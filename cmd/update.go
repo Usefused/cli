@@ -1,8 +1,12 @@
 package cmd
 
 import (
+	"archive/zip"
+	"bytes"
 	"fmt"
+	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/Usefused/cli/internal/api"
@@ -86,17 +90,49 @@ Loop:
 			return
 		}
 
-		outPath := fmt.Sprintf("%s/sdk_%s.zip", strings.TrimRight(outputDir, "/"), generatedSdkID)
-		
-		if err := os.MkdirAll(strings.TrimRight(outputDir, "/"), 0755); err != nil {
-			fmt.Printf("Error creating output directory: %v\n", err)
+		zipReader, err := zip.NewReader(bytes.NewReader(zipData), int64(len(zipData)))
+		if err != nil {
+			fmt.Printf("Error reading zip archive: %v\n", err)
 			return
 		}
 
-		if err := os.WriteFile(outPath, zipData, 0644); err != nil {
-			fmt.Printf("Error writing zip file: %v\n", err)
-			return
+		extractDir := strings.TrimRight(outputDir, "/")
+		if extractDir == "" {
+			extractDir = "."
 		}
-		fmt.Printf("🎉 Updated SDK saved to %s\n", outPath)
+
+		for _, f := range zipReader.File {
+			fpath := filepath.Join(extractDir, f.Name)
+
+			if !strings.HasPrefix(fpath, filepath.Clean(extractDir)+string(os.PathSeparator)) {
+				continue
+			}
+
+			if f.FileInfo().IsDir() {
+				os.MkdirAll(fpath, os.ModePerm)
+				continue
+			}
+
+			if err := os.MkdirAll(filepath.Dir(fpath), os.ModePerm); err != nil {
+				continue
+			}
+
+			outFile, err := os.OpenFile(fpath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
+			if err != nil {
+				continue
+			}
+
+			rc, err := f.Open()
+			if err != nil {
+				outFile.Close()
+				continue
+			}
+
+			io.Copy(outFile, rc)
+			outFile.Close()
+			rc.Close()
+		}
+
+		fmt.Printf("🎉 Updated SDK automatically extracted to %s/\n", extractDir)
 	}
 }

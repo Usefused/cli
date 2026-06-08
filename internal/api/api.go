@@ -60,7 +60,11 @@ func (c *Client) GraphQL(query string, variables map[string]interface{}, out int
 	}
 
 	if err := json.Unmarshal(respBody, &graphqlResp); err != nil {
-		return fmt.Errorf("failed to unmarshal graphql response: %v, body: %s", err, string(respBody))
+		bodyStr := string(respBody)
+		if len(bodyStr) > 200 {
+			bodyStr = bodyStr[:200] + "..."
+		}
+		return fmt.Errorf("failed to unmarshal graphql response: %v, body snippet: %s", err, bodyStr)
 	}
 
 	if len(graphqlResp.Errors) > 0 {
@@ -192,7 +196,11 @@ func (c *Client) GenerateSDK(reqBody GenerateSDKRequest) (*GenerateSDKResponse, 
 
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("failed to generate SDK: %s", string(respBody))
+		bodyStr := string(respBody)
+		if len(bodyStr) > 200 {
+			bodyStr = bodyStr[:200] + "..."
+		}
+		return nil, fmt.Errorf("failed to generate SDK (HTTP %d): %s", resp.StatusCode, bodyStr)
 	}
 
 	var out GenerateSDKResponse
