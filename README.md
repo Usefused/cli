@@ -38,7 +38,7 @@ The `create` command uses AI to understand your exact intent and instantly compi
 
 ```bash
 # Generate an SDK by describing what you want to build
-fused-cli create -d "I want to accept payments using Stripe and use Plunk for sending emails"
+fused-cli create --name stripe-sdk --version 1.0.0 -d "I want to accept payments using Stripe and use Plunk for sending emails"
 ```
 
 The AI will parse your intent, map the endpoints, and provide an interactive Cart UI where you can review, add, or refine the endpoints before downloading the generated SDK `.zip` file to your current directory!

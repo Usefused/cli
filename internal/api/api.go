@@ -164,6 +164,7 @@ type SDKSelection struct {
 type GenerateSDKRequest struct {
 	Name        string         `json:"name"`
 	Description string         `json:"description"`
+	Version     string         `json:"version"`
 	TargetType  string         `json:"target_type"`
 	Selections  []SDKSelection `json:"selections"`
 	UpgradeFrom string         `json:"upgrade_from,omitempty"`

@@ -17,6 +17,9 @@ import (
 var description string
 var outputDir string
 var autoConfirm bool
+var sdkName string
+var sdkVersion string
+var targetType string
 
 var createCmd = &cobra.Command{
 	Use:   "create",
@@ -27,9 +30,15 @@ var createCmd = &cobra.Command{
 }
 
 func init() {
+	createCmd.Flags().StringVarP(&sdkName, "name", "n", "", "Name of the generated SDK (e.g., 'stripe-sdk')")
+	createCmd.Flags().StringVarP(&sdkVersion, "version", "v", "1.0.0", "Version of the generated SDK")
+	createCmd.Flags().StringVarP(&targetType, "target", "t", "typescript", "Target language for the SDK (e.g., 'typescript')")
 	createCmd.Flags().StringVarP(&description, "description", "d", "", "Description of the SDK to create (e.g. 'Create a stripe and plunk sdk')")
 	createCmd.Flags().StringVarP(&outputDir, "output", "o", ".", "Directory to save the generated SDK zip")
 	createCmd.Flags().BoolVarP(&autoConfirm, "auto-confirm", "y", false, "Automatically confirm and select all endpoints")
+	
+	createCmd.MarkFlagRequired("name")
+	
 	rootCmd.AddCommand(createCmd)
 }
 
@@ -208,9 +217,10 @@ func runCreate() {
 
 	fmt.Println("\n🚀 Generating SDK...")
 	req := api.GenerateSDKRequest{
-		Name:        "Generated SDK",
+		Name:        sdkName,
 		Description: description,
-		TargetType:  "typescript",
+		Version:     sdkVersion,
+		TargetType:  targetType,
 		Selections:  selections,
 	}
 
@@ -277,7 +287,7 @@ Loop:
 			return
 		}
 
-		extractDir := strings.TrimRight(outputDir, "/")
+		extractDir := filepath.Join(strings.TrimRight(outputDir, "/"), sdkName)
 		if extractDir == "" {
 			extractDir = "."
 		}
