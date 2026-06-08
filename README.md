@@ -5,6 +5,12 @@ The `fused-cli` is the official command-line interface for OpenSync. It allows y
 ## Installation
 
 ### Option 1: One-Line Install Script (Recommended)
+
+**Install a specific version:**
+```bash
+curl -sSL https://raw.githubusercontent.com/Usefused/cli/main/install.sh | VERSION=v1.0.0 bash
+```
+
 You can easily install the pre-compiled binary for macOS or Linux using our install script:
 ```bash
 curl -sSL https://raw.githubusercontent.com/Usefused/cli/main/install.sh | bash

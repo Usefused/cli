@@ -27,21 +27,26 @@ esac
 
 echo "=> Detected ${OS} ${ARCH}"
 
-# Fetch the latest release tag from GitHub API
-echo "=> Fetching latest release version..."
-LATEST_TAG=$(curl -s "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+# Determine version to install
+if [ -n "$VERSION" ]; then
+    TARGET_VERSION="$VERSION"
+    echo "=> Using specified version ${TARGET_VERSION}"
+else
+    echo "=> Fetching latest release version..."
+    TARGET_VERSION=$(curl -s "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+fi
 
-if [ -z "$LATEST_TAG" ]; then
-    echo "Error: Could not fetch latest release version from GitHub."
+if [ -z "$TARGET_VERSION" ]; then
+    echo "Error: Could not determine release version."
     exit 1
 fi
 
-echo "=> Latest version is ${LATEST_TAG}"
+echo "=> Installing version ${TARGET_VERSION}"
 
 # Construct the download URL based on GoReleaser naming convention
 # Example: fused-cli_Darwin_arm64.tar.gz
 TAR_NAME="${BINARY}_${OS}_${ARCH}.tar.gz"
-DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${LATEST_TAG}/${TAR_NAME}"
+DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${TARGET_VERSION}/${TAR_NAME}"
 
 # Create a temporary directory
 TMP_DIR=$(mktemp -d)
