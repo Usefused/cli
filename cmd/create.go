@@ -5,8 +5,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/charmbracelet/huh"
 	"github.com/Usefused/cli/internal/api"
+	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 )
 
@@ -30,7 +30,7 @@ func init() {
 }
 
 func searchAndAddEndpoints(client *api.Client, searchString string, currentCart map[string]api.Integration, servicesMap map[string]api.Service) {
-	fmt.Printf("🧠 Parsing intent using AI for: %q...\n", searchString)
+	// fmt.Printf("🧠 Parsing intent using AI for: %q...\n", searchString)
 	intent, err := client.ParseSDKIntent(searchString)
 	if err != nil {
 		fmt.Printf("Failed to parse intent: %v\n", err)
@@ -50,7 +50,7 @@ func searchAndAddEndpoints(client *api.Client, searchString string, currentCart 
 			fmt.Printf("   -> Could not find service matching %q\n", svcIntent.Name)
 			continue
 		}
-		
+
 		// Take the best match (first one)
 		s := services[0]
 		servicesMap[s.ID] = s
@@ -105,7 +105,7 @@ func runCreate() {
 		for _, ep := range cart {
 			endpointsByService[ep.ServiceID] = append(endpointsByService[ep.ServiceID], ep)
 		}
-		
+
 		for svcID, eps := range endpointsByService {
 			svcName := "Unknown Service"
 			if s, ok := services[svcID]; ok {
@@ -164,6 +164,7 @@ func runCreate() {
 				Title("Select endpoints to KEEP in the SDK").
 				Options(options...).
 				Value(&selectedIDs).
+				Height(15).
 				Run()
 
 			if err == nil {
@@ -262,7 +263,7 @@ Loop:
 		}
 
 		outPath := fmt.Sprintf("%s/sdk_%s.zip", strings.TrimRight(outputDir, "/"), generatedSdkID)
-		
+
 		if err := os.MkdirAll(strings.TrimRight(outputDir, "/"), 0755); err != nil {
 			fmt.Printf("Error creating output directory: %v\n", err)
 			return
