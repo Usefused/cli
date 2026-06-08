@@ -8,13 +8,13 @@ import (
 )
 
 var (
-	apiKey  string
-	apiURL  string
+	apiKey string
+	apiURL string
 )
 
 var rootCmd = &cobra.Command{
 	Use:   "fused-cli",
-	Short: "A CLI for discovering and generating OpenSync SDKs",
+	Short: "A CLI for discovering and generating Fused SDKs",
 	Long: `fused-cli allows you to discover API services and endpoints
 and generate ready-to-use SDKs.`,
 }
@@ -28,7 +28,7 @@ func Execute() {
 
 func init() {
 	rootCmd.PersistentFlags().StringVar(&apiKey, "key", "", "FUSED_API_KEY (can also be set via FUSED_API_KEY env var)")
-	rootCmd.PersistentFlags().StringVar(&apiURL, "api-url", "http://localhost:8080", "OpenSync backend URL")
+	rootCmd.PersistentFlags().StringVar(&apiURL, "api-url", "https://api.usefused.com", "Fused backend URL")
 }
 
 // GetAPIKey resolves the API key from flag or environment variable
