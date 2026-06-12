@@ -40,14 +40,14 @@ export FUSED_API_KEY="sk_test_..."
 
 ### Generate an SDK (`create`)
 
-The `create` command uses AI to understand your exact intent and instantly compiles a perfectly scoped SDK containing only the endpoints you need.
+The `create` command uses Fused intent AI to understand your exact intent and instantly compiles a perfectly scoped SDK containing only the endpoints you need.
 
 ```bash
 # Generate an SDK by describing what you want to build
 fused-cli create --name stripe-sdk --version 1.0.0 -d "I want to accept payments using Stripe and use Plunk for sending emails"
 ```
 
-The AI will parse your intent, map the endpoints, and provide an interactive Cart UI where you can review, add, or refine the endpoints before downloading the generated SDK `.zip` file to your current directory!
+The Fused AI will parse your intent, map the endpoints, and provide an interactive Cart UI where you can review, add, or refine the endpoints before downloading the generated SDK `.zip` file to your current directory!
 
 ### Available Commands
 - `create`: Generate a brand new SDK from natural language
@@ -55,12 +55,3 @@ The AI will parse your intent, map the endpoints, and provide an interactive Car
 
 Run `fused-cli --help` for more information on available commands and flags.
 
-## Developing & Releasing
-
-To create a new release for users to download:
-1. Make sure your changes are merged to the `main` branch.
-2. From the `cli` directory, run:
-```bash
-make release VERSION=v1.0.0
-```
-3. GitHub Actions will automatically compile the binaries for Linux, macOS, and Windows and publish them to the GitHub Releases page!
