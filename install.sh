@@ -4,6 +4,7 @@ set -e
 # Fused CLI Installation Script
 # This script detects the OS and Architecture, downloads the latest release from GitHub,
 # and installs the `fused-cli` binary to /usr/local/bin.
+# For Windows, use install.ps1 instead.
 
 REPO="Usefused/cli"
 BINARY="fused-cli"
@@ -14,6 +15,10 @@ OS="$(uname -s)"
 case "${OS}" in
     Linux*)     OS="Linux";;
     Darwin*)    OS="Darwin";;
+    MINGW*|MSYS*|CYGWIN*)
+        echo "Windows detected. Please use the PowerShell install script instead:"
+        echo "  irm https://raw.githubusercontent.com/Usefused/cli/main/install.ps1 | iex"
+        exit 1;;
     *)          echo "Unsupported operating system: ${OS}"; exit 1;;
 esac
 
@@ -68,5 +73,13 @@ sudo chmod +x "${INSTALL_DIR}/${BINARY}"
 cd - > /dev/null
 rm -rf "$TMP_DIR"
 
-echo "=> Installation complete! 🎉"
+echo "=> Installation complete!"
 echo "=> Run 'fused-cli --help' to get started."
+
+# Verify the install directory is on PATH
+if ! echo ":${PATH}:" | grep -q ":${INSTALL_DIR}:"; then
+    echo ""
+    echo "WARNING: ${INSTALL_DIR} is not in your PATH."
+    echo "Add the following line to your ~/.bashrc or ~/.zshrc and restart your terminal:"
+    echo "  export PATH=\"\$PATH:${INSTALL_DIR}\""
+fi
