@@ -1,6 +1,6 @@
 # Fused CLI
 
-The `fused-cli` is the official command-line interface for Fused. It allows you to rapidly generate hyper-targeted API SDKs directly from natural language using the power of AI.
+The `fused-cli` is the official command-line interface for [Fused](https://usefused.com). It allows you to rapidly generate hyper-targeted API SDKs directly from natural language using the power of AI.
 
 ## Installation
 
