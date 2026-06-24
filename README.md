@@ -65,18 +65,17 @@ export FUSED_API_KEY="sk_test_..."
 
 ### Generate an SDK (`create`)
 
-The `create` command uses Fused intent AI to understand your exact intent and instantly compiles a perfectly scoped SDK containing only the endpoints you need.
+The `create` command uses Fused intent AI to turn a business use case into a Business Capability SDK. Describe the workflow your team wants to ship, and Fused maps the right services and endpoints into a single, scoped SDK with the authentication, retries, tracing, and typed errors wired in.
 
 ```bash
-# Generate an SDK by describing what you want to build
-fused-cli create --name stripe-sdk --version 1.0.0 -d "I want to accept payments using Stripe and use Plunk for sending emails"
+# Generate an SDK around a business capability
+fused-cli create --name onboarding-sdk --version 1.0.0 -d "When a new employee joins, use Jira to create an onboarding ticket, use GitHub to provision repository access, and use Slack to send a welcome message"
 ```
 
-The Fused AI will parse your intent, map the endpoints, and provide an interactive Cart UI where you can review, add, or refine the endpoints before downloading the generated SDK `.zip` file to your current directory!
+Fused parses the use case, uses the services you name for each task, selects the relevant operations, and opens an interactive Cart UI where you can review, add, or refine the SDK before downloading the generated `.zip` file to your current directory.
 
 ### Available Commands
 - `create`: Generate a brand new SDK from natural language
 - `update`: Update an existing Fused SDK directory
 
 Run `fused-cli --help` for more information on available commands and flags.
-
