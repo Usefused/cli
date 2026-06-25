@@ -22,6 +22,7 @@ var sdkVersion string
 var targetType string
 var targetLanguage string
 var deploy bool
+var autoYes bool
 
 var createCmd = &cobra.Command{
 	Use:   "create",
@@ -36,10 +37,11 @@ func init() {
 	createCmd.Flags().StringVarP(&sdkVersion, "version", "v", "1.0.0", "Version of the generated SDK")
 	createCmd.Flags().StringVarP(&targetType, "type", "t", "sdk", "Target type for the SDK (e.g., 'sdk', 'mcp')")
 	createCmd.Flags().StringVarP(&targetLanguage, "language", "l", "typescript", "Target language for the SDK (e.g., 'typescript', 'python')")
-	createCmd.Flags().BoolVarP(&deploy, "deploy", "", false, "Deploy the generated MCP server to Fused systems (applies only if --type=mcp)")
+	createCmd.Flags().BoolVar(&deploy, "deploy", false, "Deploy to Fused Sandbox immediately (MCP TypeScript only)")
+	createCmd.Flags().BoolVarP(&autoYes, "yes", "y", false, "Skip interactive menu and automatically proceed")
 	createCmd.Flags().StringVarP(&description, "description", "d", "", "Description of the SDK to create (e.g. 'Create a stripe and plunk sdk')")
 	createCmd.Flags().StringVarP(&outputDir, "output", "o", ".", "Directory to save the generated SDK zip")
-	createCmd.Flags().BoolVarP(&autoConfirm, "auto-confirm", "y", false, "Automatically confirm and select all endpoints")
+	createCmd.Flags().BoolVarP(&autoConfirm, "auto-confirm", "", false, "Automatically confirm and select all endpoints")
 	
 	createCmd.MarkFlagRequired("name")
 	
@@ -150,6 +152,10 @@ func runCreate() {
 			}
 		}
 		fmt.Println("---------------------------")
+
+		if autoYes {
+			break
+		}
 
 		if autoConfirm {
 			fmt.Println("Auto-confirm enabled. Proceeding to generation...")
