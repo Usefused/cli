@@ -162,12 +162,14 @@ type SDKSelection struct {
 }
 
 type GenerateSDKRequest struct {
-	Name        string         `json:"name"`
-	Description string         `json:"description"`
-	Version     string         `json:"version"`
-	TargetType  string         `json:"target_type"`
-	Selections  []SDKSelection `json:"selections"`
-	UpgradeFrom string         `json:"upgrade_from,omitempty"`
+	Name           string         `json:"name"`
+	Description    string         `json:"description"`
+	Version        string         `json:"version"`
+	TargetType     string         `json:"target_type"`
+	TargetLanguage string         `json:"target_language,omitempty"`
+	Selections     []SDKSelection `json:"selections"`
+	SkipSandbox    bool           `json:"skip_sandbox"`
+	UpgradeFrom    string         `json:"upgrade_from,omitempty"`
 }
 
 type GenerateSDKResponse struct {
@@ -270,6 +272,56 @@ func (c *Client) StreamSDKGenerationEvents(jobID string, eventChan chan<- SDKEve
 	}
 	close(eventChan)
 	close(errChan)
+}
+
+type SDKDetails struct {
+	SandboxURL string `json:"sandbox_url"`
+}
+
+type GetSDKResponse struct {
+	SDK SDKDetails `json:"sdk"`
+}
+
+func (c *Client) GetSDK(sdkID string) (*SDKDetails, error) {
+	query := `
+		query GetSDK($id: String!) {
+			sdk(id: $id) {
+				sandbox_url
+			}
+		}
+	`
+	var resp GetSDKResponse
+	err := c.GraphQL(query, map[string]interface{}{"id": sdkID}, &resp)
+	if err != nil {
+		return nil, err
+	}
+	return &resp.SDK, nil
+}
+
+type SDKBasicDetails struct {
+	ID         string `json:"id"`
+	SandboxURL string `json:"sandbox_url"`
+}
+
+type GetSDKByNameResponse struct {
+	SDK SDKBasicDetails `json:"sdkByName"`
+}
+
+func (c *Client) GetSDKByName(name string, version string) (*SDKBasicDetails, error) {
+	query := `
+		query GetSDKByName($name: String!, $version: String) {
+			sdkByName(name: $name, version: $version) {
+				id
+				sandbox_url
+			}
+		}
+	`
+	var resp GetSDKByNameResponse
+	err := c.GraphQL(query, map[string]interface{}{"name": name, "version": version}, &resp)
+	if err != nil {
+		return nil, err
+	}
+	return &resp.SDK, nil
 }
 
 func (c *Client) DownloadSDK(sdkID string) ([]byte, error) {

@@ -68,14 +68,63 @@ export FUSED_API_KEY="sk_test_..."
 The `create` command uses Fused intent AI to turn a business use case into a Business Capability SDK. Describe the workflow your team wants to ship, and Fused maps the right services and endpoints into a single, scoped SDK with the authentication, retries, tracing, and typed errors wired in.
 
 ```bash
-# Generate an SDK around a business capability
+# Generate a standard SDK around a business capability
 fused-cli create --name onboarding-sdk --version 1.0.0 -d "When a new employee joins, use Jira to create an onboarding ticket, use GitHub to provision repository access, and use Slack to send a welcome message"
 ```
 
-Fused parses the use case, uses the services you name for each task, selects the relevant operations, and opens an interactive Cart UI where you can review, add, or refine the SDK before downloading the generated `.zip` file to your current directory.
+Fused parses the use case, uses the services you name for each task, selects the relevant operations, and opens an interactive Cart UI where you can review, add, or refine the SDK before either downloading the generated `.zip` file to your current directory or deploying it directly as an MCP server.
+
+#### Targets and Languages
+You can specify the type of integration and its programming language:
+- `--type` (or `-t`): Set the target type. Options are `sdk` (default) or `mcp`.
+- `--language` (or `-l`): Set the programming language. Options include `typescript` (default) and `python`.
+
+```bash
+# Generate a Python MCP server
+fused-cli create --name support-agent-mcp -t mcp -l python -d "Search Zendesk for tickets and use Linear to update corresponding issues"
+```
+
+#### Deploying MCP Servers
+If you are generating a TypeScript MCP server (`--type=mcp`), you can choose to deploy it directly to the Fused Sandbox by passing the `--deploy` flag instead of downloading the source code. The CLI will output the active Sandbox URL for your AI agents to connect to immediately via SSE. *(Note: Python MCP servers cannot be deployed and must be downloaded locally).*
+
+```bash
+fused-cli create --name sales-mcp -t mcp --deploy -d "Read Salesforce leads and fetch Intercom conversations"
+```
+
+### Update an SDK (`update`)
+
+The `update` command allows you to seamlessly iterate on an existing SDK. By default, it will look up your most recently generated SDK with that name and use its configurations as the baseline. 
+
+```bash
+# Update the most recent 'support-agent-mcp' SDK
+fused-cli update support-agent-mcp
+
+# Update a specific version of the SDK
+fused-cli update support-agent-mcp@1.0.0
+```
+Just like `create`, you can also specify the target language and whether to deploy it:
+```bash
+fused-cli update support-agent-mcp -t mcp -l python
+```
+
+### Download an SDK (`download`)
+
+If you've already generated an SDK (perhaps via the web UI or an earlier CLI session) and just need to download the `.zip` archive or extract the source code locally, use the `download` command.
+
+```bash
+# Download the most recently generated 'sales-mcp'
+fused-cli download sales-mcp
+
+# Download a specific version
+fused-cli download sales-mcp@1.2.0
+
+# Download and output to a specific directory
+fused-cli download sales-mcp@1.2.0 --output ./my-agent
+```
 
 ### Available Commands
 - `create`: Generate a brand new SDK from natural language
-- `update`: Update an existing Fused SDK directory
+- `update`: Update an existing SDK by its ID or name. You can specify a version by appending `@<version>` (e.g., `fused-cli update my-sdk@1.2.0`). (Supports `--type`, `--language`, and `--deploy` flags).
+- `download`: Download an already built SDK by its ID or name. You can specify a version by appending `@<version>` (e.g., `fused-cli download my-sdk@1.2.0`).
 
 Run `fused-cli --help` for more information on available commands and flags.

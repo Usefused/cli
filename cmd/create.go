@@ -20,6 +20,8 @@ var autoConfirm bool
 var sdkName string
 var sdkVersion string
 var targetType string
+var targetLanguage string
+var deploy bool
 
 var createCmd = &cobra.Command{
 	Use:   "create",
@@ -32,7 +34,9 @@ var createCmd = &cobra.Command{
 func init() {
 	createCmd.Flags().StringVarP(&sdkName, "name", "n", "", "Name of the generated SDK (e.g., 'stripe-sdk')")
 	createCmd.Flags().StringVarP(&sdkVersion, "version", "v", "1.0.0", "Version of the generated SDK")
-	createCmd.Flags().StringVarP(&targetType, "target", "t", "typescript", "Target language for the SDK (e.g., 'typescript')")
+	createCmd.Flags().StringVarP(&targetType, "type", "t", "sdk", "Target type for the SDK (e.g., 'sdk', 'mcp')")
+	createCmd.Flags().StringVarP(&targetLanguage, "language", "l", "typescript", "Target language for the SDK (e.g., 'typescript', 'python')")
+	createCmd.Flags().BoolVarP(&deploy, "deploy", "", false, "Deploy the generated MCP server to Fused systems (applies only if --type=mcp)")
 	createCmd.Flags().StringVarP(&description, "description", "d", "", "Description of the SDK to create (e.g. 'Create a stripe and plunk sdk')")
 	createCmd.Flags().StringVarP(&outputDir, "output", "o", ".", "Directory to save the generated SDK zip")
 	createCmd.Flags().BoolVarP(&autoConfirm, "auto-confirm", "y", false, "Automatically confirm and select all endpoints")
@@ -87,6 +91,16 @@ func searchAndAddEndpoints(client *api.Client, searchString string, currentCart 
 func runCreate() {
 	if description == "" {
 		fmt.Println("Error: --description is required")
+		os.Exit(1)
+	}
+
+	if deploy && targetType != "mcp" {
+		fmt.Println("Error: --deploy can only be used with --type=mcp")
+		os.Exit(1)
+	}
+
+	if deploy && targetLanguage == "python" {
+		fmt.Println("Error: Python MCP servers cannot be deployed to Fused systems.")
 		os.Exit(1)
 	}
 
@@ -217,11 +231,13 @@ func runCreate() {
 
 	fmt.Println("\n🚀 Generating SDK...")
 	req := api.GenerateSDKRequest{
-		Name:        sdkName,
-		Description: description,
-		Version:     sdkVersion,
-		TargetType:  targetType,
-		Selections:  selections,
+		Name:           sdkName,
+		Description:    description,
+		Version:        sdkVersion,
+		TargetType:     targetType,
+		TargetLanguage: targetLanguage,
+		Selections:     selections,
+		SkipSandbox:    !deploy,
 	}
 
 	resp, err := client.GenerateSDK(req)
@@ -269,8 +285,23 @@ Loop:
 	}
 
 	if generatedSdkID != "" {
-		fmt.Printf("✅ SDK Generation Complete. Downloading SDK %s...\n", generatedSdkID)
-		zipData, err := client.DownloadSDK(generatedSdkID)
+		if deploy {
+			fmt.Println("✅ MCP Server Deployment Complete.")
+			sdkDetails, err := client.GetSDK(generatedSdkID)
+			if err != nil {
+				fmt.Printf("Error fetching MCP details: %v\n", err)
+				return
+			}
+			if sdkDetails != nil && sdkDetails.SandboxURL != "" {
+				fmt.Printf("\n🌐 Sandbox URL: %s\n", sdkDetails.SandboxURL)
+				fmt.Println("\nTo use this MCP Server, configure your client to connect to the above SSE Sandbox URL.")
+				fmt.Println("Authentication credentials should be passed as HTTP headers prefixed with 'X-Env-' when establishing the connection.")
+			} else {
+				fmt.Println("Sandbox URL is not available.")
+			}
+		} else {
+			fmt.Printf("✅ SDK Generation Complete. Downloading SDK %s...\n", generatedSdkID)
+			zipData, err := client.DownloadSDK(generatedSdkID)
 		if err != nil {
 			fmt.Printf("Error downloading SDK: %v\n", err)
 			return
@@ -326,5 +357,6 @@ Loop:
 		}
 
 		fmt.Printf("🎉 SDK automatically extracted to %s/\n", extractDir)
+		}
 	}
 }
