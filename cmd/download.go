@@ -31,10 +31,12 @@ func runDownload(sdkArg string) {
 	key := GetAPIKey()
 	client := api.NewClient(apiURL, key)
 
+	var sdkName string
 	var generatedSdkID string
 	if len(sdkArg) == 36 && sdkArg[8] == '-' && sdkArg[13] == '-' && sdkArg[18] == '-' && sdkArg[23] == '-' {
 		// Looks like a UUID, assume it's the SDK ID
 		generatedSdkID = sdkArg
+		sdkName = "sdk"
 	} else {
 		// It's a name, find the ID by name
 		namePart := sdkArg
@@ -60,6 +62,7 @@ func runDownload(sdkArg string) {
 			os.Exit(1)
 		}
 		generatedSdkID = sdkDetails.ID
+		sdkName = namePart
 		fmt.Printf("✅ Found SDK ID: %s\n", generatedSdkID)
 	}
 
@@ -78,12 +81,29 @@ func runDownload(sdkArg string) {
 
 	extractDir := outputDir
 	if extractDir == "." {
-		// If output is default (.), extract to a folder named after the first directory in the zip
-		// or just use "sdk"
-		if len(zipReader.File) > 0 {
-			parts := strings.Split(zipReader.File[0].Name, "/")
-			if len(parts) > 0 {
-				extractDir = parts[0]
+		// Check if the zip has a single root directory
+		hasSingleRoot := true
+		var rootDir string
+		for _, f := range zipReader.File {
+			parts := strings.Split(f.Name, "/")
+			if len(parts) == 1 && !f.FileInfo().IsDir() {
+				hasSingleRoot = false
+				break
+			}
+			if rootDir == "" {
+				rootDir = parts[0]
+			} else if parts[0] != rootDir {
+				hasSingleRoot = false
+				break
+			}
+		}
+
+		if hasSingleRoot && rootDir != "" {
+			extractDir = "."
+		} else {
+			extractDir = sdkName
+			if extractDir == "" {
+				extractDir = "sdk"
 			}
 		}
 	}
