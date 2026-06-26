@@ -15,8 +15,9 @@ var (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "fused-cli",
-	Short: "Turn any API into a typed SDK or MCP server — powered by Fused.",
+	Use:     "fused-cli",
+	Version: Version,
+	Short:   "Turn any API into a typed SDK or MCP server — powered by Fused.",
 	Long: `Fused CLI lets you register API services, select the endpoints you care about,
 and instantly generate type-safe SDKs or MCP servers ready for production.`,
 }
