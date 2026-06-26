@@ -193,12 +193,15 @@ func runCreate() {
 			}
 
 			var selectedIDs []string
-			err := huh.NewMultiSelect[string]().
-				Title("Select endpoints to KEEP in the SDK").
-				Options(options...).
-				Value(&selectedIDs).
-				Height(15).
-				Run()
+			err := huh.NewForm(
+				huh.NewGroup(
+					huh.NewMultiSelect[string]().
+						Title("Select endpoints to KEEP in the SDK").
+						Options(options...).
+						Value(&selectedIDs).
+						Height(15),
+				),
+			).WithTheme(huh.ThemeBase()).Run()
 
 			if err == nil {
 				// Rebuild cart
