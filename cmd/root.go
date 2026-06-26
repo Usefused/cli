@@ -7,6 +7,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var Version = "dev"
+
 var (
 	apiKey string
 	apiURL string
@@ -14,16 +16,18 @@ var (
 
 var rootCmd = &cobra.Command{
 	Use:   "fused-cli",
-	Short: "A CLI for discovering and generating Fused SDKs",
-	Long: `fused-cli allows you to discover API services and endpoints
-and generate ready-to-use SDKs.`,
+	Short: "Turn any API into a typed SDK or MCP server — powered by Fused.",
+	Long: `Fused CLI lets you register API services, select the endpoints you care about,
+and instantly generate type-safe SDKs or MCP servers ready for production.`,
 }
 
 func Execute() {
+	startUpdateCheck()
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+	printUpdateNudge()
 }
 
 func init() {
