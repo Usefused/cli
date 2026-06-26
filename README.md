@@ -78,10 +78,11 @@ Fused parses the use case, uses the services you name for each task, selects the
 You can specify the type of integration and its programming language:
 - `--type` (or `-t`): Set the target type. Options are `sdk` (default) or `mcp`.
 - `--language` (or `-l`): Set the programming language. Options include `typescript` (default) and `python`.
+- `-y` (or `--yes`): Skip the interactive Cart UI and automatically proceed with generation (non-interactive mode).
 
 ```bash
-# Generate a Python MCP server
-fused-cli create --name support-agent-mcp -t mcp -l python -d "Search Zendesk for tickets and use Linear to update corresponding issues"
+# Generate a Python MCP server non-interactively
+fused-cli create --name support-agent-mcp -t mcp -l python -y -d "Search Zendesk for tickets and use Linear to update corresponding issues"
 ```
 
 #### Deploying MCP Servers
