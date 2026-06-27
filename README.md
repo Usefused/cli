@@ -86,7 +86,7 @@ fused-cli create --name support-agent-mcp -t mcp -l python -y -d "Search Zendesk
 ```
 
 #### Deploying MCP Servers
-If you are generating a TypeScript MCP server (`--type=mcp`), you can choose to deploy it directly to the Fused Sandbox by passing the `--deploy` flag instead of downloading the source code. The CLI will output the active Sandbox URL for your AI agents to connect to immediately via SSE. *(Note: Python MCP servers cannot be deployed and must be downloaded locally).*
+If you are generating a TypeScript MCP server (`--type=mcp`), you can choose to deploy it directly to Fused-Run (a managed service) by passing the `--deploy` flag instead of downloading the source code. The CLI will output the active Fused-Run URL for your AI agents to connect to immediately via SSE. *(Note: Python MCP servers cannot be deployed and must be downloaded locally).*
 
 ```bash
 fused-cli create --name sales-mcp -t mcp --deploy -d "Read Salesforce leads and fetch Intercom conversations"

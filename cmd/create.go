@@ -16,7 +16,6 @@ import (
 
 var description string
 var outputDir string
-var autoConfirm bool
 var sdkName string
 var sdkVersion string
 var targetType string
@@ -41,7 +40,6 @@ func init() {
 	createCmd.Flags().BoolVarP(&autoYes, "yes", "y", false, "Skip interactive menu and automatically proceed")
 	createCmd.Flags().StringVarP(&description, "description", "d", "", "Description of the SDK to create (e.g. 'Create a stripe and plunk sdk')")
 	createCmd.Flags().StringVarP(&outputDir, "output", "o", ".", "Directory to save the generated SDK zip")
-	createCmd.Flags().BoolVarP(&autoConfirm, "auto-confirm", "", false, "Automatically confirm and select all endpoints")
 	
 	createCmd.MarkFlagRequired("name")
 	
@@ -154,10 +152,6 @@ func runCreate() {
 		fmt.Println("---------------------------")
 
 		if autoYes {
-			break
-		}
-
-		if autoConfirm {
 			fmt.Println("Auto-confirm enabled. Proceeding to generation...")
 			break
 		}
