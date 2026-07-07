@@ -52,6 +52,14 @@ func (c *Client) GraphQL(query string, variables map[string]interface{}, out int
 		return err
 	}
 
+	if resp.StatusCode >= 400 {
+		bodyStr := string(respBody)
+		if len(bodyStr) > 200 {
+			bodyStr = bodyStr[:200] + "..."
+		}
+		return fmt.Errorf("graphql request failed (HTTP %d): %s", resp.StatusCode, bodyStr)
+	}
+
 	var graphqlResp struct {
 		Data   json.RawMessage `json:"data"`
 		Errors []struct {
@@ -344,4 +352,40 @@ func (c *Client) DownloadSDK(sdkID string) ([]byte, error) {
 	}
 
 	return io.ReadAll(resp.Body)
+}
+
+type MCPActivateResult struct {
+	MCPURL string `json:"mcp_url"`
+}
+
+// ActivateMCPServer posts to the Engine to deploy an MCP server.
+func (c *Client) ActivateMCPServer(sdkID string) (*MCPActivateResult, error) {
+	req, err := http.NewRequest("POST", c.BaseURL+"/engine/sdks/"+sdkID+"/activate", nil)
+	if err != nil {
+		return nil, err
+	}
+	if c.APIKey != "" {
+		req.Header.Set("x-api-key", c.APIKey)
+	}
+
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		respBody, _ := io.ReadAll(resp.Body)
+		bodyStr := string(respBody)
+		if len(bodyStr) > 200 {
+			bodyStr = bodyStr[:200] + "..."
+		}
+		return nil, fmt.Errorf("failed to activate MCP server (HTTP %d): %s", resp.StatusCode, bodyStr)
+	}
+
+	var out MCPActivateResult
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	return &out, nil
 }

@@ -31,7 +31,7 @@ func init() {
 	updateCmd.Flags().StringVarP(&updateTargetType, "type", "t", "sdk", "Target type for the SDK (e.g., 'sdk', 'mcp')")
 	updateCmd.Flags().StringVarP(&updateTargetLanguage, "language", "l", "typescript", "Target language for the SDK (e.g., 'typescript', 'python')")
 	updateCmd.Flags().BoolVarP(&updateDeploy, "deploy", "", false, "Deploy the generated MCP server to Fused systems (applies only if --type=mcp)")
-	rootCmd.AddCommand(updateCmd)
+	RootCmd.AddCommand(updateCmd)
 }
 
 func runUpdate(sdkID string) {
@@ -46,7 +46,12 @@ func runUpdate(sdkID string) {
 	}
 
 	key := GetAPIKey()
-	client := api.NewClient(apiURL, key)
+	engineURL, err := GetEngineURL()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	client := api.NewClient(engineURL, key)
 
 	var generatedSdkID string
 	if len(sdkID) == 36 && sdkID[8] == '-' && sdkID[13] == '-' && sdkID[18] == '-' && sdkID[23] == '-' {
@@ -137,17 +142,18 @@ Loop:
 	if finalGeneratedSdkID != "" {
 		if updateDeploy {
 			fmt.Println("✅ MCP Server Deployment Complete.")
-			sdkDetails, err := client.GetSDK(finalGeneratedSdkID)
+			
+			res, err := client.ActivateMCPServer(finalGeneratedSdkID)
 			if err != nil {
-				fmt.Printf("Error fetching MCP details: %v\n", err)
+				fmt.Printf("Error activating MCP server on Engine: %v\n", err)
 				return
 			}
-			if sdkDetails != nil && sdkDetails.SandboxURL != "" {
-				fmt.Printf("\n🌐 Sandbox URL: %s\n", sdkDetails.SandboxURL)
+			if res != nil && res.MCPURL != "" {
+				fmt.Printf("\n🌐 Engine MCP URL: %s\n", res.MCPURL)
 				fmt.Println("\nTo use this MCP Server, configure your client to connect to the above SSE Sandbox URL.")
 				fmt.Println("Authentication credentials should be passed as HTTP headers prefixed with 'X-Env-' when establishing the connection.")
 			} else {
-				fmt.Println("Sandbox URL is not available.")
+				fmt.Println("MCP URL is not available.")
 			}
 		} else {
 			fmt.Printf("✅ SDK Update Complete. Downloading SDK %s...\n", finalGeneratedSdkID)

@@ -51,15 +51,26 @@ Head over to the [Releases](https://github.com/Usefused/cli/releases) page and d
 
 ## Configuration
 
-To use `fused-cli`, you need to set your API Key. You can get your API Key from the Fused Dashboard.
-
-Export it as an environment variable in your terminal (or add it to your `~/.bashrc` / `~/.zshrc`):
+The `fused-cli` requires an **API Key** and an **Engine URL** to connect to the Fused data plane. You can set these up once using the `config` command.
 
 ```bash
-export FUSED_API_KEY="sk_test_..."
+# Set your API Key (from the Fused Dashboard)
+fused-cli config set api-key "sk_test_..."
+
+# Set the URL for your Fused Engine
+fused-cli config set engine-url "http://localhost:8080"
 ```
 
-*(You can also pass it explicitly with the `--api-key` flag)*
+To view your current configuration, run:
+```bash
+fused-cli config list
+```
+
+### Resolution Order
+The CLI resolves configuration in the following order (highest precedence first):
+1. **Command Line Flags**: `--key` and `--engine-url`
+2. **Environment Variables**: `FUSED_API_KEY` and `FUSED_ENGINE_URL`
+3. **Config File**: Set via `fused-cli config set` (stored in `~/.config/fused/config.json`)
 
 ## Usage
 
@@ -124,7 +135,8 @@ fused-cli download sales-mcp@1.2.0 --output ./my-agent
 ```
 
 ### Available Commands
-- `create`: Generate a brand new SDK from natural language
+- `config`: Manage your local CLI configuration (`set`, `get`, `list`, `reset`).
+- `create`: Generate a brand new SDK from natural language.
 - `update`: Update an existing SDK by its ID or name. You can specify a version by appending `@<version>` (e.g., `fused-cli update my-sdk@1.2.0`). (Supports `--type`, `--language`, and `--deploy` flags).
 - `download`: Download an already built SDK by its ID or name. You can specify a version by appending `@<version>` (e.g., `fused-cli download my-sdk@1.2.0`).
 

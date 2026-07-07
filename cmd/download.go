@@ -24,12 +24,17 @@ var downloadCmd = &cobra.Command{
 
 func init() {
 	downloadCmd.Flags().StringVarP(&outputDir, "output", "o", ".", "Directory to save the downloaded SDK zip")
-	rootCmd.AddCommand(downloadCmd)
+	RootCmd.AddCommand(downloadCmd)
 }
 
 func runDownload(sdkArg string) {
 	key := GetAPIKey()
-	client := api.NewClient(apiURL, key)
+	engineURL, err := GetEngineURL()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	client := api.NewClient(engineURL, key)
 
 	var sdkName string
 	var generatedSdkID string
