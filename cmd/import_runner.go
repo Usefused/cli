@@ -75,11 +75,15 @@ func runImportPlan(cmd *cobra.Command, specArg string, opts importSpecPlanOption
 // into either source_url (the Registry fetches it, same as any other direct
 // import) or source_content (a local file the Registry can't reach itself).
 func buildSpecImportRequest(specArg string, opts importSpecPlanOptions) (api.SpecImportPlanRequest, error) {
+	slug := strings.TrimSpace(opts.slug)
 	req := api.SpecImportPlanRequest{
 		Name:     opts.name,
-		Slug:     opts.slug,
+		Slug:     slug,
 		IsPublic: opts.isPublic,
 		Category: opts.category,
+	}
+	if slug == "" {
+		return req, errors.New("--slug is required")
 	}
 	if isURL(specArg) {
 		req.SourceURL = specArg
@@ -201,6 +205,7 @@ func resolveImportApplyReceipt(opts importSpecApplyOptions) (importPlanReceipt, 
 func printImportApplyResult(out io.Writer, resp *api.SpecImportApplyResponse) {
 	if resp.IsNewService {
 		fmt.Fprintf(out, "Created service %s (version %s)\n", resp.ServiceID, resp.Version)
+		fmt.Fprintf(out, "Slug: %s\n", resp.Slug)
 		return
 	}
 	fmt.Fprintf(out, "Applied %s to service %s (version %s)\n", resp.ResolvedStrategy, resp.ServiceID, resp.Version)

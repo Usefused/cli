@@ -105,20 +105,30 @@ fused-cli create --name sales-mcp -t mcp --deploy -d "Read Salesforce leads and 
 
 ### Import an API Spec (`import`)
 
-The `import` command registers (or updates) a service in the Registry directly from an OpenAPI, AsyncAPI, or Postman collection spec -- no conversational import agent, no endpoint-picking prompt, always the whole spec. This is the non-interactive path for teams adding their own internal service to Fused, e.g. from a CI step.
+The `import` command registers (or updates) a service in the Registry directly from a supported API specification -- no conversational import agent, no endpoint-picking prompt, always the whole spec. This is the non-interactive path for teams adding their own internal service to Fused, e.g. from a CI step.
+
+The Registry auto-detects the source format; no `--format` flag is required. Supported formats are:
+
+- OpenAPI
+- AsyncAPI
+- Postman Collection
+- GraphQL SDL or an introspectable GraphQL endpoint
 
 ```bash
 # Plan: parse the spec, diff it against the live service (if one exists via --slug),
 # and pick a publish strategy -- read-only, nothing is written yet.
 fused-cli import plan ./openapi.json --name "Internal Billing API" --slug billing-api
 
+# The same command accepts an online source directly.
+fused-cli import plan https://developer.example.com/asyncapi.yaml --name "Events API" --slug events-api
+
 # Apply: commit the most recently planned import.
 fused-cli import apply
 ```
 
-`<spec-path-or-url>` can be a local file path or an `http(s)://` URL -- a local file's contents are read and sent directly; a URL is fetched by the Registry itself, the same way it already fetches specs for the conversational import flow.
+`<spec-path-or-url>` can be a local file path or an `http(s)://` URL -- a local file's contents are read and sent directly; a URL is processed by the Registry. Registry first tries a normal `GET`; if the response is not a recognized specification, it sends a standard GraphQL introspection query to the same URL. A successful introspection import also uses that URL as the service's GraphQL base URL.
 
-`import plan` resolves whether it's registering a new service or updating an existing one purely from `--slug`: passing a `--slug` that matches an existing service updates it (diffing against what's currently live); omitting `--slug`, or passing one that matches nothing, always creates a new service -- it never guesses a match from `--name` alone, since service names aren't unique. Updating an existing service also auto-selects a strategy from the spec's own declared version: the same version re-imported merges into the live default in place, while a bumped version becomes a new version alongside it. If anything (a generated SDK or a workspace) is pinned to the version about to be modified, `import plan`'s output flags it -- this is informational only and never blocks `import plan` or `import apply`.
+`--slug` is required and is the service identity chosen by the producer. Slugs are unique within the producer's account, so another account may use the same slug under its own provider namespace. If the slug already exists in the caller's account, `import plan` updates that service; otherwise it creates a service with that exact slug. It never guesses from `--name`, because display names are not unique. Updating an existing service also auto-selects a strategy from the spec's declared version: the same version re-imported merges into the live default in place, while a bumped version becomes a new version alongside it. If anything (a generated SDK or workspace) is pinned to the version about to be modified, `import plan` reports it without blocking `plan` or `apply`.
 
 ```bash
 fused-cli import plan ./openapi.json --name "Internal Billing API" --slug billing-api
@@ -288,14 +298,14 @@ Deprecate a specific version of a service in your Workspace configuration.
 | `--reason` | | Reason for deprecation | `""` |
 
 #### `import plan`
-Parse a spec (local file or URL), resolve create-vs-update via `--slug`, diff it against the live service, and pick a publish strategy. Read-only.
+Parse an auto-detected OpenAPI, AsyncAPI, Postman Collection, GraphQL SDL, or introspectable GraphQL endpoint (local file or URL), resolve create-vs-update via `--slug`, diff it against the live service, and pick a publish strategy. Read-only.
 
 Usage: `fused-cli import plan <spec-path-or-url>`
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
 | `--name` | | Service name (required) | `""` |
-| `--slug` | | Existing service slug to update -- omit to always create a new service | `""` |
+| `--slug` | | Service slug to create or update (required; unique within your account) | `""` |
 | `--public` | | Mark a new service public | `false` |
 | `--category` | | Category for a new service | `""` |
 | `--receipt-out` | | Write the plan receipt to a specific path | `""` |

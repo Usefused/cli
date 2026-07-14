@@ -78,6 +78,18 @@ func TestImportPlanWritesReceiptAndPostsSpecContent(t *testing.T) {
 	}
 }
 
+func TestBuildSpecImportRequestRequiresSlug(t *testing.T) {
+	specPath := filepath.Join(t.TempDir(), "widgets.json")
+	if err := os.WriteFile(specPath, []byte(`{"openapi":"3.0.0","info":{"title":"Widgets","version":"1.0"},"paths":{}}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := buildSpecImportRequest(specPath, importSpecPlanOptions{name: "Widgets"})
+	if err == nil || !strings.Contains(err.Error(), "slug") {
+		t.Fatalf("expected a missing-slug error, got %v", err)
+	}
+}
+
 // TestImportPlanPrintsUsageWarningWhenNonEmpty is Task 6's other explicit
 // CLI test requirement: when the mocked plan response's usage block is
 // non-empty, the printed summary must include the "N SDKs / M workspaces"

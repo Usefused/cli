@@ -12,12 +12,13 @@ import (
 // endpoint-picking prompt).
 var importCmd = &cobra.Command{
 	Use:   "import",
-	Short: "Import an API spec (OpenAPI, AsyncAPI, or Postman) into the Registry",
+	Short: "Import a supported API specification into the Registry",
 	Long: `Import a spec as a Fused service without the conversational import agent --
 suitable for a local run or a CI step. Always imports everything the spec
 describes (no endpoint-picking prompt). Mirrors this CLI's plan/apply shape:
 "import plan" computes what would change and who else relies on the version
-being touched; "import apply" commits it.`,
+being touched; "import apply" commits it. OpenAPI, AsyncAPI, Postman Collection,
+GraphQL SDL, and introspectable GraphQL endpoints are detected automatically.`,
 }
 
 var (
@@ -76,12 +77,13 @@ func init() {
 
 	importCmd.AddCommand(importPlanCmd)
 	importPlanCmd.Flags().StringVar(&importPlanName, "name", "", "Service name (required)")
-	importPlanCmd.Flags().StringVar(&importPlanSlug, "slug", "", "Existing service slug to update -- omit to always create a new service")
+	importPlanCmd.Flags().StringVar(&importPlanSlug, "slug", "", "Service slug to create or update (required; unique within your account)")
 	importPlanCmd.Flags().BoolVar(&importPlanPublic, "public", false, "Mark a new service public (default: private)")
 	importPlanCmd.Flags().StringVar(&importPlanCategory, "category", "", "Category for a new service")
 	importPlanCmd.Flags().StringVar(&importPlanReceiptOut, "receipt-out", "", "Write the plan receipt to a specific path")
 	importPlanCmd.Flags().BoolVar(&importPlanJSON, "json", false, "Print the raw plan response as JSON instead of a summary")
 	importPlanCmd.MarkFlagRequired("name")
+	importPlanCmd.MarkFlagRequired("slug")
 
 	importCmd.AddCommand(importApplyCmd)
 	importApplyCmd.Flags().StringVar(&importApplyPlanID, "plan-id", "", "Apply a specific remote plan ID (requires --source-hash)")
