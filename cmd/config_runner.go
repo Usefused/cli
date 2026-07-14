@@ -255,7 +255,7 @@ func applyOneConfig(client *api.Client, cfg *configfile.ParsedConfig, receipt pl
 		if _, err := client.ApplyWorkspaceConfig(receipt.PlanID, receipt.SourceHash); err != nil {
 			return fmt.Errorf("failed to apply workspace %s: %w", cfg.ConfigKey, err)
 		}
-		fmt.Printf("Successfully applied workspace %s\n", cfg.ConfigKey)
+		fmt.Printf("Successfully applied workspace config\n")
 	case configfile.KindSDK:
 		resp, err := client.ApplySDKConfig(receipt.PlanID, receipt.SourceHash)
 		if err != nil {

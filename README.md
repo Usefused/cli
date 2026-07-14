@@ -194,8 +194,8 @@ Apply a generated plan to activate Workspace changes.
 | `--plan-id` | | Apply a specific remote plan ID | `""` |
 | `--receipt` | | Read a specific plan receipt | `""` |
 
-#### `workspace services`
-Manage services in your workspace configuration (`add`, `remove`, `list`, `deprecate`). Inherits global flags.
+#### `workspace services list`
+List workspace services. Inherits global flags.
 
 #### `workspace service add`
 Add a service to your Workspace configuration.
@@ -203,7 +203,6 @@ Add a service to your Workspace configuration.
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
 | `--version` | | Default version to add | `""` |
-| `--service-id` | | Registry service UUID to store in workspace config | `""` |
 
 #### `workspace service remove`
 Remove a service from your Workspace configuration.
@@ -220,8 +219,8 @@ Deprecate a service in your Workspace configuration.
 | `--at` | | Deprecation effective date in YYYY-MM-DD | `""` |
 | `--reason` | | Reason for deprecation | `""` |
 
-#### `workspace service-version`
-Manage service versions in your workspace configuration (`add`, `remove`, `deprecate`). Inherits global flags.
+#### `workspace service-version add`
+Add an allowed version to a workspace service. Inherits global flags.
 
 #### `workspace service-version remove`
 Remove a specific version of a service from your Workspace configuration.
@@ -238,8 +237,11 @@ Deprecate a specific version of a service in your Workspace configuration.
 | `--at` | | Deprecation effective date in YYYY-MM-DD | `""` |
 | `--reason` | | Reason for deprecation | `""` |
 
-#### Global `plan` / `apply`
-The CLI also supports top-level `plan` and `apply` commands to process all configurations (both SDKs and workspaces).
+#### Global `plan` / `apply` / `validate`
+The CLI also supports top-level `plan`, `apply`, and `validate` commands to process all configurations (both SDKs and workspaces).
+
+**`validate`**
+Validates the syntax and references for all Fused configurations in the target directory or file. Inherits global flags.
 
 **`plan`**
 
@@ -297,17 +299,15 @@ kind: "workspace"
 version: 1
 services:
   stripe:
-    service_id: "12345678-1234-1234-1234-1234567890ab"
     versions:
       - "2026-07-09"
       - "2026-08-01"
     default: "2026-08-01"
   okta:
-    service_id: "87654321-4321-4321-4321-ba0987654321"
     versions:
       - "1.0.0"
 ```
-The service keys are friendly slugs of your choosing. The `service_id` must map to the corresponding UUID in the Fused Registry. If `default` is not provided, the Engine will automatically pin the latest version in the `versions` array as the default. You can easily populate this file automatically by using the `fused-cli workspace service add <slug>` command.
+The service keys are Registry service slugs. Engine resolves those slugs to service IDs during workspace planning, so teams do not need to know UUIDs. If `default` is not provided, the Engine will automatically pin the latest version in the `versions` array as the default. You can populate this file automatically by using the `fused-cli workspace service add <slug>` command.
 
 ### Applying the Config
 
