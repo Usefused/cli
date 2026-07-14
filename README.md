@@ -103,44 +103,158 @@ If you are generating a TypeScript MCP server (`--type=mcp`), you can choose to 
 fused-cli create --name sales-mcp -t mcp --deploy -d "Read Salesforce leads and fetch Intercom conversations"
 ```
 
-### Update an SDK (`update`)
+### Command Reference
 
-The `update` command allows you to seamlessly iterate on an existing SDK. By default, it will look up your most recently generated SDK with that name and use its configurations as the baseline. 
+#### Global Flags
+All commands support the following global flags:
 
-```bash
-# Update the most recent 'support-agent-mcp' SDK
-fused-cli update support-agent-mcp
+| Argument | Short | Description | Default |
+|----------|-------|-------------|---------|
+| `--key` | | API key (overrides config & `FUSED_API_KEY`) | `""` |
+| `--engine-url` | | Fused Engine URL (overrides config & `FUSED_ENGINE_URL`) | `""` |
+| `--file` | `-f` | Path to a Fused config file (disables `.fused/` discovery) | `""` |
+| `--readme` | | Print the full CLI README text and exit | `false` |
 
-# Update a specific version of the SDK
-fused-cli update support-agent-mcp@1.0.0
-```
-Just like `create`, you can also specify the target language and whether to deploy it:
-```bash
-fused-cli update support-agent-mcp -t mcp -l python
-```
+#### `create`
+Generate a brand new SDK from natural language.
 
-### Download an SDK (`download`)
+| Argument | Short | Description | Default |
+|----------|-------|-------------|---------|
+| `--name` | `-n` | Name of the generated SDK (e.g., 'stripe-sdk') | `""` |
+| `--version` | `-v` | Version of the generated SDK | `"1.0.0"` |
+| `--type` | `-t` | Target type for the SDK (e.g., 'sdk', 'mcp') | `"sdk"` |
+| `--language` | `-l` | Target language for the SDK (e.g., 'typescript', 'python') | `"typescript"` |
+| `--deploy` | | Deploy to Fused Sandbox immediately (MCP TypeScript only) | `false` |
+| `--yes` | `-y` | Skip interactive menu and automatically proceed | `false` |
+| `--description` | `-d` | Description of the SDK to create | `""` |
+| `--output` | `-o` | Directory to save the generated SDK zip | `"."` |
 
-If you've already generated an SDK (perhaps via the web UI or an earlier CLI session) and just need to download the `.zip` archive or extract the source code locally, use the `download` command.
+#### `config`
+Manage your local CLI configuration (`set`, `get`, `list`, `reset`). Inherits global flags.
 
-```bash
-# Download the most recently generated 'sales-mcp'
-fused-cli download sales-mcp
+#### `sdk plan`
+Preview changes that will be made to your Fused environment for SDKs.
 
-# Download a specific version
-fused-cli download sales-mcp@1.2.0
+| Argument | Short | Description | Default |
+|----------|-------|-------------|---------|
+| `--json` | | Print plan receipt JSON instead of writing default receipt | `false` |
+| `--receipt-out` | | Write the plan receipt to a specific path | `""` |
 
-# Download and output to a specific directory
-fused-cli download sales-mcp@1.2.0 --output ./my-agent
-```
+#### `sdk apply`
+Apply a generated plan to deploy SDK changes.
 
-### Available Commands
-- `config`: Manage your local CLI configuration (`set`, `get`, `list`, `reset`).
-- `create`: Generate a brand new SDK from natural language.
-- `update`: Update an existing SDK by its ID or name. You can specify a version by appending `@<version>` (e.g., `fused-cli update my-sdk@1.2.0`). (Supports `--type`, `--language`, and `--deploy` flags).
-- `download`: Download an already built SDK by its ID or name. You can specify a version by appending `@<version>` (e.g., `fused-cli download my-sdk@1.2.0`).
-- `sdk`: Manage SDK configurations via GitOps (`plan`, `apply`, `validate`, `download`, `add-service`, `add-operation`, `remove-operation`).
-- `workspace`: Manage Workspace configurations (`plan`, `apply`, `services`).
+| Argument | Short | Description | Default |
+|----------|-------|-------------|---------|
+| `--download` | | Download generated SDK after apply | `false` |
+| `--plan-id` | | Apply a specific remote plan ID for a single SDK config | `""` |
+| `--receipt` | | Read a specific plan receipt for a single SDK config | `""` |
+
+#### `sdk validate`
+Validates an SDK configuration file. Inherits global flags.
+
+#### `sdk download`
+Download a generated SDK manually.
+
+| Argument | Short | Description | Default |
+|----------|-------|-------------|---------|
+| `--out` | `-o` | Output directory for the SDK | `"."` |
+
+#### `sdk add-service`
+Add a service to an SDK configuration.
+
+| Argument | Short | Description | Default |
+|----------|-------|-------------|---------|
+| `--version` | | Specific version to use for the service | `""` |
+
+#### `sdk add-operation`
+Add an operation to an existing service in an SDK configuration.
+
+| Argument | Short | Description | Default |
+|----------|-------|-------------|---------|
+| `--interactive` | `-i` | Interactive operation selection | `false` |
+| `--apply` | | Apply changes after adding operation | `false` |
+| `--download` | | Download SDK after apply (implies `--apply`) | `false` |
+
+#### `sdk remove-operation`
+Remove an operation from an existing service in an SDK configuration. Inherits global flags.
+
+#### `workspace plan`
+Preview changes that will be made to your Workspace configuration.
+
+| Argument | Short | Description | Default |
+|----------|-------|-------------|---------|
+| `--json` | | Print plan receipt JSON instead of writing default receipt | `false` |
+| `--receipt-out` | | Write the plan receipt to a specific path | `""` |
+
+#### `workspace apply`
+Apply a generated plan to activate Workspace changes.
+
+| Argument | Short | Description | Default |
+|----------|-------|-------------|---------|
+| `--plan-id` | | Apply a specific remote plan ID | `""` |
+| `--receipt` | | Read a specific plan receipt | `""` |
+
+#### `workspace services`
+Manage services in your workspace configuration (`add`, `remove`, `list`, `deprecate`). Inherits global flags.
+
+#### `workspace service add`
+Add a service to your Workspace configuration.
+
+| Argument | Short | Description | Default |
+|----------|-------|-------------|---------|
+| `--version` | | Default version to add | `""` |
+| `--service-id` | | Registry service UUID to store in workspace config | `""` |
+
+#### `workspace service remove`
+Remove a service from your Workspace configuration.
+
+| Argument | Short | Description | Default |
+|----------|-------|-------------|---------|
+| `--force` | | Force removal when the generated plan action is applied | `false` |
+
+#### `workspace service deprecate`
+Deprecate a service in your Workspace configuration.
+
+| Argument | Short | Description | Default |
+|----------|-------|-------------|---------|
+| `--at` | | Deprecation effective date in YYYY-MM-DD | `""` |
+| `--reason` | | Reason for deprecation | `""` |
+
+#### `workspace service-version`
+Manage service versions in your workspace configuration (`add`, `remove`, `deprecate`). Inherits global flags.
+
+#### `workspace service-version remove`
+Remove a specific version of a service from your Workspace configuration.
+
+| Argument | Short | Description | Default |
+|----------|-------|-------------|---------|
+| `--force` | | Force removal | `false` |
+
+#### `workspace service-version deprecate`
+Deprecate a specific version of a service in your Workspace configuration.
+
+| Argument | Short | Description | Default |
+|----------|-------|-------------|---------|
+| `--at` | | Deprecation effective date in YYYY-MM-DD | `""` |
+| `--reason` | | Reason for deprecation | `""` |
+
+#### Global `plan` / `apply`
+The CLI also supports top-level `plan` and `apply` commands to process all configurations (both SDKs and workspaces).
+
+**`plan`**
+
+| Argument | Short | Description | Default |
+|----------|-------|-------------|---------|
+| `--json` | | Print plan receipt JSON instead of writing default receipt | `false` |
+| `--receipt-out` | | Write the plan receipt to a specific path | `""` |
+
+**`apply`**
+
+| Argument | Short | Description | Default |
+|----------|-------|-------------|---------|
+| `--download` | | Download generated SDKs after apply | `false` |
+| `--plan-id` | | Apply a specific remote plan ID for a single config | `""` |
+| `--receipt` | | Read a specific plan receipt for a single config | `""` |
 
 ## Config-as-Code (GitOps)
 
@@ -183,15 +297,17 @@ kind: "workspace"
 version: 1
 services:
   stripe:
+    service_id: "12345678-1234-1234-1234-1234567890ab"
     versions:
       - "2026-07-09"
       - "2026-08-01"
     default: "2026-08-01"
   okta:
+    service_id: "87654321-4321-4321-4321-ba0987654321"
     versions:
       - "1.0.0"
 ```
-The service keys are Registry service slugs. The Engine resolves those slugs to service IDs during workspace planning, so teams do not need to know UUIDs. If `default` is not provided, the Engine will automatically pin the latest version in the `versions` array as the default.
+The service keys are friendly slugs of your choosing. The `service_id` must map to the corresponding UUID in the Fused Registry. If `default` is not provided, the Engine will automatically pin the latest version in the `versions` array as the default. You can easily populate this file automatically by using the `fused-cli workspace service add <slug>` command.
 
 ### Applying the Config
 

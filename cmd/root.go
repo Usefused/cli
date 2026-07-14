@@ -13,9 +13,11 @@ import (
 var Version = "dev"
 
 var (
-	APIKey     string
-	EngineURL  string
-	ConfigFile string
+	APIKey        string
+	EngineURL     string
+	ConfigFile    string
+	showReadme    bool
+	ReadmeContent string
 )
 
 // RootCmd is exported for testing.
@@ -25,6 +27,19 @@ var RootCmd = &cobra.Command{
 	Short:   "Turn any API into a typed SDK or MCP server — powered by Fused.",
 	Long: `Fused CLI lets you register API services, select the endpoints you care about,
 and instantly generate type-safe SDKs or MCP servers ready for production.`,
+	Run: func(cmd *cobra.Command, args []string) {
+		if showReadme {
+			fmt.Print(ReadmeContent)
+			os.Exit(0)
+		}
+		cmd.Help()
+	},
+	PersistentPreRun: func(cmd *cobra.Command, args []string) {
+		if showReadme {
+			fmt.Print(ReadmeContent)
+			os.Exit(0)
+		}
+	},
 }
 
 func NewRootCommand() *cobra.Command {
@@ -51,6 +66,7 @@ func init() {
 	RootCmd.PersistentFlags().StringVar(&APIKey, "key", "", "API key (overrides config & FUSED_API_KEY)")
 	RootCmd.PersistentFlags().StringVar(&EngineURL, "engine-url", "", "Fused Engine URL (overrides config & FUSED_ENGINE_URL)")
 	RootCmd.PersistentFlags().StringVarP(&ConfigFile, "file", "f", "", "Path to a Fused config file (disables .fused/ discovery)")
+	RootCmd.PersistentFlags().BoolVar(&showReadme, "readme", false, "Print the full CLI README text and exit")
 }
 
 // GetEngineURL resolves the Engine URL.
