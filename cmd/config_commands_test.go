@@ -20,6 +20,8 @@ func TestConfigCommandSurface(t *testing.T) {
 		{"workspace", "plan", "-f", "workspace.yaml"},
 		{"workspace", "apply", "-f", "workspace.yaml"},
 		{"workspace", "services", "list"},
+		{"workspace", "services", "list", "--interactive"},
+		{"workspace", "has", "okta"},
 		{"workspace", "service", "add", "okta", "--version", "2026-07-01"},
 		{"workspace", "service", "remove", "okta"},
 		{"workspace", "service", "version", "add", "okta", "2026-07-01"},

@@ -103,6 +103,37 @@ If you are generating a TypeScript MCP server (`--type=mcp`), you can choose to 
 fused-cli create --name sales-mcp -t mcp --deploy -d "Read Salesforce leads and fetch Intercom conversations"
 ```
 
+### Import an API Spec (`import`)
+
+The `import` command registers (or updates) a service in the Registry directly from an OpenAPI, AsyncAPI, or Postman collection spec -- no conversational import agent, no endpoint-picking prompt, always the whole spec. This is the non-interactive path for teams adding their own internal service to Fused, e.g. from a CI step.
+
+```bash
+# Plan: parse the spec, diff it against the live service (if one exists via --slug),
+# and pick a publish strategy -- read-only, nothing is written yet.
+fused-cli import plan ./openapi.json --name "Internal Billing API" --slug billing-api
+
+# Apply: commit the most recently planned import.
+fused-cli import apply
+```
+
+`<spec-path-or-url>` can be a local file path or an `http(s)://` URL -- a local file's contents are read and sent directly; a URL is fetched by the Registry itself, the same way it already fetches specs for the conversational import flow.
+
+`import plan` resolves whether it's registering a new service or updating an existing one purely from `--slug`: passing a `--slug` that matches an existing service updates it (diffing against what's currently live); omitting `--slug`, or passing one that matches nothing, always creates a new service -- it never guesses a match from `--name` alone, since service names aren't unique. Updating an existing service also auto-selects a strategy from the spec's own declared version: the same version re-imported merges into the live default in place, while a bumped version becomes a new version alongside it. If anything (a generated SDK or a workspace) is pinned to the version about to be modified, `import plan`'s output flags it -- this is informational only and never blocks `import plan` or `import apply`.
+
+```bash
+fused-cli import plan ./openapi.json --name "Internal Billing API" --slug billing-api
+# Update to "Internal Billing API" (slug: billing-api, strategy: modify_existing) -- plan ID: 5e1e...
+# Diff: 0 added, 2 changed, 0 removed
+#   ~ createInvoice
+#   ~ listInvoices
+# 1 SDKs / 0 workspaces use this version:
+#   - SDK billing-sdk (uses a changed/removed endpoint)
+# Run `fused import apply` to commit this plan.
+
+fused-cli import apply
+# Applied modify_existing to service 3f8c... (version 2026-07-14)
+```
+
 ### Command Reference
 
 #### Global Flags
@@ -149,6 +180,11 @@ Apply a generated plan to deploy SDK changes.
 | `--plan-id` | | Apply a specific remote plan ID for a single SDK config | `""` |
 | `--receipt` | | Read a specific plan receipt for a single SDK config | `""` |
 
+#### `sdk sync`
+Full-mirror a local SDK config from the most recently generated remote SDK with the given name.
+
+Usage: `fused-cli sdk sync <name> -f .fused/sdks/<name>.yaml`
+
 #### `sdk validate`
 Validates an SDK configuration file. Inherits global flags.
 
@@ -194,8 +230,21 @@ Apply a generated plan to activate Workspace changes.
 | `--plan-id` | | Apply a specific remote plan ID | `""` |
 | `--receipt` | | Read a specific plan receipt | `""` |
 
+#### `workspace sync`
+Full-mirror the local workspace config from the Engine's current activation state. Engine state wins: services activated remotely are added or updated locally, and local services no longer activated remotely are removed.
+
+Usage: `fused-cli workspace sync -f .fused/workspace.yaml`
+
 #### `workspace services list`
-List workspace services. Inherits global flags.
+List workspace services along with their enabled versions.
+
+| Argument | Short | Description | Default |
+|----------|-------|-------------|---------|
+| `--interactive` | `-i` | Interactive service selection | `false` |
+
+#### `workspace has`
+Check if a specific service is available in the workspace and output its enabled versions.
+Usage: `fused-cli workspace has <service_name>`
 
 #### `workspace service add`
 Add a service to your Workspace configuration.
@@ -203,6 +252,7 @@ Add a service to your Workspace configuration.
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
 | `--version` | | Default version to add | `""` |
+| `--service-id` | | Optional service ID to store when editing a local config directly | `""` |
 
 #### `workspace service remove`
 Remove a service from your Workspace configuration.
@@ -236,6 +286,29 @@ Deprecate a specific version of a service in your Workspace configuration.
 |----------|-------|-------------|---------|
 | `--at` | | Deprecation effective date in YYYY-MM-DD | `""` |
 | `--reason` | | Reason for deprecation | `""` |
+
+#### `import plan`
+Parse a spec (local file or URL), resolve create-vs-update via `--slug`, diff it against the live service, and pick a publish strategy. Read-only.
+
+Usage: `fused-cli import plan <spec-path-or-url>`
+
+| Argument | Short | Description | Default |
+|----------|-------|-------------|---------|
+| `--name` | | Service name (required) | `""` |
+| `--slug` | | Existing service slug to update -- omit to always create a new service | `""` |
+| `--public` | | Mark a new service public | `false` |
+| `--category` | | Category for a new service | `""` |
+| `--receipt-out` | | Write the plan receipt to a specific path | `""` |
+| `--json` | | Print the raw plan response as JSON instead of a summary | `false` |
+
+#### `import apply`
+Commit the plan produced by `import plan`: a new service goes live immediately; an existing service is appended and published in the same request, using the strategy already resolved at plan time.
+
+| Argument | Short | Description | Default |
+|----------|-------|-------------|---------|
+| `--plan-id` | | Apply a specific remote plan ID (requires `--source-hash`) | `""` |
+| `--source-hash` | | Source hash to pair with `--plan-id` | `""` |
+| `--receipt` | | Read a specific plan receipt (default: most recent local receipt) | `""` |
 
 #### Global `plan` / `apply` / `validate`
 The CLI also supports top-level `plan`, `apply`, and `validate` commands to process all configurations (both SDKs and workspaces).
@@ -307,7 +380,18 @@ services:
     versions:
       - "1.0.0"
 ```
-The service keys are Registry service slugs. Engine resolves those slugs to service IDs during workspace planning, so teams do not need to know UUIDs. If `default` is not provided, the Engine will automatically pin the latest version in the `versions` array as the default. You can populate this file automatically by using the `fused-cli workspace service add <slug>` command.
+The service keys are Registry service slugs. Engine resolves those slugs to service IDs during workspace planning, so teams do not need to know UUIDs. If `default` is not provided, the Engine will automatically pin the latest version in the `versions` array as the default. To edit this file directly from the CLI, use `fused-cli workspace service add <slug> --version <version> -f .fused/workspace.yaml`.
+
+### Syncing Local Config From Remote State
+
+UI actions and service imports can update the Engine or Registry before your local YAML knows about the change. Use sync when you want local config-as-code to mirror the current remote truth:
+
+```bash
+fused-cli workspace sync -f .fused/workspace.yaml
+fused-cli sdk sync my-sdk -f .fused/sdks/my-sdk.yaml
+```
+
+`workspace sync` mirrors the Engine's active workspace services. `sdk sync` mirrors the most recently generated SDK with the given name, including its selected services, resolved versions, and operation names.
 
 ### Applying the Config
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -88,6 +89,62 @@ func truncateBody(body []byte) string {
 	return bodyStr
 }
 
+func formatHTTPErrorBody(respBody []byte) string {
+	var payload struct {
+		Error   string `json:"error"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(respBody, &payload); err == nil {
+		if msg := strings.TrimSpace(payload.Error); msg != "" {
+			return msg
+		}
+		if msg := strings.TrimSpace(payload.Message); msg != "" {
+			return msg
+		}
+	}
+	return strings.TrimSpace(truncateBody(respBody))
+}
+
+// HealthStatus is the Engine's GET /health response shape.
+type HealthStatus struct {
+	Status      string `json:"status"`
+	Plane       string `json:"plane"`
+	Environment string `json:"environment"`
+}
+
+// Health calls the Engine's GET /health and returns its parsed status,
+// including the --environment observability label (Task 8,
+// engine_workspace_registration_plan.md) so callers like `workspace apply`'s
+// production warning can react to it. Any error here (network failure,
+// non-2xx, older Engine without the environment field decoding to "") is
+// meant to be treated by callers as "couldn't determine environment" rather
+// than a hard failure -- this is a plain health probe, not a critical path.
+func (c *Client) Health() (*HealthStatus, error) {
+	req, err := http.NewRequest("GET", c.BaseURL+"/health", nil)
+	if err != nil {
+		return nil, err
+	}
+	if c.APIKey != "" {
+		req.Header.Set("x-api-key", c.APIKey)
+	}
+
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("health check failed (HTTP %d)", resp.StatusCode)
+	}
+
+	var out HealthStatus
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // Models
 
 type Service struct {
@@ -105,21 +162,24 @@ type Integration struct {
 }
 
 type WorkspaceService struct {
-	ID          string `json:"id"`
-	WorkspaceID string `json:"workspace_id"`
-	ServiceID   string `json:"service_id"`
-	Version     string `json:"version"`
-	ServiceName string `json:"service_name"`
-	AddedBy     string `json:"added_by"`
-	CreatedAt   string `json:"created_at"`
+	ID          string   `json:"id"`
+	WorkspaceID string   `json:"workspace_id"`
+	ServiceID   string   `json:"service_id"`
+	Version     string   `json:"version"`
+	Versions    []string `json:"versions"`
+	ServiceName string   `json:"service_name"`
+	AddedBy     string   `json:"added_by"`
+	CreatedAt   string   `json:"created_at"`
 }
 
 func (c *Client) ListWorkspaceServices(names ...string) ([]WorkspaceService, error) {
-	url := c.BaseURL + "/workspace/services"
+	reqURL := c.BaseURL + "/workspace/services"
 	if len(names) > 0 {
-		url += "?names=" + strings.Join(names, ",")
+		query := url.Values{}
+		query.Set("names", strings.Join(names, ","))
+		reqURL += "?" + query.Encode()
 	}
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequest("GET", reqURL, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -277,11 +337,7 @@ func (c *Client) GenerateSDK(reqBody GenerateSDKRequest) (*GenerateSDKResponse, 
 
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(resp.Body)
-		bodyStr := string(respBody)
-		if len(bodyStr) > 200 {
-			bodyStr = bodyStr[:200] + "..."
-		}
-		return nil, fmt.Errorf("failed to generate SDK (HTTP %d): %s", resp.StatusCode, bodyStr)
+		return nil, fmt.Errorf("failed to generate SDK (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(respBody))
 	}
 
 	var out GenerateSDKResponse
@@ -298,6 +354,8 @@ type SDKEvent struct {
 }
 
 func (c *Client) StreamSDKGenerationEvents(jobID string, eventChan chan<- SDKEvent, errChan chan<- error) {
+	defer close(eventChan)
+	defer close(errChan)
 	req, err := http.NewRequest("GET", c.BaseURL+"/sdks/job/"+jobID+"/stream", nil)
 	if err != nil {
 		errChan <- err
@@ -323,8 +381,6 @@ func (c *Client) StreamSDKGenerationEvents(jobID string, eventChan chan<- SDKEve
 	if err := streamSDKEvents(resp.Body, eventChan); err != nil {
 		errChan <- err
 	}
-	close(eventChan)
-	close(errChan)
 }
 
 func streamSDKEvents(reader io.Reader, eventChan chan<- SDKEvent) error {
@@ -413,6 +469,79 @@ func (c *Client) GetSDKByName(name string, version string) (*SDKBasicDetails, er
 		return nil, err
 	}
 	return &resp.SDK, nil
+}
+
+type SDKSelectionDetail struct {
+	ServiceID    string   `json:"service_id"`
+	ServiceName  string   `json:"service_name"`
+	EndpointIDs  []string `json:"endpoint_ids"`
+	WebhookIDs   []string `json:"webhook_ids"`
+	SelectAll    bool     `json:"select_all"`
+	ApiVersionID string   `json:"api_version_id"`
+}
+
+type SDKWithSelections struct {
+	ID                 string               `json:"id"`
+	Version            string               `json:"version"`
+	DetailedSelections []SDKSelectionDetail `json:"detailed_selections"`
+}
+
+// GetSDKSelectionsByName fetches the most recently generated SDK with the
+// given name, including its full per-service selection detail. Used by
+// `sdk sync` to reconstruct local sdk.yaml service entries. Passing an empty
+// version to sdkByName resolves to the latest generated SDK -- there's no
+// separate "latest" query; this is the documented way to get it.
+func (c *Client) GetSDKSelectionsByName(name string) (*SDKWithSelections, error) {
+	query := `
+		query GetSDKSelectionsByName($name: String!) {
+			sdkByName(name: $name, version: "") {
+				id
+				version
+				detailed_selections {
+					service_id
+					service_name
+					endpoint_ids
+					webhook_ids
+					select_all
+					api_version_id
+				}
+			}
+		}
+	`
+	var resp struct {
+		SDK SDKWithSelections `json:"sdkByName"`
+	}
+	if err := c.GraphQL(query, map[string]interface{}{"name": name}, &resp); err != nil {
+		return nil, err
+	}
+	return &resp.SDK, nil
+}
+
+// GetSDKSelectionResourceNames resolves a service's selection on a generated
+// SDK -- whether select_all or an explicit endpoint/webhook ID list -- into
+// the operation names `sdk sync` writes to sdk.yaml. select_all has no local
+// yaml representation, so it must always be enumerated explicitly.
+func (c *Client) GetSDKSelectionResourceNames(sdkID, serviceID string) ([]string, error) {
+	query := `
+		query GetSDKSelectionResourceNames($sdkId: String!, $serviceId: String!) {
+			sdkSelectionResources(sdkId: $sdkId, serviceId: $serviceId) {
+				name
+			}
+		}
+	`
+	var resp struct {
+		Resources []struct {
+			Name string `json:"name"`
+		} `json:"sdkSelectionResources"`
+	}
+	if err := c.GraphQL(query, map[string]interface{}{"sdkId": sdkID, "serviceId": serviceID}, &resp); err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(resp.Resources))
+	for _, r := range resp.Resources {
+		names = append(names, r.Name)
+	}
+	return names, nil
 }
 
 func (c *Client) DownloadSDK(sdkID string) ([]byte, error) {
@@ -542,7 +671,7 @@ func (c *Client) PlanSDKConfig(sourceHash, configKey string, config json.RawMess
 
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("plan SDK config failed (HTTP %d): %s", resp.StatusCode, string(respBody))
+		return nil, fmt.Errorf("plan SDK config failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(respBody))
 	}
 
 	var out SDKConfigPlanResponse
@@ -594,6 +723,7 @@ type SDKConfigApplyResponse struct {
 	Status string `json:"status"`
 	PlanID string `json:"plan_id"`
 	SDKID  string `json:"sdk_id"`
+	JobID  string `json:"job_id"`
 }
 
 func (c *Client) ApplySDKConfig(planID, sourceHash string) (*SDKConfigApplyResponse, error) {
@@ -623,7 +753,7 @@ func (c *Client) ApplySDKConfig(planID, sourceHash string) (*SDKConfigApplyRespo
 
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("apply SDK config failed (HTTP %d): %s", resp.StatusCode, string(respBody))
+		return nil, fmt.Errorf("apply SDK config failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(respBody))
 	}
 
 	var out SDKConfigApplyResponse
@@ -664,6 +794,150 @@ func (c *Client) ApplyWorkspaceConfig(planID, sourceHash string) (*ConfigApplyRe
 	}
 
 	var out ConfigApplyResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ─── Non-interactive spec import (fused import plan/apply) ─────────────────
+//
+// Unlike the sdk-config/workspace-config plan/apply pair above, these two
+// hit the Registry's /integrations/import/* endpoints directly rather than
+// an Engine-owned config endpoint -- but they still go through the same
+// BaseURL (the Engine), since the Engine already proxies every
+// /integrations/* path straight through to the Registry unchanged
+// (RESTProxyMountPaths), so the CLI needs no separate Registry URL concept.
+
+type SpecImportPlanRequest struct {
+	Name          string `json:"name"`
+	Slug          string `json:"slug,omitempty"`
+	SourceURL     string `json:"source_url,omitempty"`
+	SourceContent string `json:"source_content,omitempty"`
+	IsPublic      bool   `json:"is_public,omitempty"`
+	TargetType    string `json:"target_type,omitempty"`
+	Category      string `json:"category,omitempty"`
+}
+
+type SpecImportDiff struct {
+	Added        int      `json:"added"`
+	Changed      int      `json:"changed"`
+	Removed      int      `json:"removed"`
+	ChangedNames []string `json:"changed_names"`
+	RemovedNames []string `json:"removed_names"`
+}
+
+type SpecImportSDKUsage struct {
+	ID                  string `json:"id"`
+	Name                string `json:"name"`
+	Version             string `json:"version"`
+	UsesChangedEndpoint bool   `json:"uses_changed_endpoint"`
+}
+
+type SpecImportWorkspaceUsage struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+type SpecImportUsage struct {
+	SDKs       []SpecImportSDKUsage       `json:"sdks"`
+	Workspaces []SpecImportWorkspaceUsage `json:"workspaces"`
+}
+
+type SpecImportPlanResponse struct {
+	PlanID           string           `json:"plan_id"`
+	SourceHash       string           `json:"source_hash"`
+	ServiceID        string           `json:"service_id"`
+	Slug             string           `json:"slug"`
+	Name             string           `json:"name"`
+	IsNewService     bool             `json:"is_new_service"`
+	ResolvedStrategy string           `json:"resolved_strategy"`
+	Diff             SpecImportDiff   `json:"diff"`
+	Usage            *SpecImportUsage `json:"usage,omitempty"`
+}
+
+type SpecImportApplyRequest struct {
+	PlanID     string `json:"plan_id"`
+	SourceHash string `json:"source_hash"`
+}
+
+type SpecImportApplyResponse struct {
+	Status           string `json:"status"`
+	PlanID           string `json:"plan_id"`
+	ServiceID        string `json:"service_id"`
+	Slug             string `json:"slug"`
+	IsNewService     bool   `json:"is_new_service"`
+	ResolvedStrategy string `json:"resolved_strategy"`
+	Version          string `json:"version"`
+}
+
+// PlanSpecImport computes (but does not commit) a non-interactive spec
+// import -- see Registry's importPlanHandler for what it parses/diffs/
+// resolves.
+func (c *Client) PlanSpecImport(req SpecImportPlanRequest) (*SpecImportPlanResponse, error) {
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, err
+	}
+
+	httpReq, err := http.NewRequest("POST", c.BaseURL+"/integrations/import/plan", bytes.NewBuffer(body))
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	if c.APIKey != "" {
+		httpReq.Header.Set("x-api-key", c.APIKey)
+	}
+
+	resp, err := c.HTTP.Do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("plan spec import failed (HTTP %d): %s", resp.StatusCode, string(respBody))
+	}
+
+	var out SpecImportPlanResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ApplySpecImport commits a plan produced by PlanSpecImport. sourceHash must
+// match the plan's own recorded hash or the Registry rejects the call --
+// same concurrency guard ApplySDKConfig/ApplyWorkspaceConfig already use.
+func (c *Client) ApplySpecImport(planID, sourceHash string) (*SpecImportApplyResponse, error) {
+	reqBody := SpecImportApplyRequest{PlanID: planID, SourceHash: sourceHash}
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", c.BaseURL+"/integrations/import/apply", bytes.NewBuffer(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if c.APIKey != "" {
+		req.Header.Set("x-api-key", c.APIKey)
+	}
+
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("apply spec import failed (HTTP %d): %s", resp.StatusCode, string(respBody))
+	}
+
+	var out SpecImportApplyResponse
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return nil, err
 	}

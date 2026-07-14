@@ -25,7 +25,8 @@ services:
       - "users.create"
 `)
 
-	var sawPlan, sawApply, sawDownload bool
+	var sawPlan, sawApply, sawStream bool
+	downloadAttempts := 0
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -45,9 +46,17 @@ services:
 			if body["plan_id"] != "plan-sdk-123" {
 				t.Fatalf("unexpected plan id in apply: %v", body["plan_id"])
 			}
-			_, _ = w.Write([]byte(`{"status":"applied","plan_id":"plan-sdk-123","sdk_id":"sdk-id-123"}`))
+			_, _ = w.Write([]byte(`{"status":"applied","plan_id":"plan-sdk-123","sdk_id":"sdk-id-123","job_id":"job-sdk-123"}`))
+		case "/sdks/job/job-sdk-123/stream":
+			sawStream = true
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = w.Write([]byte("data: {\"type\":\"complete\",\"message\":\"done\",\"integration_id\":\"sdk-id-123\"}\n\n"))
 		case "/sdk-config/sdk:my-sdk/download":
-			sawDownload = true
+			downloadAttempts++
+			if downloadAttempts == 1 {
+				http.Error(w, "not ready", http.StatusNotFound)
+				return
+			}
 			w.Header().Set("Content-Type", "application/zip")
 			_, _ = w.Write([]byte("mock-zip-content"))
 		default:
@@ -55,6 +64,11 @@ services:
 		}
 	}))
 	defer server.Close()
+	oldAttempts, oldDelay := sdkDownloadRetryAttempts, sdkDownloadRetryDelay
+	sdkDownloadRetryAttempts, sdkDownloadRetryDelay = 2, 0
+	t.Cleanup(func() {
+		sdkDownloadRetryAttempts, sdkDownloadRetryDelay = oldAttempts, oldDelay
+	})
 
 	// 1. Plan
 	runCommandInDir(t, dir, server.URL, []string{"sdk", "plan", "-f", path})
@@ -67,8 +81,11 @@ services:
 	if !sawApply {
 		t.Fatal("expected sdk apply request")
 	}
-	if !sawDownload {
-		t.Fatal("expected sdk download request")
+	if !sawStream {
+		t.Fatal("expected sdk generation stream request")
+	}
+	if downloadAttempts != 2 {
+		t.Fatalf("expected sdk download to retry once, got %d attempts", downloadAttempts)
 	}
 
 	// 3. Verify Download Artifact

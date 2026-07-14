@@ -1,10 +1,17 @@
 package cmd
 
 import (
+	"bufio"
 	"fmt"
+	"io"
+	"os"
+	"strconv"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
+
+var workspaceInput io.Reader = os.Stdin
 
 var workspaceCmd = &cobra.Command{
 	Use:   "workspace",
@@ -28,6 +35,7 @@ var workspaceApplyCmd = &cobra.Command{
 	Use:   "apply",
 	Short: "Apply workspace configuration",
 	RunE: WithTelemetry("cli.workspace.apply", func(cmd *cobra.Command, args []string) error {
+		warnIfProductionEnvironment(cmd)
 		return runConfigApply(applyOptions{
 			filter:      filterWorkspace,
 			planID:      workspaceApplyPlanID,
@@ -36,11 +44,35 @@ var workspaceApplyCmd = &cobra.Command{
 	}),
 }
 
+// warnIfProductionEnvironment is a best-effort UX nudge (Task 8,
+// engine_workspace_registration_plan.md): `workspace apply` can activate or
+// deactivate services workspace-wide, so before running it we check the
+// Engine's /health echo of its --environment label and warn if it's
+// "production" (the default -- most Engines will hit this unless an
+// operator has explicitly labeled a non-production deployment). Never
+// blocks or fails the apply: any error here (offline Engine, older Engine
+// without the environment field, etc.) just means the warning is silently
+// skipped.
+func warnIfProductionEnvironment(cmd *cobra.Command) {
+	client, err := getAPIClient()
+	if err != nil {
+		return
+	}
+	health, err := client.Health()
+	if err != nil || health == nil || health.Environment == "" {
+		return
+	}
+	if strings.EqualFold(health.Environment, "production") {
+		fmt.Fprintf(cmd.OutOrStdout(), "Warning: applying against a production Engine (environment=%s).\n", health.Environment)
+	}
+}
+
 var workspaceServicesCmd = &cobra.Command{
 	Use:   "services",
 	Short: "Manage workspace services",
 }
 
+var workspaceServicesListInteractive bool
 var workspaceServicesListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List workspace services",
@@ -57,10 +89,54 @@ var workspaceServicesListCmd = &cobra.Command{
 			fmt.Fprintln(cmd.OutOrStdout(), "No workspace services found.")
 			return nil
 		}
+
+		if workspaceServicesListInteractive {
+			scanner := bufio.NewScanner(workspaceInput)
+			for i, service := range services {
+				fmt.Fprintf(cmd.OutOrStdout(), "%d. %s\n", i+1, service.ServiceName)
+			}
+			fmt.Fprint(cmd.OutOrStdout(), "Select service: ")
+			if !scanner.Scan() {
+				return fmt.Errorf("no service selected")
+			}
+			choiceStr := scanner.Text()
+			choice, err := strconv.Atoi(choiceStr)
+			if err != nil || choice < 1 || choice > len(services) {
+				return fmt.Errorf("invalid service selection")
+			}
+			selected := services[choice-1]
+			fmt.Fprintf(cmd.OutOrStdout(), "Enabled Versions for %s: %s\n", selected.ServiceName, strings.Join(selected.Versions, ", "))
+			return nil
+		}
+
 		for _, service := range services {
-			fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", service.ServiceName, service.ServiceID, service.Version)
+			fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\n", service.ServiceName, service.ServiceID, service.Version, strings.Join(service.Versions, ", "))
 		}
 		return nil
+	}),
+}
+
+var workspaceHasCmd = &cobra.Command{
+	Use:   "has <service_name>",
+	Short: "Check if a service is available in the workspace",
+	Args:  cobra.ExactArgs(1),
+	RunE: WithTelemetry("cli.workspace.has", func(cmd *cobra.Command, args []string) error {
+		client, err := getAPIClient()
+		if err != nil {
+			return err
+		}
+		serviceName := args[0]
+		services, err := client.ListWorkspaceServices(serviceName)
+		if err != nil {
+			return err
+		}
+		for _, service := range services {
+			if service.ServiceName == serviceName {
+				fmt.Fprintf(cmd.OutOrStdout(), "Found service %s (Enabled Versions: %s)\n", service.ServiceName, strings.Join(service.Versions, ", "))
+				return nil
+			}
+		}
+		return fmt.Errorf("service %s not found in workspace", serviceName)
 	}),
 }
 
@@ -171,9 +247,10 @@ func init() {
 	workspaceApplyCmd.Flags().StringVar(&workspaceApplyReceiptPath, "receipt", "", "Read a specific plan receipt")
 
 	workspaceCmd.AddCommand(workspaceServicesCmd)
+	workspaceServicesListCmd.Flags().BoolVarP(&workspaceServicesListInteractive, "interactive", "i", false, "Interactive service selection")
 	workspaceServicesCmd.AddCommand(workspaceServicesListCmd)
-
 	workspaceCmd.AddCommand(workspaceServiceCmd)
+	workspaceCmd.AddCommand(workspaceHasCmd)
 	workspaceServiceCmd.AddCommand(workspaceServiceAddCmd)
 	workspaceServiceAddCmd.Flags().StringVar(&workspaceServiceAddVersion, "version", "", "Default version to add")
 	workspaceServiceAddCmd.Flags().StringVar(&workspaceServiceAddID, "service-id", "", "Registry service UUID to store in workspace config")

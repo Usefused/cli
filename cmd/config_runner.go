@@ -34,6 +34,11 @@ const (
 	filterWorkspace configKindFilter = "workspace"
 )
 
+var (
+	sdkDownloadRetryAttempts = 10
+	sdkDownloadRetryDelay    = 500 * time.Millisecond
+)
+
 type planOptions struct {
 	filter     configKindFilter
 	jsonOut    bool
@@ -263,14 +268,53 @@ func applyOneConfig(client *api.Client, cfg *configfile.ParsedConfig, receipt pl
 		}
 		fmt.Printf("Successfully applied SDK %s (SDK ID: %s)\n", cfg.SDK.Name, resp.SDKID)
 		if download {
+			if err := waitForSDKGeneration(client, resp.JobID); err != nil {
+				return fmt.Errorf("failed to generate SDK %s: %w", cfg.SDK.Name, err)
+			}
 			return downloadSDKConfig(client, cfg.ConfigKey, ".")
 		}
 	}
 	return nil
 }
 
+func waitForSDKGeneration(client *api.Client, jobID string) error {
+	if jobID == "" {
+		return nil
+	}
+	eventChan := make(chan api.SDKEvent)
+	errChan := make(chan error)
+	go client.StreamSDKGenerationEvents(jobID, eventChan, errChan)
+	timeout := time.After(2 * time.Minute)
+	for eventChan != nil || errChan != nil {
+		select {
+		case event, ok := <-eventChan:
+			if !ok {
+				eventChan = nil
+				continue
+			}
+			if event.Type == "complete" || event.Type == "auth_key_generated" {
+				return nil
+			}
+			if event.Type == "error" {
+				return errors.New(event.Message)
+			}
+		case err, ok := <-errChan:
+			if !ok {
+				errChan = nil
+				continue
+			}
+			if err != nil {
+				return err
+			}
+		case <-timeout:
+			return errors.New("timed out waiting for SDK generation")
+		}
+	}
+	return nil
+}
+
 func downloadSDKConfig(client *api.Client, configKey, outDir string) error {
-	data, err := client.DownloadGeneratedSDK(configKey)
+	data, err := downloadSDKConfigWithRetry(client, configKey)
 	if err != nil {
 		return fmt.Errorf("failed to download %s: %w", configKey, err)
 	}
@@ -280,6 +324,26 @@ func downloadSDKConfig(client *api.Client, configKey, outDir string) error {
 	}
 	fmt.Printf("Downloaded %s to %s\n", configKey, outPath)
 	return nil
+}
+
+func downloadSDKConfigWithRetry(client *api.Client, configKey string) ([]byte, error) {
+	var lastErr error
+	for attempt := 1; attempt <= sdkDownloadRetryAttempts; attempt++ {
+		data, err := client.DownloadGeneratedSDK(configKey)
+		if err == nil {
+			return data, nil
+		}
+		lastErr = err
+		if !isPendingSDKDownload(err) || attempt == sdkDownloadRetryAttempts {
+			return nil, err
+		}
+		time.Sleep(sdkDownloadRetryDelay)
+	}
+	return nil, lastErr
+}
+
+func isPendingSDKDownload(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "status 404")
 }
 
 func filteredConfigs(configs []*configfile.ParsedConfig, filter configKindFilter) []*configfile.ParsedConfig {

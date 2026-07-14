@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -65,5 +66,46 @@ func TestActivateMCPServer_HandlesError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "engine failed") && !strings.Contains(err.Error(), "500") {
 		t.Errorf("expected error to contain status or body, got: %v", err)
+	}
+}
+
+func TestListWorkspaceServices_EscapesNameFilter(t *testing.T) {
+	var rawQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rawQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`[]`))
+	}))
+	defer srv.Close()
+
+	client := api.NewClient(srv.URL, "test-key")
+	if _, err := client.ListWorkspaceServices("E2E Service Name"); err != nil {
+		t.Fatalf("ListWorkspaceServices: %v", err)
+	}
+	if rawQuery != "names=E2E+Service+Name" {
+		t.Fatalf("expected escaped names query, got %q", rawQuery)
+	}
+}
+
+func TestGenerateSDK_UnwrapsJSONErrorBody(t *testing.T) {
+	const serverMessage = "service Stripe Billing is not activated in this workspace. Run 'fused-cli workspace service add stripe-billing' to activate it."
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte(`{"error":` + strconv.Quote(serverMessage) + `}`))
+	}))
+	defer srv.Close()
+
+	client := api.NewClient(srv.URL, "test-key")
+	_, err := client.GenerateSDK(api.GenerateSDKRequest{Name: "security-sdk"})
+
+	if err == nil {
+		t.Fatal("expected error on 403 response, got nil")
+	}
+	got := err.Error()
+	if !strings.Contains(got, serverMessage) {
+		t.Fatalf("expected unwrapped server message, got %q", got)
+	}
+	if strings.Contains(got, `{"error"`) {
+		t.Fatalf("expected raw JSON wrapper to be removed, got %q", got)
 	}
 }

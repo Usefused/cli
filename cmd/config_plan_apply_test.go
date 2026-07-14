@@ -70,6 +70,13 @@ services:
 
 	var sawApply bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			// workspace apply checks the Engine's environment label (Task 8)
+			// before applying; "staging" here keeps this test's assertions
+			// scoped to the receipt/apply behavior it's actually testing.
+			w.Write([]byte(`{"status":"ok","plane":"engine","environment":"staging"}`))
+			return
+		}
 		if r.URL.Path == "/workspace/config/plan" {
 			t.Fatal("apply must not re-plan when a receipt exists")
 		}
@@ -280,7 +287,7 @@ func TestWorkspaceServicesListCallsEngine(t *testing.T) {
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
 		sawList = true
-		_, _ = w.Write([]byte(`[{"service_id":"00000000-0000-0000-0000-000000000001","service_name":"okta","version":"2026-07-01"}]`))
+		_, _ = w.Write([]byte(`[{"service_id":"00000000-0000-0000-0000-000000000001","service_name":"okta","version":"2026-07-01","versions":["2026-07-01", "2026-07-02"]}]`))
 	}))
 	defer server.Close()
 
@@ -288,8 +295,54 @@ func TestWorkspaceServicesListCallsEngine(t *testing.T) {
 	if !sawList {
 		t.Fatal("expected workspace services request")
 	}
-	if !strings.Contains(out, "okta") || !strings.Contains(out, "2026-07-01") {
+	if !strings.Contains(out, "okta") || !strings.Contains(out, "2026-07-01") || !strings.Contains(out, "2026-07-01, 2026-07-02") {
 		t.Fatalf("expected service output, got %q", out)
+	}
+}
+
+func TestWorkspaceServicesListInteractiveCallsEngine(t *testing.T) {
+	dir := t.TempDir()
+	var sawList bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/workspace/services" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		sawList = true
+		_, _ = w.Write([]byte(`[{"service_id":"00000000-0000-0000-0000-000000000001","service_name":"okta","version":"2026-07-01","versions":["2026-07-01", "2026-07-02"]}]`))
+	}))
+	defer server.Close()
+
+	oldInput := workspaceInput
+	workspaceInput = strings.NewReader("1\n")
+	t.Cleanup(func() { workspaceInput = oldInput })
+
+	out := runCommandInDirOutput(t, dir, server.URL, []string{"workspace", "services", "list", "--interactive"})
+	if !sawList {
+		t.Fatal("expected workspace services request")
+	}
+	if !strings.Contains(out, "1. okta") || !strings.Contains(out, "Enabled Versions for okta: 2026-07-01, 2026-07-02") {
+		t.Fatalf("expected interactive service output, got %q", out)
+	}
+}
+
+func TestWorkspaceHasCallsEngine(t *testing.T) {
+	dir := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/workspace/services" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		name := r.URL.Query().Get("names")
+		if name == "okta" {
+			_, _ = w.Write([]byte(`[{"service_id":"00000000-0000-0000-0000-000000000001","service_name":"okta","version":"2026-07-01","versions":["2026-07-01", "2026-07-02"]}]`))
+		} else {
+			_, _ = w.Write([]byte(`[]`))
+		}
+	}))
+	defer server.Close()
+
+	out := runCommandInDirOutput(t, dir, server.URL, []string{"workspace", "has", "okta"})
+	if !strings.Contains(out, "Found service okta (Enabled Versions: 2026-07-01, 2026-07-02)") {
+		t.Fatalf("expected has command output for okta, got %q", out)
 	}
 }
 
