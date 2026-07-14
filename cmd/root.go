@@ -1,9 +1,11 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 
+	"github.com/Usefused/cli/internal/api"
 	"github.com/Usefused/cli/internal/config"
 	"github.com/spf13/cobra"
 )
@@ -11,8 +13,9 @@ import (
 var Version = "dev"
 
 var (
-	APIKey    string
-	EngineURL string
+	APIKey     string
+	EngineURL  string
+	ConfigFile string
 )
 
 // RootCmd is exported for testing.
@@ -24,8 +27,19 @@ var RootCmd = &cobra.Command{
 and instantly generate type-safe SDKs or MCP servers ready for production.`,
 }
 
+func NewRootCommand() *cobra.Command {
+	return RootCmd
+}
+
 func Execute() {
 	startUpdateCheck()
+	
+	shutdown := InitTelemetry()
+	defer func() {
+		// Do not pass a nil context
+		_ = shutdown(context.Background())
+	}()
+
 	if err := RootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -36,6 +50,7 @@ func Execute() {
 func init() {
 	RootCmd.PersistentFlags().StringVar(&APIKey, "key", "", "API key (overrides config & FUSED_API_KEY)")
 	RootCmd.PersistentFlags().StringVar(&EngineURL, "engine-url", "", "Fused Engine URL (overrides config & FUSED_ENGINE_URL)")
+	RootCmd.PersistentFlags().StringVarP(&ConfigFile, "file", "f", "", "Path to a Fused config file (disables .fused/ discovery)")
 }
 
 // GetEngineURL resolves the Engine URL.
@@ -68,4 +83,13 @@ func GetAPIKey() string {
 		return cfgVal
 	}
 	return ""
+}
+
+// getAPIClient returns an initialized API client.
+func getAPIClient() (*api.Client, error) {
+	url, err := GetEngineURL()
+	if err != nil {
+		return nil, err
+	}
+	return api.NewClient(url, GetAPIKey()), nil
 }

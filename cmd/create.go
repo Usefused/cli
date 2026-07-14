@@ -40,9 +40,9 @@ func init() {
 	createCmd.Flags().BoolVarP(&autoYes, "yes", "y", false, "Skip interactive menu and automatically proceed")
 	createCmd.Flags().StringVarP(&description, "description", "d", "", "Description of the SDK to create (e.g. 'Create a stripe and plunk sdk')")
 	createCmd.Flags().StringVarP(&outputDir, "output", "o", ".", "Directory to save the generated SDK zip")
-	
+
 	createCmd.MarkFlagRequired("name")
-	
+
 	RootCmd.AddCommand(createCmd)
 }
 
@@ -59,6 +59,18 @@ func searchAndAddEndpoints(client *api.Client, searchString string, currentCart 
 		return
 	}
 
+	// Fetch workspace services once to avoid redundant network calls
+	var intentNames []string
+	for _, svc := range intent.Services {
+		intentNames = append(intentNames, svc.Name)
+	}
+
+	workspaceServices, err := client.ListWorkspaceServices(intentNames...)
+	if err != nil {
+		// Non-fatal: if we can't fetch workspace services, we just rely on Registry defaults
+		workspaceServices = []api.WorkspaceService{}
+	}
+
 	added := 0
 	for _, svcIntent := range intent.Services {
 		fmt.Printf("🔍 Searching for service matching %q...\n", svcIntent.Name)
@@ -72,8 +84,16 @@ func searchAndAddEndpoints(client *api.Client, searchString string, currentCart 
 		s := services[0]
 		servicesMap[s.ID] = s
 
-		fmt.Printf("   -> Found %q! Fetching endpoints (intent: %q)...\n", s.Name, svcIntent.EndpointQuery)
-		endpoints, err := client.SearchEndpoints(s.ID, svcIntent.EndpointQuery)
+		version, err := resolveServiceVersion(client, s.ID, workspaceServices)
+		if err != nil {
+			fmt.Printf("   -> ❌ Service %q is not enabled in your workspace.\n", svcIntent.Name)
+			fmt.Printf("      To add it, run: fused workspace service add %q\n", svcIntent.Name)
+			fmt.Printf("      Then apply the changes: fused workspace apply\n")
+			continue
+		}
+
+		fmt.Printf("   -> Found %q (v%s)! Fetching endpoints (intent: %q)...\n", s.Name, version, svcIntent.EndpointQuery)
+		endpoints, err := client.SearchEndpoints(s.ID, version, svcIntent.EndpointQuery)
 		if err != nil {
 			fmt.Printf("Error fetching endpoints for service %s: %v\n", s.Name, err)
 			continue
@@ -86,6 +106,17 @@ func searchAndAddEndpoints(client *api.Client, searchString string, currentCart 
 		}
 	}
 	fmt.Printf("✅ Added %d new targeted endpoints to the cart.\n", added)
+}
+
+func resolveServiceVersion(client *api.Client, serviceID string, workspaceServices []api.WorkspaceService) (string, error) {
+	// First check workspace map
+	for _, wsSvc := range workspaceServices {
+		if wsSvc.ServiceID == serviceID {
+			return wsSvc.Version, nil
+		}
+	}
+	
+	return "", fmt.Errorf("service is not enabled in your workspace")
 }
 
 func runCreate() {
@@ -295,7 +326,7 @@ Loop:
 	if generatedSdkID != "" {
 		if deploy {
 			fmt.Println("✅ MCP Server Deployment Complete.")
-			
+
 			res, err := client.ActivateMCPServer(generatedSdkID)
 			if err != nil {
 				fmt.Printf("Error activating MCP server on Engine: %v\n", err)
@@ -311,61 +342,61 @@ Loop:
 		} else {
 			fmt.Printf("✅ SDK Generation Complete. Downloading SDK %s...\n", generatedSdkID)
 			zipData, err := client.DownloadSDK(generatedSdkID)
-		if err != nil {
-			fmt.Printf("Error downloading SDK: %v\n", err)
-			return
-		}
-
-		if err := os.MkdirAll(strings.TrimRight(outputDir, "/"), 0755); err != nil {
-			fmt.Printf("Error creating output directory: %v\n", err)
-			return
-		}
-
-		zipReader, err := zip.NewReader(bytes.NewReader(zipData), int64(len(zipData)))
-		if err != nil {
-			fmt.Printf("Error reading zip archive: %v\n", err)
-			return
-		}
-
-		extractDir := filepath.Join(strings.TrimRight(outputDir, "/"), sdkName)
-		if extractDir == "" {
-			extractDir = "."
-		}
-
-		for _, f := range zipReader.File {
-			fpath := filepath.Join(extractDir, f.Name)
-
-			// Check for ZipSlip vulnerability
-			if !strings.HasPrefix(fpath, filepath.Clean(extractDir)+string(os.PathSeparator)) {
-				continue
-			}
-
-			if f.FileInfo().IsDir() {
-				os.MkdirAll(fpath, os.ModePerm)
-				continue
-			}
-
-			if err := os.MkdirAll(filepath.Dir(fpath), os.ModePerm); err != nil {
-				continue
-			}
-
-			outFile, err := os.OpenFile(fpath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
 			if err != nil {
-				continue
+				fmt.Printf("Error downloading SDK: %v\n", err)
+				return
 			}
 
-			rc, err := f.Open()
+			if err := os.MkdirAll(strings.TrimRight(outputDir, "/"), 0755); err != nil {
+				fmt.Printf("Error creating output directory: %v\n", err)
+				return
+			}
+
+			zipReader, err := zip.NewReader(bytes.NewReader(zipData), int64(len(zipData)))
 			if err != nil {
+				fmt.Printf("Error reading zip archive: %v\n", err)
+				return
+			}
+
+			extractDir := filepath.Join(strings.TrimRight(outputDir, "/"), sdkName)
+			if extractDir == "" {
+				extractDir = "."
+			}
+
+			for _, f := range zipReader.File {
+				fpath := filepath.Join(extractDir, f.Name)
+
+				// Check for ZipSlip vulnerability
+				if !strings.HasPrefix(fpath, filepath.Clean(extractDir)+string(os.PathSeparator)) {
+					continue
+				}
+
+				if f.FileInfo().IsDir() {
+					os.MkdirAll(fpath, os.ModePerm)
+					continue
+				}
+
+				if err := os.MkdirAll(filepath.Dir(fpath), os.ModePerm); err != nil {
+					continue
+				}
+
+				outFile, err := os.OpenFile(fpath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
+				if err != nil {
+					continue
+				}
+
+				rc, err := f.Open()
+				if err != nil {
+					outFile.Close()
+					continue
+				}
+
+				io.Copy(outFile, rc)
 				outFile.Close()
-				continue
+				rc.Close()
 			}
 
-			io.Copy(outFile, rc)
-			outFile.Close()
-			rc.Close()
-		}
-
-		fmt.Printf("🎉 SDK automatically extracted to %s/\n", extractDir)
+			fmt.Printf("🎉 SDK automatically extracted to %s/\n", extractDir)
 		}
 	}
 }

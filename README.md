@@ -139,5 +139,80 @@ fused-cli download sales-mcp@1.2.0 --output ./my-agent
 - `create`: Generate a brand new SDK from natural language.
 - `update`: Update an existing SDK by its ID or name. You can specify a version by appending `@<version>` (e.g., `fused-cli update my-sdk@1.2.0`). (Supports `--type`, `--language`, and `--deploy` flags).
 - `download`: Download an already built SDK by its ID or name. You can specify a version by appending `@<version>` (e.g., `fused-cli download my-sdk@1.2.0`).
+- `sdk`: Manage SDK configurations via GitOps (`plan`, `apply`, `validate`, `download`, `add-service`, `add-operation`, `remove-operation`).
+- `workspace`: Manage Workspace configurations (`plan`, `apply`, `services`).
+
+## Config-as-Code (GitOps)
+
+Fused now supports managing your SDKs and Workspace service whitelists via declarative YAML configurations stored in a `.fused/` folder in your repository.
+
+### Defining an SDK
+
+Create `.fused/sdks/my-sdk.yaml`:
+```yaml
+kind: "sdk"
+version: 1
+name: "my-sdk"
+sdkVersion: "1.0.0"
+language: "typescript"
+target: "sdk"
+services:
+  okta:
+    version: "2026-07-09"
+    operations:
+      - "listLogEvents"
+      - "getUser"
+```
+
+The `operations` values are OpenAPI `operationId`s for the selected service version. To browse available operations and add several at once:
+
+```bash
+fused-cli sdk add-service okta -f .fused/sdks/my-sdk.yaml --version 2026-07-09
+fused-cli sdk add-operation -f .fused/sdks/my-sdk.yaml --interactive
+```
+
+`add-service` creates or updates the service entry; the config becomes valid once that service has at least one operationId.
+
+### Defining a Workspace Configuration
+
+You can also manage the services activated for your entire workspace via config.
+
+Create `.fused/workspace.yaml`:
+```yaml
+kind: "workspace"
+version: 1
+services:
+  stripe:
+    versions:
+      - "2026-07-09"
+      - "2026-08-01"
+    default: "2026-08-01"
+  okta:
+    versions:
+      - "1.0.0"
+```
+The service keys are Registry service slugs. The Engine resolves those slugs to service IDs during workspace planning, so teams do not need to know UUIDs. If `default` is not provided, the Engine will automatically pin the latest version in the `versions` array as the default.
+
+### Applying the Config
+
+You can preview the changes that will be made to your Fused environment and generate a deployment plan. For SDKs:
+```bash
+fused-cli sdk plan
+```
+
+For Workspaces:
+```bash
+fused-cli workspace plan
+```
+
+Once you're satisfied with the plan, you can apply it. The CLI will automatically trigger the respective processes (e.g., Registry generation for SDKs, or Engine activations for Workspaces):
+```bash
+fused-cli sdk apply --download
+```
+Using the `--download` flag automatically fetches the compiled SDK binary into your local directory upon successful generation.
+
+```bash
+fused-cli workspace apply
+```
 
 Run `fused-cli --help` for more information on available commands and flags.
