@@ -152,6 +152,12 @@ type Service struct {
 	Name string `json:"name"`
 }
 
+type ServiceVisibility struct {
+	ServiceID string `json:"id"`
+	IsOwner   bool   `json:"is_owner"`
+	IsPublic  bool   `json:"is_public"`
+}
+
 type Integration struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
@@ -215,18 +221,46 @@ func (c *Client) ListWorkspaceServices(names ...string) ([]WorkspaceService, err
 	return out, nil
 }
 
+func (c *Client) ServiceVisibilities(serviceIDs []string) (map[string]ServiceVisibility, error) {
+	out := map[string]ServiceVisibility{}
+	if len(serviceIDs) == 0 {
+		return out, nil
+	}
+	query := `
+		query ServiceVisibilities($serviceIds: [String!]!) {
+			servicesByIds(serviceIds: $serviceIds) {
+				id
+				is_owner
+				is_public
+			}
+		}
+	`
+	var resp struct {
+		ServicesByIDs []ServiceVisibility `json:"servicesByIds"`
+	}
+	if err := c.GraphQL(query, map[string]interface{}{"serviceIds": serviceIDs}, &resp); err != nil {
+		return nil, err
+	}
+	for _, svc := range resp.ServicesByIDs {
+		out[svc.ServiceID] = svc
+	}
+	return out, nil
+}
+
 type ServiceVersion struct {
 	ID        string `json:"id"`
+	ServiceID string `json:"service_id"`
 	Name      string `json:"name"`
 	Status    string `json:"status"`
 	CreatedAt string `json:"created_at"`
 }
 
-func (c *Client) ServiceVersions(serviceID string) ([]ServiceVersion, error) {
+func (c *Client) ServiceVersions(serviceSlug string) ([]ServiceVersion, error) {
 	query := `
-		query ServiceVersions($serviceId: String!) {
-			serviceVersions(serviceId: $serviceId) {
+		query ServiceVersions($serviceId: String!, $provider: String) {
+			serviceVersions(serviceId: $serviceId, provider: $provider) {
 				id
+				service_id
 				name
 				status
 				created_at
@@ -236,8 +270,20 @@ func (c *Client) ServiceVersions(serviceID string) ([]ServiceVersion, error) {
 	var resp struct {
 		ServiceVersions []ServiceVersion `json:"serviceVersions"`
 	}
-	err := c.GraphQL(query, map[string]interface{}{"serviceId": serviceID}, &resp)
+	slug, provider := splitProviderQualifiedServiceRef(serviceSlug)
+	err := c.GraphQL(query, map[string]interface{}{"serviceId": slug, "provider": provider}, &resp)
 	return resp.ServiceVersions, err
+}
+
+func splitProviderQualifiedServiceRef(ref string) (string, string) {
+	if !strings.HasPrefix(ref, "@") {
+		return ref, ""
+	}
+	rest := ref[1:]
+	if i := strings.IndexByte(rest, '/'); i >= 0 {
+		return rest[i+1:], rest[:i]
+	}
+	return ref, ""
 }
 
 func (c *Client) SearchServices(q string) ([]Service, error) {

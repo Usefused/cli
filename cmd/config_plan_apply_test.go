@@ -325,6 +325,53 @@ func TestWorkspaceServicesListInteractiveCallsEngine(t *testing.T) {
 	}
 }
 
+func TestWorkspaceServiceVersionsUsesSlugResolvedServiceID(t *testing.T) {
+	dir := t.TempDir()
+	var sawGraphQL bool
+	var sawWorkspaceList bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/graphql":
+			sawGraphQL = true
+			var body struct {
+				Variables map[string]any `json:"variables"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode graphql body: %v", err)
+			}
+			if body.Variables["serviceId"] != "github" || body.Variables["provider"] != "acme-inc" {
+				t.Fatalf("expected provider-qualified slug split, got %#v", body.Variables)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":{"serviceVersions":[{"id":"ver-1","service_id":"svc-github","name":"2026-07-01","status":"public","created_at":"2026-07-16T00:00:00Z"}]}}`))
+		case "/workspace/services":
+			sawWorkspaceList = true
+			if r.URL.Query().Get("names") != "" {
+				t.Fatalf("workspace versions should resolve by service_id, got names query %q", r.URL.RawQuery)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[
+				{"service_id":"svc-other","service_name":"GitHub","version":"2026-01-01","enabled_versions":[{"version":"2026-01-01","service_version_id":"ver-other"}]},
+				{"service_id":"svc-github","service_name":"GitHub REST API","version":"2026-07-01","enabled_versions":[{"version":"2026-07-01","service_version_id":"ver-1","status":"public","enabled_at":"2026-07-16T00:00:00Z"}]}
+			]`))
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	out := runCommandInDirOutput(t, dir, server.URL, []string{"workspace", "service", "@acme-inc/github", "--versions"})
+	if !sawGraphQL || !sawWorkspaceList {
+		t.Fatalf("expected graphql and workspace requests, saw graphql=%v workspace=%v", sawGraphQL, sawWorkspaceList)
+	}
+	if !strings.Contains(out, "2026-07-01") || !strings.Contains(out, "ver-1") {
+		t.Fatalf("expected resolved workspace version output, got %q", out)
+	}
+	if strings.Contains(out, "ver-other") {
+		t.Fatalf("expected service_id match to exclude other service, got %q", out)
+	}
+}
+
 func TestWorkspaceHasCallsEngine(t *testing.T) {
 	dir := t.TempDir()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

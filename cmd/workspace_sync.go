@@ -25,7 +25,7 @@ type workspaceSyncResult struct {
 // Engine's data winning on any conflict, and any local entry whose service
 // is no longer enabled remotely is removed, not just flagged. Pure and
 // side-effect-free (no file or network I/O) so it's directly testable.
-func mergeWorkspaceServicesFromRemote(cfg *configfile.WorkspaceConfig, remote []api.WorkspaceService) workspaceSyncResult {
+func mergeWorkspaceServicesFromRemote(cfg *configfile.WorkspaceConfig, remote []api.WorkspaceService, visibility map[string]api.ServiceVisibility) workspaceSyncResult {
 	if cfg.Services == nil {
 		cfg.Services = map[string]configfile.WorkspaceService{}
 	}
@@ -46,14 +46,7 @@ func mergeWorkspaceServicesFromRemote(cfg *configfile.WorkspaceConfig, remote []
 
 	// Add/update from remote -- remote always wins over whatever was there.
 	for _, svc := range remote {
-		versions := workspaceServiceVersionNames(svc)
-		if svc.Version != "" && !containsString(versions, svc.Version) {
-			versions = append(append([]string{}, versions...), svc.Version)
-		}
-		newEntry := configfile.WorkspaceService{
-			ServiceID: svc.ServiceID,
-			Versions:  versions,
-		}
+		newEntry := workspaceServiceFromRemote(svc, visibility)
 		existing, existed := cfg.Services[svc.ServiceName]
 		cfg.Services[svc.ServiceName] = newEntry
 		switch {
@@ -70,11 +63,37 @@ func mergeWorkspaceServicesFromRemote(cfg *configfile.WorkspaceConfig, remote []
 	return result
 }
 
+func workspaceServiceFromRemote(svc api.WorkspaceService, visibility map[string]api.ServiceVisibility) configfile.WorkspaceService {
+	versions := workspaceServiceVersionNames(svc)
+	if svc.Version != "" && !containsString(versions, svc.Version) {
+		versions = append(append([]string{}, versions...), svc.Version)
+	}
+	newEntry := configfile.WorkspaceService{
+		ServiceID: svc.ServiceID,
+		Versions:  versions,
+	}
+	if vis, ok := visibility[svc.ServiceID]; ok && vis.IsOwner {
+		newEntry.Public = boolPtr(vis.IsPublic)
+	}
+	return newEntry
+}
+
 // workspaceServiceEqual compares the fields sync actually touches.
 // Versions is compared as a set so harmless remote ordering changes do not
 // churn local files.
 func workspaceServiceEqual(a, b configfile.WorkspaceService) bool {
-	return a.ServiceID == b.ServiceID && sameStringSet(a.Versions, b.Versions)
+	return a.ServiceID == b.ServiceID && sameStringSet(a.Versions, b.Versions) && sameBoolPtr(a.Public, b.Public)
+}
+
+func boolPtr(value bool) *bool {
+	return &value
+}
+
+func sameBoolPtr(a, b *bool) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
 }
 
 func workspaceServiceVersionNames(svc api.WorkspaceService) []string {
@@ -121,13 +140,27 @@ that's no longer enabled remotely.`,
 		if err != nil {
 			return err
 		}
-		result := mergeWorkspaceServicesFromRemote(cfg, remote)
+		visibility, err := client.ServiceVisibilities(serviceIDsFromWorkspaceServices(remote))
+		if err != nil {
+			return err
+		}
+		result := mergeWorkspaceServicesFromRemote(cfg, remote, visibility)
 		if err := writeWorkspaceConfig(ConfigFile, cfg); err != nil {
 			return err
 		}
 		printWorkspaceSyncResult(cmd, result)
 		return nil
 	}),
+}
+
+func serviceIDsFromWorkspaceServices(services []api.WorkspaceService) []string {
+	out := make([]string, 0, len(services))
+	for _, svc := range services {
+		if svc.ServiceID != "" {
+			out = append(out, svc.ServiceID)
+		}
+	}
+	return out
 }
 
 func printWorkspaceSyncResult(cmd *cobra.Command, result workspaceSyncResult) {

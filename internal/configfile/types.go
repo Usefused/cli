@@ -24,6 +24,7 @@ type WorkspaceConfig struct {
 // WorkspaceService represents service versions enabled for a workspace.
 type WorkspaceService struct {
 	ServiceID     string         `yaml:"service_id,omitempty" json:"service_id,omitempty"`
+	Public        *bool          `yaml:"public,omitempty" json:"public,omitempty"`
 	Versions      []string       `yaml:"versions,omitempty" json:"versions,omitempty"`
 	RuntimeConfig *RuntimeConfig `yaml:"runtime_config,omitempty" json:"runtime_config,omitempty"`
 }

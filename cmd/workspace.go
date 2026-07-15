@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 
+	cliapi "github.com/Usefused/cli/internal/api"
 	"github.com/Usefused/cli/internal/configfile"
 )
 
@@ -145,8 +146,65 @@ var workspaceHasCmd = &cobra.Command{
 }
 
 var workspaceServiceCmd = &cobra.Command{
-	Use:   "service",
+	Use:   "service <service-slug>",
 	Short: "Manage a specific workspace service",
+	Args:  cobra.MaximumNArgs(1),
+	RunE: WithTelemetry("cli.workspace.service", func(cmd *cobra.Command, args []string) error {
+		if !workspaceServiceShowVersions {
+			return cmd.Help()
+		}
+		if len(args) != 1 {
+			return fmt.Errorf("workspace service slug is required when using --versions")
+		}
+		return runWorkspaceServiceVersions(cmd, args[0])
+	}),
+}
+
+var workspaceServiceShowVersions bool
+
+func runWorkspaceServiceVersions(cmd *cobra.Command, serviceSlug string) error {
+	client, err := getAPIClient()
+	if err != nil {
+		return err
+	}
+	serviceID, err := resolveServiceIDFromSlug(client, serviceSlug)
+	if err != nil {
+		return err
+	}
+	services, err := client.ListWorkspaceServices()
+	if err != nil {
+		return err
+	}
+	for _, workspaceService := range services {
+		if workspaceService.ServiceID == serviceID {
+			printWorkspaceServiceVersions(cmd.OutOrStdout(), workspaceService)
+			return nil
+		}
+	}
+	return fmt.Errorf("service %s not found in workspace", serviceSlug)
+}
+
+func resolveServiceIDFromSlug(client *cliapi.Client, serviceSlug string) (string, error) {
+	versions, err := client.ServiceVersions(serviceSlug)
+	if err != nil {
+		return "", err
+	}
+	for _, version := range versions {
+		if version.ServiceID != "" {
+			return version.ServiceID, nil
+		}
+	}
+	return "", fmt.Errorf("service %s has no visible versions", serviceSlug)
+}
+
+func printWorkspaceServiceVersions(out io.Writer, service cliapi.WorkspaceService) {
+	if len(service.EnabledVersions) == 0 {
+		fmt.Fprintf(out, "No enabled versions for service %s.\n", service.ServiceName)
+		return
+	}
+	for _, version := range service.EnabledVersions {
+		fmt.Fprintf(out, "%s\t%s\t%s\t%s\n", version.Version, version.ServiceVersionID, version.Status, version.EnabledAt)
+	}
 }
 
 var workspaceServiceAddVersion string
@@ -382,6 +440,7 @@ func init() {
 	workspaceServicesCmd.AddCommand(workspaceServicesListCmd)
 	workspaceCmd.AddCommand(workspaceServiceCmd)
 	workspaceCmd.AddCommand(workspaceHasCmd)
+	workspaceServiceCmd.Flags().BoolVar(&workspaceServiceShowVersions, "versions", false, "List versions enabled in the workspace for this service slug; supports @provider/slug")
 	workspaceServiceCmd.AddCommand(workspaceServiceAddCmd)
 	workspaceServiceAddCmd.Flags().StringVar(&workspaceServiceAddVersion, "version", "", "Version to enable; omitted resolves latest during plan")
 	workspaceServiceAddCmd.Flags().StringVar(&workspaceServiceAddID, "service-id", "", "Registry service UUID to store in workspace config")

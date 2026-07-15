@@ -26,7 +26,7 @@ func TestMergeWorkspaceServicesFromRemote_AddsNewRemoteService(t *testing.T) {
 		{ServiceName: "stripe", ServiceID: "svc-1", Version: "2026-01-01", EnabledVersions: remoteVersions("2026-01-01")},
 	}
 
-	result := mergeWorkspaceServicesFromRemote(cfg, remote)
+	result := mergeWorkspaceServicesFromRemote(cfg, remote, nil)
 
 	if !reflect.DeepEqual(result.Added, []string{"stripe"}) {
 		t.Errorf("expected Added=[stripe], got %v", result.Added)
@@ -54,7 +54,7 @@ func TestMergeWorkspaceServicesFromRemote_RemoteWinsOnConflict(t *testing.T) {
 		{ServiceName: "stripe", ServiceID: "svc-1", Version: "2026-01-01", EnabledVersions: remoteVersions("2025-01-01", "2026-01-01")},
 	}
 
-	result := mergeWorkspaceServicesFromRemote(cfg, remote)
+	result := mergeWorkspaceServicesFromRemote(cfg, remote, nil)
 
 	if !reflect.DeepEqual(result.Updated, []string{"stripe"}) {
 		t.Errorf("expected Updated=[stripe], got %v", result.Updated)
@@ -76,7 +76,7 @@ func TestMergeWorkspaceServicesFromRemote_UnchangedServiceNotReportedAsUpdated(t
 		{ServiceName: "stripe", ServiceID: "svc-1", Version: "2026-01-01", EnabledVersions: remoteVersions("2026-01-01")},
 	}
 
-	result := mergeWorkspaceServicesFromRemote(cfg, remote)
+	result := mergeWorkspaceServicesFromRemote(cfg, remote, nil)
 
 	if len(result.Added) != 0 || len(result.Updated) != 0 || len(result.Removed) != 0 {
 		t.Errorf("expected no changes reported for an already-in-sync service, got %+v", result)
@@ -94,7 +94,7 @@ func TestMergeWorkspaceServicesFromRemote_UnchangedIgnoresVersionOrder(t *testin
 		{ServiceName: "stripe", ServiceID: "svc-1", Version: "2026-01-01", EnabledVersions: remoteVersions("2025-06-01", "2026-01-01")},
 	}
 
-	result := mergeWorkspaceServicesFromRemote(cfg, remote)
+	result := mergeWorkspaceServicesFromRemote(cfg, remote, nil)
 
 	if len(result.Updated) != 0 {
 		t.Errorf("expected version-order difference alone not to count as a change, got Updated=%v", result.Updated)
@@ -113,7 +113,7 @@ func TestMergeWorkspaceServicesFromRemote_RemovesLocalEntryNoLongerActivated(t *
 		{ServiceName: "stripe", ServiceID: "svc-1", Version: "2026-01-01", EnabledVersions: remoteVersions("2026-01-01")},
 	}
 
-	result := mergeWorkspaceServicesFromRemote(cfg, remote)
+	result := mergeWorkspaceServicesFromRemote(cfg, remote, nil)
 
 	if !reflect.DeepEqual(result.Removed, []string{"legacy"}) {
 		t.Errorf("expected Removed=[legacy], got %v", result.Removed)
@@ -132,7 +132,7 @@ func TestMergeWorkspaceServicesFromRemote_LatestVersionIncludedInVersions(t *tes
 		{ServiceName: "stripe", ServiceID: "svc-1", Version: "2026-01-01"},
 	}
 
-	mergeWorkspaceServicesFromRemote(cfg, remote)
+	mergeWorkspaceServicesFromRemote(cfg, remote, nil)
 
 	got := cfg.Services["stripe"]
 	if !containsString(got.Versions, "2026-01-01") {
@@ -147,7 +147,7 @@ func TestMergeWorkspaceServicesFromRemote_EmptyRemoteRemovesEverything(t *testin
 		"stripe": {ServiceID: "svc-1", Versions: []string{"2026-01-01"}},
 	}}
 
-	result := mergeWorkspaceServicesFromRemote(cfg, nil)
+	result := mergeWorkspaceServicesFromRemote(cfg, nil, nil)
 
 	if !reflect.DeepEqual(result.Removed, []string{"stripe"}) {
 		t.Errorf("expected Removed=[stripe], got %v", result.Removed)
@@ -166,13 +166,36 @@ func TestMergeWorkspaceServicesFromRemote_NilServicesMapInitialized(t *testing.T
 		{ServiceName: "stripe", ServiceID: "svc-1", Version: "2026-01-01", EnabledVersions: remoteVersions("2026-01-01")},
 	}
 
-	mergeWorkspaceServicesFromRemote(cfg, remote)
+	mergeWorkspaceServicesFromRemote(cfg, remote, nil)
 
 	if cfg.Services == nil {
 		t.Fatal("expected Services map to be initialized")
 	}
 	if _, ok := cfg.Services["stripe"]; !ok {
 		t.Error("expected stripe to be added")
+	}
+}
+
+func TestMergeWorkspaceServicesFromRemote_WritesPublicOnlyForOwnedServices(t *testing.T) {
+	cfg := &configfile.WorkspaceConfig{Services: map[string]configfile.WorkspaceService{}}
+	remote := []api.WorkspaceService{
+		{ServiceName: "stripe", ServiceID: "svc-owned", Version: "2026-01-01"},
+		{ServiceName: "@acme/billing", ServiceID: "svc-foreign", Version: "2026-02-01"},
+	}
+	visibility := map[string]api.ServiceVisibility{
+		"svc-owned":   {ServiceID: "svc-owned", IsOwner: true, IsPublic: false},
+		"svc-foreign": {ServiceID: "svc-foreign", IsOwner: false, IsPublic: true},
+	}
+
+	mergeWorkspaceServicesFromRemote(cfg, remote, visibility)
+
+	owned := cfg.Services["stripe"]
+	if owned.Public == nil || *owned.Public != false {
+		t.Fatalf("expected owned service public=false to be written, got %#v", owned.Public)
+	}
+	foreign := cfg.Services["@acme/billing"]
+	if foreign.Public != nil {
+		t.Fatalf("expected non-owned service public metadata to be omitted, got %#v", foreign.Public)
 	}
 }
 

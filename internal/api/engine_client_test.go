@@ -87,6 +87,112 @@ func TestListWorkspaceServices_EscapesNameFilter(t *testing.T) {
 	}
 }
 
+func TestServiceVisibilitiesUsesSingleGraphQLBatch(t *testing.T) {
+	var sawIDs []interface{}
+	var sawQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/graphql" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		var body struct {
+			Query     string         `json:"query"`
+			Variables map[string]any `json:"variables"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode graphql body: %v", err)
+		}
+		sawQuery = body.Query
+		sawIDs, _ = body.Variables["serviceIds"].([]interface{})
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"data":{"servicesByIds":[{"id":"svc-1","is_owner":true,"is_public":false},{"id":"svc-2","is_owner":false,"is_public":true}]}}`))
+	}))
+	defer srv.Close()
+
+	client := api.NewClient(srv.URL, "test-key")
+	visibility, err := client.ServiceVisibilities([]string{"svc-1", "svc-2"})
+	if err != nil {
+		t.Fatalf("ServiceVisibilities: %v", err)
+	}
+	if !strings.Contains(sawQuery, "servicesByIds") || len(sawIDs) != 2 {
+		t.Fatalf("expected one batched servicesByIds query, query=%q ids=%#v", sawQuery, sawIDs)
+	}
+	if !visibility["svc-1"].IsOwner || visibility["svc-1"].IsPublic {
+		t.Fatalf("unexpected svc-1 visibility: %#v", visibility["svc-1"])
+	}
+	if visibility["svc-2"].IsOwner || !visibility["svc-2"].IsPublic {
+		t.Fatalf("unexpected svc-2 visibility: %#v", visibility["svc-2"])
+	}
+}
+
+func TestServiceVersionsReturnsServiceIDForSlug(t *testing.T) {
+	var sawSlug string
+	var sawProvider string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/graphql" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		var body struct {
+			Query     string         `json:"query"`
+			Variables map[string]any `json:"variables"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode graphql body: %v", err)
+		}
+		if !strings.Contains(body.Query, "service_id") {
+			t.Fatalf("expected service_id in query, got %s", body.Query)
+		}
+		sawSlug, _ = body.Variables["serviceId"].(string)
+		sawProvider, _ = body.Variables["provider"].(string)
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"data":{"serviceVersions":[{"id":"ver-1","service_id":"svc-1","name":"2026-07-01","status":"public","created_at":"2026-07-16T00:00:00Z"}]}}`))
+	}))
+	defer srv.Close()
+
+	client := api.NewClient(srv.URL, "test-key")
+	versions, err := client.ServiceVersions("github")
+	if err != nil {
+		t.Fatalf("ServiceVersions: %v", err)
+	}
+	if sawSlug != "github" {
+		t.Fatalf("expected slug variable github, got %q", sawSlug)
+	}
+	if sawProvider != "" {
+		t.Fatalf("expected empty provider for bare slug, got %q", sawProvider)
+	}
+	if len(versions) != 1 || versions[0].ServiceID != "svc-1" {
+		t.Fatalf("expected service_id svc-1, got %#v", versions)
+	}
+}
+
+func TestServiceVersionsSplitsProviderQualifiedSlug(t *testing.T) {
+	var sawSlug string
+	var sawProvider string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/graphql" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		var body struct {
+			Variables map[string]any `json:"variables"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode graphql body: %v", err)
+		}
+		sawSlug, _ = body.Variables["serviceId"].(string)
+		sawProvider, _ = body.Variables["provider"].(string)
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"data":{"serviceVersions":[{"id":"ver-1","service_id":"svc-1","name":"2026-07-01","status":"public","created_at":"2026-07-16T00:00:00Z"}]}}`))
+	}))
+	defer srv.Close()
+
+	client := api.NewClient(srv.URL, "test-key")
+	if _, err := client.ServiceVersions("@acme-inc/custom-crm"); err != nil {
+		t.Fatalf("ServiceVersions: %v", err)
+	}
+	if sawSlug != "custom-crm" || sawProvider != "acme-inc" {
+		t.Fatalf("expected split provider-qualified slug, got slug=%q provider=%q", sawSlug, sawProvider)
+	}
+}
+
 func TestGenerateSDK_UnwrapsJSONErrorBody(t *testing.T) {
 	const serverMessage = "service Stripe Billing is not activated in this workspace. Run 'fused-cli workspace service add stripe-billing' to activate it."
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

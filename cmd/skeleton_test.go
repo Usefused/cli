@@ -82,6 +82,29 @@ func TestWorkspaceServiceAddCmdSkeleton(t *testing.T) {
 	}
 }
 
+func TestWorkspaceServiceVersionsFlagCmdSkeleton(t *testing.T) {
+	RootCmd.SetArgs([]string{"workspace", "service", "okta", "--versions"})
+
+	origRunE := workspaceServiceCmd.RunE
+	defer func() { workspaceServiceCmd.RunE = origRunE }()
+
+	workspaceServiceCmd.RunE = func(cmd *cobra.Command, args []string) error {
+		if len(args) != 1 || args[0] != "okta" {
+			t.Errorf("expected arg 'okta', got %v", args)
+		}
+		if !workspaceServiceShowVersions {
+			t.Error("expected versions flag to be true")
+		}
+		return nil
+	}
+
+	out := new(bytes.Buffer)
+	RootCmd.SetOut(out)
+	if err := RootCmd.Execute(); err != nil {
+		t.Fatalf("unexpected error executing workspace service --versions: %v", err)
+	}
+}
+
 func TestSdkAddOperationCmdSkeleton(t *testing.T) {
 	RootCmd.SetArgs([]string{"sdk", "operation", "add", "okta", "listLogEvents", "--interactive", "--apply", "--download"})
 
@@ -134,5 +157,48 @@ func TestWorkspaceServiceDeprecateCmdSkeleton(t *testing.T) {
 	RootCmd.SetOut(out)
 	if err := RootCmd.Execute(); err != nil {
 		t.Fatalf("unexpected error executing workspace service deprecate: %v", err)
+	}
+}
+
+func TestServiceVersionsCmdSkeleton(t *testing.T) {
+	RootCmd.SetArgs([]string{"service", "versions", "okta"})
+
+	origRunE := serviceVersionsCmd.RunE
+	defer func() { serviceVersionsCmd.RunE = origRunE }()
+
+	serviceVersionsCmd.RunE = func(cmd *cobra.Command, args []string) error {
+		if len(args) != 1 || args[0] != "okta" {
+			t.Errorf("expected arg 'okta', got %v", args)
+		}
+		return nil
+	}
+
+	out := new(bytes.Buffer)
+	RootCmd.SetOut(out)
+	if err := RootCmd.Execute(); err != nil {
+		t.Fatalf("unexpected error executing service versions: %v", err)
+	}
+}
+
+func TestServiceVersionsFlagCmdSkeleton(t *testing.T) {
+	RootCmd.SetArgs([]string{"service", "okta", "--versions"})
+
+	origRunE := serviceCmd.RunE
+	defer func() { serviceCmd.RunE = origRunE }()
+
+	serviceCmd.RunE = func(cmd *cobra.Command, args []string) error {
+		if len(args) != 1 || args[0] != "okta" {
+			t.Errorf("expected arg 'okta', got %v", args)
+		}
+		if !serviceShowVersions {
+			t.Error("expected versions flag to be true")
+		}
+		return nil
+	}
+
+	out := new(bytes.Buffer)
+	RootCmd.SetOut(out)
+	if err := RootCmd.Execute(); err != nil {
+		t.Fatalf("unexpected error executing service --versions: %v", err)
 	}
 }
