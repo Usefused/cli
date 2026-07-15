@@ -21,9 +21,9 @@ type workspaceSyncResult struct {
 // mergeWorkspaceServicesFromRemote is Task 4's core logic
 // (engine_workspace_registration_plan.md): full-mirrors the Engine's
 // authoritative GET /workspace/services list (Fact 9) into cfg.Services --
-// every remotely-activated service is added or updated locally with the
+// every remote workspace service is added or updated locally with the
 // Engine's data winning on any conflict, and any local entry whose service
-// is no longer activated remotely is removed, not just flagged. Pure and
+// is no longer enabled remotely is removed, not just flagged. Pure and
 // side-effect-free (no file or network I/O) so it's directly testable.
 func mergeWorkspaceServicesFromRemote(cfg *configfile.WorkspaceConfig, remote []api.WorkspaceService) workspaceSyncResult {
 	if cfg.Services == nil {
@@ -36,7 +36,7 @@ func mergeWorkspaceServicesFromRemote(cfg *configfile.WorkspaceConfig, remote []
 		remoteByName[svc.ServiceName] = svc
 	}
 
-	// Remove local entries no longer activated remotely.
+	// Remove local entries no longer enabled remotely.
 	for name := range cfg.Services {
 		if _, ok := remoteByName[name]; !ok {
 			delete(cfg.Services, name)
@@ -46,14 +46,13 @@ func mergeWorkspaceServicesFromRemote(cfg *configfile.WorkspaceConfig, remote []
 
 	// Add/update from remote -- remote always wins over whatever was there.
 	for _, svc := range remote {
-		versions := svc.Versions
+		versions := workspaceServiceVersionNames(svc)
 		if svc.Version != "" && !containsString(versions, svc.Version) {
 			versions = append(append([]string{}, versions...), svc.Version)
 		}
 		newEntry := configfile.WorkspaceService{
 			ServiceID: svc.ServiceID,
 			Versions:  versions,
-			Default:   svc.Version,
 		}
 		existing, existed := cfg.Services[svc.ServiceName]
 		cfg.Services[svc.ServiceName] = newEntry
@@ -72,11 +71,18 @@ func mergeWorkspaceServicesFromRemote(cfg *configfile.WorkspaceConfig, remote []
 }
 
 // workspaceServiceEqual compares the fields sync actually touches.
-// Versions is compared as a set, not an ordered list -- the Engine's
-// ListActivatedServices/ListActivationVersionsForServices give no ordering
-// guarantee, so a pure reordering must not be reported as a change.
+// Versions is compared as a set so harmless remote ordering changes do not
+// churn local files.
 func workspaceServiceEqual(a, b configfile.WorkspaceService) bool {
-	return a.ServiceID == b.ServiceID && a.Default == b.Default && sameStringSet(a.Versions, b.Versions)
+	return a.ServiceID == b.ServiceID && sameStringSet(a.Versions, b.Versions)
+}
+
+func workspaceServiceVersionNames(svc api.WorkspaceService) []string {
+	versions := make([]string, 0, len(svc.EnabledVersions))
+	for _, version := range svc.EnabledVersions {
+		versions = append(versions, version.Version)
+	}
+	return versions
 }
 
 func sameStringSet(a, b []string) bool {
@@ -97,11 +103,11 @@ func sameStringSet(a, b []string) bool {
 
 var workspaceSyncCmd = &cobra.Command{
 	Use:   "sync",
-	Short: "Full-mirror the local workspace config from the Engine's current activation state",
+	Short: "Full-mirror the local workspace config from the Engine's current service state",
 	Long: `Overwrites the local workspace config's services with whatever is currently
-activated remotely: adds or updates every remotely-activated service (the
+enabled remotely: adds or updates every remote workspace service (the
 Engine's data wins on any conflict) and removes any local service entry
-that's no longer activated remotely.`,
+that's no longer enabled remotely.`,
 	RunE: WithTelemetry("cli.workspace.sync", func(cmd *cobra.Command, args []string) error {
 		cfg, err := loadWorkspaceConfigForEdit(ConfigFile)
 		if err != nil {

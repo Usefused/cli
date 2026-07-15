@@ -61,7 +61,6 @@ services:
     versions:
       - "2026-07-01"
       - "2026-08-01"
-    default: "2026-07-01"
 deprecations:
   - service_id: "00000000-0000-0000-0000-000000000001"
     version: "2026-07-01"
@@ -80,8 +79,8 @@ deprecations:
 	if cfg.ConfigKey != "workspace" {
 		t.Errorf("config key: got %q", cfg.ConfigKey)
 	}
-	if got := cfg.Workspace.Services["okta"].Default; got != "2026-07-01" {
-		t.Errorf("default version: got %q", got)
+	if got := cfg.Workspace.Services["okta"].Versions; len(got) != 2 || got[0] != "2026-07-01" {
+		t.Errorf("versions: got %q", got)
 	}
 	if got := cfg.Workspace.Services["okta"].ServiceID; got != "00000000-0000-0000-0000-000000000001" {
 		t.Errorf("service_id: got %q", got)
@@ -213,14 +212,6 @@ target: sdk
 services:
   okta:
     operations: ["listLogEvents"]
-`,
-		"malformed workspace service": `
-kind: workspace
-version: 1
-services:
-  okta:
-    service_id: "00000000-0000-0000-0000-000000000001"
-    default: "2026-07-01"
 `,
 		"legacy endpoints key rejected": `
 kind: sdk

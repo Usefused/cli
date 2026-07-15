@@ -105,12 +105,12 @@ var workspaceServicesListCmd = &cobra.Command{
 				return fmt.Errorf("invalid service selection")
 			}
 			selected := services[choice-1]
-			fmt.Fprintf(cmd.OutOrStdout(), "Enabled Versions for %s: %s\n", selected.ServiceName, strings.Join(selected.Versions, ", "))
+			fmt.Fprintf(cmd.OutOrStdout(), "Enabled Versions for %s: %s\n", selected.ServiceName, strings.Join(workspaceServiceVersionNames(selected), ", "))
 			return nil
 		}
 
 		for _, service := range services {
-			fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\n", service.ServiceName, service.ServiceID, service.Version, strings.Join(service.Versions, ", "))
+			fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\n", service.ServiceName, service.ServiceID, service.Version, strings.Join(workspaceServiceVersionNames(service), ", "))
 		}
 		return nil
 	}),
@@ -132,7 +132,7 @@ var workspaceHasCmd = &cobra.Command{
 		}
 		for _, service := range services {
 			if service.ServiceName == serviceName {
-				fmt.Fprintf(cmd.OutOrStdout(), "Found service %s (Enabled Versions: %s)\n", service.ServiceName, strings.Join(service.Versions, ", "))
+				fmt.Fprintf(cmd.OutOrStdout(), "Found service %s (Enabled Versions: %s)\n", service.ServiceName, strings.Join(workspaceServiceVersionNames(service), ", "))
 				return nil
 			}
 		}
@@ -252,7 +252,7 @@ func init() {
 	workspaceCmd.AddCommand(workspaceServiceCmd)
 	workspaceCmd.AddCommand(workspaceHasCmd)
 	workspaceServiceCmd.AddCommand(workspaceServiceAddCmd)
-	workspaceServiceAddCmd.Flags().StringVar(&workspaceServiceAddVersion, "version", "", "Default version to add")
+	workspaceServiceAddCmd.Flags().StringVar(&workspaceServiceAddVersion, "version", "", "Version to enable; omitted resolves latest during plan")
 	workspaceServiceAddCmd.Flags().StringVar(&workspaceServiceAddID, "service-id", "", "Registry service UUID to store in workspace config")
 
 	workspaceServiceCmd.AddCommand(workspaceServiceRemoveCmd)

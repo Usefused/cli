@@ -20,17 +20,17 @@ func addWorkspaceService(path, serviceName, serviceID, version string) error {
 			serviceID = serviceName
 		}
 	}
-	if version == "" {
-		return errors.New("workspace service add requires --version")
-	}
 	cfg, err := loadWorkspaceConfigForEdit(path)
 	if err != nil {
 		return err
 	}
+	versions := []string(nil)
+	if version != "" {
+		versions = []string{version}
+	}
 	cfg.Services[serviceName] = configfile.WorkspaceService{
 		ServiceID: serviceID,
-		Versions:  []string{version},
-		Default:   version,
+		Versions:  versions,
 	}
 	return writeWorkspaceConfig(path, cfg)
 }
@@ -70,9 +70,6 @@ func removeWorkspaceVersion(path, serviceName, version string) error {
 		return fmt.Errorf("service %s is not in this workspace config", serviceName)
 	}
 	service.Versions = removeString(service.Versions, version)
-	if service.Default == version {
-		service.Default = ""
-	}
 	cfg.Services[serviceName] = service
 	return writeWorkspaceConfig(path, cfg)
 }

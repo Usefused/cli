@@ -31,9 +31,9 @@ func TestConfigCommandSurface(t *testing.T) {
 		{"sdk", "validate", "-f", "fused.yaml"},
 		{"sdk", "download", "security@1.0.0"},
 		{"sdk", "download", "-f", "fused.yaml"},
-		{"sdk", "add-service", "okta", "-f", "fused.yaml", "--version", "2026-07-01"},
-		{"sdk", "add-operation", "okta", "listLogEvents", "-f", "fused.yaml"},
-		{"sdk", "remove-operation", "okta", "listLogEvents", "-f", "fused.yaml"},
+		{"sdk", "service", "add", "okta", "-f", "fused.yaml", "--version", "2026-07-01"},
+		{"sdk", "operation", "add", "okta", "listLogEvents", "-f", "fused.yaml"},
+		{"sdk", "operation", "remove", "okta", "listLogEvents", "-f", "fused.yaml"},
 	}
 
 	for _, args := range tests {

@@ -41,6 +41,8 @@ func TestImportPlanWritesReceiptAndPostsSpecContent(t *testing.T) {
 			"slug": "widgets",
 			"name": "Widgets",
 			"is_new_service": true,
+			"action": "create_service",
+			"target_version": "1.0",
 			"diff": {"added": 1, "changed": 0, "removed": 0}
 		}`))
 	}))
@@ -60,8 +62,11 @@ func TestImportPlanWritesReceiptAndPostsSpecContent(t *testing.T) {
 	if decoded["source_content"] == "" || decoded["source_content"] == nil {
 		t.Error("expected the local spec file's content to be sent as source_content")
 	}
-	if !strings.Contains(out, "New service") || !strings.Contains(out, "plan-1") {
+	if !strings.Contains(out, "create_service") || !strings.Contains(out, "plan-1") {
 		t.Errorf("expected a new-service summary naming the plan ID, got %q", out)
+	}
+	if !strings.Contains(out, "Run `fused-cli import apply`") {
+		t.Errorf("expected the summary to name the installed CLI binary, got %q", out)
 	}
 
 	receiptPath := filepath.Join(dir, ".fused/.state/import.plan.json")
@@ -85,8 +90,27 @@ func TestBuildSpecImportRequestRequiresSlug(t *testing.T) {
 	}
 
 	_, err := buildSpecImportRequest(specPath, importSpecPlanOptions{name: "Widgets"})
-	if err == nil || !strings.Contains(err.Error(), "slug") {
-		t.Fatalf("expected a missing-slug error, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "--slug") {
+		t.Fatalf("expected a required-slug error, got %v", err)
+	}
+}
+
+func TestBuildSpecImportRequestUsesURLFlagAndExplicitVersion(t *testing.T) {
+	req, err := buildSpecImportRequest("", importSpecPlanOptions{
+		name: "Events", slug: "events", url: "https://example.test/asyncapi.yaml", version: "2026-07",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.SourceURL != "https://example.test/asyncapi.yaml" || req.Version != "2026-07" || req.SourceContent != "" {
+		t.Fatalf("unexpected URL import request: %+v", req)
+	}
+}
+
+func TestBuildSpecImportRequestRejectsPositionalURL(t *testing.T) {
+	_, err := buildSpecImportRequest("https://example.test/schema", importSpecPlanOptions{name: "Events", slug: "events"})
+	if err == nil || !strings.Contains(err.Error(), "--url") {
+		t.Fatalf("expected positional URLs to direct users to --url, got %v", err)
 	}
 }
 
@@ -108,7 +132,8 @@ func TestImportPlanPrintsUsageWarningWhenNonEmpty(t *testing.T) {
 			"slug": "widgets",
 			"name": "Widgets",
 			"is_new_service": false,
-			"resolved_strategy": "modify_existing",
+			"action": "update_version",
+			"target_version": "1.0",
 			"diff": {"added": 0, "changed": 1, "removed": 0, "changed_names": ["listWidgets"]},
 			"usage": {
 				"sdks": [{"id": "sdk-1", "name": "widgets-sdk", "uses_changed_endpoint": true}],
@@ -160,7 +185,7 @@ func TestImportApplyUsesReceiptWithoutReplanning(t *testing.T) {
 			t.Fatalf("decode body: %v", err)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"status":"applied","plan_id":"plan-3","service_id":"svc-1","is_new_service":false,"resolved_strategy":"modify_existing","version":"2026-07-14"}`))
+		w.Write([]byte(`{"status":"applied","plan_id":"plan-3","service_id":"svc-1","is_new_service":false,"action":"update_version","version":"2026-07-14","revision":2}`))
 	}))
 	defer server.Close()
 
@@ -174,6 +199,9 @@ func TestImportApplyUsesReceiptWithoutReplanning(t *testing.T) {
 	}
 	if !strings.Contains(out, "svc-1") || !strings.Contains(out, "2026-07-14") {
 		t.Errorf("expected apply result naming service/version, got %q", out)
+	}
+	if !strings.Contains(out, "revision 2") {
+		t.Errorf("expected apply result naming the internal revision, got %q", out)
 	}
 }
 

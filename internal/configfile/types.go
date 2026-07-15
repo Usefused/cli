@@ -21,11 +21,29 @@ type WorkspaceConfig struct {
 	Deprecations []WorkspaceDeprecationDirective `yaml:"deprecations,omitempty" json:"deprecations,omitempty"`
 }
 
-// WorkspaceService represents the allowed and default versions for a service in a workspace.
+// WorkspaceService represents service versions enabled for a workspace.
 type WorkspaceService struct {
-	ServiceID string   `yaml:"service_id,omitempty" json:"service_id,omitempty"`
-	Versions  []string `yaml:"versions" json:"versions"`
-	Default   string   `yaml:"default" json:"default"`
+	ServiceID     string         `yaml:"service_id,omitempty" json:"service_id,omitempty"`
+	Versions      []string       `yaml:"versions,omitempty" json:"versions,omitempty"`
+	RuntimeConfig *RuntimeConfig `yaml:"runtime_config,omitempty" json:"runtime_config,omitempty"`
+}
+
+type RuntimeConfig struct {
+	BaseURL             string                       `yaml:"base_url,omitempty" json:"base_url,omitempty"`
+	DefaultHeaders      map[string]string            `yaml:"default_headers,omitempty" json:"default_headers,omitempty"`
+	Webhook             *WebhookConfig               `yaml:"webhook,omitempty" json:"webhook,omitempty"`
+	Pagination          *PaginationConfig            `yaml:"pagination,omitempty" json:"pagination,omitempty"`
+	PaginationOverrides map[string]*PaginationConfig `yaml:"pagination_overrides,omitempty" json:"pagination_overrides,omitempty"`
+}
+
+type WebhookConfig struct {
+	SigningSecret string `yaml:"signing_secret,omitempty" json:"signing_secret,omitempty"`
+}
+
+type PaginationConfig struct {
+	Type          string `yaml:"type" json:"type"`
+	CursorField   string `yaml:"cursor_field,omitempty" json:"cursor_field,omitempty"`
+	NextPageField string `yaml:"next_page_field,omitempty" json:"next_page_field,omitempty"`
 }
 
 // WorkspaceDeprecationDirective keeps deprecation as explicit config intent,
@@ -51,6 +69,7 @@ type SDKConfig struct {
 type SDKService struct {
 	Version         string   `yaml:"version" json:"version"`
 	Operations      []string `yaml:"operations" json:"operations"`
+	Webhooks        []string `yaml:"webhooks,omitempty" json:"webhooks,omitempty"`
 	LegacyEndpoints []string `yaml:"endpoints,omitempty" json:"-"`
 }
 

@@ -25,13 +25,14 @@ func TestPlanSpecImport_PostsToImportPlanEndpoint(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(api.SpecImportPlanResponse{
-			PlanID:           "plan-1",
-			SourceHash:       "hash-1",
-			ServiceID:        "svc-1",
-			Slug:             "widgets",
-			Name:             "Widgets",
-			IsNewService:     false,
-			ResolvedStrategy: "modify_existing",
+			PlanID:        "plan-1",
+			SourceHash:    "hash-1",
+			ServiceID:     "svc-1",
+			Slug:          "widgets",
+			Name:          "Widgets",
+			IsNewService:  false,
+			Action:        "update_version",
+			TargetVersion: "1.0",
 			Diff: api.SpecImportDiff{
 				Added: 1, Changed: 2, Removed: 0,
 				ChangedNames: []string{"listWidgets"},
@@ -48,6 +49,7 @@ func TestPlanSpecImport_PostsToImportPlanEndpoint(t *testing.T) {
 	resp, err := client.PlanSpecImport(api.SpecImportPlanRequest{
 		Name:          "Widgets",
 		Slug:          "widgets",
+		Version:       "1.0",
 		SourceContent: `{"openapi":"3.0.0"}`,
 	})
 	if err != nil {
@@ -65,7 +67,10 @@ func TestPlanSpecImport_PostsToImportPlanEndpoint(t *testing.T) {
 	if decoded.Name != "Widgets" || decoded.Slug != "widgets" {
 		t.Errorf("expected name/slug to reach the server, got %+v", decoded)
 	}
-	if resp.PlanID != "plan-1" || resp.ResolvedStrategy != "modify_existing" {
+	if decoded.Version != "1.0" {
+		t.Errorf("expected explicit version to reach the server, got %+v", decoded)
+	}
+	if resp.PlanID != "plan-1" || resp.Action != "update_version" || resp.TargetVersion != "1.0" {
 		t.Errorf("unexpected response: %+v", resp)
 	}
 	if resp.Usage == nil || len(resp.Usage.SDKs) != 1 || !resp.Usage.SDKs[0].UsesChangedEndpoint {
@@ -105,7 +110,7 @@ func TestApplySpecImport_PostsToImportApplyEndpoint(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(api.SpecImportApplyResponse{
 			Status: "applied", PlanID: "plan-1", ServiceID: "svc-1",
-			IsNewService: false, ResolvedStrategy: "modify_existing", Version: "2026-07-14",
+			IsNewService: false, Action: "update_version", Version: "2026-07-14", Revision: 2,
 		})
 	}))
 	defer srv.Close()
@@ -121,7 +126,7 @@ func TestApplySpecImport_PostsToImportApplyEndpoint(t *testing.T) {
 	if decoded.PlanID != "plan-1" || decoded.SourceHash != "hash-1" {
 		t.Errorf("expected plan_id/source_hash to reach the server, got %+v", decoded)
 	}
-	if resp.Status != "applied" || resp.Version != "2026-07-14" {
+	if resp.Status != "applied" || resp.Action != "update_version" || resp.Version != "2026-07-14" || resp.Revision != 2 {
 		t.Errorf("unexpected response: %+v", resp)
 	}
 }

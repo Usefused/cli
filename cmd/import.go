@@ -24,6 +24,8 @@ GraphQL SDL, and introspectable GraphQL endpoints are detected automatically.`,
 var (
 	importPlanName       string
 	importPlanSlug       string
+	importPlanURL        string
+	importPlanVersion    string
 	importPlanPublic     bool
 	importPlanCategory   string
 	importPlanReceiptOut string
@@ -31,17 +33,23 @@ var (
 )
 
 var importPlanCmd = &cobra.Command{
-	Use:   "plan <spec-path-or-url>",
+	Use:   "plan [spec-path]",
 	Short: "Plan a non-interactive spec import",
 	Long: `Parses the given spec (a local file path or an http(s) URL), resolves
-whether it targets a new or existing service (via --slug), diffs it against
-the live service if one exists, and auto-selects a publish strategy. Read-only
--- nothing is written except the plan record itself.`,
-	Args: cobra.ExactArgs(1),
+whether it targets a new or existing service, and diffs it against the exact
+provider version. Use --url for an online source. Read-only -- nothing is
+written except the plan record itself.`,
+	Args: cobra.MaximumNArgs(1),
 	RunE: WithTelemetry("cli.import.plan", func(cmd *cobra.Command, args []string) error {
-		return runImportPlan(cmd, args[0], importSpecPlanOptions{
+		specPath := ""
+		if len(args) == 1 {
+			specPath = args[0]
+		}
+		return runImportPlan(cmd, specPath, importSpecPlanOptions{
 			name:       importPlanName,
 			slug:       importPlanSlug,
+			url:        importPlanURL,
+			version:    importPlanVersion,
 			isPublic:   importPlanPublic,
 			category:   importPlanCategory,
 			receiptOut: importPlanReceiptOut,
@@ -60,9 +68,9 @@ var importApplyCmd = &cobra.Command{
 	Use:   "apply",
 	Short: "Apply a previously planned spec import",
 	Long: `Commits the plan produced by "import plan": a new service is created live
-immediately; an existing service is appended and published in the same
-request, with the strategy plan already resolved. Defaults to the most
-recent local plan receipt.`,
+immediately; an existing provider version is replaced by a new internal
+revision, while a different provider version is created alongside it. Defaults
+to the most recent local plan receipt.`,
 	RunE: WithTelemetry("cli.import.apply", func(cmd *cobra.Command, args []string) error {
 		return runImportApply(cmd, importSpecApplyOptions{
 			planID:      importApplyPlanID,
@@ -78,12 +86,14 @@ func init() {
 	importCmd.AddCommand(importPlanCmd)
 	importPlanCmd.Flags().StringVar(&importPlanName, "name", "", "Service name (required)")
 	importPlanCmd.Flags().StringVar(&importPlanSlug, "slug", "", "Service slug to create or update (required; unique within your account)")
+	importPlanCmd.MarkFlagRequired("slug")
+	importPlanCmd.Flags().StringVar(&importPlanURL, "url", "", "Import from an online http(s) source")
+	importPlanCmd.Flags().StringVar(&importPlanVersion, "version", "", "Provider version when the source does not declare one")
 	importPlanCmd.Flags().BoolVar(&importPlanPublic, "public", false, "Mark a new service public (default: private)")
 	importPlanCmd.Flags().StringVar(&importPlanCategory, "category", "", "Category for a new service")
 	importPlanCmd.Flags().StringVar(&importPlanReceiptOut, "receipt-out", "", "Write the plan receipt to a specific path")
 	importPlanCmd.Flags().BoolVar(&importPlanJSON, "json", false, "Print the raw plan response as JSON instead of a summary")
 	importPlanCmd.MarkFlagRequired("name")
-	importPlanCmd.MarkFlagRequired("slug")
 
 	importCmd.AddCommand(importApplyCmd)
 	importApplyCmd.Flags().StringVar(&importApplyPlanID, "plan-id", "", "Apply a specific remote plan ID (requires --source-hash)")

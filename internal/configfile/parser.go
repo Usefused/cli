@@ -223,11 +223,6 @@ func validateSDKService(name string, svc SDKService) error {
 }
 
 func validateWorkspaceConfig(cfg *WorkspaceConfig) error {
-	for svcName, svc := range cfg.Services {
-		if len(svc.Versions) == 0 {
-			return fmt.Errorf("workspace service %q requires at least one allowed version", svcName)
-		}
-	}
 	for _, deprecation := range cfg.Deprecations {
 		if deprecation.ServiceID == "" || deprecation.EffectiveAt == "" {
 			return fmt.Errorf("workspace deprecations require service_id and effective_at")

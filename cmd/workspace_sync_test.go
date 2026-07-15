@@ -8,14 +8,22 @@ import (
 	"github.com/Usefused/cli/internal/configfile"
 )
 
+func remoteVersions(values ...string) []api.WorkspaceServiceVersion {
+	out := make([]api.WorkspaceServiceVersion, len(values))
+	for i, value := range values {
+		out[i] = api.WorkspaceServiceVersion{Version: value}
+	}
+	return out
+}
+
 // TestMergeWorkspaceServicesFromRemote_AddsNewRemoteService is Task 4's core
-// AC (engine_workspace_registration_plan.md): a service activated remotely
+// AC: a service enabled remotely
 // but absent locally gets added, with the Engine's data as the source of
-// truth for ServiceID/Versions/Default.
+// truth for ServiceID/Versions.
 func TestMergeWorkspaceServicesFromRemote_AddsNewRemoteService(t *testing.T) {
 	cfg := &configfile.WorkspaceConfig{Services: map[string]configfile.WorkspaceService{}}
 	remote := []api.WorkspaceService{
-		{ServiceName: "stripe", ServiceID: "svc-1", Version: "2026-01-01", Versions: []string{"2026-01-01"}},
+		{ServiceName: "stripe", ServiceID: "svc-1", Version: "2026-01-01", EnabledVersions: remoteVersions("2026-01-01")},
 	}
 
 	result := mergeWorkspaceServicesFromRemote(cfg, remote)
@@ -30,7 +38,7 @@ func TestMergeWorkspaceServicesFromRemote_AddsNewRemoteService(t *testing.T) {
 	if !ok {
 		t.Fatal("expected stripe to be added to cfg.Services")
 	}
-	if got.ServiceID != "svc-1" || got.Default != "2026-01-01" {
+	if got.ServiceID != "svc-1" || !reflect.DeepEqual(got.Versions, []string{"2026-01-01"}) {
 		t.Errorf("unexpected merged entry: %+v", got)
 	}
 }
@@ -40,10 +48,10 @@ func TestMergeWorkspaceServicesFromRemote_AddsNewRemoteService(t *testing.T) {
 // the remote gets fully overwritten, not merged field-by-field.
 func TestMergeWorkspaceServicesFromRemote_RemoteWinsOnConflict(t *testing.T) {
 	cfg := &configfile.WorkspaceConfig{Services: map[string]configfile.WorkspaceService{
-		"stripe": {ServiceID: "stale-id", Versions: []string{"2025-01-01"}, Default: "2025-01-01"},
+		"stripe": {ServiceID: "stale-id", Versions: []string{"2025-01-01"}},
 	}}
 	remote := []api.WorkspaceService{
-		{ServiceName: "stripe", ServiceID: "svc-1", Version: "2026-01-01", Versions: []string{"2025-01-01", "2026-01-01"}},
+		{ServiceName: "stripe", ServiceID: "svc-1", Version: "2026-01-01", EnabledVersions: remoteVersions("2025-01-01", "2026-01-01")},
 	}
 
 	result := mergeWorkspaceServicesFromRemote(cfg, remote)
@@ -52,7 +60,7 @@ func TestMergeWorkspaceServicesFromRemote_RemoteWinsOnConflict(t *testing.T) {
 		t.Errorf("expected Updated=[stripe], got %v", result.Updated)
 	}
 	got := cfg.Services["stripe"]
-	if got.ServiceID != "svc-1" || got.Default != "2026-01-01" {
+	if got.ServiceID != "svc-1" || !sameStringSet(got.Versions, []string{"2025-01-01", "2026-01-01"}) {
 		t.Errorf("expected remote values to win, got %+v", got)
 	}
 }
@@ -62,10 +70,10 @@ func TestMergeWorkspaceServicesFromRemote_RemoteWinsOnConflict(t *testing.T) {
 // changed shouldn't list every service as "updated".
 func TestMergeWorkspaceServicesFromRemote_UnchangedServiceNotReportedAsUpdated(t *testing.T) {
 	cfg := &configfile.WorkspaceConfig{Services: map[string]configfile.WorkspaceService{
-		"stripe": {ServiceID: "svc-1", Versions: []string{"2026-01-01"}, Default: "2026-01-01"},
+		"stripe": {ServiceID: "svc-1", Versions: []string{"2026-01-01"}},
 	}}
 	remote := []api.WorkspaceService{
-		{ServiceName: "stripe", ServiceID: "svc-1", Version: "2026-01-01", Versions: []string{"2026-01-01"}},
+		{ServiceName: "stripe", ServiceID: "svc-1", Version: "2026-01-01", EnabledVersions: remoteVersions("2026-01-01")},
 	}
 
 	result := mergeWorkspaceServicesFromRemote(cfg, remote)
@@ -80,10 +88,10 @@ func TestMergeWorkspaceServicesFromRemote_UnchangedServiceNotReportedAsUpdated(t
 // ListActivatedServices has no guaranteed ordering.
 func TestMergeWorkspaceServicesFromRemote_UnchangedIgnoresVersionOrder(t *testing.T) {
 	cfg := &configfile.WorkspaceConfig{Services: map[string]configfile.WorkspaceService{
-		"stripe": {ServiceID: "svc-1", Versions: []string{"2026-01-01", "2025-06-01"}, Default: "2026-01-01"},
+		"stripe": {ServiceID: "svc-1", Versions: []string{"2026-01-01", "2025-06-01"}},
 	}}
 	remote := []api.WorkspaceService{
-		{ServiceName: "stripe", ServiceID: "svc-1", Version: "2026-01-01", Versions: []string{"2025-06-01", "2026-01-01"}},
+		{ServiceName: "stripe", ServiceID: "svc-1", Version: "2026-01-01", EnabledVersions: remoteVersions("2025-06-01", "2026-01-01")},
 	}
 
 	result := mergeWorkspaceServicesFromRemote(cfg, remote)
@@ -98,11 +106,11 @@ func TestMergeWorkspaceServicesFromRemote_UnchangedIgnoresVersionOrder(t *testin
 // as activated must be dropped, not just flagged.
 func TestMergeWorkspaceServicesFromRemote_RemovesLocalEntryNoLongerActivated(t *testing.T) {
 	cfg := &configfile.WorkspaceConfig{Services: map[string]configfile.WorkspaceService{
-		"stripe": {ServiceID: "svc-1", Versions: []string{"2026-01-01"}, Default: "2026-01-01"},
-		"legacy": {ServiceID: "svc-2", Versions: []string{"1.0.0"}, Default: "1.0.0"},
+		"stripe": {ServiceID: "svc-1", Versions: []string{"2026-01-01"}},
+		"legacy": {ServiceID: "svc-2", Versions: []string{"1.0.0"}},
 	}}
 	remote := []api.WorkspaceService{
-		{ServiceName: "stripe", ServiceID: "svc-1", Version: "2026-01-01", Versions: []string{"2026-01-01"}},
+		{ServiceName: "stripe", ServiceID: "svc-1", Version: "2026-01-01", EnabledVersions: remoteVersions("2026-01-01")},
 	}
 
 	result := mergeWorkspaceServicesFromRemote(cfg, remote)
@@ -118,21 +126,17 @@ func TestMergeWorkspaceServicesFromRemote_RemovesLocalEntryNoLongerActivated(t *
 	}
 }
 
-// TestMergeWorkspaceServicesFromRemote_DefaultAlwaysIncludedInVersions
-// guards against a Versions list that omits the currently-pinned Version --
-// a config where Default isn't a member of Versions would misrepresent what
-// the Engine actually enforces.
-func TestMergeWorkspaceServicesFromRemote_DefaultAlwaysIncludedInVersions(t *testing.T) {
+func TestMergeWorkspaceServicesFromRemote_LatestVersionIncludedInVersions(t *testing.T) {
 	cfg := &configfile.WorkspaceConfig{Services: map[string]configfile.WorkspaceService{}}
 	remote := []api.WorkspaceService{
-		{ServiceName: "stripe", ServiceID: "svc-1", Version: "2026-01-01", Versions: []string{}},
+		{ServiceName: "stripe", ServiceID: "svc-1", Version: "2026-01-01"},
 	}
 
 	mergeWorkspaceServicesFromRemote(cfg, remote)
 
 	got := cfg.Services["stripe"]
 	if !containsString(got.Versions, "2026-01-01") {
-		t.Errorf("expected Default version to be included in Versions, got %v", got.Versions)
+		t.Errorf("expected latest version to be included in Versions, got %v", got.Versions)
 	}
 }
 
@@ -140,7 +144,7 @@ func TestMergeWorkspaceServicesFromRemote_DefaultAlwaysIncludedInVersions(t *tes
 // the edge case of a workspace with nothing currently activated.
 func TestMergeWorkspaceServicesFromRemote_EmptyRemoteRemovesEverything(t *testing.T) {
 	cfg := &configfile.WorkspaceConfig{Services: map[string]configfile.WorkspaceService{
-		"stripe": {ServiceID: "svc-1", Versions: []string{"2026-01-01"}, Default: "2026-01-01"},
+		"stripe": {ServiceID: "svc-1", Versions: []string{"2026-01-01"}},
 	}}
 
 	result := mergeWorkspaceServicesFromRemote(cfg, nil)
@@ -159,7 +163,7 @@ func TestMergeWorkspaceServicesFromRemote_EmptyRemoteRemovesEverything(t *testin
 func TestMergeWorkspaceServicesFromRemote_NilServicesMapInitialized(t *testing.T) {
 	cfg := &configfile.WorkspaceConfig{}
 	remote := []api.WorkspaceService{
-		{ServiceName: "stripe", ServiceID: "svc-1", Version: "2026-01-01", Versions: []string{"2026-01-01"}},
+		{ServiceName: "stripe", ServiceID: "svc-1", Version: "2026-01-01", EnabledVersions: remoteVersions("2026-01-01")},
 	}
 
 	mergeWorkspaceServicesFromRemote(cfg, remote)

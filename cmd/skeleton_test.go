@@ -83,7 +83,7 @@ func TestWorkspaceServiceAddCmdSkeleton(t *testing.T) {
 }
 
 func TestSdkAddOperationCmdSkeleton(t *testing.T) {
-	RootCmd.SetArgs([]string{"sdk", "add-operation", "okta", "listLogEvents", "--interactive", "--apply", "--download"})
+	RootCmd.SetArgs([]string{"sdk", "operation", "add", "okta", "listLogEvents", "--interactive", "--apply", "--download"})
 
 	origRunE := sdkAddOperationCmd.RunE
 	defer func() { sdkAddOperationCmd.RunE = origRunE }()
@@ -107,7 +107,7 @@ func TestSdkAddOperationCmdSkeleton(t *testing.T) {
 	out := new(bytes.Buffer)
 	RootCmd.SetOut(out)
 	if err := RootCmd.Execute(); err != nil {
-		t.Fatalf("unexpected error executing sdk add-operation: %v", err)
+		t.Fatalf("unexpected error executing sdk operation add: %v", err)
 	}
 }
 

@@ -118,12 +118,17 @@ var sdkDownloadCmd = &cobra.Command{
 	}),
 }
 
+var sdkServiceCmd = &cobra.Command{
+	Use:   "service",
+	Short: "Manage services in SDK config",
+}
+
 var sdkAddServiceVersion string
 var sdkAddServiceCmd = &cobra.Command{
-	Use:   "add-service <service>",
+	Use:   "add <service>",
 	Short: "Add a service to SDK config",
 	Args:  cobra.ExactArgs(1),
-	RunE: WithTelemetry("cli.sdk.add-service", func(cmd *cobra.Command, args []string) error {
+	RunE: WithTelemetry("cli.sdk.service.add", func(cmd *cobra.Command, args []string) error {
 		if err := addSDKService(ConfigFile, args[0], sdkAddServiceVersion); err != nil {
 			return err
 		}
@@ -132,11 +137,16 @@ var sdkAddServiceCmd = &cobra.Command{
 	}),
 }
 
+var sdkOperationCmd = &cobra.Command{
+	Use:   "operation",
+	Short: "Manage operations in SDK config",
+}
+
 var sdkAddOperationInteractive bool
 var sdkAddOperationApply bool
 var sdkAddOperationDownload bool
 var sdkAddOperationCmd = &cobra.Command{
-	Use:   "add-operation <service> [operationId...]",
+	Use:   "add <service> [operationId...]",
 	Short: "Add one or more operationIds to SDK config",
 	Args: func(cmd *cobra.Command, args []string) error {
 		if len(args) == 0 && sdkAddOperationInteractive {
@@ -147,7 +157,7 @@ var sdkAddOperationCmd = &cobra.Command{
 		}
 		return nil
 	},
-	RunE: WithTelemetry("cli.sdk.add-operation", func(cmd *cobra.Command, args []string) error {
+	RunE: WithTelemetry("cli.sdk.operation.add", func(cmd *cobra.Command, args []string) error {
 		serviceName, operations := "", []string{}
 		if len(args) > 0 {
 			serviceName = args[0]
@@ -177,6 +187,77 @@ var sdkAddOperationCmd = &cobra.Command{
 			}
 			return runConfigApply(applyOptions{filter: filterSDK, download: sdkAddOperationDownload})
 		}
+		return nil
+	}),
+}
+
+var sdkRemoveOperationCmd = &cobra.Command{
+	Use:   "remove <service> <operationId...>",
+	Short: "Remove one or more operationIds from SDK config",
+	Args:  cobra.MinimumNArgs(2),
+	RunE: WithTelemetry("cli.sdk.operation.remove", func(cmd *cobra.Command, args []string) error {
+		operations := append([]string(nil), args[1:]...)
+		if err := removeSDKOperations(ConfigFile, args[0], operations); err != nil {
+			return err
+		}
+		fmt.Printf("Removed %d operationId(s) from service %s: %s\n", len(operations), args[0], strings.Join(operations, ", "))
+		return nil
+	}),
+}
+
+var sdkWebhookCmd = &cobra.Command{
+	Use:   "webhook",
+	Short: "Manage webhooks in SDK config",
+}
+
+var sdkAddWebhookInteractive bool
+var sdkAddWebhookCmd = &cobra.Command{
+	Use:   "add <service> [webhookId...]",
+	Short: "Add one or more webhooks to SDK config",
+	Args: func(cmd *cobra.Command, args []string) error {
+		if len(args) == 0 && sdkAddWebhookInteractive {
+			return nil
+		}
+		if len(args) < 1 {
+			return fmt.Errorf("service is required unless --interactive is set")
+		}
+		return nil
+	},
+	RunE: WithTelemetry("cli.sdk.webhook.add", func(cmd *cobra.Command, args []string) error {
+		serviceName, webhooks := "", []string{}
+		if len(args) > 0 {
+			serviceName = args[0]
+			webhooks = append(webhooks, args[1:]...)
+		}
+		if len(webhooks) == 0 && sdkAddWebhookInteractive {
+			selectedService, selectedWebhooks, err := selectSDKWebhooksInteractively(ConfigFile, serviceName)
+			if err != nil {
+				return err
+			}
+			serviceName = selectedService
+			webhooks = append(webhooks, selectedWebhooks...)
+		}
+		if len(webhooks) == 0 {
+			return fmt.Errorf("at least one webhook is required unless --interactive is set")
+		}
+		if err := addSDKWebhooks(ConfigFile, serviceName, webhooks); err != nil {
+			return err
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "Added %d webhook(s) to service %s: %s\n", len(webhooks), serviceName, strings.Join(webhooks, ", "))
+		return nil
+	}),
+}
+
+var sdkRemoveWebhookCmd = &cobra.Command{
+	Use:   "remove <service> <webhookId...>",
+	Short: "Remove one or more webhooks from SDK config",
+	Args:  cobra.MinimumNArgs(2),
+	RunE: WithTelemetry("cli.sdk.webhook.remove", func(cmd *cobra.Command, args []string) error {
+		webhooks := append([]string(nil), args[1:]...)
+		if err := removeSDKWebhooks(ConfigFile, args[0], webhooks); err != nil {
+			return err
+		}
+		fmt.Printf("Removed %d webhook(s) from service %s: %s\n", len(webhooks), args[0], strings.Join(webhooks, ", "))
 		return nil
 	}),
 }
@@ -218,6 +299,45 @@ func selectSDKOperationsInteractively(path, requestedService string) (string, []
 		return "", nil, err
 	}
 	return serviceName, operations, nil
+}
+
+func selectSDKWebhooksInteractively(path, requestedService string) (string, []string, error) {
+	cfg, err := loadSDKConfigForEdit(path)
+	if err != nil {
+		return "", nil, err
+	}
+	scanner := bufio.NewScanner(sdkInput)
+	serviceName, serviceVersion, err := chooseSDKService(cfg, requestedService, scanner)
+	if err != nil {
+		return "", nil, err
+	}
+	client, err := getAPIClient()
+	if err != nil {
+		return "", nil, err
+	}
+	serviceID, err := workspaceServiceID(client, serviceName)
+	if err != nil {
+		return "", nil, err
+	}
+	webhooks, err := client.FetchWebhooks(serviceID, serviceVersion)
+	if err != nil {
+		return "", nil, err
+	}
+	if len(webhooks) == 0 {
+		return "", nil, fmt.Errorf("no webhooks found for service %s version %s", serviceName, serviceVersion)
+	}
+	for i, webhook := range webhooks {
+		fmt.Printf("%d. %s\n", i+1, webhook.Name)
+	}
+	fmt.Print("Select webhooks (for example 1,3-4 or all): ")
+	if !scanner.Scan() {
+		return "", nil, fmt.Errorf("no webhook selected")
+	}
+	selectedNames, err := webhooksFromSelection(webhooks, scanner.Text())
+	if err != nil {
+		return "", nil, err
+	}
+	return serviceName, selectedNames, nil
 }
 
 func chooseSDKService(cfg *configfile.SDKConfig, requested string, scanner *bufio.Scanner) (string, string, error) {
@@ -296,12 +416,36 @@ func operationsFromSelection(endpoints []api.Integration, rawChoice string) ([]s
 	return operations, nil
 }
 
+func webhooksFromSelection(webhooks []api.Webhook, rawChoice string) ([]string, error) {
+	rawChoice = strings.TrimSpace(rawChoice)
+	if strings.EqualFold(rawChoice, "all") {
+		return webhookNames(webhooks), nil
+	}
+	indices, err := selectedIndices(rawChoice, len(webhooks))
+	if err != nil {
+		return nil, err
+	}
+	selected := make([]string, 0, len(indices))
+	for _, index := range indices {
+		selected = append(selected, webhooks[index].Name)
+	}
+	return selected, nil
+}
+
 func operationNames(endpoints []api.Integration) []string {
 	operations := make([]string, 0, len(endpoints))
 	for _, endpoint := range endpoints {
 		operations = append(operations, endpoint.Name)
 	}
 	return operations
+}
+
+func webhookNames(webhooks []api.Webhook) []string {
+	names := make([]string, 0, len(webhooks))
+	for _, webhook := range webhooks {
+		names = append(names, webhook.Name)
+	}
+	return names
 }
 
 func selectedIndices(rawChoice string, size int) ([]int, error) {
@@ -320,25 +464,25 @@ func selectedIndices(rawChoice string, size int) ([]int, error) {
 		}
 	}
 	if len(indices) == 0 {
-		return nil, fmt.Errorf("invalid operation selection")
+		return nil, fmt.Errorf("invalid selection")
 	}
 	return indices, nil
 }
 
 func indicesFromToken(token string, size int) ([]int, error) {
 	if token == "" {
-		return nil, fmt.Errorf("invalid operation selection")
+		return nil, fmt.Errorf("invalid selection")
 	}
 	if strings.Contains(token, "-") {
 		parts := strings.Split(token, "-")
 		if len(parts) != 2 {
-			return nil, fmt.Errorf("invalid operation selection")
+			return nil, fmt.Errorf("invalid selection")
 		}
 		return indexRange(parts[0], parts[1], size)
 	}
 	index, err := selectedIndex(token, size)
 	if err != nil {
-		return nil, fmt.Errorf("invalid operation selection")
+		return nil, fmt.Errorf("invalid selection")
 	}
 	return []int{index}, nil
 }
@@ -346,11 +490,11 @@ func indicesFromToken(token string, size int) ([]int, error) {
 func indexRange(startRaw, endRaw string, size int) ([]int, error) {
 	start, err := selectedIndex(startRaw, size)
 	if err != nil {
-		return nil, fmt.Errorf("invalid operation selection")
+		return nil, fmt.Errorf("invalid selection")
 	}
 	end, err := selectedIndex(endRaw, size)
 	if err != nil || end < start {
-		return nil, fmt.Errorf("invalid operation selection")
+		return nil, fmt.Errorf("invalid selection")
 	}
 	indices := make([]int, 0, end-start+1)
 	for index := start; index <= end; index++ {
@@ -365,20 +509,6 @@ func selectedIndex(rawChoice string, size int) (int, error) {
 		return 0, fmt.Errorf("selection out of range")
 	}
 	return choice - 1, nil
-}
-
-var sdkRemoveOperationCmd = &cobra.Command{
-	Use:   "remove-operation <service> <operationId...>",
-	Short: "Remove one or more operationIds from SDK config",
-	Args:  cobra.MinimumNArgs(2),
-	RunE: WithTelemetry("cli.sdk.remove-operation", func(cmd *cobra.Command, args []string) error {
-		operations := append([]string(nil), args[1:]...)
-		if err := removeSDKOperations(ConfigFile, args[0], operations); err != nil {
-			return err
-		}
-		fmt.Printf("Removed %d operationId(s) from service %s: %s\n", len(operations), args[0], strings.Join(operations, ", "))
-		return nil
-	}),
 }
 
 func init() {
@@ -398,13 +528,19 @@ func init() {
 	sdkCmd.AddCommand(sdkDownloadCmd)
 	sdkDownloadCmd.Flags().StringVarP(&sdkDownloadOutDir, "out", "o", ".", "Output directory for the SDK")
 
-	sdkCmd.AddCommand(sdkAddServiceCmd)
+	sdkCmd.AddCommand(sdkServiceCmd)
+	sdkServiceCmd.AddCommand(sdkAddServiceCmd)
 	sdkAddServiceCmd.Flags().StringVar(&sdkAddServiceVersion, "version", "", "Specific version to use for the service")
 
-	sdkCmd.AddCommand(sdkAddOperationCmd)
+	sdkCmd.AddCommand(sdkOperationCmd)
+	sdkOperationCmd.AddCommand(sdkAddOperationCmd)
 	sdkAddOperationCmd.Flags().BoolVarP(&sdkAddOperationInteractive, "interactive", "i", false, "Interactive operation selection")
 	sdkAddOperationCmd.Flags().BoolVar(&sdkAddOperationApply, "apply", false, "Apply changes after adding operation")
 	sdkAddOperationCmd.Flags().BoolVar(&sdkAddOperationDownload, "download", false, "Download SDK after apply (implies --apply)")
+	sdkOperationCmd.AddCommand(sdkRemoveOperationCmd)
 
-	sdkCmd.AddCommand(sdkRemoveOperationCmd)
+	sdkCmd.AddCommand(sdkWebhookCmd)
+	sdkWebhookCmd.AddCommand(sdkAddWebhookCmd)
+	sdkAddWebhookCmd.Flags().BoolVarP(&sdkAddWebhookInteractive, "interactive", "i", false, "Interactive webhook selection")
+	sdkWebhookCmd.AddCommand(sdkRemoveWebhookCmd)
 }

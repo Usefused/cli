@@ -162,14 +162,24 @@ type Integration struct {
 }
 
 type WorkspaceService struct {
-	ID          string   `json:"id"`
-	WorkspaceID string   `json:"workspace_id"`
-	ServiceID   string   `json:"service_id"`
-	Version     string   `json:"version"`
-	Versions    []string `json:"versions"`
-	ServiceName string   `json:"service_name"`
-	AddedBy     string   `json:"added_by"`
-	CreatedAt   string   `json:"created_at"`
+	ID               string                    `json:"id"`
+	WorkspaceID      string                    `json:"workspace_id"`
+	ServiceID        string                    `json:"service_id"`
+	ServiceVersionID string                    `json:"service_version_id"`
+	Version          string                    `json:"version"`
+	EnabledVersions  []WorkspaceServiceVersion `json:"enabled_versions"`
+	ServiceName      string                    `json:"service_name"`
+	AddedBy          string                    `json:"added_by"`
+	CreatedAt        string                    `json:"created_at"`
+}
+
+type WorkspaceServiceVersion struct {
+	ID               string `json:"id"`
+	ServiceVersionID string `json:"service_version_id"`
+	Version          string `json:"version"`
+	Status           string `json:"status"`
+	CreatedAt        string `json:"created_at"`
+	EnabledAt        string `json:"enabled_at"`
 }
 
 func (c *Client) ListWorkspaceServices(names ...string) ([]WorkspaceService, error) {
@@ -262,6 +272,33 @@ func (c *Client) SearchEndpoints(serviceID, version, q string) ([]Integration, e
 	}
 	err := c.GraphQL(query, map[string]interface{}{"serviceId": serviceID, "version": version, "q": q}, &resp)
 	return resp.SearchEndpoints, err
+}
+
+type Webhook struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+func (c *Client) FetchWebhooks(serviceID, version string) ([]Webhook, error) {
+	query := `
+		query FetchWebhooks($id: String!) {
+			service(id: $id) {
+				webhooks {
+					id
+					name
+					description
+				}
+			}
+		}
+	`
+	var resp struct {
+		Service struct {
+			Webhooks []Webhook `json:"webhooks"`
+		} `json:"service"`
+	}
+	err := c.GraphQL(query, map[string]interface{}{"id": serviceID}, &resp)
+	return resp.Service.Webhooks, err
 }
 
 type IntentService struct {
@@ -811,7 +848,8 @@ func (c *Client) ApplyWorkspaceConfig(planID, sourceHash string) (*ConfigApplyRe
 
 type SpecImportPlanRequest struct {
 	Name          string `json:"name"`
-	Slug          string `json:"slug,omitempty"`
+	Slug          string `json:"slug"`
+	Version       string `json:"version,omitempty"`
 	SourceURL     string `json:"source_url,omitempty"`
 	SourceContent string `json:"source_content,omitempty"`
 	IsPublic      bool   `json:"is_public,omitempty"`
@@ -845,15 +883,16 @@ type SpecImportUsage struct {
 }
 
 type SpecImportPlanResponse struct {
-	PlanID           string           `json:"plan_id"`
-	SourceHash       string           `json:"source_hash"`
-	ServiceID        string           `json:"service_id"`
-	Slug             string           `json:"slug"`
-	Name             string           `json:"name"`
-	IsNewService     bool             `json:"is_new_service"`
-	ResolvedStrategy string           `json:"resolved_strategy"`
-	Diff             SpecImportDiff   `json:"diff"`
-	Usage            *SpecImportUsage `json:"usage,omitempty"`
+	PlanID        string           `json:"plan_id"`
+	SourceHash    string           `json:"source_hash"`
+	ServiceID     string           `json:"service_id"`
+	Slug          string           `json:"slug"`
+	Name          string           `json:"name"`
+	IsNewService  bool             `json:"is_new_service"`
+	TargetVersion string           `json:"target_version"`
+	Action        string           `json:"action"`
+	Diff          SpecImportDiff   `json:"diff"`
+	Usage         *SpecImportUsage `json:"usage,omitempty"`
 }
 
 type SpecImportApplyRequest struct {
@@ -862,13 +901,14 @@ type SpecImportApplyRequest struct {
 }
 
 type SpecImportApplyResponse struct {
-	Status           string `json:"status"`
-	PlanID           string `json:"plan_id"`
-	ServiceID        string `json:"service_id"`
-	Slug             string `json:"slug"`
-	IsNewService     bool   `json:"is_new_service"`
-	ResolvedStrategy string `json:"resolved_strategy"`
-	Version          string `json:"version"`
+	Status       string `json:"status"`
+	PlanID       string `json:"plan_id"`
+	ServiceID    string `json:"service_id"`
+	Slug         string `json:"slug"`
+	IsNewService bool   `json:"is_new_service"`
+	Action       string `json:"action"`
+	Version      string `json:"version"`
+	Revision     int    `json:"revision"`
 }
 
 // PlanSpecImport computes (but does not commit) a non-interactive spec

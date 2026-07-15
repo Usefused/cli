@@ -23,6 +23,8 @@ const defaultImportReceiptPath = ".fused/.state/import.plan.json"
 type importSpecPlanOptions struct {
 	name       string
 	slug       string
+	url        string
+	version    string
 	isPublic   bool
 	category   string
 	receiptOut string
@@ -79,15 +81,29 @@ func buildSpecImportRequest(specArg string, opts importSpecPlanOptions) (api.Spe
 	req := api.SpecImportPlanRequest{
 		Name:     opts.name,
 		Slug:     slug,
+		Version:  strings.TrimSpace(opts.version),
 		IsPublic: opts.isPublic,
 		Category: opts.category,
 	}
 	if slug == "" {
 		return req, errors.New("--slug is required")
 	}
-	if isURL(specArg) {
-		req.SourceURL = specArg
+	sourceURL := strings.TrimSpace(opts.url)
+	if sourceURL != "" {
+		if specArg != "" {
+			return req, errors.New("provide either a local spec path or --url, not both")
+		}
+		if !isURL(sourceURL) {
+			return req, errors.New("--url must be an http(s) URL")
+		}
+		req.SourceURL = sourceURL
 		return req, nil
+	}
+	if specArg == "" {
+		return req, errors.New("a local spec path or --url is required")
+	}
+	if isURL(specArg) {
+		return req, errors.New("online sources must be passed with --url")
 	}
 	data, err := os.ReadFile(specArg)
 	if err != nil {
@@ -126,11 +142,7 @@ func maybeWriteImportPlanReceipt(receipt importPlanReceipt, opts importSpecPlanO
 }
 
 func printImportPlanSummary(out io.Writer, resp *api.SpecImportPlanResponse) {
-	if resp.IsNewService {
-		fmt.Fprintf(out, "New service %q (slug: %s) -- plan ID: %s\n", resp.Name, resp.Slug, resp.PlanID)
-	} else {
-		fmt.Fprintf(out, "Update to %q (slug: %s, strategy: %s) -- plan ID: %s\n", resp.Name, resp.Slug, resp.ResolvedStrategy, resp.PlanID)
-	}
+	fmt.Fprintf(out, "Plan %s for %q (slug: %s, version: %s) -- plan ID: %s\n", resp.Action, resp.Name, resp.Slug, resp.TargetVersion, resp.PlanID)
 	fmt.Fprintf(out, "Diff: %d added, %d changed, %d removed\n", resp.Diff.Added, resp.Diff.Changed, resp.Diff.Removed)
 	for _, name := range resp.Diff.ChangedNames {
 		fmt.Fprintf(out, "  ~ %s\n", name)
@@ -139,15 +151,13 @@ func printImportPlanSummary(out io.Writer, resp *api.SpecImportPlanResponse) {
 		fmt.Fprintf(out, "  - %s\n", name)
 	}
 	printImportUsageWarning(out, resp.Usage)
-	fmt.Fprintf(out, "Run `fused import apply` to commit this plan.\n")
+	fmt.Fprintf(out, "Run `fused-cli import apply` to commit this plan.\n")
 }
 
 // printImportUsageWarning names which SDKs/workspaces are pinned to the
-// version a modify_existing apply would touch -- informational only (never
+// provider version an update_version apply would touch -- informational only (never
 // fails the command, see Task 6's "plan && apply is safe to run unattended
-// in CI" requirement), and silent when the usage block is empty or absent
-// (a new service or a new_version strategy, neither of which affects an
-// existing consumer).
+// in CI" requirement), and silent when the usage block is empty or absent.
 func printImportUsageWarning(out io.Writer, usage *api.SpecImportUsage) {
 	if usage == nil || (len(usage.SDKs) == 0 && len(usage.Workspaces) == 0) {
 		return
@@ -204,11 +214,11 @@ func resolveImportApplyReceipt(opts importSpecApplyOptions) (importPlanReceipt, 
 
 func printImportApplyResult(out io.Writer, resp *api.SpecImportApplyResponse) {
 	if resp.IsNewService {
-		fmt.Fprintf(out, "Created service %s (version %s)\n", resp.ServiceID, resp.Version)
+		fmt.Fprintf(out, "Created service %s (version %s, revision %d)\n", resp.ServiceID, resp.Version, resp.Revision)
 		fmt.Fprintf(out, "Slug: %s\n", resp.Slug)
 		return
 	}
-	fmt.Fprintf(out, "Applied %s to service %s (version %s)\n", resp.ResolvedStrategy, resp.ServiceID, resp.Version)
+	fmt.Fprintf(out, "Applied %s to service %s (version %s, revision %d)\n", resp.Action, resp.ServiceID, resp.Version, resp.Revision)
 }
 
 func writeImportPlanReceiptFile(path string, receipt importPlanReceipt) error {

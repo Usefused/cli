@@ -58,7 +58,7 @@ The `fused-cli` requires an **API Key** and an **Engine URL** to connect to the 
 fused-cli config set api-key "sk_test_..."
 
 # Set the URL for your Fused Engine
-fused-cli config set engine-url "http://localhost:8080"
+fused-cli config set engine-url "http://localhost:8081"
 ```
 
 To view your current configuration, run:
@@ -115,34 +115,42 @@ The Registry auto-detects the source format; no `--format` flag is required. Sup
 - GraphQL SDL or an introspectable GraphQL endpoint
 
 ```bash
-# Plan: parse the spec, diff it against the live service (if one exists via --slug),
-# and pick a publish strategy -- read-only, nothing is written yet.
+# Plan a local file. Slug is required for both create and update plans.
 fused-cli import plan ./openapi.json --name "Internal Billing API" --slug billing-api
 
-# The same command accepts an online source directly.
-fused-cli import plan https://developer.example.com/asyncapi.yaml --name "Events API" --slug events-api
+# Import an online source with --url. Format is auto-detected.
+fused-cli import plan --url https://developer.example.com/asyncapi.yaml --name "Events API" --slug events-api
+
+# Versionless sources, including GraphQL SDL and Postman collections without a
+# version, require an explicit provider version.
+fused-cli import plan ./schema.graphql --name "Graph API" --slug graph-api --version 1.0
 
 # Apply: commit the most recently planned import.
 fused-cli import apply
 ```
 
-`<spec-path-or-url>` can be a local file path or an `http(s)://` URL -- a local file's contents are read and sent directly; a URL is processed by the Registry. Registry first tries a normal `GET`; if the response is not a recognized specification, it sends a standard GraphQL introspection query to the same URL. A successful introspection import also uses that URL as the service's GraphQL base URL.
+The optional positional argument is a local file path. Use `--url` for an online source. Registry first tries `GET`; if the response is not a recognized specification, it sends a standard GraphQL introspection query to the same URL. Successful introspection also uses that URL as the service's GraphQL base URL.
 
-`--slug` is required and is the service identity chosen by the producer. Slugs are unique within the producer's account, so another account may use the same slug under its own provider namespace. If the slug already exists in the caller's account, `import plan` updates that service; otherwise it creates a service with that exact slug. It never guesses from `--name`, because display names are not unique. Updating an existing service also auto-selects a strategy from the spec's declared version: the same version re-imported merges into the live default in place, while a bumped version becomes a new version alongside it. If anything (a generated SDK or workspace) is pinned to the version about to be modified, `import plan` reports it without blocking `plan` or `apply`.
+`--slug` is required and is resolved within the caller's Registry account. An existing match updates that service; an unknown slug creates a service with that slug. The provider-declared version is authoritative: importing the same version creates a new internal revision, while importing a different version creates that provider version. Fused never asks for a publish strategy and never invents a provider version. If a generated SDK or workspace uses the version being corrected, the plan reports that usage without blocking apply.
 
 ```bash
 fused-cli import plan ./openapi.json --name "Internal Billing API" --slug billing-api
-# Update to "Internal Billing API" (slug: billing-api, strategy: modify_existing) -- plan ID: 5e1e...
+# Plan update_version for "Internal Billing API" (slug: billing-api, version: 2026-07-14) -- plan ID: 5e1e...
 # Diff: 0 added, 2 changed, 0 removed
 #   ~ createInvoice
 #   ~ listInvoices
 # 1 SDKs / 0 workspaces use this version:
 #   - SDK billing-sdk (uses a changed/removed endpoint)
-# Run `fused import apply` to commit this plan.
+# Run `fused-cli import apply` to commit this plan.
 
 fused-cli import apply
-# Applied modify_existing to service 3f8c... (version 2026-07-14)
+# Applied update_version to service 3f8c... (version 2026-07-14, revision 2)
 ```
+
+When the CLI sends apply through Engine, Engine attempts to register the service
+in its sole workspace. This registration is best-effort: a workspace failure is
+logged and traced without changing the successful Registry apply response. Use
+the explicit workspace service-add flow when automatic registration fails.
 
 ### Command Reference
 
@@ -205,14 +213,14 @@ Download a generated SDK manually.
 |----------|-------|-------------|---------|
 | `--out` | `-o` | Output directory for the SDK | `"."` |
 
-#### `sdk add-service`
+#### `sdk service add`
 Add a service to an SDK configuration.
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
 | `--version` | | Specific version to use for the service | `""` |
 
-#### `sdk add-operation`
+#### `sdk operation add`
 Add an operation to an existing service in an SDK configuration.
 
 | Argument | Short | Description | Default |
@@ -221,7 +229,7 @@ Add an operation to an existing service in an SDK configuration.
 | `--apply` | | Apply changes after adding operation | `false` |
 | `--download` | | Download SDK after apply (implies `--apply`) | `false` |
 
-#### `sdk remove-operation`
+#### `sdk operation remove`
 Remove an operation from an existing service in an SDK configuration. Inherits global flags.
 
 #### `workspace plan`
@@ -298,21 +306,23 @@ Deprecate a specific version of a service in your Workspace configuration.
 | `--reason` | | Reason for deprecation | `""` |
 
 #### `import plan`
-Parse an auto-detected OpenAPI, AsyncAPI, Postman Collection, GraphQL SDL, or introspectable GraphQL endpoint (local file or URL), resolve create-vs-update via `--slug`, diff it against the live service, and pick a publish strategy. Read-only.
+Parse an auto-detected OpenAPI, AsyncAPI, Postman Collection, GraphQL SDL, or introspectable GraphQL endpoint, resolve the provider-version action, and diff it against the live service. Read-only apart from the plan record.
 
-Usage: `fused-cli import plan <spec-path-or-url>`
+Usage: `fused-cli import plan [spec-path]` or `fused-cli import plan --url <http(s)-url>`
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
 | `--name` | | Service name (required) | `""` |
-| `--slug` | | Service slug to create or update (required; unique within your account) | `""` |
+| `--slug` | | Account-scoped service slug to create or update (required) | `""` |
+| `--url` | | Import from an online HTTP(S) source | `""` |
+| `--version` | | Provider version when the source does not declare one | `""` |
 | `--public` | | Mark a new service public | `false` |
 | `--category` | | Category for a new service | `""` |
 | `--receipt-out` | | Write the plan receipt to a specific path | `""` |
 | `--json` | | Print the raw plan response as JSON instead of a summary | `false` |
 
 #### `import apply`
-Commit the plan produced by `import plan`: a new service goes live immediately; an existing service is appended and published in the same request, using the strategy already resolved at plan time.
+Commit the exact source reviewed by `import plan`. Service, provider version, contract rows, immutable internal revision, and plan completion are written atomically.
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
@@ -366,11 +376,11 @@ services:
 The `operations` values are OpenAPI `operationId`s for the selected service version. To browse available operations and add several at once:
 
 ```bash
-fused-cli sdk add-service okta -f .fused/sdks/my-sdk.yaml --version 2026-07-09
-fused-cli sdk add-operation -f .fused/sdks/my-sdk.yaml --interactive
+fused-cli sdk service add okta -f .fused/sdks/my-sdk.yaml --version 2026-07-09
+fused-cli sdk operation add -f .fused/sdks/my-sdk.yaml --interactive
 ```
 
-`add-service` creates or updates the service entry; the config becomes valid once that service has at least one operationId.
+`service add` creates or updates the service entry; the config becomes valid once that service has at least one operationId.
 
 ### Defining a Workspace Configuration
 

@@ -212,7 +212,7 @@ services:
     version: "2026-07-01"
     operations: ["listLogEvents"]
 `)
-	runCommandInDir(t, dir, "", []string{"sdk", "add-operation", "okta", "getUser", "listGroups", "-f", path})
+	runCommandInDir(t, dir, "", []string{"sdk", "operation", "add", "okta", "getUser", "listGroups", "-f", path})
 	afterAdd, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -221,7 +221,7 @@ services:
 		t.Fatalf("expected getUser and listGroups in YAML:\n%s", string(afterAdd))
 	}
 
-	runCommandInDir(t, dir, "", []string{"sdk", "remove-operation", "okta", "listLogEvents", "getUser", "-f", path})
+	runCommandInDir(t, dir, "", []string{"sdk", "operation", "remove", "okta", "listLogEvents", "getUser", "-f", path})
 	afterRemove, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -248,7 +248,7 @@ services:
     version: "2026-07-01"
     operations: ["listLogEvents"]
 `)
-	runCommandInDir(t, dir, "", []string{"sdk", "add-service", "github", "-f", path, "--version", "2026-06-15"})
+	runCommandInDir(t, dir, "", []string{"sdk", "service", "add", "github", "-f", path, "--version", "2026-06-15"})
 
 	after, err := os.ReadFile(path)
 	if err != nil {
@@ -287,7 +287,7 @@ func TestWorkspaceServicesListCallsEngine(t *testing.T) {
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
 		sawList = true
-		_, _ = w.Write([]byte(`[{"service_id":"00000000-0000-0000-0000-000000000001","service_name":"okta","version":"2026-07-01","versions":["2026-07-01", "2026-07-02"]}]`))
+		_, _ = w.Write([]byte(`[{"service_id":"00000000-0000-0000-0000-000000000001","service_name":"okta","version":"2026-07-01","enabled_versions":[{"version":"2026-07-01"},{"version":"2026-07-02"}]}]`))
 	}))
 	defer server.Close()
 
@@ -308,7 +308,7 @@ func TestWorkspaceServicesListInteractiveCallsEngine(t *testing.T) {
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
 		sawList = true
-		_, _ = w.Write([]byte(`[{"service_id":"00000000-0000-0000-0000-000000000001","service_name":"okta","version":"2026-07-01","versions":["2026-07-01", "2026-07-02"]}]`))
+		_, _ = w.Write([]byte(`[{"service_id":"00000000-0000-0000-0000-000000000001","service_name":"okta","version":"2026-07-01","enabled_versions":[{"version":"2026-07-01"},{"version":"2026-07-02"}]}]`))
 	}))
 	defer server.Close()
 
@@ -333,7 +333,7 @@ func TestWorkspaceHasCallsEngine(t *testing.T) {
 		}
 		name := r.URL.Query().Get("names")
 		if name == "okta" {
-			_, _ = w.Write([]byte(`[{"service_id":"00000000-0000-0000-0000-000000000001","service_name":"okta","version":"2026-07-01","versions":["2026-07-01", "2026-07-02"]}]`))
+			_, _ = w.Write([]byte(`[{"service_id":"00000000-0000-0000-0000-000000000001","service_name":"okta","version":"2026-07-01","enabled_versions":[{"version":"2026-07-01"},{"version":"2026-07-02"}]}]`))
 		} else {
 			_, _ = w.Write([]byte(`[]`))
 		}
@@ -408,7 +408,7 @@ services:
 	sdkInput = strings.NewReader("all\n")
 	t.Cleanup(func() { sdkInput = oldInput })
 
-	runCommandInDir(t, dir, server.URL, []string{"sdk", "add-operation", "--interactive", "-f", path})
+	runCommandInDir(t, dir, server.URL, []string{"sdk", "operation", "add", "--interactive", "-f", path})
 	if sawVersion != "2026-07-01" {
 		t.Fatalf("expected versioned endpoint search, got %q", sawVersion)
 	}
@@ -454,7 +454,7 @@ services:
 	sdkInput = strings.NewReader("2\n1-2\n")
 	t.Cleanup(func() { sdkInput = oldInput })
 
-	runCommandInDir(t, dir, server.URL, []string{"sdk", "add-operation", "--interactive", "-f", path})
+	runCommandInDir(t, dir, server.URL, []string{"sdk", "operation", "add", "--interactive", "-f", path})
 	after, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)

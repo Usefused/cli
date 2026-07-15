@@ -15,7 +15,7 @@ func addSDKService(path, serviceName, version string) error {
 		return errors.New("sdk config edit requires -f")
 	}
 	if version == "" {
-		return errors.New("sdk add-service requires --version")
+		return errors.New("sdk service add requires --version")
 	}
 	cfg, err := loadSDKConfigForEdit(path)
 	if err != nil {
@@ -113,4 +113,50 @@ func removeString(items []string, unwanted string) []string {
 		}
 	}
 	return out
+}
+
+func addSDKWebhooks(path, serviceName string, webhooks []string) error {
+	if path == "" {
+		return errors.New("sdk config edit requires -f")
+	}
+	cfg, err := loadSDKConfigForEdit(path)
+	if err != nil {
+		return err
+	}
+	service, ok := cfg.Services[serviceName]
+	if !ok {
+		return fmt.Errorf("service %s is not in this SDK config", serviceName)
+	}
+	if service.Webhooks == nil {
+		service.Webhooks = []string{}
+	}
+	for _, webhook := range webhooks {
+		if !containsString(service.Webhooks, webhook) {
+			service.Webhooks = append(service.Webhooks, webhook)
+		}
+	}
+	cfg.Services[serviceName] = service
+	return writeSDKConfig(path, cfg)
+}
+
+func removeSDKWebhooks(path, serviceName string, webhooks []string) error {
+	if path == "" {
+		return errors.New("sdk config edit requires -f")
+	}
+	cfg, err := loadSDKConfigForEdit(path)
+	if err != nil {
+		return err
+	}
+	service, ok := cfg.Services[serviceName]
+	if !ok {
+		return fmt.Errorf("service %s is not in this SDK config", serviceName)
+	}
+	if service.Webhooks == nil {
+		service.Webhooks = []string{}
+	}
+	for _, webhook := range webhooks {
+		service.Webhooks = removeString(service.Webhooks, webhook)
+	}
+	cfg.Services[serviceName] = service
+	return writeSDKConfig(path, cfg)
 }
