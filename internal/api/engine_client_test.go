@@ -109,3 +109,39 @@ func TestGenerateSDK_UnwrapsJSONErrorBody(t *testing.T) {
 		t.Fatalf("expected raw JSON wrapper to be removed, got %q", got)
 	}
 }
+
+func TestUpdateWorkspacePlanActionPatchesConfigPlanActions(t *testing.T) {
+	var reqMethod, reqPath string
+	var reqBody struct {
+		Actions []map[string]any `json:"actions"`
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reqMethod = r.Method
+		reqPath = r.URL.Path
+		if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"status":"updated","plan_id":"plan-123","revision":2}`))
+	}))
+	defer srv.Close()
+
+	client := api.NewClient(srv.URL, "test-key")
+	actions := []map[string]any{
+		{"id": "keep", "decision": ""},
+		{"id": "remove", "requires_decision": true},
+	}
+	if err := client.UpdateWorkspacePlanAction("plan-123", actions, "remove", "force_remove"); err != nil {
+		t.Fatalf("UpdateWorkspacePlanAction: %v", err)
+	}
+
+	if reqMethod != http.MethodPatch {
+		t.Fatalf("expected PATCH, got %s", reqMethod)
+	}
+	if reqPath != "/config/plans/plan-123/actions" {
+		t.Fatalf("expected /config/plans/plan-123/actions, got %s", reqPath)
+	}
+	if got := reqBody.Actions[1]["decision"]; got != "force_remove" {
+		t.Fatalf("expected updated decision, got %#v in %#v", got, reqBody.Actions)
+	}
+}

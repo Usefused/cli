@@ -2,13 +2,17 @@ package cmd
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"strconv"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/spf13/cobra"
+
+	"github.com/Usefused/cli/internal/configfile"
 )
 
 var workspaceInput io.Reader = os.Stdin
@@ -160,14 +164,128 @@ var workspaceServiceAddCmd = &cobra.Command{
 	}),
 }
 
+func resolveForceRemoveServiceID(serviceName string) (string, error) {
+	if cfg, err := loadWorkspaceConfigForEdit(ConfigFile); err == nil {
+		if service := cfg.Services[serviceName]; service.ServiceID != "" {
+			return service.ServiceID, nil
+		}
+	}
+	if _, err := uuid.Parse(serviceName); err == nil {
+		return serviceName, nil
+	}
+	client, err := getAPIClient()
+	if err != nil {
+		return "", err
+	}
+	services, err := client.ListWorkspaceServices(serviceName)
+	if err != nil {
+		return "", err
+	}
+	for _, service := range services {
+		if service.ServiceName == serviceName {
+			return service.ServiceID, nil
+		}
+	}
+	return "", fmt.Errorf("service %s is not enabled in this workspace", serviceName)
+}
+
+func runForceRemoveWorkspace(serviceID string, version string) error {
+	client, err := getAPIClient()
+	if err != nil {
+		return err
+	}
+	cfg, err := configfile.ParseFile(ConfigFile)
+	if err != nil {
+		return err
+	}
+	raw, err := json.Marshal(cfg.Workspace)
+	if err != nil {
+		return err
+	}
+	planResp, err := client.PlanWorkspaceConfig(cfg.SourceHash, cfg.ConfigKey, raw)
+	if err != nil {
+		return err
+	}
+	actions, actionID, err := forceRemovePlanAction(planResp.Summary, serviceID, version)
+	if err != nil {
+		return err
+	}
+	if actionID != "" {
+		if err := client.UpdateWorkspacePlanAction(planResp.PlanID, actions, actionID, "force_remove"); err != nil {
+			return err
+		}
+	}
+
+	sourceHash := planResp.SourceHash
+	if sourceHash == "" {
+		sourceHash = cfg.SourceHash
+	}
+	_, err = client.ApplyWorkspaceConfig(planResp.PlanID, sourceHash)
+	return err
+}
+
+func forceRemovePlanAction(summary map[string]interface{}, serviceID string, version string) ([]map[string]any, string, error) {
+	actions, err := workspacePlanActions(summary)
+	if err != nil {
+		return nil, "", err
+	}
+	for _, action := range actions {
+		actionID, _ := action["id"].(string)
+		if actionID != "" && actionRequiresForce(action, serviceID, version) {
+			return actions, actionID, nil
+		}
+	}
+	return actions, "", nil
+}
+
+func workspacePlanActions(summary map[string]interface{}) ([]map[string]any, error) {
+	rawActions, _ := summary["actions"].([]interface{})
+	actions := make([]map[string]any, 0, len(rawActions))
+	for _, raw := range rawActions {
+		action, ok := raw.(map[string]interface{})
+		if !ok {
+			return nil, fmt.Errorf("workspace plan action has unexpected shape")
+		}
+		actions = append(actions, action)
+	}
+	return actions, nil
+}
+
+func actionRequiresForce(action map[string]any, serviceID string, version string) bool {
+	requiresDecision, _ := action["requires_decision"].(bool)
+	actionType, _ := action["type"].(string)
+	actionServiceID, _ := action["service_id"].(string)
+	actionVersion, _ := action["version"].(string)
+	if !requiresDecision || actionServiceID != serviceID {
+		return false
+	}
+	if version == "" {
+		return actionType == "remove_service"
+	}
+	return actionType == "disable_service_version" && actionVersion == version
+}
+
 var workspaceServiceRemoveForce bool
 var workspaceServiceRemoveCmd = &cobra.Command{
 	Use:   "remove <service>",
 	Short: "Remove a service from workspace",
 	Args:  cobra.ExactArgs(1),
 	RunE: WithTelemetry("cli.workspace.service.remove", func(cmd *cobra.Command, args []string) error {
+		targetServiceID := ""
+		if workspaceServiceRemoveForce {
+			var err error
+			targetServiceID, err = resolveForceRemoveServiceID(args[0])
+			if err != nil {
+				return err
+			}
+		}
 		if err := removeWorkspaceService(ConfigFile, args[0]); err != nil {
 			return err
+		}
+		if workspaceServiceRemoveForce {
+			if err := runForceRemoveWorkspace(targetServiceID, ""); err != nil {
+				return err
+			}
 		}
 		fmt.Printf("Removed service %s\n", args[0])
 		return nil
@@ -213,8 +331,21 @@ var workspaceServiceVersionRemoveCmd = &cobra.Command{
 	Short: "Remove an allowed version from a workspace service",
 	Args:  cobra.ExactArgs(2),
 	RunE: WithTelemetry("cli.workspace.service.version.remove", func(cmd *cobra.Command, args []string) error {
+		targetServiceID := ""
+		if workspaceServiceVersionRemoveForce {
+			var err error
+			targetServiceID, err = resolveForceRemoveServiceID(args[0])
+			if err != nil {
+				return err
+			}
+		}
 		if err := removeWorkspaceVersion(ConfigFile, args[0], args[1]); err != nil {
 			return err
+		}
+		if workspaceServiceVersionRemoveForce {
+			if err := runForceRemoveWorkspace(targetServiceID, args[1]); err != nil {
+				return err
+			}
 		}
 		fmt.Printf("Removed version %s from service %s\n", args[1], args[0])
 		return nil

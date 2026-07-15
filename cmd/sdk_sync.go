@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -23,7 +24,7 @@ type sdkSyncResult struct {
 // sdkSyncRemoteService is the fully-resolved remote view of one service's
 // selection on the most recently generated SDK -- select_all vs. explicit
 // endpoint/webhook IDs already collapsed into concrete operation names, and
-// the pinned api_version_id already resolved to its human-readable version
+// the pinned version identity already resolved to its human-readable version
 // tag (see fetchSDKSyncData).
 type sdkSyncRemoteService struct {
 	Name       string
@@ -91,51 +92,29 @@ func sdkServiceEqual(a, b configfile.SDKService) bool {
 	return a.Version == b.Version && sameStringSet(a.Operations, b.Operations)
 }
 
-// resolveVersionTag turns a selection's api_version_id (may be empty,
-// meaning "whatever the Registry resolved as current/default at generation
-// time") into the human-readable version tag local sdk.yaml expects. A
-// non-empty apiVersionID must match one of the service's current versions
-// exactly -- silently falling back to the default would mask a version
-// that's since been deleted or deprecated away.
-func resolveVersionTag(apiVersionID string, versions []api.ServiceApiVersion) (string, error) {
-	if apiVersionID != "" {
-		for _, v := range versions {
-			if v.ID == apiVersionID {
-				return v.Name, nil
-			}
-		}
-		return "", fmt.Errorf("pinned api version %s not found among this service's current versions", apiVersionID)
+func resolveServiceVersionName(sel api.SDKSelectionDetail) (string, error) {
+	if strings.TrimSpace(sel.ServiceVersionID) == "" {
+		return "", fmt.Errorf("missing service_version_id")
 	}
-	for _, v := range versions {
-		if v.IsDefault {
-			return v.Name, nil
-		}
+	name := strings.TrimSpace(sel.ServiceVersionName)
+	if name == "" {
+		return "", fmt.Errorf("missing service_version_name for service_version_id %s", sel.ServiceVersionID)
 	}
-	return "", fmt.Errorf("no default api version is configured for this service, and the selection has no pinned version")
+	return name, nil
 }
 
 // fetchSDKSyncData is the impure orchestration layer for `sdk sync`: fetches
 // the most recently generated SDK by name, resolves each selected service's
-// pinned/default api version to a version tag, and enumerates each
-// selection's operations (select_all included) into concrete names.
+// persisted version tag, and enumerates each selection's operations
+// (select_all included) into concrete names.
 func fetchSDKSyncData(client *api.Client, sdkName string) (sdkVersion string, remote []sdkSyncRemoteService, err error) {
 	sdk, err := client.GetSDKSelectionsByName(sdkName)
 	if err != nil {
 		return "", nil, fmt.Errorf("fetching sdk %q: %w", sdkName, err)
 	}
 
-	versionCache := make(map[string][]api.ServiceApiVersion, len(sdk.DetailedSelections))
 	for _, sel := range sdk.DetailedSelections {
-		versions, ok := versionCache[sel.ServiceID]
-		if !ok {
-			versions, err = client.ServiceApiVersions(sel.ServiceID)
-			if err != nil {
-				return "", nil, fmt.Errorf("resolving api versions for service %s: %w", sel.ServiceName, err)
-			}
-			versionCache[sel.ServiceID] = versions
-		}
-
-		versionTag, err := resolveVersionTag(sel.ApiVersionID, versions)
+		versionTag, err := resolveServiceVersionName(sel)
 		if err != nil {
 			return "", nil, fmt.Errorf("resolving version for service %s: %w", sel.ServiceName, err)
 		}

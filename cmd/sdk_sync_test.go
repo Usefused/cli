@@ -194,16 +194,11 @@ func TestSDKServiceEqual(t *testing.T) {
 	}
 }
 
-// TestResolveVersionTag_PinnedIDMatches covers a selection with an explicit
-// api_version_id -- it must resolve to that exact version's human-readable
-// name, not the workspace default.
-func TestResolveVersionTag_PinnedIDMatches(t *testing.T) {
-	versions := []api.ServiceApiVersion{
-		{ID: "v-1", Name: "2025-01-01", IsDefault: false},
-		{ID: "v-2", Name: "2026-01-01", IsDefault: true},
-	}
-
-	got, err := resolveVersionTag("v-1", versions)
+func TestResolveServiceVersionName_ReturnsPersistedName(t *testing.T) {
+	got, err := resolveServiceVersionName(api.SDKSelectionDetail{
+		ServiceVersionID:   "v-1",
+		ServiceVersionName: "2025-01-01",
+	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -212,47 +207,26 @@ func TestResolveVersionTag_PinnedIDMatches(t *testing.T) {
 	}
 }
 
-// TestResolveVersionTag_EmptyIDFallsBackToDefault covers a selection with no
-// pinned version (nil ApiVersionID from the Registry means "whatever was
-// current/default at generation time").
-func TestResolveVersionTag_EmptyIDFallsBackToDefault(t *testing.T) {
-	versions := []api.ServiceApiVersion{
-		{ID: "v-1", Name: "2025-01-01", IsDefault: false},
-		{ID: "v-2", Name: "2026-01-01", IsDefault: true},
-	}
-
-	got, err := resolveVersionTag("", versions)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got != "2026-01-01" {
-		t.Errorf("expected default 2026-01-01, got %s", got)
+func TestResolveServiceVersionName_MissingIDReturnsError(t *testing.T) {
+	_, err := resolveServiceVersionName(api.SDKSelectionDetail{
+		ServiceVersionName: "2025-01-01",
+	})
+	if err == nil {
+		t.Fatal("expected an error for a selection without service_version_id")
 	}
 }
 
-// TestResolveVersionTag_UnknownPinnedIDReturnsError covers a pinned version
-// that no longer exists among the service's current versions (e.g. deleted
-// since generation) -- this must surface as an error, not silently fall back.
-func TestResolveVersionTag_UnknownPinnedIDReturnsError(t *testing.T) {
-	versions := []api.ServiceApiVersion{
-		{ID: "v-2", Name: "2026-01-01", IsDefault: true},
-	}
-
-	_, err := resolveVersionTag("v-missing", versions)
+func TestResolveServiceVersionName_MissingNameReturnsError(t *testing.T) {
+	_, err := resolveServiceVersionName(api.SDKSelectionDetail{
+		ServiceVersionID: "v-1",
+	})
 	if err == nil {
-		t.Fatal("expected an error for an unresolvable pinned version")
+		t.Fatal("expected an error for a selection without service_version_name")
 	}
 }
 
-// TestResolveVersionTag_NoDefaultAndNoPinReturnsError covers the degenerate
-// case of a service with no default version configured at all.
-func TestResolveVersionTag_NoDefaultAndNoPinReturnsError(t *testing.T) {
-	versions := []api.ServiceApiVersion{
-		{ID: "v-1", Name: "2025-01-01", IsDefault: false},
-	}
-
-	_, err := resolveVersionTag("", versions)
-	if err == nil {
-		t.Fatal("expected an error when no default version exists and no version is pinned")
+func TestValidateSDKDownloadArgs_RejectsVersionSuffix(t *testing.T) {
+	if err := validateSDKDownloadArgs([]string{"billing@1.2.3"}); err == nil {
+		t.Fatal("expected version-suffixed sdk download argument to be rejected")
 	}
 }

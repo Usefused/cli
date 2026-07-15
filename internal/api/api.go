@@ -215,27 +215,29 @@ func (c *Client) ListWorkspaceServices(names ...string) ([]WorkspaceService, err
 	return out, nil
 }
 
-type ServiceApiVersion struct {
+type ServiceVersion struct {
 	ID        string `json:"id"`
 	Name      string `json:"name"`
-	IsDefault bool   `json:"is_default"`
+	Status    string `json:"status"`
+	CreatedAt string `json:"created_at"`
 }
 
-func (c *Client) ServiceApiVersions(serviceID string) ([]ServiceApiVersion, error) {
+func (c *Client) ServiceVersions(serviceID string) ([]ServiceVersion, error) {
 	query := `
-		query ServiceApiVersions($serviceId: String!) {
-			serviceApiVersions(serviceId: $serviceId) {
+		query ServiceVersions($serviceId: String!) {
+			serviceVersions(serviceId: $serviceId) {
 				id
 				name
-				is_default
+				status
+				created_at
 			}
 		}
 	`
 	var resp struct {
-		ServiceApiVersions []ServiceApiVersion `json:"serviceApiVersions"`
+		ServiceVersions []ServiceVersion `json:"serviceVersions"`
 	}
 	err := c.GraphQL(query, map[string]interface{}{"serviceId": serviceID}, &resp)
-	return resp.ServiceApiVersions, err
+	return resp.ServiceVersions, err
 }
 
 func (c *Client) SearchServices(q string) ([]Service, error) {
@@ -509,12 +511,13 @@ func (c *Client) GetSDKByName(name string, version string) (*SDKBasicDetails, er
 }
 
 type SDKSelectionDetail struct {
-	ServiceID    string   `json:"service_id"`
-	ServiceName  string   `json:"service_name"`
-	EndpointIDs  []string `json:"endpoint_ids"`
-	WebhookIDs   []string `json:"webhook_ids"`
-	SelectAll    bool     `json:"select_all"`
-	ApiVersionID string   `json:"api_version_id"`
+	ServiceID          string   `json:"service_id"`
+	ServiceName        string   `json:"service_name"`
+	EndpointIDs        []string `json:"endpoint_ids"`
+	WebhookIDs         []string `json:"webhook_ids"`
+	SelectAll          bool     `json:"select_all"`
+	ServiceVersionID   string   `json:"service_version_id"`
+	ServiceVersionName string   `json:"service_version_name"`
 }
 
 type SDKWithSelections struct {
@@ -540,7 +543,8 @@ func (c *Client) GetSDKSelectionsByName(name string) (*SDKWithSelections, error)
 					endpoint_ids
 					webhook_ids
 					select_all
-					api_version_id
+					service_version_id
+					service_version_name
 				}
 			}
 		}
@@ -835,6 +839,47 @@ func (c *Client) ApplyWorkspaceConfig(planID, sourceHash string) (*ConfigApplyRe
 		return nil, err
 	}
 	return &out, nil
+}
+
+func (c *Client) UpdateWorkspacePlanAction(planID string, actions []map[string]any, actionID, decision string) error {
+	updated := false
+	for i := range actions {
+		if actions[i]["id"] == actionID {
+			actions[i]["decision"] = decision
+			updated = true
+			break
+		}
+	}
+	if !updated {
+		return fmt.Errorf("plan action %s not found", actionID)
+	}
+	reqBody := map[string]any{"actions": actions}
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequest(http.MethodPatch, fmt.Sprintf("%s/config/plans/%s/actions", c.BaseURL, planID), bytes.NewBuffer(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if c.APIKey != "" {
+		req.Header.Set("x-api-key", c.APIKey)
+	}
+
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("update workspace plan action failed (HTTP %d): %s", resp.StatusCode, string(respBody))
+	}
+
+	return nil
 }
 
 // ─── Non-interactive spec import (fused import plan/apply) ─────────────────

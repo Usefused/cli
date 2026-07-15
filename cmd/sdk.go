@@ -73,10 +73,23 @@ var sdkValidateCmd = &cobra.Command{
 }
 
 var sdkDownloadOutDir string
+
+func validateSDKDownloadArgs(args []string) error {
+	if len(args) > 0 && strings.Contains(args[0], "@") {
+		return fmt.Errorf("sdk download uses config names only; %q includes a version suffix", args[0])
+	}
+	return nil
+}
+
 var sdkDownloadCmd = &cobra.Command{
-	Use:   "download [name[@version]]",
-	Short: "Download generated SDK",
+	Use:   "download [name]",
+	Short: "Download the generated SDK for a config",
+	Args:  cobra.MaximumNArgs(1),
 	RunE: WithTelemetry("cli.sdk.download", func(cmd *cobra.Command, args []string) error {
+		if err := validateSDKDownloadArgs(args); err != nil {
+			return err
+		}
+
 		client, err := getAPIClient()
 		if err != nil {
 			return err
@@ -84,7 +97,7 @@ var sdkDownloadCmd = &cobra.Command{
 
 		var sdksToDownload []string
 		if len(args) > 0 {
-			name := strings.Split(args[0], "@")[0]
+			name := args[0]
 			sdksToDownload = append(sdksToDownload, "sdk:"+name)
 		} else {
 			run, err := configfile.LoadRun(ConfigFile)

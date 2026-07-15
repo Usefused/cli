@@ -346,6 +346,71 @@ func TestWorkspaceHasCallsEngine(t *testing.T) {
 	}
 }
 
+func TestWorkspaceVersionRemoveForceUpdatesPlanActionBeforeApply(t *testing.T) {
+	dir := t.TempDir()
+	path := writeSprintConfig(t, dir, "workspace.yaml", `
+kind: workspace
+version: 1
+services:
+  okta:
+    service_id: "00000000-0000-0000-0000-000000000001"
+    versions: ["2026-07-01", "2026-08-01"]
+`)
+	var paths []string
+	var patchedActions []map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		switch r.URL.Path {
+		case "/workspace/config/plan":
+			_, _ = w.Write([]byte(`{
+				"plan_id":"plan-workspace",
+				"config_key":"workspace",
+				"source_hash":"hash",
+				"base_generation":1,
+				"summary":{"actions":[{
+					"id":"disable_service_version:00000000-0000-0000-0000-000000000999:2026-07-01",
+					"type":"disable_service_version",
+					"service_id":"00000000-0000-0000-0000-000000000999",
+					"version":"2026-07-01",
+					"requires_decision":true
+				},{
+					"id":"disable_service_version:00000000-0000-0000-0000-000000000001:2026-07-01",
+					"type":"disable_service_version",
+					"service_id":"00000000-0000-0000-0000-000000000001",
+					"version":"2026-07-01",
+					"requires_decision":true
+				}]}
+			}`))
+		case "/config/plans/plan-workspace/actions":
+			if r.Method != http.MethodPatch {
+				t.Fatalf("expected PATCH action update, got %s", r.Method)
+			}
+			var body struct {
+				Actions []map[string]any `json:"actions"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode actions body: %v", err)
+			}
+			patchedActions = body.Actions
+			_, _ = w.Write([]byte(`{"status":"updated","plan_id":"plan-workspace","revision":2}`))
+		case "/workspace/config/apply":
+			_, _ = w.Write([]byte(`{"status":"applied","plan_id":"plan-workspace"}`))
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	runCommandInDir(t, dir, server.URL, []string{"workspace", "service", "version", "remove", "okta", "2026-07-01", "-f", path, "--force"})
+
+	if got := strings.Join(paths, ","); got != "/workspace/config/plan,/config/plans/plan-workspace/actions,/workspace/config/apply" {
+		t.Fatalf("unexpected request order %s", got)
+	}
+	if len(patchedActions) != 2 || patchedActions[1]["decision"] != "force_remove" || patchedActions[0]["decision"] == "force_remove" {
+		t.Fatalf("expected force_remove action patch, got %#v", patchedActions)
+	}
+}
+
 func TestWorkspaceAddServiceWritesSlugOnlyYaml(t *testing.T) {
 	dir := t.TempDir()
 	path := writeSprintConfig(t, dir, "workspace.yaml", `
