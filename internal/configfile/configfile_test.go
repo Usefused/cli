@@ -34,6 +34,11 @@ services:
 	}
 
 	cfg := run.Configs[0]
+	assertSingleSDKConfig(t, cfg)
+}
+
+func assertSingleSDKConfig(t *testing.T, cfg *configfile.ParsedConfig) {
+	t.Helper()
 	if cfg.Kind != configfile.KindSDK {
 		t.Fatalf("kind: got %q", cfg.Kind)
 	}
@@ -48,6 +53,29 @@ services:
 	}
 	if cfg.SourceHash == "" || !strings.HasPrefix(cfg.SourceHash, "sha256:") {
 		t.Errorf("expected sha256 source hash, got %q", cfg.SourceHash)
+	}
+}
+
+func TestLoadRun_SDKServiceVersionIsOptional(t *testing.T) {
+	path := writeFile(t, t.TempDir(), "security.yaml", `
+kind: sdk
+version: 1
+name: security-detection
+sdkVersion: "1.2.0"
+language: typescript
+target: sdk
+services:
+  okta:
+    operations:
+      - listLogEvents
+`)
+
+	run, err := configfile.LoadRun(path)
+	if err != nil {
+		t.Fatalf("LoadRun failed: %v", err)
+	}
+	if got := run.Configs[0].SDK.Services["okta"].Version; got != "" {
+		t.Fatalf("expected omitted SDK service version to remain empty before Engine plan, got %q", got)
 	}
 }
 
@@ -211,7 +239,7 @@ language: typescript
 target: sdk
 services:
   okta:
-    operations: ["listLogEvents"]
+    version: "2026-07-01"
 `,
 		"legacy endpoints key rejected": `
 kind: sdk

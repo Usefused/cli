@@ -210,9 +210,6 @@ func validateSDKType(language, target string) error {
 }
 
 func validateSDKService(name string, svc SDKService) error {
-	if svc.Version == "" {
-		return fmt.Errorf("sdk service %q requires a version", name)
-	}
 	if len(svc.LegacyEndpoints) > 0 {
 		return fmt.Errorf("sdk service %q uses legacy endpoints; use operations instead", name)
 	}
