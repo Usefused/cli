@@ -146,21 +146,106 @@ var workspaceHasCmd = &cobra.Command{
 }
 
 var workspaceServiceCmd = &cobra.Command{
-	Use:   "service <service-slug>",
+	Use:   "service <service-slug> [versions|operations]",
 	Short: "Manage a specific workspace service",
-	Args:  cobra.MaximumNArgs(1),
+	Args:  validateWorkspaceServiceArgs,
 	RunE: WithTelemetry("cli.workspace.service", func(cmd *cobra.Command, args []string) error {
-		if !workspaceServiceShowVersions {
-			return cmd.Help()
-		}
-		if len(args) != 1 {
-			return fmt.Errorf("workspace service slug is required when using --versions")
-		}
-		return runWorkspaceServiceVersions(cmd, args[0])
+		return runWorkspaceServiceAction(cmd, args)
 	}),
+	ValidArgsFunction: completeWorkspaceServiceArgs,
+}
+
+func validateWorkspaceServiceArgs(cmd *cobra.Command, args []string) error {
+	if len(args) == 0 {
+		return nil
+	}
+	if len(args) > 2 {
+		return fmt.Errorf("workspace service accepts at most <service-slug> and one action")
+	}
+	if len(args) == 1 {
+		return nil
+	}
+	if !isWorkspaceServiceAction(args[1]) {
+		return fmt.Errorf("unknown workspace service action %q", args[1])
+	}
+	return nil
+}
+
+func runWorkspaceServiceAction(cmd *cobra.Command, args []string) error {
+	if len(args) == 0 {
+		return cmd.Help()
+	}
+	serviceSlug := args[0]
+	if workspaceServiceShowVersions {
+		return runWorkspaceServiceVersions(cmd, serviceSlug)
+	}
+	if len(args) == 1 {
+		return cmd.Help()
+	}
+	switch args[1] {
+	case "versions":
+		return runWorkspaceServiceVersions(cmd, serviceSlug)
+	case "operations":
+		return runWorkspaceServiceOperations(cmd, serviceSlug, workspaceServiceOperationsVersion)
+	default:
+		return fmt.Errorf("unknown workspace service action %q", args[1])
+	}
+}
+
+func isWorkspaceServiceAction(action string) bool {
+	switch action {
+	case "versions", "operations":
+		return true
+	default:
+		return false
+	}
+}
+
+func completeWorkspaceServiceArgs(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	switch len(args) {
+	case 0:
+		return completeWorkspaceServiceCandidates(toComplete), cobra.ShellCompDirectiveNoFileComp
+	case 1:
+		return filteredWorkspaceServiceActions(toComplete), cobra.ShellCompDirectiveNoFileComp
+	default:
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+}
+
+func completeWorkspaceServiceCandidates(toComplete string) []string {
+	client, err := getAPIClient()
+	if err != nil {
+		return nil
+	}
+	services, err := client.ListWorkspaceServices()
+	if err != nil {
+		return nil
+	}
+	candidates := make([]string, 0, len(services))
+	for _, service := range services {
+		if service.ServiceID != "" && strings.HasPrefix(service.ServiceID, toComplete) {
+			candidates = append(candidates, service.ServiceID+"\t"+service.ServiceName)
+		}
+	}
+	return candidates
+}
+
+func filteredWorkspaceServiceActions(toComplete string) []string {
+	actions := []string{"versions", "operations"}
+	if toComplete == "" {
+		return actions
+	}
+	out := make([]string, 0, len(actions))
+	for _, action := range actions {
+		if strings.HasPrefix(action, toComplete) {
+			out = append(out, action)
+		}
+	}
+	return out
 }
 
 var workspaceServiceShowVersions bool
+var workspaceServiceOperationsVersion string
 
 func runWorkspaceServiceVersions(cmd *cobra.Command, serviceSlug string) error {
 	client, err := getAPIClient()
@@ -182,6 +267,100 @@ func runWorkspaceServiceVersions(cmd *cobra.Command, serviceSlug string) error {
 		}
 	}
 	return fmt.Errorf("service %s not found in workspace", serviceSlug)
+}
+
+var workspaceServiceOperationsCmd = &cobra.Command{
+	Use:   "operations <service-slug>",
+	Short: "List operationIds available for an enabled workspace service",
+	Args:  cobra.ExactArgs(1),
+	RunE: WithTelemetry("cli.workspace.service.operations", func(cmd *cobra.Command, args []string) error {
+		return runWorkspaceServiceOperations(cmd, args[0], workspaceServiceOperationsVersion)
+	}),
+}
+
+func runWorkspaceServiceOperations(cmd *cobra.Command, serviceSlug, version string) error {
+	client, err := getAPIClient()
+	if err != nil {
+		return err
+	}
+	serviceID, err := resolveServiceIDFromSlug(client, serviceSlug)
+	if err != nil {
+		return err
+	}
+	workspaceService, err := workspaceServiceByID(client, serviceID, serviceSlug)
+	if err != nil {
+		return err
+	}
+	resolvedVersion, err := resolveWorkspaceOperationVersion(workspaceService, version)
+	if err != nil {
+		return err
+	}
+	endpoints, err := client.ServiceOperations(serviceID, resolvedVersion)
+	if err != nil {
+		return err
+	}
+	if len(endpoints) == 0 {
+		return fmt.Errorf("no operations found for service %s version %s", serviceSlug, resolvedVersion)
+	}
+	for _, endpoint := range endpoints {
+		fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", endpoint.Name, endpoint.Method, endpoint.Path)
+	}
+	return nil
+}
+
+func workspaceServiceByID(client *cliapi.Client, serviceID, serviceSlug string) (cliapi.WorkspaceService, error) {
+	services, err := client.ListWorkspaceServices()
+	if err != nil {
+		return cliapi.WorkspaceService{}, err
+	}
+	for _, service := range services {
+		if service.ServiceID == serviceID {
+			return service, nil
+		}
+	}
+	return cliapi.WorkspaceService{}, fmt.Errorf("service %s is not enabled in this workspace", serviceSlug)
+}
+
+func resolveWorkspaceOperationVersion(service cliapi.WorkspaceService, requested string) (string, error) {
+	if requested != "" {
+		if workspaceServiceHasVersion(service, requested) {
+			return requested, nil
+		}
+		return "", fmt.Errorf("version %s for service %s is not enabled in this workspace", requested, service.ServiceName)
+	}
+	version := latestWorkspaceServiceVersion(service)
+	if version == "" {
+		return "", fmt.Errorf("service %s has no enabled versions", service.ServiceName)
+	}
+	return version, nil
+}
+
+func workspaceServiceHasVersion(service cliapi.WorkspaceService, version string) bool {
+	if service.Version == version {
+		return true
+	}
+	for _, enabled := range service.EnabledVersions {
+		if enabled.Version == version {
+			return true
+		}
+	}
+	return false
+}
+
+func latestWorkspaceServiceVersion(service cliapi.WorkspaceService) string {
+	bestVersion := service.Version
+	bestStamp := ""
+	for _, enabled := range service.EnabledVersions {
+		stamp := enabled.EnabledAt
+		if stamp == "" {
+			stamp = enabled.CreatedAt
+		}
+		if bestVersion == "" || stamp >= bestStamp {
+			bestVersion = enabled.Version
+			bestStamp = stamp
+		}
+	}
+	return bestVersion
 }
 
 func resolveServiceIDFromSlug(client *cliapi.Client, serviceSlug string) (string, error) {
@@ -441,9 +620,12 @@ func init() {
 	workspaceCmd.AddCommand(workspaceServiceCmd)
 	workspaceCmd.AddCommand(workspaceHasCmd)
 	workspaceServiceCmd.Flags().BoolVar(&workspaceServiceShowVersions, "versions", false, "List versions enabled in the workspace for this service slug; supports @provider/slug")
+	workspaceServiceCmd.Flags().StringVar(&workspaceServiceOperationsVersion, "version", "", "Enabled workspace service version for the operations action; omitted uses the latest enabled version")
 	workspaceServiceCmd.AddCommand(workspaceServiceAddCmd)
 	workspaceServiceAddCmd.Flags().StringVar(&workspaceServiceAddVersion, "version", "", "Version to enable; omitted resolves latest during plan")
 	workspaceServiceAddCmd.Flags().StringVar(&workspaceServiceAddID, "service-id", "", "Registry service UUID to store in workspace config")
+	workspaceServiceCmd.AddCommand(workspaceServiceOperationsCmd)
+	workspaceServiceOperationsCmd.Flags().StringVar(&workspaceServiceOperationsVersion, "version", "", "Enabled workspace service version; omitted uses the latest enabled version")
 
 	workspaceServiceCmd.AddCommand(workspaceServiceRemoveCmd)
 	workspaceServiceRemoveCmd.Flags().BoolVar(&workspaceServiceRemoveForce, "force", false, "Force removal when the generated plan action is applied")

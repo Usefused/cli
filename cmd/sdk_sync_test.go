@@ -1,12 +1,27 @@
 package cmd
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/Usefused/cli/internal/api"
 	"github.com/Usefused/cli/internal/configfile"
 )
+
+func mustMergeSDKServicesFromRemote(t *testing.T, cfg *configfile.SDKConfig, sdkVersion string, remote []sdkSyncRemoteService) sdkSyncResult {
+	t.Helper()
+	result, err := mergeSDKServicesFromRemote(cfg, sdkVersion, remote)
+	if err != nil {
+		t.Fatalf("mergeSDKServicesFromRemote: %v", err)
+	}
+	return result
+}
 
 // TestMergeSDKServicesFromRemote_AddsNewRemoteService is Task 4c's core AC
 // (engine_workspace_registration_plan.md): a service present in the most
@@ -16,10 +31,10 @@ import (
 func TestMergeSDKServicesFromRemote_AddsNewRemoteService(t *testing.T) {
 	cfg := &configfile.SDKConfig{Services: map[string]configfile.SDKService{}}
 	remote := []sdkSyncRemoteService{
-		{Name: "stripe", Version: "2026-01-01", Operations: []string{"createCharge", "listCharges"}},
+		{Name: "Stripe", Ref: "stripe", Version: "2026-01-01", Operations: []string{"createCharge", "listCharges"}},
 	}
 
-	result := mergeSDKServicesFromRemote(cfg, "1.2.0", remote)
+	result := mustMergeSDKServicesFromRemote(t, cfg, "1.2.0", remote)
 
 	if !reflect.DeepEqual(result.Added, []string{"stripe"}) {
 		t.Errorf("expected Added=[stripe], got %v", result.Added)
@@ -36,6 +51,40 @@ func TestMergeSDKServicesFromRemote_AddsNewRemoteService(t *testing.T) {
 	}
 }
 
+func TestMergeSDKServicesFromRemote_UsesSlugRefAsConfigKey(t *testing.T) {
+	cfg := &configfile.SDKConfig{Services: map[string]configfile.SDKService{}}
+	remote := []sdkSyncRemoteService{
+		{Name: "GitHub REST API", Ref: "github-rest-api", Version: "1.1.4", Operations: []string{"apps/delete-installation"}},
+		{Name: "Acme CRM", Ref: "@acme/crm", Version: "2026-07-01", Operations: []string{"contacts/list"}},
+	}
+
+	result := mustMergeSDKServicesFromRemote(t, cfg, "1.0.0", remote)
+
+	if !reflect.DeepEqual(result.Added, []string{"@acme/crm", "github-rest-api"}) {
+		t.Fatalf("expected slug refs in Added, got %v", result.Added)
+	}
+	if _, ok := cfg.Services["GitHub REST API"]; ok {
+		t.Fatal("display name should not be used as an sdk config key")
+	}
+	if _, ok := cfg.Services["github-rest-api"]; !ok {
+		t.Fatalf("expected owned service keyed by slug, got %+v", cfg.Services)
+	}
+	if _, ok := cfg.Services["@acme/crm"]; !ok {
+		t.Fatalf("expected foreign service keyed by provider-qualified slug, got %+v", cfg.Services)
+	}
+}
+
+func TestMergeSDKServicesFromRemote_RejectsMissingSlugRef(t *testing.T) {
+	cfg := &configfile.SDKConfig{Services: map[string]configfile.SDKService{}}
+	remote := []sdkSyncRemoteService{{Name: "GitHub REST API", Version: "1.1.4"}}
+
+	_, err := mergeSDKServicesFromRemote(cfg, "1.0.0", remote)
+
+	if err == nil || !strings.Contains(err.Error(), "missing service slug") {
+		t.Fatalf("expected missing slug error, got %v", err)
+	}
+}
+
 // TestMergeSDKServicesFromRemote_RemoteWinsOnConflict mirrors workspace
 // sync's "remote wins" semantics: a local entry with a stale version or
 // operation list is fully overwritten, not merged field-by-field.
@@ -44,10 +93,10 @@ func TestMergeSDKServicesFromRemote_RemoteWinsOnConflict(t *testing.T) {
 		"stripe": {Version: "2025-01-01", Operations: []string{"createCharge"}},
 	}}
 	remote := []sdkSyncRemoteService{
-		{Name: "stripe", Version: "2026-01-01", Operations: []string{"createCharge", "listCharges"}},
+		{Name: "Stripe", Ref: "stripe", Version: "2026-01-01", Operations: []string{"createCharge", "listCharges"}},
 	}
 
-	result := mergeSDKServicesFromRemote(cfg, "1.2.0", remote)
+	result := mustMergeSDKServicesFromRemote(t, cfg, "1.2.0", remote)
 
 	if !reflect.DeepEqual(result.Updated, []string{"stripe"}) {
 		t.Errorf("expected Updated=[stripe], got %v", result.Updated)
@@ -65,10 +114,10 @@ func TestMergeSDKServicesFromRemote_UnchangedServiceNotReportedAsUpdated(t *test
 		"stripe": {Version: "2026-01-01", Operations: []string{"createCharge", "listCharges"}},
 	}}
 	remote := []sdkSyncRemoteService{
-		{Name: "stripe", Version: "2026-01-01", Operations: []string{"createCharge", "listCharges"}},
+		{Name: "Stripe", Ref: "stripe", Version: "2026-01-01", Operations: []string{"createCharge", "listCharges"}},
 	}
 
-	result := mergeSDKServicesFromRemote(cfg, "1.2.0", remote)
+	result := mustMergeSDKServicesFromRemote(t, cfg, "1.2.0", remote)
 
 	if len(result.Added) != 0 || len(result.Updated) != 0 || len(result.Removed) != 0 {
 		t.Errorf("expected no changes reported for an already-in-sync service, got %+v", result)
@@ -83,10 +132,10 @@ func TestMergeSDKServicesFromRemote_UnchangedIgnoresOperationOrder(t *testing.T)
 		"stripe": {Version: "2026-01-01", Operations: []string{"createCharge", "listCharges"}},
 	}}
 	remote := []sdkSyncRemoteService{
-		{Name: "stripe", Version: "2026-01-01", Operations: []string{"listCharges", "createCharge"}},
+		{Name: "Stripe", Ref: "stripe", Version: "2026-01-01", Operations: []string{"listCharges", "createCharge"}},
 	}
 
-	result := mergeSDKServicesFromRemote(cfg, "1.2.0", remote)
+	result := mustMergeSDKServicesFromRemote(t, cfg, "1.2.0", remote)
 
 	if len(result.Updated) != 0 {
 		t.Errorf("expected operation-order difference alone not to count as a change, got Updated=%v", result.Updated)
@@ -104,19 +153,19 @@ func TestMergeSDKServicesFromRemote_UnchangedIgnoresOperationOrder(t *testing.T)
 func TestMergeSDKServicesFromRemote_RemovesLocalEntryNoLongerInRemote(t *testing.T) {
 	cfg := &configfile.SDKConfig{Services: map[string]configfile.SDKService{
 		"stripe": {Version: "2026-01-01", Operations: []string{"createCharge"}},
-		"legacy": {Version: "1.0.0", Operations: []string{"oldOp"}},
+		"stale":  {Version: "1.0.0", Operations: []string{"oldOp"}},
 	}}
 	remote := []sdkSyncRemoteService{
-		{Name: "stripe", Version: "2026-01-01", Operations: []string{"createCharge"}},
+		{Name: "Stripe", Ref: "stripe", Version: "2026-01-01", Operations: []string{"createCharge"}},
 	}
 
-	result := mergeSDKServicesFromRemote(cfg, "1.2.0", remote)
+	result := mustMergeSDKServicesFromRemote(t, cfg, "1.2.0", remote)
 
-	if !reflect.DeepEqual(result.Removed, []string{"legacy"}) {
-		t.Errorf("expected Removed=[legacy], got %v", result.Removed)
+	if !reflect.DeepEqual(result.Removed, []string{"stale"}) {
+		t.Errorf("expected Removed=[stale], got %v", result.Removed)
 	}
-	if _, ok := cfg.Services["legacy"]; ok {
-		t.Error("expected legacy to be removed from cfg.Services")
+	if _, ok := cfg.Services["stale"]; ok {
+		t.Error("expected stale service to be removed")
 	}
 	if _, ok := cfg.Services["stripe"]; !ok {
 		t.Error("expected stripe to remain")
@@ -130,7 +179,7 @@ func TestMergeSDKServicesFromRemote_EmptyRemoteRemovesEverything(t *testing.T) {
 		"stripe": {Version: "2026-01-01", Operations: []string{"createCharge"}},
 	}}
 
-	result := mergeSDKServicesFromRemote(cfg, "1.2.0", nil)
+	result := mustMergeSDKServicesFromRemote(t, cfg, "1.2.0", nil)
 
 	if !reflect.DeepEqual(result.Removed, []string{"stripe"}) {
 		t.Errorf("expected Removed=[stripe], got %v", result.Removed)
@@ -145,10 +194,10 @@ func TestMergeSDKServicesFromRemote_EmptyRemoteRemovesEverything(t *testing.T) {
 func TestMergeSDKServicesFromRemote_NilServicesMapInitialized(t *testing.T) {
 	cfg := &configfile.SDKConfig{}
 	remote := []sdkSyncRemoteService{
-		{Name: "stripe", Version: "2026-01-01", Operations: []string{"createCharge"}},
+		{Name: "Stripe", Ref: "stripe", Version: "2026-01-01", Operations: []string{"createCharge"}},
 	}
 
-	mergeSDKServicesFromRemote(cfg, "1.2.0", remote)
+	mustMergeSDKServicesFromRemote(t, cfg, "1.2.0", remote)
 
 	if cfg.Services == nil {
 		t.Fatal("expected Services map to be initialized")
@@ -164,7 +213,7 @@ func TestMergeSDKServicesFromRemote_NilServicesMapInitialized(t *testing.T) {
 func TestMergeSDKServicesFromRemote_BumpsSDKVersion(t *testing.T) {
 	cfg := &configfile.SDKConfig{SDKVersion: "1.1.0", Services: map[string]configfile.SDKService{}}
 
-	result := mergeSDKServicesFromRemote(cfg, "1.2.0", nil)
+	result := mustMergeSDKServicesFromRemote(t, cfg, "1.2.0", nil)
 
 	if cfg.SDKVersion != "1.2.0" {
 		t.Errorf("expected cfg.SDKVersion to be bumped to 1.2.0, got %s", cfg.SDKVersion)
@@ -225,8 +274,143 @@ func TestResolveServiceVersionName_MissingNameReturnsError(t *testing.T) {
 	}
 }
 
-func TestValidateSDKDownloadArgs_RejectsVersionSuffix(t *testing.T) {
-	if err := validateSDKDownloadArgs([]string{"billing@1.2.3"}); err == nil {
-		t.Fatal("expected version-suffixed sdk download argument to be rejected")
+func TestValidateSDKDownloadArgs_RejectsMalformedVersionSuffix(t *testing.T) {
+	if err := validateSDKDownloadArgs([]string{"billing@"}); err == nil {
+		t.Fatal("expected empty version suffix to be rejected")
+	}
+	if err := validateSDKDownloadArgs([]string{"@1.2.3"}); err == nil {
+		t.Fatal("expected empty sdk name to be rejected")
+	}
+}
+
+func TestResolveSDKDownloadConfigKeys_UsesExplicitName(t *testing.T) {
+	targets, err := resolveSDKDownloadTargets([]string{"security-sdk"}, "")
+	if err != nil {
+		t.Fatalf("resolveSDKDownloadTargets failed: %v", err)
+	}
+	if len(targets) != 1 || targets[0].Name != "security-sdk" || targets[0].Version != "" {
+		t.Fatalf("unexpected download targets: %+v", targets)
+	}
+}
+
+func TestResolveSDKDownloadTargets_UsesVersionSuffix(t *testing.T) {
+	targets, err := resolveSDKDownloadTargets([]string{"security-sdk@1.2.0"}, "")
+	if err != nil {
+		t.Fatalf("resolveSDKDownloadTargets failed: %v", err)
+	}
+	if len(targets) != 1 || targets[0].Name != "security-sdk" || targets[0].Version != "1.2.0" {
+		t.Fatalf("unexpected download targets: %+v", targets)
+	}
+}
+
+func TestResolveSDKDownloadConfigKeys_UsesSingleConfigFile(t *testing.T) {
+	path := writeSprintConfig(t, t.TempDir(), "security.yaml", `
+kind: sdk
+version: 1
+name: security-sdk
+sdkVersion: "1.0.0"
+language: typescript
+target: sdk
+services:
+  github:
+    operations: ["repos_list_for_authenticated_user"]
+`)
+
+	targets, err := resolveSDKDownloadTargets(nil, path)
+	if err != nil {
+		t.Fatalf("resolveSDKDownloadTargets failed: %v", err)
+	}
+	if len(targets) != 1 || targets[0].Name != "security-sdk" || targets[0].Version != "1.0.0" {
+		t.Fatalf("unexpected download targets: %+v", targets)
+	}
+}
+
+func TestResolveSDKDownloadConfigKeys_RejectsWorkspaceConfigFile(t *testing.T) {
+	path := writeSprintConfig(t, t.TempDir(), "workspace.yaml", `
+kind: workspace
+version: 1
+services:
+  github:
+    versions: ["1.1.4"]
+`)
+
+	if _, err := resolveSDKDownloadTargets(nil, path); err == nil {
+		t.Fatal("expected workspace-only config to be rejected")
+	}
+}
+
+func TestSDKNameDownloadRoutesThroughEngineToRegistrySDKRecord(t *testing.T) {
+	dir := t.TempDir()
+	var sawGraphQL, sawDownload bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/graphql":
+			sawGraphQL = true
+			var body struct {
+				Variables map[string]any `json:"variables"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode graphql request: %v", err)
+			}
+			if body.Variables["name"] != "security-sdk" || body.Variables["version"] != "1.2.0" {
+				t.Fatalf("unexpected sdkByName variables: %+v", body.Variables)
+			}
+			_, _ = w.Write([]byte(`{"data":{"sdkByName":{"id":"sdk-record-123","sandbox_url":""}}}`))
+		case "/sdks/sdk-record-123/download":
+			sawDownload = true
+			w.Header().Set("Content-Type", "application/zip")
+			_, _ = w.Write([]byte("registry-zip"))
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	runCommandInDir(t, dir, server.URL, []string{"sdk", "security-sdk@1.2.0", "download"})
+
+	if !sawGraphQL || !sawDownload {
+		t.Fatalf("expected graphql and download requests, saw graphql=%v download=%v", sawGraphQL, sawDownload)
+	}
+	content, err := os.ReadFile(filepath.Join(dir, "security-sdk.zip"))
+	if err != nil {
+		t.Fatalf("read downloaded sdk: %v", err)
+	}
+	if string(content) != "registry-zip" {
+		t.Fatalf("unexpected downloaded content: %q", string(content))
+	}
+}
+
+func TestSDKSyncCreatesDefaultFusedConfig(t *testing.T) {
+	dir := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/graphql" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		var body struct {
+			Query string `json:"query"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode graphql request: %v", err)
+		}
+		switch {
+		case strings.Contains(body.Query, "sdkByName"):
+			_, _ = w.Write([]byte(`{"data":{"sdkByName":{"id":"sdk-record-123","version":"1.0.0","detailed_selections":[{"service_id":"svc-github","service_name":"GitHub REST API","service_slug":"github-rest-api","service_provider":null,"endpoint_ids":["ep-1"],"webhook_ids":[],"select_all":false,"service_version_id":"sv-1","service_version_name":"1.1.4"}]}}}`))
+		case strings.Contains(body.Query, "sdkSelectionResources"):
+			_, _ = w.Write([]byte(`{"data":{"sdkSelectionResources":[{"name":"repos_list_for_authenticated_user"}]}}`))
+		default:
+			t.Fatalf("unexpected graphql query %s", body.Query)
+		}
+	}))
+	defer server.Close()
+
+	runCommandInDir(t, dir, server.URL, []string{"sdk", "sync", "security-sdk"})
+
+	data, err := os.ReadFile(filepath.Join(dir, ".fused", "sdks", "security-sdk.yaml"))
+	if err != nil {
+		t.Fatalf("expected default sdk config to be created: %v", err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "kind: sdk") || !strings.Contains(text, "name: security-sdk") || !strings.Contains(text, "github-rest-api:") || !strings.Contains(text, "repos_list_for_authenticated_user") {
+		t.Fatalf("unexpected sdk sync file:\n%s", text)
 	}
 }

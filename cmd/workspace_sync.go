@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -25,7 +26,7 @@ type workspaceSyncResult struct {
 // Engine's data winning on any conflict, and any local entry whose service
 // is no longer enabled remotely is removed, not just flagged. Pure and
 // side-effect-free (no file or network I/O) so it's directly testable.
-func mergeWorkspaceServicesFromRemote(cfg *configfile.WorkspaceConfig, remote []api.WorkspaceService, visibility map[string]api.ServiceVisibility) workspaceSyncResult {
+func mergeWorkspaceServicesFromRemote(cfg *configfile.WorkspaceConfig, remote []api.WorkspaceService, visibility map[string]api.ServiceVisibility) (workspaceSyncResult, error) {
 	if cfg.Services == nil {
 		cfg.Services = map[string]configfile.WorkspaceService{}
 	}
@@ -33,7 +34,11 @@ func mergeWorkspaceServicesFromRemote(cfg *configfile.WorkspaceConfig, remote []
 
 	remoteByName := make(map[string]api.WorkspaceService, len(remote))
 	for _, svc := range remote {
-		remoteByName[svc.ServiceName] = svc
+		key, err := workspaceServiceConfigKey(svc, visibility)
+		if err != nil {
+			return result, err
+		}
+		remoteByName[key] = svc
 	}
 
 	// Remove local entries no longer enabled remotely.
@@ -46,21 +51,46 @@ func mergeWorkspaceServicesFromRemote(cfg *configfile.WorkspaceConfig, remote []
 
 	// Add/update from remote -- remote always wins over whatever was there.
 	for _, svc := range remote {
+		key, err := workspaceServiceConfigKey(svc, visibility)
+		if err != nil {
+			return result, err
+		}
 		newEntry := workspaceServiceFromRemote(svc, visibility)
-		existing, existed := cfg.Services[svc.ServiceName]
-		cfg.Services[svc.ServiceName] = newEntry
+		existing, existed := cfg.Services[key]
+		cfg.Services[key] = newEntry
 		switch {
 		case !existed:
-			result.Added = append(result.Added, svc.ServiceName)
+			result.Added = append(result.Added, key)
 		case !workspaceServiceEqual(existing, newEntry):
-			result.Updated = append(result.Updated, svc.ServiceName)
+			result.Updated = append(result.Updated, key)
 		}
 	}
 
 	sort.Strings(result.Added)
 	sort.Strings(result.Updated)
 	sort.Strings(result.Removed)
-	return result
+	return result, nil
+}
+
+func workspaceServiceConfigKey(svc api.WorkspaceService, visibility map[string]api.ServiceVisibility) (string, error) {
+	if vis, ok := visibility[svc.ServiceID]; ok {
+		if ref := serviceConfigRef(vis.Slug, vis.Provider); ref != "" {
+			return ref, nil
+		}
+	}
+	return "", fmt.Errorf("workspace sync missing service slug for service_id %s", svc.ServiceID)
+}
+
+func serviceConfigRef(slug, provider string) string {
+	slug = strings.TrimSpace(slug)
+	provider = strings.TrimSpace(provider)
+	if slug == "" {
+		return ""
+	}
+	if provider == "" {
+		return slug
+	}
+	return "@" + provider + "/" + slug
 }
 
 func workspaceServiceFromRemote(svc api.WorkspaceService, visibility map[string]api.ServiceVisibility) configfile.WorkspaceService {
@@ -126,9 +156,9 @@ var workspaceSyncCmd = &cobra.Command{
 	Long: `Overwrites the local workspace config's services with whatever is currently
 enabled remotely: adds or updates every remote workspace service (the
 Engine's data wins on any conflict) and removes any local service entry
-that's no longer enabled remotely.`,
+	that's no longer enabled remotely.`,
 	RunE: WithTelemetry("cli.workspace.sync", func(cmd *cobra.Command, args []string) error {
-		cfg, err := loadWorkspaceConfigForEdit(ConfigFile)
+		path, cfg, err := loadWorkspaceConfigForSync(ConfigFile)
 		if err != nil {
 			return err
 		}
@@ -144,8 +174,11 @@ that's no longer enabled remotely.`,
 		if err != nil {
 			return err
 		}
-		result := mergeWorkspaceServicesFromRemote(cfg, remote, visibility)
-		if err := writeWorkspaceConfig(ConfigFile, cfg); err != nil {
+		result, err := mergeWorkspaceServicesFromRemote(cfg, remote, visibility)
+		if err != nil {
+			return err
+		}
+		if err := writeWorkspaceConfig(path, cfg); err != nil {
 			return err
 		}
 		printWorkspaceSyncResult(cmd, result)

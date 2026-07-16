@@ -181,6 +181,9 @@ Generate a brand new SDK from natural language.
 #### `config`
 Manage your local CLI configuration (`set`, `get`, `list`, `reset`). Inherits global flags.
 
+#### `service <service-slug> versions`
+List Registry versions visible to the current account for a service slug. Supports provider-qualified slugs such as `@provider/slug`.
+
 #### `sdk plan`
 Preview changes that will be made to your Fused environment for SDKs.
 
@@ -206,22 +209,42 @@ Usage: `fused-cli sdk sync <name> -f .fused/sdks/<name>.yaml`
 #### `sdk validate`
 Validates an SDK configuration file. Inherits global flags.
 
-#### `sdk download`
-Download a generated SDK manually.
+#### `sdk <sdk-name> download`
+Download generated SDK artifacts from Registry records through the Engine. Pass an SDK name to download the latest generated SDK, or use `name@version` to request a specific SDK version.
+
+```bash
+fused-cli sdk security-sdk download
+fused-cli sdk security-sdk@1.2.0 download
+```
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
 | `--out` | `-o` | Output directory for the SDK | `"."` |
 
-#### `sdk service add`
+#### `sdk service <service-slug> add`
 Add a service to an SDK configuration.
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
 | `--version` | | Specific version to use for the service | `""` |
 
+#### `sdk service <service-slug> remove`
+Remove a service from an SDK configuration. Inherits global flags.
+
+#### `sdk service <service-slug> add <operationId...>`
+Add one or more operationIds to an existing service in an SDK configuration.
+
+| Argument | Short | Description | Default |
+|----------|-------|-------------|---------|
+| `--interactive` | `-i` | Interactive operation selection | `false` |
+| `--apply` | | Apply changes after adding operation | `false` |
+| `--download` | | Download SDK after apply (implies `--apply`) | `false` |
+
+#### `sdk service <service-slug> remove <operationId...>`
+Remove one or more operationIds from an existing service in an SDK configuration. Inherits global flags.
+
 #### `sdk operation add`
-Add an operation to an existing service in an SDK configuration.
+Compatibility alias for adding operationIds to an existing service in an SDK configuration.
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
@@ -230,7 +253,7 @@ Add an operation to an existing service in an SDK configuration.
 | `--download` | | Download SDK after apply (implies `--apply`) | `false` |
 
 #### `sdk operation remove`
-Remove an operation from an existing service in an SDK configuration. Inherits global flags.
+Compatibility alias for removing operationIds from an existing service in an SDK configuration. Inherits global flags.
 
 #### `workspace plan`
 Preview changes that will be made to your Workspace configuration.
@@ -287,17 +310,27 @@ Deprecate a service in your Workspace configuration.
 | `--at` | | Deprecation effective date in YYYY-MM-DD | `""` |
 | `--reason` | | Reason for deprecation | `""` |
 
-#### `workspace service-version add`
+#### `workspace service <service-slug> versions`
+List versions enabled in the workspace for a service slug. Supports provider-qualified slugs such as `@provider/slug`.
+
+#### `workspace service <service-slug> operations`
+List operationIds available for an enabled workspace service.
+
+| Argument | Short | Description | Default |
+|----------|-------|-------------|---------|
+| `--version` | | Enabled workspace service version; omitted uses the latest enabled version | `""` |
+
+#### `workspace service version add`
 Add an allowed version to a workspace service. Inherits global flags.
 
-#### `workspace service-version remove`
+#### `workspace service version remove`
 Remove a specific version of a service from your Workspace configuration.
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
 | `--force` | | Force removal | `false` |
 
-#### `workspace service-version deprecate`
+#### `workspace service version deprecate`
 Deprecate a specific version of a service in your Workspace configuration.
 
 | Argument | Short | Description | Default |
@@ -376,11 +409,12 @@ services:
 The `operations` values are OpenAPI `operationId`s for the selected service version. To browse available operations and add several at once:
 
 ```bash
-fused-cli sdk service add okta -f .fused/sdks/my-sdk.yaml --version 2026-07-09
-fused-cli sdk operation add -f .fused/sdks/my-sdk.yaml --interactive
+fused-cli sdk service okta add -f .fused/sdks/my-sdk.yaml --version 2026-07-09
+fused-cli workspace service okta operations --version 2026-07-09
+fused-cli sdk service okta add listLogEvents getUser -f .fused/sdks/my-sdk.yaml
 ```
 
-`service add` creates or updates the service entry; the config becomes valid once that service has at least one operationId.
+`sdk service <slug> add --version` creates or updates the service entry; the config becomes valid once that service has at least one operationId. Use `workspace service <slug> operations` to browse operationIds for services already enabled in the workspace.
 
 ### Defining a Workspace Configuration
 
@@ -399,7 +433,7 @@ services:
     versions:
       - "1.0.0"
 ```
-The service keys are Registry service slugs. Engine resolves those slugs to service IDs during workspace planning, so teams do not need to know UUIDs. If `versions` is omitted, the Engine resolves Registry's latest public service version during planning and records the exact service-version ID in the plan. To edit this file directly from the CLI, use `fused-cli workspace service add <slug> --version <version> -f .fused/workspace.yaml`.
+The service keys are Registry service slugs. Engine resolves those slugs to service IDs during workspace planning, so teams do not need to know UUIDs. If `versions` is omitted, the Engine resolves Registry's latest public service version during planning and records the exact service-version ID in the plan. To edit this file directly from the CLI, use `fused-cli workspace service add <slug> --version <version> -f .fused/workspace.yaml`. To inspect the remote state, use `fused-cli workspace service <slug> versions` and `fused-cli workspace service <slug> operations`.
 
 ### Syncing Local Config From Remote State
 

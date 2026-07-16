@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 
@@ -27,6 +29,21 @@ func addSDKService(path, serviceName, version string) error {
 		service.Operations = []string{}
 	}
 	cfg.Services[serviceName] = service
+	return writeSDKConfig(path, cfg)
+}
+
+func removeSDKService(path, serviceName string) error {
+	if path == "" {
+		return errors.New("sdk config edit requires -f")
+	}
+	cfg, err := loadSDKConfigForEdit(path)
+	if err != nil {
+		return err
+	}
+	if _, ok := cfg.Services[serviceName]; !ok {
+		return fmt.Errorf("service %s is not in this SDK config", serviceName)
+	}
+	delete(cfg.Services, serviceName)
 	return writeSDKConfig(path, cfg)
 }
 
@@ -75,6 +92,52 @@ func loadSDKConfigForEdit(path string) (*configfile.SDKConfig, error) {
 	if err != nil {
 		return nil, err
 	}
+	return parseSDKConfig(path, data)
+}
+
+func loadSDKConfigForSync(path, sdkName string) (string, *configfile.SDKConfig, error) {
+	target, err := sdkConfigSyncPath(path, sdkName)
+	if err != nil {
+		return "", nil, err
+	}
+	data, err := os.ReadFile(target)
+	if os.IsNotExist(err) {
+		return target, &configfile.SDKConfig{
+			BaseConfig: configfile.BaseConfig{Kind: configfile.KindSDK, Version: 1},
+			Name:       sdkName,
+			Language:   "typescript",
+			Target:     "sdk",
+			Services:   map[string]configfile.SDKService{},
+		}, nil
+	}
+	if err != nil {
+		return "", nil, err
+	}
+	cfg, err := parseSDKConfig(target, data)
+	if err == nil && cfg.Name == "" {
+		cfg.Name = sdkName
+	}
+	return target, cfg, err
+}
+
+func sdkConfigSyncPath(path, sdkName string) (string, error) {
+	if path != "" {
+		return path, nil
+	}
+	fileName := safeConfigFileName(sdkName)
+	if fileName == "" {
+		return "", errors.New("sdk sync requires an sdk name")
+	}
+	return filepath.Join(".fused", "sdks", fileName+".yaml"), nil
+}
+
+func safeConfigFileName(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.NewReplacer("/", "-", "\\", "-", " ", "-").Replace(value)
+	return strings.Trim(value, ".")
+}
+
+func parseSDKConfig(path string, data []byte) (*configfile.SDKConfig, error) {
 	var cfg configfile.SDKConfig
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, err
@@ -91,6 +154,9 @@ func loadSDKConfigForEdit(path string) (*configfile.SDKConfig, error) {
 func writeSDKConfig(path string, cfg *configfile.SDKConfig) error {
 	data, err := yaml.Marshal(cfg)
 	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
 	}
 	return os.WriteFile(path, data, 0644)

@@ -3,27 +3,55 @@ package cmd
 import (
 	"fmt"
 	"io"
+	"strings"
 
 	cliapi "github.com/Usefused/cli/internal/api"
 	"github.com/spf13/cobra"
 )
 
 var serviceCmd = &cobra.Command{
-	Use:   "service <service-slug>",
+	Use:   "service <service-slug> [versions]",
 	Short: "Inspect Registry services",
-	Args:  cobra.MaximumNArgs(1),
+	Args:  validateServiceArgs,
 	RunE: WithTelemetry("cli.service", func(cmd *cobra.Command, args []string) error {
-		if !serviceShowVersions {
-			return cmd.Help()
-		}
-		if len(args) != 1 {
-			return fmt.Errorf("service slug is required when using --versions")
-		}
-		return runServiceVersions(cmd, args[0])
+		return runServiceAction(cmd, args)
 	}),
+	ValidArgsFunction: completeServiceArgs,
 }
 
 var serviceShowVersions bool
+
+func validateServiceArgs(cmd *cobra.Command, args []string) error {
+	if len(args) == 0 {
+		return nil
+	}
+	if len(args) > 2 {
+		return fmt.Errorf("service accepts at most <service-slug> and one action")
+	}
+	if len(args) == 2 && args[1] != "versions" {
+		return fmt.Errorf("unknown service action %q", args[1])
+	}
+	return nil
+}
+
+func runServiceAction(cmd *cobra.Command, args []string) error {
+	if len(args) == 0 {
+		return cmd.Help()
+	}
+	if serviceShowVersions || (len(args) == 2 && args[1] == "versions") {
+		return runServiceVersions(cmd, args[0])
+	}
+	return cmd.Help()
+}
+
+func completeServiceArgs(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	if len(args) == 1 {
+		if toComplete == "" || strings.HasPrefix("versions", toComplete) {
+			return []string{"versions"}, cobra.ShellCompDirectiveNoFileComp
+		}
+	}
+	return nil, cobra.ShellCompDirectiveNoFileComp
+}
 
 var serviceVersionsCmd = &cobra.Command{
 	Use:   "versions <service-slug>",

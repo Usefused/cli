@@ -271,7 +271,7 @@ func applyOneConfig(client *api.Client, cfg *configfile.ParsedConfig, receipt pl
 			if err := waitForSDKGeneration(client, resp.JobID); err != nil {
 				return fmt.Errorf("failed to generate SDK %s: %w", cfg.SDK.Name, err)
 			}
-			return downloadSDKConfig(client, cfg.ConfigKey, ".")
+			return downloadSDKByID(client, resp.SDKID, cfg.SDK.Name, ".")
 		}
 	}
 	return nil
@@ -288,21 +288,14 @@ func waitForSDKGeneration(client *api.Client, jobID string) error {
 	for eventChan != nil || errChan != nil {
 		select {
 		case event, ok := <-eventChan:
-			if !ok {
-				eventChan = nil
-				continue
-			}
-			if event.Type == "complete" || event.Type == "auth_key_generated" {
-				return nil
-			}
-			if event.Type == "error" {
-				return errors.New(event.Message)
+			nextEventChan, done, err := handleSDKGenerationEvent(eventChan, event, ok)
+			eventChan = nextEventChan
+			if done || err != nil {
+				return err
 			}
 		case err, ok := <-errChan:
-			if !ok {
-				errChan = nil
-				continue
-			}
+			nextErrChan, err := handleSDKGenerationStreamError(errChan, err, ok)
+			errChan = nextErrChan
 			if err != nil {
 				return err
 			}
@@ -310,6 +303,43 @@ func waitForSDKGeneration(client *api.Client, jobID string) error {
 			return errors.New("timed out waiting for SDK generation")
 		}
 	}
+	return nil
+}
+
+func handleSDKGenerationEvent(ch chan api.SDKEvent, event api.SDKEvent, ok bool) (chan api.SDKEvent, bool, error) {
+	if !ok {
+		return nil, false, nil
+	}
+	switch event.Type {
+	case "complete", "auth_key_generated":
+		return ch, true, nil
+	case "error":
+		return ch, false, errors.New(event.Message)
+	default:
+		return ch, false, nil
+	}
+}
+
+func handleSDKGenerationStreamError(ch chan error, err error, ok bool) (chan error, error) {
+	if !ok {
+		return nil, nil
+	}
+	return ch, err
+}
+
+func downloadSDKByID(client *api.Client, sdkID, sdkName, outDir string) error {
+	if strings.TrimSpace(sdkID) == "" {
+		return fmt.Errorf("sdk ID is required for download")
+	}
+	data, err := client.DownloadSDK(sdkID)
+	if err != nil {
+		return fmt.Errorf("failed to download sdk:%s: %w", sdkName, err)
+	}
+	outPath := filepath.Join(outDir, sdkName+".zip")
+	if err := os.WriteFile(outPath, data, 0644); err != nil {
+		return fmt.Errorf("failed to write %s: %w", outPath, err)
+	}
+	fmt.Printf("Downloaded sdk:%s to %s\n", sdkName, outPath)
 	return nil
 }
 

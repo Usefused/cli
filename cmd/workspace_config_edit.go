@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/google/uuid"
 	"gopkg.in/yaml.v3"
@@ -100,6 +101,29 @@ func loadWorkspaceConfigForEdit(path string) (*configfile.WorkspaceConfig, error
 	if err != nil {
 		return nil, err
 	}
+	return parseWorkspaceConfig(path, data)
+}
+
+func loadWorkspaceConfigForSync(path string) (string, *configfile.WorkspaceConfig, error) {
+	target := path
+	if target == "" {
+		target = filepath.Join(".fused", "workspace.yaml")
+	}
+	data, err := os.ReadFile(target)
+	if os.IsNotExist(err) {
+		return target, &configfile.WorkspaceConfig{
+			BaseConfig: configfile.BaseConfig{Kind: configfile.KindWorkspace, Version: 1},
+			Services:   map[string]configfile.WorkspaceService{},
+		}, nil
+	}
+	if err != nil {
+		return "", nil, err
+	}
+	cfg, err := parseWorkspaceConfig(target, data)
+	return target, cfg, err
+}
+
+func parseWorkspaceConfig(path string, data []byte) (*configfile.WorkspaceConfig, error) {
 	var cfg configfile.WorkspaceConfig
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, err
@@ -116,6 +140,9 @@ func loadWorkspaceConfigForEdit(path string) (*configfile.WorkspaceConfig, error
 func writeWorkspaceConfig(path string, cfg *configfile.WorkspaceConfig) error {
 	data, err := yaml.Marshal(cfg)
 	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
 	}
 	return os.WriteFile(path, data, 0644)

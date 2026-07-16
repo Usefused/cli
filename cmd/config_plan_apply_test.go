@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/Usefused/cli/internal/configfile"
+	"github.com/spf13/cobra"
 )
 
 func TestWorkspacePlanWritesReceiptAndPostsToEngine(t *testing.T) {
@@ -212,7 +213,7 @@ services:
     version: "2026-07-01"
     operations: ["listLogEvents"]
 `)
-	runCommandInDir(t, dir, "", []string{"sdk", "operation", "add", "okta", "getUser", "listGroups", "-f", path})
+	runCommandInDir(t, dir, "", []string{"sdk", "service", "okta", "add", "getUser", "listGroups", "-f", path})
 	afterAdd, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -221,7 +222,7 @@ services:
 		t.Fatalf("expected getUser and listGroups in YAML:\n%s", string(afterAdd))
 	}
 
-	runCommandInDir(t, dir, "", []string{"sdk", "operation", "remove", "okta", "listLogEvents", "getUser", "-f", path})
+	runCommandInDir(t, dir, "", []string{"sdk", "service", "okta", "remove", "listLogEvents", "getUser", "-f", path})
 	afterRemove, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -248,7 +249,7 @@ services:
     version: "2026-07-01"
     operations: ["listLogEvents"]
 `)
-	runCommandInDir(t, dir, "", []string{"sdk", "service", "add", "github", "-f", path, "--version", "2026-06-15"})
+	runCommandInDir(t, dir, "", []string{"sdk", "service", "github", "add", "-f", path, "--version", "2026-06-15"})
 
 	after, err := os.ReadFile(path)
 	if err != nil {
@@ -256,6 +257,36 @@ services:
 	}
 	if !bytes.Contains(after, []byte("github:")) || !bytes.Contains(after, []byte("2026-06-15")) {
 		t.Fatalf("expected github service in YAML:\n%s", string(after))
+	}
+
+	runCommandInDir(t, dir, "", []string{"sdk", "service", "github", "remove", "-f", path})
+	afterRemove, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(afterRemove, []byte("github:")) {
+		t.Fatalf("expected github service removed from YAML:\n%s", string(afterRemove))
+	}
+}
+
+func TestSDKServiceActionCompletionAfterSlug(t *testing.T) {
+	got, directive := completeSDKServiceArgs(sdkServiceCmd, []string{"okta"}, "ad")
+	if directive != cobra.ShellCompDirectiveNoFileComp {
+		t.Fatalf("expected no-file completion directive, got %v", directive)
+	}
+	if len(got) != 1 || got[0] != "add" {
+		t.Fatalf("expected add completion after slug, got %#v", got)
+	}
+}
+
+func TestSDKServiceSlugHelpShowsReadableActions(t *testing.T) {
+	dir := t.TempDir()
+	out := runCommandInDirOutput(t, dir, "", []string{"sdk", "service", "okta", "--help"})
+	if !strings.Contains(out, "service <service-slug> [add|remove] [operationId...]") {
+		t.Fatalf("expected readable sdk service use in help, got %q", out)
+	}
+	if !strings.Contains(out, "add") || !strings.Contains(out, "remove") {
+		t.Fatalf("expected sdk service actions in help, got %q", out)
 	}
 }
 
@@ -360,7 +391,7 @@ func TestWorkspaceServiceVersionsUsesSlugResolvedServiceID(t *testing.T) {
 	}))
 	defer server.Close()
 
-	out := runCommandInDirOutput(t, dir, server.URL, []string{"workspace", "service", "@acme-inc/github", "--versions"})
+	out := runCommandInDirOutput(t, dir, server.URL, []string{"workspace", "service", "@acme-inc/github", "versions"})
 	if !sawGraphQL || !sawWorkspaceList {
 		t.Fatalf("expected graphql and workspace requests, saw graphql=%v workspace=%v", sawGraphQL, sawWorkspaceList)
 	}
@@ -369,6 +400,127 @@ func TestWorkspaceServiceVersionsUsesSlugResolvedServiceID(t *testing.T) {
 	}
 	if strings.Contains(out, "ver-other") {
 		t.Fatalf("expected service_id match to exclude other service, got %q", out)
+	}
+}
+
+func TestWorkspaceServiceOperationsDefaultsToLatestEnabledVersion(t *testing.T) {
+	dir := t.TempDir()
+	var sawVersion string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/graphql":
+			var body struct {
+				Query     string         `json:"query"`
+				Variables map[string]any `json:"variables"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode graphql body: %v", err)
+			}
+			if strings.Contains(body.Query, "serviceVersions") {
+				if body.Variables["serviceId"] != "github" || body.Variables["provider"] != "acme-inc" {
+					t.Fatalf("expected provider-qualified slug split, got %#v", body.Variables)
+				}
+				_, _ = w.Write([]byte(`{"data":{"serviceVersions":[{"id":"ver-latest","service_id":"svc-github","name":"2026-07-16","status":"public","created_at":"2026-07-16T00:00:00Z"}]}}`))
+				return
+			}
+			sawVersion, _ = body.Variables["version"].(string)
+			if body.Variables["serviceId"] != "svc-github" {
+				t.Fatalf("unexpected operation list variables %#v", body.Variables)
+			}
+			_, _ = w.Write([]byte(`{"data":{"serviceOperations":[{"id":"ep1","name":"reposListForOrg","method":"GET","path":"/orgs/{org}/repos","description":"","service_id":"svc-github"},{"id":"ep2","name":"issuesListForRepo","method":"GET","path":"/repos/{owner}/{repo}/issues","description":"","service_id":"svc-github"}]}}`))
+		case "/workspace/services":
+			_, _ = w.Write([]byte(`[
+				{"service_id":"svc-github","service_name":"GitHub REST API","version":"2026-01-01","enabled_versions":[
+					{"version":"2026-01-01","service_version_id":"ver-old","created_at":"2026-01-01T00:00:00Z","enabled_at":"2026-01-02T00:00:00Z"},
+					{"version":"2026-07-16","service_version_id":"ver-latest","created_at":"2026-07-16T00:00:00Z","enabled_at":"2026-07-17T00:00:00Z"}
+				]}
+			]`))
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	out := runCommandInDirOutput(t, dir, server.URL, []string{"workspace", "service", "@acme-inc/github", "operations"})
+	if sawVersion != "2026-07-16" {
+		t.Fatalf("expected latest enabled version, got %q", sawVersion)
+	}
+	if !strings.Contains(out, "reposListForOrg\tGET\t/orgs/{org}/repos") || !strings.Contains(out, "issuesListForRepo") {
+		t.Fatalf("expected operation output, got %q", out)
+	}
+}
+
+func TestWorkspaceServiceOperationsUsesExplicitEnabledVersion(t *testing.T) {
+	dir := t.TempDir()
+	var sawVersion string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/graphql":
+			var body struct {
+				Query     string         `json:"query"`
+				Variables map[string]any `json:"variables"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode graphql body: %v", err)
+			}
+			if strings.Contains(body.Query, "serviceVersions") {
+				_, _ = w.Write([]byte(`{"data":{"serviceVersions":[{"id":"ver-old","service_id":"svc-github","name":"2026-01-01","status":"public","created_at":"2026-01-01T00:00:00Z"}]}}`))
+				return
+			}
+			sawVersion, _ = body.Variables["version"].(string)
+			_, _ = w.Write([]byte(`{"data":{"serviceOperations":[{"id":"ep1","name":"reposListForOrg","method":"GET","path":"/orgs/{org}/repos","description":"","service_id":"svc-github"}]}}`))
+		case "/workspace/services":
+			_, _ = w.Write([]byte(`[{"service_id":"svc-github","service_name":"GitHub REST API","version":"2026-07-16","enabled_versions":[{"version":"2026-01-01","service_version_id":"ver-old"},{"version":"2026-07-16","service_version_id":"ver-latest"}]}]`))
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	runCommandInDir(t, dir, server.URL, []string{"workspace", "service", "github", "operations", "--version", "2026-01-01"})
+	if sawVersion != "2026-01-01" {
+		t.Fatalf("expected explicit version to be used, got %q", sawVersion)
+	}
+}
+
+func TestWorkspaceServiceOperationsRejectsNonWorkspaceVersion(t *testing.T) {
+	dir := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/graphql":
+			_, _ = w.Write([]byte(`{"data":{"serviceVersions":[{"id":"ver-new","service_id":"svc-github","name":"2026-08-01","status":"public","created_at":"2026-08-01T00:00:00Z"}]}}`))
+		case "/workspace/services":
+			_, _ = w.Write([]byte(`[{"service_id":"svc-github","service_name":"GitHub REST API","version":"2026-07-16","enabled_versions":[{"version":"2026-07-16","service_version_id":"ver-latest"}]}]`))
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	out := runCommandInDirExpectError(t, dir, server.URL, []string{"workspace", "service", "github", "operations", "--version", "2026-08-01"})
+	if !strings.Contains(out, "not enabled in this workspace") {
+		t.Fatalf("expected workspace-version rejection, got %q", out)
+	}
+}
+
+func TestWorkspaceServiceActionCompletionAfterSlug(t *testing.T) {
+	got, directive := completeWorkspaceServiceArgs(workspaceServiceCmd, []string{"github"}, "op")
+	if directive != cobra.ShellCompDirectiveNoFileComp {
+		t.Fatalf("expected no-file completion directive, got %v", directive)
+	}
+	if len(got) != 1 || got[0] != "operations" {
+		t.Fatalf("expected operations completion after slug, got %#v", got)
+	}
+}
+
+func TestWorkspaceServiceSlugHelpShowsReadableActions(t *testing.T) {
+	dir := t.TempDir()
+	out := runCommandInDirOutput(t, dir, "", []string{"workspace", "service", "github", "--help"})
+	if !strings.Contains(out, "service <service-slug> [versions|operations]") {
+		t.Fatalf("expected readable service use in help, got %q", out)
+	}
+	if !strings.Contains(out, "operations") || !strings.Contains(out, "versions") {
+		t.Fatalf("expected service actions in help, got %q", out)
 	}
 }
 
@@ -621,6 +773,36 @@ func runCommandInDirOutput(t *testing.T, dir, engineURL string, args []string) s
 		t.Fatal(err)
 	}
 	return out.String() + string(stdoutBytes)
+}
+
+func runCommandInDirExpectError(t *testing.T, dir, engineURL string, args []string) string {
+	t.Helper()
+	oldwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldwd) })
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	oldEngineURL, oldAPIKey, oldConfigFile := EngineURL, APIKey, ConfigFile
+	t.Cleanup(func() {
+		EngineURL, APIKey, ConfigFile = oldEngineURL, oldAPIKey, oldConfigFile
+	})
+	EngineURL = engineURL
+	APIKey = "fsk_test"
+	ConfigFile = ""
+
+	out := &bytes.Buffer{}
+	errOut := &bytes.Buffer{}
+	RootCmd.SetOut(out)
+	RootCmd.SetErr(errOut)
+	RootCmd.SetArgs(args)
+	err = RootCmd.Execute()
+	if err == nil {
+		t.Fatalf("expected command %v to fail", args)
+	}
+	return out.String() + errOut.String() + err.Error()
 }
 
 func writeSprintConfig(t *testing.T, dir, rel, body string) string {

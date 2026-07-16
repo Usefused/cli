@@ -22,6 +22,12 @@ var sdkCmd = &cobra.Command{
 	Use:   "sdk",
 	Short: "Manage Fused SDK configuration",
 	Long:  `Manage your SDK generation config files, plan changes, and download generated SDKs.`,
+	Example: `  fused-cli sdk security-sdk download
+  fused-cli sdk security-sdk@1.2.0 download`,
+	Args: cobra.ArbitraryArgs,
+	RunE: WithTelemetry("cli.sdk", func(cmd *cobra.Command, args []string) error {
+		return runSDKDynamicAction(cmd, args)
+	}),
 }
 
 var sdkPlanCmd = &cobra.Command{
@@ -74,69 +80,272 @@ var sdkValidateCmd = &cobra.Command{
 
 var sdkDownloadOutDir string
 
+type sdkDownloadTarget struct {
+	Name    string
+	Version string
+}
+
 func validateSDKDownloadArgs(args []string) error {
-	if len(args) > 0 && strings.Contains(args[0], "@") {
-		return fmt.Errorf("sdk download uses config names only; %q includes a version suffix", args[0])
+	if len(args) > 0 {
+		name, version := parseSDKDownloadName(args[0])
+		if name == "" || strings.Contains(args[0], "@") && version == "" {
+			return fmt.Errorf("sdk download requires name@version when using version suffix")
+		}
 	}
 	return nil
 }
 
+func resolveSDKDownloadTargets(args []string, configPath string) ([]sdkDownloadTarget, error) {
+	if len(args) > 0 {
+		name, version := parseSDKDownloadName(args[0])
+		return []sdkDownloadTarget{{Name: name, Version: version}}, nil
+	}
+	run, err := configfile.LoadRun(configPath)
+	if err != nil {
+		return nil, err
+	}
+	targets := make([]sdkDownloadTarget, 0, len(run.Configs))
+	for _, cfg := range run.Configs {
+		if cfg.Kind == configfile.KindSDK {
+			targets = append(targets, sdkDownloadTarget{
+				Name:    cfg.SDK.Name,
+				Version: strings.TrimSpace(cfg.SDK.SDKVersion),
+			})
+		}
+	}
+	if len(targets) == 0 {
+		return nil, fmt.Errorf("no sdk configs found")
+	}
+	return targets, nil
+}
+
+func parseSDKDownloadName(raw string) (string, string) {
+	name, version, found := strings.Cut(raw, "@")
+	if !found {
+		return strings.TrimSpace(raw), ""
+	}
+	return strings.TrimSpace(name), strings.TrimSpace(version)
+}
+
+func runSDKDynamicAction(cmd *cobra.Command, args []string) error {
+	if len(args) == 0 {
+		return cmd.Help()
+	}
+	if len(args) == 2 && args[1] == "download" {
+		if err := validateSDKDownloadArgs([]string{args[0]}); err != nil {
+			return err
+		}
+		return runSDKDownloadTargets([]sdkDownloadTarget{downloadTargetFromName(args[0])})
+	}
+	return fmt.Errorf("unknown sdk command %q", strings.Join(args, " "))
+}
+
+func downloadTargetFromName(name string) sdkDownloadTarget {
+	sdkName, version := parseSDKDownloadName(name)
+	return sdkDownloadTarget{Name: sdkName, Version: version}
+}
+
 var sdkDownloadCmd = &cobra.Command{
-	Use:   "download [name]",
-	Short: "Download the generated SDK for a config",
-	Args:  cobra.MaximumNArgs(1),
+	Use:    "download [name[@version]]",
+	Short:  "Download the generated SDK for a config",
+	Hidden: true,
+	Args:   cobra.MaximumNArgs(1),
 	RunE: WithTelemetry("cli.sdk.download", func(cmd *cobra.Command, args []string) error {
 		if err := validateSDKDownloadArgs(args); err != nil {
 			return err
 		}
 
-		client, err := getAPIClient()
+		sdksToDownload, err := resolveSDKDownloadTargets(args, effectiveConfigFile())
 		if err != nil {
 			return err
 		}
 
-		var sdksToDownload []string
-		if len(args) > 0 {
-			name := args[0]
-			sdksToDownload = append(sdksToDownload, "sdk:"+name)
-		} else {
-			run, err := configfile.LoadRun(ConfigFile)
-			if err != nil {
-				return err
-			}
-			for _, cfg := range run.Configs {
-				if cfg.Kind == configfile.KindSDK {
-					sdksToDownload = append(sdksToDownload, cfg.ConfigKey)
-				}
-			}
-		}
-
-		if len(sdksToDownload) == 0 {
-			fmt.Println("No SDKs found to download.")
-			return nil
-		}
-
-		for _, configKey := range sdksToDownload {
-			data, err := client.DownloadGeneratedSDK(configKey)
-			if err != nil {
-				return fmt.Errorf("failed to download %s: %w", configKey, err)
-			}
-			outPath := filepath.Join(sdkDownloadOutDir, strings.TrimPrefix(configKey, "sdk:")+".zip")
-			if err := os.WriteFile(outPath, data, 0644); err != nil {
-				return fmt.Errorf("failed to write %s: %w", outPath, err)
-			}
-			fmt.Printf("Downloaded %s to %s\n", configKey, outPath)
-		}
-		return nil
+		return runSDKDownloadTargets(sdksToDownload)
 	}),
 }
 
+func runSDKDownloadTargets(targets []sdkDownloadTarget) error {
+	client, err := getAPIClient()
+	if err != nil {
+		return err
+	}
+	for _, target := range targets {
+		if err := downloadSDKTarget(client, target); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func downloadSDKTarget(client *api.Client, target sdkDownloadTarget) error {
+	data, err := downloadSDKByName(client, target)
+	if err != nil {
+		return fmt.Errorf("failed to download sdk:%s: %w", target.Name, err)
+	}
+	outPath := filepath.Join(sdkDownloadOutDir, target.Name+".zip")
+	if err := os.WriteFile(outPath, data, 0644); err != nil {
+		return fmt.Errorf("failed to write %s: %w", outPath, err)
+	}
+	fmt.Printf("Downloaded sdk:%s to %s\n", target.Name, outPath)
+	return nil
+}
+
+func downloadSDKByName(client *api.Client, target sdkDownloadTarget) ([]byte, error) {
+	sdk, err := client.GetSDKByName(target.Name, target.Version)
+	if err != nil {
+		return nil, err
+	}
+	if sdk == nil || strings.TrimSpace(sdk.ID) == "" {
+		return nil, fmt.Errorf("generated SDK not found")
+	}
+	return client.DownloadSDK(sdk.ID)
+}
+
 var sdkServiceCmd = &cobra.Command{
-	Use:   "service",
+	Use:   "service <service-slug> [add|remove] [operationId...]",
 	Short: "Manage services in SDK config",
+	Args:  validateSDKServiceArgs,
+	RunE: WithTelemetry("cli.sdk.service", func(cmd *cobra.Command, args []string) error {
+		return runSDKServiceAction(cmd, args)
+	}),
+	ValidArgsFunction: completeSDKServiceArgs,
 }
 
 var sdkAddServiceVersion string
+var sdkServiceActionInteractive bool
+var sdkServiceActionApply bool
+var sdkServiceActionDownload bool
+
+func validateSDKServiceArgs(cmd *cobra.Command, args []string) error {
+	if len(args) == 0 {
+		return nil
+	}
+	if len(args) < 2 {
+		return fmt.Errorf("sdk service action is required")
+	}
+	if !isSDKServiceAction(args[1]) {
+		return fmt.Errorf("unknown sdk service action %q", args[1])
+	}
+	return nil
+}
+
+func runSDKServiceAction(cmd *cobra.Command, args []string) error {
+	if len(args) == 0 {
+		return cmd.Help()
+	}
+	serviceName := args[0]
+	action := args[1]
+	operations := append([]string(nil), args[2:]...)
+	switch action {
+	case "add":
+		return runSDKServiceAddAction(cmd, serviceName, operations)
+	case "remove":
+		return runSDKServiceRemoveAction(cmd, serviceName, operations)
+	default:
+		return fmt.Errorf("unknown sdk service action %q", action)
+	}
+}
+
+func runSDKServiceAddAction(cmd *cobra.Command, serviceName string, operations []string) error {
+	if len(operations) == 0 && sdkServiceActionInteractive {
+		selectedService, selectedOperations, err := selectSDKOperationsInteractively(ConfigFile, serviceName)
+		if err != nil {
+			return err
+		}
+		serviceName = selectedService
+		operations = append(operations, selectedOperations...)
+	}
+	if len(operations) > 0 {
+		if err := addSDKOperations(ConfigFile, serviceName, operations); err != nil {
+			return err
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "Added %d operationId(s) to service %s: %s\n", len(operations), serviceName, strings.Join(operations, ", "))
+		return maybeApplySDKServiceAction()
+	}
+	if err := addSDKService(ConfigFile, serviceName, sdkAddServiceVersion); err != nil {
+		return err
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "Added service %s with version %s\n", serviceName, sdkAddServiceVersion)
+	return nil
+}
+
+func runSDKServiceRemoveAction(cmd *cobra.Command, serviceName string, operations []string) error {
+	if len(operations) > 0 {
+		if err := removeSDKOperations(ConfigFile, serviceName, operations); err != nil {
+			return err
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "Removed %d operationId(s) from service %s: %s\n", len(operations), serviceName, strings.Join(operations, ", "))
+		return nil
+	}
+	if err := removeSDKService(ConfigFile, serviceName); err != nil {
+		return err
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "Removed service %s\n", serviceName)
+	return nil
+}
+
+func maybeApplySDKServiceAction() error {
+	if sdkServiceActionDownload {
+		sdkServiceActionApply = true
+	}
+	if !sdkServiceActionApply {
+		return nil
+	}
+	if err := runConfigPlan(planOptions{filter: filterSDK}); err != nil {
+		return err
+	}
+	return runConfigApply(applyOptions{filter: filterSDK, download: sdkServiceActionDownload})
+}
+
+func isSDKServiceAction(action string) bool {
+	switch action {
+	case "add", "remove":
+		return true
+	default:
+		return false
+	}
+}
+
+func completeSDKServiceArgs(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	switch len(args) {
+	case 0:
+		return completeSDKConfigServices(toComplete), cobra.ShellCompDirectiveNoFileComp
+	case 1:
+		return filteredSDKServiceActions(toComplete), cobra.ShellCompDirectiveNoFileComp
+	default:
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+}
+
+func completeSDKConfigServices(toComplete string) []string {
+	cfg, err := loadSDKConfigForEdit(effectiveConfigFile())
+	if err != nil {
+		return nil
+	}
+	names := sortedSDKServiceNames(cfg.Services)
+	out := make([]string, 0, len(names))
+	for _, name := range names {
+		if strings.HasPrefix(name, toComplete) {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+func filteredSDKServiceActions(toComplete string) []string {
+	actions := []string{"add", "remove"}
+	if toComplete == "" {
+		return actions
+	}
+	out := make([]string, 0, len(actions))
+	for _, action := range actions {
+		if strings.HasPrefix(action, toComplete) {
+			out = append(out, action)
+		}
+	}
+	return out
+}
+
 var sdkAddServiceCmd = &cobra.Command{
 	Use:   "add <service>",
 	Short: "Add a service to SDK config",
@@ -526,6 +735,7 @@ func selectedIndex(rawChoice string, size int) (int, error) {
 
 func init() {
 	RootCmd.AddCommand(sdkCmd)
+	sdkCmd.Flags().StringVarP(&sdkDownloadOutDir, "out", "o", ".", "Output directory for SDK download")
 
 	sdkCmd.AddCommand(sdkPlanCmd)
 	sdkPlanCmd.Flags().BoolVar(&sdkPlanJSON, "json", false, "Print plan receipt JSON instead of writing default receipt")
@@ -542,6 +752,10 @@ func init() {
 	sdkDownloadCmd.Flags().StringVarP(&sdkDownloadOutDir, "out", "o", ".", "Output directory for the SDK")
 
 	sdkCmd.AddCommand(sdkServiceCmd)
+	sdkServiceCmd.Flags().StringVar(&sdkAddServiceVersion, "version", "", "Specific version to use when adding a service")
+	sdkServiceCmd.Flags().BoolVarP(&sdkServiceActionInteractive, "interactive", "i", false, "Interactively select operations for the service add action")
+	sdkServiceCmd.Flags().BoolVar(&sdkServiceActionApply, "apply", false, "Apply SDK config after adding operations")
+	sdkServiceCmd.Flags().BoolVar(&sdkServiceActionDownload, "download", false, "Download SDK after apply (implies --apply)")
 	sdkServiceCmd.AddCommand(sdkAddServiceCmd)
 	sdkAddServiceCmd.Flags().StringVar(&sdkAddServiceVersion, "version", "", "Specific version to use for the service")
 

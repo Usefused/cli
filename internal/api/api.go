@@ -156,6 +156,8 @@ type ServiceVisibility struct {
 	ServiceID string `json:"id"`
 	IsOwner   bool   `json:"is_owner"`
 	IsPublic  bool   `json:"is_public"`
+	Slug      string `json:"slug"`
+	Provider  string `json:"provider"`
 }
 
 type Integration struct {
@@ -230,6 +232,8 @@ func (c *Client) ServiceVisibilities(serviceIDs []string) (map[string]ServiceVis
 		query ServiceVisibilities($serviceIds: [String!]!) {
 			servicesByIds(serviceIds: $serviceIds) {
 				id
+				slug
+				provider
 				is_owner
 				is_public
 			}
@@ -320,6 +324,26 @@ func (c *Client) SearchEndpoints(serviceID, version, q string) ([]Integration, e
 	}
 	err := c.GraphQL(query, map[string]interface{}{"serviceId": serviceID, "version": version, "q": q}, &resp)
 	return resp.SearchEndpoints, err
+}
+
+func (c *Client) ServiceOperations(serviceID, version string) ([]Integration, error) {
+	query := `
+		query ServiceOperations($serviceId: String!, $version: String) {
+			serviceOperations(serviceId: $serviceId, version: $version) {
+				id
+				name
+				path
+				method
+				description
+				service_id
+			}
+		}
+	`
+	var resp struct {
+		ServiceOperations []Integration `json:"serviceOperations"`
+	}
+	err := c.GraphQL(query, map[string]interface{}{"serviceId": serviceID, "version": version}, &resp)
+	return resp.ServiceOperations, err
 }
 
 type Webhook struct {
@@ -559,6 +583,8 @@ func (c *Client) GetSDKByName(name string, version string) (*SDKBasicDetails, er
 type SDKSelectionDetail struct {
 	ServiceID          string   `json:"service_id"`
 	ServiceName        string   `json:"service_name"`
+	ServiceSlug        string   `json:"service_slug"`
+	ServiceProvider    string   `json:"service_provider"`
 	EndpointIDs        []string `json:"endpoint_ids"`
 	WebhookIDs         []string `json:"webhook_ids"`
 	SelectAll          bool     `json:"select_all"`
@@ -586,6 +612,8 @@ func (c *Client) GetSDKSelectionsByName(name string) (*SDKWithSelections, error)
 				detailed_selections {
 					service_id
 					service_name
+					service_slug
+					service_provider
 					endpoint_ids
 					webhook_ids
 					select_all

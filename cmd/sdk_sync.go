@@ -28,6 +28,7 @@ type sdkSyncResult struct {
 // tag (see fetchSDKSyncData).
 type sdkSyncRemoteService struct {
 	Name       string
+	Ref        string
 	Version    string
 	Operations []string
 }
@@ -41,7 +42,7 @@ type sdkSyncRemoteService struct {
 // bumps cfg.SDKVersion to the synced SDK's version. Pure and side-effect-free
 // (no file or network I/O) so it's directly testable, mirroring
 // mergeWorkspaceServicesFromRemote's structure (workspace_sync.go).
-func mergeSDKServicesFromRemote(cfg *configfile.SDKConfig, sdkVersion string, remote []sdkSyncRemoteService) sdkSyncResult {
+func mergeSDKServicesFromRemote(cfg *configfile.SDKConfig, sdkVersion string, remote []sdkSyncRemoteService) (sdkSyncResult, error) {
 	if cfg.Services == nil {
 		cfg.Services = map[string]configfile.SDKService{}
 	}
@@ -50,7 +51,11 @@ func mergeSDKServicesFromRemote(cfg *configfile.SDKConfig, sdkVersion string, re
 
 	remoteByName := make(map[string]sdkSyncRemoteService, len(remote))
 	for _, svc := range remote {
-		remoteByName[svc.Name] = svc
+		key, err := sdkSyncServiceConfigKey(svc)
+		if err != nil {
+			return result, err
+		}
+		remoteByName[key] = svc
 	}
 
 	// Remove local entries the remote SDK no longer selects.
@@ -63,26 +68,37 @@ func mergeSDKServicesFromRemote(cfg *configfile.SDKConfig, sdkVersion string, re
 
 	// Add/update from remote -- remote always wins over whatever was there.
 	for _, svc := range remote {
+		key, err := sdkSyncServiceConfigKey(svc)
+		if err != nil {
+			return result, err
+		}
 		operations := append([]string{}, svc.Operations...)
 		sort.Strings(operations)
 		newEntry := configfile.SDKService{
 			Version:    svc.Version,
 			Operations: operations,
 		}
-		existing, existed := cfg.Services[svc.Name]
-		cfg.Services[svc.Name] = newEntry
+		existing, existed := cfg.Services[key]
+		cfg.Services[key] = newEntry
 		switch {
 		case !existed:
-			result.Added = append(result.Added, svc.Name)
+			result.Added = append(result.Added, key)
 		case !sdkServiceEqual(existing, newEntry):
-			result.Updated = append(result.Updated, svc.Name)
+			result.Updated = append(result.Updated, key)
 		}
 	}
 
 	sort.Strings(result.Added)
 	sort.Strings(result.Updated)
 	sort.Strings(result.Removed)
-	return result
+	return result, nil
+}
+
+func sdkSyncServiceConfigKey(svc sdkSyncRemoteService) (string, error) {
+	if ref := strings.TrimSpace(svc.Ref); ref != "" {
+		return ref, nil
+	}
+	return "", fmt.Errorf("sdk sync missing service slug for service %s", svc.Name)
 }
 
 // sdkServiceEqual compares the fields sync actually touches. Operations is
@@ -124,8 +140,13 @@ func fetchSDKSyncData(client *api.Client, sdkName string) (sdkVersion string, re
 			return "", nil, fmt.Errorf("resolving operations for service %s: %w", sel.ServiceName, err)
 		}
 
+		ref := serviceConfigRef(sel.ServiceSlug, sel.ServiceProvider)
+		if ref == "" {
+			return "", nil, fmt.Errorf("sdk sync missing service slug for service %s", sel.ServiceName)
+		}
 		remote = append(remote, sdkSyncRemoteService{
 			Name:       sel.ServiceName,
+			Ref:        ref,
 			Version:    versionTag,
 			Operations: names,
 		})
@@ -144,7 +165,7 @@ conflict) and removes any local service entry the remote SDK no longer
 selects. Also bumps the local sdkVersion to match.`,
 	Args: cobra.ExactArgs(1),
 	RunE: WithTelemetry("cli.sdk.sync", func(cmd *cobra.Command, args []string) error {
-		cfg, err := loadSDKConfigForEdit(ConfigFile)
+		path, cfg, err := loadSDKConfigForSync(ConfigFile, args[0])
 		if err != nil {
 			return err
 		}
@@ -156,8 +177,11 @@ selects. Also bumps the local sdkVersion to match.`,
 		if err != nil {
 			return err
 		}
-		result := mergeSDKServicesFromRemote(cfg, sdkVersion, remote)
-		if err := writeSDKConfig(ConfigFile, cfg); err != nil {
+		result, err := mergeSDKServicesFromRemote(cfg, sdkVersion, remote)
+		if err != nil {
+			return err
+		}
+		if err := writeSDKConfig(path, cfg); err != nil {
 			return err
 		}
 		printSDKSyncResult(cmd, result)

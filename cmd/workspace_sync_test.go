@@ -1,7 +1,13 @@
 package cmd
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/Usefused/cli/internal/api"
@@ -16,6 +22,26 @@ func remoteVersions(values ...string) []api.WorkspaceServiceVersion {
 	return out
 }
 
+func workspaceSyncVisibility(remote ...api.WorkspaceService) map[string]api.ServiceVisibility {
+	visibility := make(map[string]api.ServiceVisibility, len(remote))
+	for _, svc := range remote {
+		visibility[svc.ServiceID] = api.ServiceVisibility{ServiceID: svc.ServiceID, Slug: svc.ServiceName}
+	}
+	return visibility
+}
+
+func mustMergeWorkspaceServicesFromRemote(t *testing.T, cfg *configfile.WorkspaceConfig, remote []api.WorkspaceService, visibility map[string]api.ServiceVisibility) workspaceSyncResult {
+	t.Helper()
+	if visibility == nil {
+		visibility = workspaceSyncVisibility(remote...)
+	}
+	result, err := mergeWorkspaceServicesFromRemote(cfg, remote, visibility)
+	if err != nil {
+		t.Fatalf("mergeWorkspaceServicesFromRemote: %v", err)
+	}
+	return result
+}
+
 // TestMergeWorkspaceServicesFromRemote_AddsNewRemoteService is Task 4's core
 // AC: a service enabled remotely
 // but absent locally gets added, with the Engine's data as the source of
@@ -26,7 +52,7 @@ func TestMergeWorkspaceServicesFromRemote_AddsNewRemoteService(t *testing.T) {
 		{ServiceName: "stripe", ServiceID: "svc-1", Version: "2026-01-01", EnabledVersions: remoteVersions("2026-01-01")},
 	}
 
-	result := mergeWorkspaceServicesFromRemote(cfg, remote, nil)
+	result := mustMergeWorkspaceServicesFromRemote(t, cfg, remote, nil)
 
 	if !reflect.DeepEqual(result.Added, []string{"stripe"}) {
 		t.Errorf("expected Added=[stripe], got %v", result.Added)
@@ -43,6 +69,33 @@ func TestMergeWorkspaceServicesFromRemote_AddsNewRemoteService(t *testing.T) {
 	}
 }
 
+func TestMergeWorkspaceServicesFromRemote_UsesSlugRefAsConfigKey(t *testing.T) {
+	cfg := &configfile.WorkspaceConfig{Services: map[string]configfile.WorkspaceService{}}
+	remote := []api.WorkspaceService{
+		{ServiceName: "GitHub REST API", ServiceID: "svc-1", Version: "1.1.4", EnabledVersions: remoteVersions("1.1.4")},
+		{ServiceName: "Acme CRM", ServiceID: "svc-2", Version: "2026-07-01", EnabledVersions: remoteVersions("2026-07-01")},
+	}
+	visibility := map[string]api.ServiceVisibility{
+		"svc-1": {ServiceID: "svc-1", Slug: "github-rest-api", IsOwner: true},
+		"svc-2": {ServiceID: "svc-2", Slug: "crm", Provider: "acme", IsOwner: false},
+	}
+
+	result := mustMergeWorkspaceServicesFromRemote(t, cfg, remote, visibility)
+
+	if !reflect.DeepEqual(result.Added, []string{"@acme/crm", "github-rest-api"}) {
+		t.Fatalf("expected slug refs in Added, got %v", result.Added)
+	}
+	if _, ok := cfg.Services["GitHub REST API"]; ok {
+		t.Fatal("display name should not be used as a workspace config key")
+	}
+	if _, ok := cfg.Services["github-rest-api"]; !ok {
+		t.Fatalf("expected owned service keyed by slug, got %+v", cfg.Services)
+	}
+	if _, ok := cfg.Services["@acme/crm"]; !ok {
+		t.Fatalf("expected foreign service keyed by provider-qualified slug, got %+v", cfg.Services)
+	}
+}
+
 // TestMergeWorkspaceServicesFromRemote_RemotWinsOnConflict is the "Engine's
 // data wins on any conflict" AC: a local entry with different values than
 // the remote gets fully overwritten, not merged field-by-field.
@@ -54,7 +107,7 @@ func TestMergeWorkspaceServicesFromRemote_RemoteWinsOnConflict(t *testing.T) {
 		{ServiceName: "stripe", ServiceID: "svc-1", Version: "2026-01-01", EnabledVersions: remoteVersions("2025-01-01", "2026-01-01")},
 	}
 
-	result := mergeWorkspaceServicesFromRemote(cfg, remote, nil)
+	result := mustMergeWorkspaceServicesFromRemote(t, cfg, remote, nil)
 
 	if !reflect.DeepEqual(result.Updated, []string{"stripe"}) {
 		t.Errorf("expected Updated=[stripe], got %v", result.Updated)
@@ -76,7 +129,7 @@ func TestMergeWorkspaceServicesFromRemote_UnchangedServiceNotReportedAsUpdated(t
 		{ServiceName: "stripe", ServiceID: "svc-1", Version: "2026-01-01", EnabledVersions: remoteVersions("2026-01-01")},
 	}
 
-	result := mergeWorkspaceServicesFromRemote(cfg, remote, nil)
+	result := mustMergeWorkspaceServicesFromRemote(t, cfg, remote, nil)
 
 	if len(result.Added) != 0 || len(result.Updated) != 0 || len(result.Removed) != 0 {
 		t.Errorf("expected no changes reported for an already-in-sync service, got %+v", result)
@@ -94,7 +147,7 @@ func TestMergeWorkspaceServicesFromRemote_UnchangedIgnoresVersionOrder(t *testin
 		{ServiceName: "stripe", ServiceID: "svc-1", Version: "2026-01-01", EnabledVersions: remoteVersions("2025-06-01", "2026-01-01")},
 	}
 
-	result := mergeWorkspaceServicesFromRemote(cfg, remote, nil)
+	result := mustMergeWorkspaceServicesFromRemote(t, cfg, remote, nil)
 
 	if len(result.Updated) != 0 {
 		t.Errorf("expected version-order difference alone not to count as a change, got Updated=%v", result.Updated)
@@ -107,19 +160,19 @@ func TestMergeWorkspaceServicesFromRemote_UnchangedIgnoresVersionOrder(t *testin
 func TestMergeWorkspaceServicesFromRemote_RemovesLocalEntryNoLongerActivated(t *testing.T) {
 	cfg := &configfile.WorkspaceConfig{Services: map[string]configfile.WorkspaceService{
 		"stripe": {ServiceID: "svc-1", Versions: []string{"2026-01-01"}},
-		"legacy": {ServiceID: "svc-2", Versions: []string{"1.0.0"}},
+		"stale":  {ServiceID: "svc-2", Versions: []string{"1.0.0"}},
 	}}
 	remote := []api.WorkspaceService{
 		{ServiceName: "stripe", ServiceID: "svc-1", Version: "2026-01-01", EnabledVersions: remoteVersions("2026-01-01")},
 	}
 
-	result := mergeWorkspaceServicesFromRemote(cfg, remote, nil)
+	result := mustMergeWorkspaceServicesFromRemote(t, cfg, remote, nil)
 
-	if !reflect.DeepEqual(result.Removed, []string{"legacy"}) {
-		t.Errorf("expected Removed=[legacy], got %v", result.Removed)
+	if !reflect.DeepEqual(result.Removed, []string{"stale"}) {
+		t.Errorf("expected Removed=[stale], got %v", result.Removed)
 	}
-	if _, ok := cfg.Services["legacy"]; ok {
-		t.Error("expected legacy to be removed from cfg.Services")
+	if _, ok := cfg.Services["stale"]; ok {
+		t.Error("expected stale service to be removed from cfg.Services")
 	}
 	if _, ok := cfg.Services["stripe"]; !ok {
 		t.Error("expected stripe to remain")
@@ -132,11 +185,42 @@ func TestMergeWorkspaceServicesFromRemote_LatestVersionIncludedInVersions(t *tes
 		{ServiceName: "stripe", ServiceID: "svc-1", Version: "2026-01-01"},
 	}
 
-	mergeWorkspaceServicesFromRemote(cfg, remote, nil)
+	mustMergeWorkspaceServicesFromRemote(t, cfg, remote, nil)
 
 	got := cfg.Services["stripe"]
 	if !containsString(got.Versions, "2026-01-01") {
 		t.Errorf("expected latest version to be included in Versions, got %v", got.Versions)
+	}
+}
+
+func TestWorkspaceSyncCreatesDefaultFusedConfig(t *testing.T) {
+	dir := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/workspace/services":
+			_ = json.NewEncoder(w).Encode([]api.WorkspaceService{{
+				ServiceName:     "github",
+				ServiceID:       "svc-github",
+				Version:         "1.1.4",
+				EnabledVersions: remoteVersions("1.1.4"),
+			}})
+		case "/graphql":
+			_, _ = w.Write([]byte(`{"data":{"servicesByIds":[{"id":"svc-github","slug":"github-rest-api","provider":null,"is_owner":true,"is_public":false}]}}`))
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	runCommandInDir(t, dir, server.URL, []string{"workspace", "sync"})
+
+	data, err := os.ReadFile(filepath.Join(dir, ".fused", "workspace.yaml"))
+	if err != nil {
+		t.Fatalf("expected default workspace config to be created: %v", err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "kind: workspace") || !strings.Contains(text, "github-rest-api:") || !strings.Contains(text, "service_id: svc-github") {
+		t.Fatalf("unexpected workspace sync file:\n%s", text)
 	}
 }
 
@@ -147,7 +231,7 @@ func TestMergeWorkspaceServicesFromRemote_EmptyRemoteRemovesEverything(t *testin
 		"stripe": {ServiceID: "svc-1", Versions: []string{"2026-01-01"}},
 	}}
 
-	result := mergeWorkspaceServicesFromRemote(cfg, nil, nil)
+	result := mustMergeWorkspaceServicesFromRemote(t, cfg, nil, nil)
 
 	if !reflect.DeepEqual(result.Removed, []string{"stripe"}) {
 		t.Errorf("expected Removed=[stripe], got %v", result.Removed)
@@ -166,7 +250,7 @@ func TestMergeWorkspaceServicesFromRemote_NilServicesMapInitialized(t *testing.T
 		{ServiceName: "stripe", ServiceID: "svc-1", Version: "2026-01-01", EnabledVersions: remoteVersions("2026-01-01")},
 	}
 
-	mergeWorkspaceServicesFromRemote(cfg, remote, nil)
+	mustMergeWorkspaceServicesFromRemote(t, cfg, remote, nil)
 
 	if cfg.Services == nil {
 		t.Fatal("expected Services map to be initialized")
@@ -183,11 +267,11 @@ func TestMergeWorkspaceServicesFromRemote_WritesPublicOnlyForOwnedServices(t *te
 		{ServiceName: "@acme/billing", ServiceID: "svc-foreign", Version: "2026-02-01"},
 	}
 	visibility := map[string]api.ServiceVisibility{
-		"svc-owned":   {ServiceID: "svc-owned", IsOwner: true, IsPublic: false},
-		"svc-foreign": {ServiceID: "svc-foreign", IsOwner: false, IsPublic: true},
+		"svc-owned":   {ServiceID: "svc-owned", Slug: "stripe", IsOwner: true, IsPublic: false},
+		"svc-foreign": {ServiceID: "svc-foreign", Slug: "billing", Provider: "acme", IsOwner: false, IsPublic: true},
 	}
 
-	mergeWorkspaceServicesFromRemote(cfg, remote, visibility)
+	mustMergeWorkspaceServicesFromRemote(t, cfg, remote, visibility)
 
 	owned := cfg.Services["stripe"]
 	if owned.Public == nil || *owned.Public != false {
@@ -196,6 +280,17 @@ func TestMergeWorkspaceServicesFromRemote_WritesPublicOnlyForOwnedServices(t *te
 	foreign := cfg.Services["@acme/billing"]
 	if foreign.Public != nil {
 		t.Fatalf("expected non-owned service public metadata to be omitted, got %#v", foreign.Public)
+	}
+}
+
+func TestMergeWorkspaceServicesFromRemote_RejectsMissingSlugRef(t *testing.T) {
+	cfg := &configfile.WorkspaceConfig{Services: map[string]configfile.WorkspaceService{}}
+	remote := []api.WorkspaceService{{ServiceName: "GitHub REST API", ServiceID: "svc-github"}}
+
+	_, err := mergeWorkspaceServicesFromRemote(cfg, remote, map[string]api.ServiceVisibility{})
+
+	if err == nil || !strings.Contains(err.Error(), "missing service slug") {
+		t.Fatalf("expected missing slug error, got %v", err)
 	}
 }
 
