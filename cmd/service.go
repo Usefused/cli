@@ -28,7 +28,7 @@ func validateServiceArgs(cmd *cobra.Command, args []string) error {
 	if len(args) > 2 {
 		return fmt.Errorf("service accepts at most <service-slug> and one action")
 	}
-	if len(args) == 2 && args[1] != "versions" {
+	if len(args) == 2 && args[1] != "versions" && args[1] != "show" {
 		return fmt.Errorf("unknown service action %q", args[1])
 	}
 	return nil
@@ -41,13 +41,23 @@ func runServiceAction(cmd *cobra.Command, args []string) error {
 	if serviceShowVersions || (len(args) == 2 && args[1] == "versions") {
 		return runServiceVersions(cmd, args[0])
 	}
+	if len(args) == 2 && args[1] == "show" {
+		return runServiceShow(cmd, args[0])
+	}
 	return cmd.Help()
 }
 
 func completeServiceArgs(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 	if len(args) == 1 {
-		if toComplete == "" || strings.HasPrefix("versions", toComplete) {
-			return []string{"versions"}, cobra.ShellCompDirectiveNoFileComp
+		actions := []string{"versions", "show"}
+		var matches []string
+		for _, a := range actions {
+			if toComplete == "" || strings.HasPrefix(a, toComplete) {
+				matches = append(matches, a)
+			}
+		}
+		if len(matches) > 0 {
+			return matches, cobra.ShellCompDirectiveNoFileComp
 		}
 	}
 	return nil, cobra.ShellCompDirectiveNoFileComp
@@ -60,6 +70,40 @@ var serviceVersionsCmd = &cobra.Command{
 	RunE: WithTelemetry("cli.service.versions", func(cmd *cobra.Command, args []string) error {
 		return runServiceVersions(cmd, args[0])
 	}),
+}
+
+var serviceShowCmd = &cobra.Command{
+	Use:   "show <service-slug>",
+	Short: "Show base URL and servers for a service",
+	Args:  cobra.ExactArgs(1),
+	RunE: WithTelemetry("cli.service.show", func(cmd *cobra.Command, args []string) error {
+		return runServiceShow(cmd, args[0])
+	}),
+}
+
+func runServiceShow(cmd *cobra.Command, serviceSlug string) error {
+	client, err := getAPIClient()
+	if err != nil {
+		return err
+	}
+	info, err := client.GetServiceInfo(serviceSlug)
+	if err != nil {
+		return err
+	}
+	if info == nil {
+		return fmt.Errorf("service %s not found", serviceSlug)
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "name:\t%s\n", info.Name)
+	fmt.Fprintf(cmd.OutOrStdout(), "slug:\t%s\n", info.Slug)
+	fmt.Fprintf(cmd.OutOrStdout(), "base_url:\t%s\n", info.BaseURL)
+	for _, srv := range info.Servers {
+		if srv.Description != "" {
+			fmt.Fprintf(cmd.OutOrStdout(), "server:\t%s\t%s\n", srv.URL, srv.Description)
+		} else {
+			fmt.Fprintf(cmd.OutOrStdout(), "server:\t%s\n", srv.URL)
+		}
+	}
+	return nil
 }
 
 func runServiceVersions(cmd *cobra.Command, service string) error {
@@ -89,4 +133,5 @@ func init() {
 	RootCmd.AddCommand(serviceCmd)
 	serviceCmd.Flags().BoolVar(&serviceShowVersions, "versions", false, "List available versions for the service slug; supports @provider/slug")
 	serviceCmd.AddCommand(serviceVersionsCmd)
+	serviceCmd.AddCommand(serviceShowCmd)
 }

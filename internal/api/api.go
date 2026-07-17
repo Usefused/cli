@@ -259,6 +259,42 @@ type ServiceVersion struct {
 	CreatedAt string `json:"created_at"`
 }
 
+type ServiceServer struct {
+	URL         string `json:"url"`
+	Description string `json:"description"`
+}
+
+type ServiceInfo struct {
+	ID      string          `json:"id"`
+	Name    string          `json:"name"`
+	Slug    string          `json:"slug"`
+	BaseURL string          `json:"base_url"`
+	Servers []ServiceServer `json:"servers"`
+}
+
+func (c *Client) GetServiceInfo(serviceSlug string) (*ServiceInfo, error) {
+	query := `
+		query GetServiceInfo($id: String!, $provider: String) {
+			service(id: $id, provider: $provider) {
+				id
+				name
+				slug
+				base_url
+				servers {
+					url
+					description
+				}
+			}
+		}
+	`
+	var resp struct {
+		Service *ServiceInfo `json:"service"`
+	}
+	slug, provider := splitProviderQualifiedServiceRef(serviceSlug)
+	err := c.GraphQL(query, map[string]interface{}{"id": slug, "provider": provider}, &resp)
+	return resp.Service, err
+}
+
 func (c *Client) ServiceVersions(serviceSlug string) ([]ServiceVersion, error) {
 	query := `
 		query ServiceVersions($serviceId: String!, $provider: String) {
