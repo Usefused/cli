@@ -257,10 +257,12 @@ func receiptForApply(cfg *configfile.ParsedConfig, opts applyOptions) (planRecei
 func applyOneConfig(client *api.Client, cfg *configfile.ParsedConfig, receipt planReceipt, download bool) error {
 	switch cfg.Kind {
 	case configfile.KindWorkspace:
-		if _, err := client.ApplyWorkspaceConfig(receipt.PlanID, receipt.SourceHash); err != nil {
+		resp, err := client.ApplyWorkspaceConfig(receipt.PlanID, receipt.SourceHash)
+		if err != nil {
 			return fmt.Errorf("failed to apply workspace %s: %w", cfg.ConfigKey, err)
 		}
 		fmt.Printf("Successfully applied workspace config\n")
+		printAppliedWebhooks(client.BaseURL, resp.Webhooks)
 	case configfile.KindSDK:
 		resp, err := client.ApplySDKConfig(receipt.PlanID, receipt.SourceHash)
 		if err != nil {
@@ -275,6 +277,23 @@ func applyOneConfig(client *api.Client, cfg *configfile.ParsedConfig, receipt pl
 		}
 	}
 	return nil
+}
+
+// printAppliedWebhooks surfaces each webhook registration's URL right after
+// a workspace apply so a user setting one up for the first time doesn't need
+// a separate lookup command just to find the address they have to paste into
+// the provider's dashboard. baseURL is the Engine host the CLI just talked
+// to; the server only returns the opaque slug and service key, not a full
+// URL, since it has no reason to know which host-facing address the caller
+// used to reach it.
+func printAppliedWebhooks(baseURL string, webhooks []api.AppliedWebhookConfig) {
+	for _, w := range webhooks {
+		fmt.Printf("  webhook %q -> %s\n", w.Label, appliedWebhookURL(baseURL, w))
+	}
+}
+
+func appliedWebhookURL(baseURL string, w api.AppliedWebhookConfig) string {
+	return strings.TrimRight(baseURL, "/") + "/webhook/" + w.Slug + "-" + w.ServiceKey
 }
 
 func waitForSDKGeneration(client *api.Client, jobID string) error {

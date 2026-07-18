@@ -146,7 +146,7 @@ var workspaceHasCmd = &cobra.Command{
 }
 
 var workspaceServiceCmd = &cobra.Command{
-	Use:   "service <service-slug> [versions|operations]",
+	Use:   "service <service-slug> [versions|operations|webhooks]",
 	Short: "Manage a specific workspace service",
 	Args:  validateWorkspaceServiceArgs,
 	RunE: WithTelemetry("cli.workspace.service", func(cmd *cobra.Command, args []string) error {
@@ -187,6 +187,8 @@ func runWorkspaceServiceAction(cmd *cobra.Command, args []string) error {
 		return runWorkspaceServiceVersions(cmd, serviceSlug)
 	case "operations":
 		return runWorkspaceServiceOperations(cmd, serviceSlug, workspaceServiceOperationsVersion)
+	case "webhooks":
+		return runWorkspaceServiceWebhooks(cmd, serviceSlug)
 	default:
 		return fmt.Errorf("unknown workspace service action %q", args[1])
 	}
@@ -194,7 +196,7 @@ func runWorkspaceServiceAction(cmd *cobra.Command, args []string) error {
 
 func isWorkspaceServiceAction(action string) bool {
 	switch action {
-	case "versions", "operations":
+	case "versions", "operations", "webhooks":
 		return true
 	default:
 		return false
@@ -231,7 +233,7 @@ func completeWorkspaceServiceCandidates(toComplete string) []string {
 }
 
 func filteredWorkspaceServiceActions(toComplete string) []string {
-	actions := []string{"versions", "operations"}
+	actions := []string{"versions", "operations", "webhooks"}
 	if toComplete == "" {
 		return actions
 	}
@@ -304,6 +306,51 @@ func runWorkspaceServiceOperations(cmd *cobra.Command, serviceSlug, version stri
 	}
 	for _, endpoint := range endpoints {
 		fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", endpoint.Name, endpoint.Method, endpoint.Path)
+	}
+	return nil
+}
+
+var workspaceServiceWebhooksCmd = &cobra.Command{
+	Use:   "webhooks <service-slug>",
+	Short: "List webhook registrations for an enabled workspace service",
+	Args:  cobra.ExactArgs(1),
+	RunE: WithTelemetry("cli.workspace.service.webhooks", func(cmd *cobra.Command, args []string) error {
+		return runWorkspaceServiceWebhooks(cmd, args[0])
+	}),
+}
+
+// runWorkspaceServiceWebhooks is the read-only visibility command
+// (engine_owned_webhooks_plan.md, Task 8): it looks up a service's webhook
+// registrations without requiring a workspace apply, and reconstructs each
+// display URL the same way applyOneConfig's output does (Task 5) --
+// appliedWebhookURL -- since the server only ever returns the opaque slug,
+// never a full URL.
+func runWorkspaceServiceWebhooks(cmd *cobra.Command, serviceSlug string) error {
+	client, err := getAPIClient()
+	if err != nil {
+		return err
+	}
+	serviceID, err := resolveServiceIDFromSlug(client, serviceSlug)
+	if err != nil {
+		return err
+	}
+	// Confirms the service is actually enabled in this workspace (not just
+	// visible in the Registry) before asking the Engine for its webhooks --
+	// same membership check runWorkspaceServiceOperations already does.
+	if _, err := workspaceServiceByID(client, serviceID, serviceSlug); err != nil {
+		return err
+	}
+	webhooks, err := client.ListWorkspaceWebhooks(serviceID)
+	if err != nil {
+		return err
+	}
+	if len(webhooks) == 0 {
+		fmt.Fprintf(cmd.OutOrStdout(), "No webhook registrations for service %s.\n", serviceSlug)
+		return nil
+	}
+	for _, wh := range webhooks {
+		url := appliedWebhookURL(client.BaseURL, cliapi.AppliedWebhookConfig{ServiceKey: serviceSlug, Label: wh.Label, Slug: wh.Slug})
+		fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", wh.Label, url, wh.CreatedAt)
 	}
 	return nil
 }
@@ -626,6 +673,7 @@ func init() {
 	workspaceServiceAddCmd.Flags().StringVar(&workspaceServiceAddID, "service-id", "", "Registry service UUID to store in workspace config")
 	workspaceServiceCmd.AddCommand(workspaceServiceOperationsCmd)
 	workspaceServiceOperationsCmd.Flags().StringVar(&workspaceServiceOperationsVersion, "version", "", "Enabled workspace service version; omitted uses the latest enabled version")
+	workspaceServiceCmd.AddCommand(workspaceServiceWebhooksCmd)
 
 	workspaceServiceCmd.AddCommand(workspaceServiceRemoveCmd)
 	workspaceServiceRemoveCmd.Flags().BoolVar(&workspaceServiceRemoveForce, "force", false, "Force removal when the generated plan action is applied")

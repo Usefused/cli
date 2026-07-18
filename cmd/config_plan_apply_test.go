@@ -516,10 +516,10 @@ func TestWorkspaceServiceActionCompletionAfterSlug(t *testing.T) {
 func TestWorkspaceServiceSlugHelpShowsReadableActions(t *testing.T) {
 	dir := t.TempDir()
 	out := runCommandInDirOutput(t, dir, "", []string{"workspace", "service", "github", "--help"})
-	if !strings.Contains(out, "service <service-slug> [versions|operations]") {
+	if !strings.Contains(out, "service <service-slug> [versions|operations|webhooks]") {
 		t.Fatalf("expected readable service use in help, got %q", out)
 	}
-	if !strings.Contains(out, "operations") || !strings.Contains(out, "versions") {
+	if !strings.Contains(out, "operations") || !strings.Contains(out, "versions") || !strings.Contains(out, "webhooks") {
 		t.Fatalf("expected service actions in help, got %q", out)
 	}
 }
@@ -760,6 +760,7 @@ func runCommandInDirOutput(t *testing.T, dir, engineURL string, args []string) s
 	os.Stdout = stdoutWriter
 	t.Cleanup(func() { os.Stdout = oldStdout })
 
+	resetHelpFlags(RootCmd)
 	RootCmd.SetOut(out)
 	RootCmd.SetErr(&bytes.Buffer{})
 	RootCmd.SetArgs(args)
@@ -795,6 +796,7 @@ func runCommandInDirExpectError(t *testing.T, dir, engineURL string, args []stri
 
 	out := &bytes.Buffer{}
 	errOut := &bytes.Buffer{}
+	resetHelpFlags(RootCmd)
 	RootCmd.SetOut(out)
 	RootCmd.SetErr(errOut)
 	RootCmd.SetArgs(args)
@@ -803,6 +805,25 @@ func runCommandInDirExpectError(t *testing.T, dir, engineURL string, args []stri
 		t.Fatalf("expected command %v to fail", args)
 	}
 	return out.String() + errOut.String() + err.Error()
+}
+
+// resetHelpFlags clears the "help" flag across the entire command tree
+// before each test invocation. Cobra's *cobra.Command values are
+// package-level singletons shared by every test in this binary, and pflag
+// does not reset a bool flag's value between Parse() calls -- it only sets
+// flags that are actually present in the new args. So a test that invokes
+// `<cmd> --help` leaves that command's help flag permanently "true" for
+// every later test that reaches the same command without passing --help
+// again, causing cobra to silently print help instead of running RunE. This
+// makes every command execution start from the correct default (help not
+// requested) regardless of what an earlier test in the same process did.
+func resetHelpFlags(cmd *cobra.Command) {
+	if help := cmd.Flags().Lookup("help"); help != nil {
+		_ = help.Value.Set("false")
+	}
+	for _, child := range cmd.Commands() {
+		resetHelpFlags(child)
+	}
 }
 
 func writeSprintConfig(t *testing.T, dir, rel, body string) string {

@@ -32,11 +32,17 @@ type WorkspaceService struct {
 type RuntimeConfig struct {
 	BaseURL             string                       `yaml:"base_url,omitempty" json:"base_url,omitempty"`
 	DefaultHeaders      map[string]string            `yaml:"default_headers,omitempty" json:"default_headers,omitempty"`
-	Webhook             *WebhookConfig               `yaml:"webhook,omitempty" json:"webhook,omitempty"`
+	Webhooks            map[string]WebhookConfig     `yaml:"webhooks,omitempty" json:"webhooks,omitempty"`
 	Pagination          *PaginationConfig            `yaml:"pagination,omitempty" json:"pagination,omitempty"`
 	PaginationOverrides map[string]*PaginationConfig `yaml:"pagination_overrides,omitempty" json:"pagination_overrides,omitempty"`
 }
 
+// WebhookConfig is one named webhook ingress registration for a service. The
+// map key in RuntimeConfig.Webhooks (e.g. "repo-a", "staging") is the
+// registration's identity across re-applies, not an event filter -- a team
+// can register as many independent URLs for the same service as they want
+// (however they've configured things on the provider's own dashboard), each
+// getting its own generated slug and signing secret.
 type WebhookConfig struct {
 	SigningSecret string `yaml:"signing_secret,omitempty" json:"signing_secret,omitempty"`
 }

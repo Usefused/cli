@@ -223,6 +223,46 @@ func (c *Client) ListWorkspaceServices(names ...string) ([]WorkspaceService, err
 	return out, nil
 }
 
+// WorkspaceWebhook is one registered webhook for a workspace service --
+// visibility-only (Task 8 of engine_owned_webhooks_plan.md), so it
+// deliberately has no signing-secret field to decode into: the server never
+// sends it back.
+type WorkspaceWebhook struct {
+	Label     string `json:"label"`
+	Slug      string `json:"slug"`
+	CreatedAt string `json:"created_at"`
+}
+
+// ListWorkspaceWebhooks looks up every webhook registration for one workspace
+// service, so a user can find a registration's URL again without re-running
+// workspace apply just to see the printout it produced once at apply time.
+func (c *Client) ListWorkspaceWebhooks(serviceID string) ([]WorkspaceWebhook, error) {
+	req, err := http.NewRequest("GET", c.BaseURL+"/workspace/services/"+serviceID+"/webhooks", nil)
+	if err != nil {
+		return nil, err
+	}
+	if c.APIKey != "" {
+		req.Header.Set("x-api-key", c.APIKey)
+	}
+
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("list workspace webhooks failed (HTTP %d): %s", resp.StatusCode, string(respBody))
+	}
+
+	var out []WorkspaceWebhook
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *Client) ServiceVisibilities(serviceIDs []string) (map[string]ServiceVisibility, error) {
 	out := map[string]ServiceVisibility{}
 	if len(serviceIDs) == 0 {
@@ -790,8 +830,19 @@ type ConfigPlanResponse struct {
 }
 
 type ConfigApplyResponse struct {
-	Status string `json:"status"`
-	PlanID string `json:"plan_id"`
+	Status   string                 `json:"status"`
+	PlanID   string                 `json:"plan_id"`
+	Webhooks []AppliedWebhookConfig `json:"webhooks,omitempty"`
+}
+
+// AppliedWebhookConfig is one webhook registration the apply just created or
+// refreshed. Slug is the opaque path segment only -- the CLI builds the full
+// display URL itself (base URL + "/webhook/" + Slug + "-" + ServiceKey)
+// since it already knows which Engine host it just called.
+type AppliedWebhookConfig struct {
+	ServiceKey string `json:"service_key"`
+	Label      string `json:"label"`
+	Slug       string `json:"slug"`
 }
 
 func (c *Client) PlanSDKConfig(sourceHash, configKey string, config json.RawMessage) (*SDKConfigPlanResponse, error) {
