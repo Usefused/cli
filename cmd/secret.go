@@ -80,7 +80,11 @@ var secretSetCmd = &cobra.Command{
 				}
 			}
 			if selectedAuth == nil {
-				return fmt.Errorf("service %s does not support authentication method '%s'", serviceSlug, secretSetType)
+				var validTypes []string
+				for _, a := range info.AuthConfigs {
+					validTypes = append(validTypes, a.Name)
+				}
+				return fmt.Errorf("service %s does not support authentication method '%s'. Valid methods are: %s. Run 'fused-cli service show %s' for details", serviceSlug, secretSetType, strings.Join(validTypes, ", "), serviceSlug)
 			}
 		}
 
@@ -89,8 +93,11 @@ var secretSetCmd = &cobra.Command{
 			if len(info.AuthConfigs) == 1 {
 				selectedAuth = &info.AuthConfigs[0]
 			} else {
-				fmt.Printf("Service %s has multiple authentication methods. Falling back to interactive mode...\n", serviceSlug)
-				secretSetInteractive = true
+				var validTypes []string
+				for _, a := range info.AuthConfigs {
+					validTypes = append(validTypes, a.Name)
+				}
+				return fmt.Errorf("service %s has multiple authentication methods. Please use interactive mode (-i) or specify --type. Valid methods are: %s. Run 'fused-cli service show %s' for details", serviceSlug, strings.Join(validTypes, ", "), serviceSlug)
 			}
 		}
 

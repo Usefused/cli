@@ -189,7 +189,9 @@ Show the base URL, servers, and supported authentication methods for a service.
 
 #### `secret set <service-slug> [value]`
 Set an authentication secret for a workspace service.
-If the service supports multiple authentication methods, use `--type` to specify the method, or omit it to use the interactive selection menu.
+If the service supports multiple authentication methods, use `--type` to specify the method, or use the `--interactive` flag to select from a menu.
+
+> **Tip:** To see the available authentication methods (and their logical names for the `--type` flag) for a service, run `fused-cli service show <service-slug>`.
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
