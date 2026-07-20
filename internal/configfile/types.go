@@ -23,10 +23,10 @@ type WorkspaceConfig struct {
 
 // WorkspaceService represents service versions enabled for a workspace.
 type WorkspaceService struct {
-	ServiceID     string         `yaml:"service_id,omitempty" json:"service_id,omitempty"`
-	Public        *bool          `yaml:"public,omitempty" json:"public,omitempty"`
-	Versions      []string       `yaml:"versions,omitempty" json:"versions,omitempty"`
-	RuntimeConfig *RuntimeConfig `yaml:"runtime_config,omitempty" json:"runtime_config,omitempty"`
+	ServiceID     string             `yaml:"service_id,omitempty" json:"service_id,omitempty"`
+	Public        *bool              `yaml:"public,omitempty" json:"public,omitempty"`
+	Versions      []string           `yaml:"versions,omitempty" json:"versions,omitempty"`
+	RuntimeConfig *RuntimeConfig     `yaml:"runtime_config,omitempty" json:"runtime_config,omitempty"`
 }
 
 type RuntimeConfig struct {
@@ -69,15 +69,16 @@ type SDKConfig struct {
 	SDKVersion string                `yaml:"sdkVersion" json:"sdkVersion"`
 	Language   string                `yaml:"language" json:"language"`
 	Target     string                `yaml:"target" json:"target"`
+	Bucket     string                `yaml:"bucket,omitempty" json:"bucket,omitempty"`
 	Services   map[string]SDKService `yaml:"services" json:"services"`
 }
 
 // SDKService represents the requested version and operations for a specific service in an SDK.
 type SDKService struct {
-	Version         string   `yaml:"version" json:"version"`
-	Operations      []string `yaml:"operations" json:"operations"`
-	Webhooks        []string `yaml:"webhooks,omitempty" json:"webhooks,omitempty"`
-	LegacyEndpoints []string `yaml:"endpoints,omitempty" json:"-"`
+	Version         string             `yaml:"version" json:"version"`
+	Operations      []string           `yaml:"operations" json:"operations"`
+	Webhooks        []string           `yaml:"webhooks,omitempty" json:"webhooks,omitempty"`
+	LegacyEndpoints []string           `yaml:"endpoints,omitempty" json:"-"`
 }
 
 // ParsedConfig is a container for the parsed configuration.

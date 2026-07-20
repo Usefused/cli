@@ -11,6 +11,7 @@ import (
 
 	"github.com/Usefused/cli/internal/api"
 	"github.com/charmbracelet/huh"
+	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 )
 
@@ -22,6 +23,7 @@ var targetType string
 var targetLanguage string
 var deploy bool
 var autoYes bool
+var bucketName string
 
 var createCmd = &cobra.Command{
 	Use:   "create",
@@ -46,6 +48,7 @@ func init() {
 	createCmd.Flags().BoolVarP(&autoYes, "yes", "y", false, "Skip interactive menu and automatically proceed")
 	createCmd.Flags().StringVarP(&description, "description", "d", "", "Description of the SDK to create (e.g. 'Create a stripe and plunk sdk')")
 	createCmd.Flags().StringVarP(&outputDir, "output", "o", ".", "Directory to save the generated SDK zip")
+	createCmd.Flags().StringVarP(&bucketName, "bucket", "b", "", "Secret bucket the deployed MCP server resolves credentials from (mcp target only; defaults to the workspace's default bucket)")
 
 	createCmd.MarkFlagRequired("name")
 
@@ -191,13 +194,23 @@ func runCreate(cmd *cobra.Command) {
 		return
 	}
 
+	// MCP creation no longer generates an SDK at all -- it never touches
+	// Registry's /sdks/generate. It resolves the cart's selections directly
+	// against the workspace's already-activated service versions and
+	// persists an SDKScope on the Engine via ActivateMCPServer. Plain SDK
+	// targets are unaffected and keep going through Registry generation.
+	if isMCPTarget(targetType) {
+		createMCPServer(client, cart)
+		return
+	}
+
 	generatedSdkID, err := generateSDK(client, buildGenerateRequest(cart))
 	if err != nil {
 		fmt.Printf("Failed to generate SDK: %v\n", err)
 		return
 	}
 	if generatedSdkID != "" {
-		finishSDKCreation(client, targetType, sdkName, outputDir, generatedSdkID)
+		deliverDownloadedSDK(client, sdkName, outputDir, generatedSdkID)
 	}
 }
 
@@ -372,16 +385,23 @@ func promptAndAddMore(client *api.Client, cart map[string]api.Integration, servi
 	searchAndAddEndpoints(client, newDesc, cart, services)
 }
 
+// groupEndpointIDsByService buckets the cart's endpoint IDs by ServiceID.
+// Shared by buildSelections (Registry SDK generation) and
+// resolveMCPSelections (direct Engine activation) -- both need the same
+// grouping, just packaged into a different selection type afterward.
+func groupEndpointIDsByService(cart map[string]api.Integration) map[string][]string {
+	grouped := make(map[string][]string)
+	for id, ep := range cart {
+		grouped[ep.ServiceID] = append(grouped[ep.ServiceID], id)
+	}
+	return grouped
+}
+
 // buildSelections groups the cart's endpoint IDs by service for the
 // generation request payload. Pure, unit-tested.
 func buildSelections(cart map[string]api.Integration) []api.SDKSelection {
-	selectionsMap := make(map[string][]string)
-	for id, ep := range cart {
-		selectionsMap[ep.ServiceID] = append(selectionsMap[ep.ServiceID], id)
-	}
-
 	var selections []api.SDKSelection
-	for sid, eids := range selectionsMap {
+	for sid, eids := range groupEndpointIDsByService(cart) {
 		selections = append(selections, api.SDKSelection{
 			ServiceID:   sid,
 			EndpointIDs: eids,
@@ -391,7 +411,8 @@ func buildSelections(cart map[string]api.Integration) []api.SDKSelection {
 }
 
 // buildGenerateRequest assembles the GenerateSDK request from the confirmed
-// cart and the create command's flags.
+// cart and the create command's flags. Only reached for plain "sdk" targets
+// now -- mcp targets never call Registry generation (see createMCPServer).
 func buildGenerateRequest(cart map[string]api.Integration) api.GenerateSDKRequest {
 	return api.GenerateSDKRequest{
 		Name:           sdkName,
@@ -400,8 +421,39 @@ func buildGenerateRequest(cart map[string]api.Integration) api.GenerateSDKReques
 		TargetType:     targetType,
 		TargetLanguage: targetLanguage,
 		Selections:     buildSelections(cart),
-		SkipSandbox:    !isMCPTarget(targetType),
 	}
+}
+
+// resolveMCPSelections turns the confirmed cart into Engine-native
+// selections, resolving each referenced service's ServiceVersionID from the
+// workspace's currently-activated services. Unlike Registry SDK generation
+// (which resolves versions itself during codegen), the direct-to-Engine
+// activate call has no codegen step to do that resolution for us, so the CLI
+// does it with one extra read -- not a generation call, just a lookup.
+func resolveMCPSelections(client *api.Client, cart map[string]api.Integration) ([]api.MCPSelection, error) {
+	workspaceServices, err := client.ListWorkspaceServices()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list workspace services: %w", err)
+	}
+	versionIDs := make(map[string]string, len(workspaceServices))
+	for _, ws := range workspaceServices {
+		versionIDs[ws.ServiceID] = ws.ServiceVersionID
+	}
+
+	grouped := groupEndpointIDsByService(cart)
+	selections := make([]api.MCPSelection, 0, len(grouped))
+	for sid, eids := range grouped {
+		versionID := versionIDs[sid]
+		if versionID == "" {
+			return nil, fmt.Errorf("service %s has no resolved service_version_id in this workspace -- run 'fused-cli workspace apply' first", sid)
+		}
+		selections = append(selections, api.MCPSelection{
+			ServiceID:        sid,
+			ServiceVersionID: versionID,
+			EndpointIDs:      eids,
+		})
+	}
+	return selections, nil
 }
 
 // generateSDK kicks off generation and streams progress until a terminal
@@ -479,35 +531,46 @@ func terminalEventResult(ev api.SDKEvent) (string, bool) {
 	}
 }
 
-// finishSDKCreation delivers the generated SDK: MCP targets are already
-// running server-side (SkipSandbox was false), so we just activate the
-// sandbox and print the connection URL; plain SDK targets are downloaded as a
-// zip and extracted locally. Split out of runCreate to keep the interactive
-// cart-building flow and the post-generation delivery flow as separate
-// concerns, and to keep runCreate's cyclomatic complexity under budget.
-func finishSDKCreation(client *api.Client, targetType, sdkName, outputDir, generatedSdkID string) {
-	if isMCPTarget(targetType) {
-		deliverMCPServer(client, generatedSdkID)
+// createMCPServer is the entire mcp-target creation path: resolve the cart
+// into Engine-native selections, mint a client-side sdkID (there's no
+// Registry-issued one anymore -- nothing generated it), and activate
+// directly on the Engine. No SDK is generated, downloaded, or built for this
+// target type at all.
+func createMCPServer(client *api.Client, cart map[string]api.Integration) {
+	if len(cart) == 0 {
+		fmt.Println("Cart is empty. Aborting.")
 		return
 	}
-	deliverDownloadedSDK(client, sdkName, outputDir, generatedSdkID)
-}
 
-func deliverMCPServer(client *api.Client, generatedSdkID string) {
-	fmt.Println("✅ MCP Server Deployment Complete.")
+	selections, err := resolveMCPSelections(client, cart)
+	if err != nil {
+		fmt.Printf("Error resolving service versions: %v\n", err)
+		return
+	}
 
-	res, err := client.ActivateMCPServer(generatedSdkID)
+	sdkID := uuid.NewString()
+	fmt.Println("\n🚀 Deploying MCP server...")
+	res, err := client.ActivateMCPServer(sdkID, api.MCPActivateRequest{
+		Bucket:     bucketName,
+		Selections: selections,
+	})
 	if err != nil {
 		fmt.Printf("Error activating MCP server on Engine: %v\n", err)
 		return
 	}
-	if res != nil && res.MCPURL != "" {
-		fmt.Printf("\n🌐 Engine MCP URL: %s\n", res.MCPURL)
-		fmt.Println("\nTo use this MCP Server, configure your client to connect to the above SSE Sandbox URL.")
-		fmt.Println("Authentication credentials should be passed as HTTP headers prefixed with 'X-Env-' when establishing the connection.")
-	} else {
+
+	fmt.Println("✅ MCP Server Deployment Complete.")
+	if res == nil || res.MCPURL == "" {
 		fmt.Println("MCP URL is not available.")
+		return
 	}
+	fmt.Printf("\n🌐 Engine MCP URL: %s\n", res.MCPURL)
+	fmt.Println("\nTo use this MCP Server, configure your client to connect to the above SSE URL.")
+	if res.AuthToken != "" {
+		fmt.Printf("🔑 Auth token (save this now, it will not be shown again): %s\n", res.AuthToken)
+		fmt.Println("Configure your MCP client to send it as: Authorization: Bearer <token>")
+	}
+	fmt.Println("Per-provider credentials still come from the workspace bucket you deployed against -- nothing else to configure client-side for those.")
 }
 
 func deliverDownloadedSDK(client *api.Client, sdkName, outputDir, generatedSdkID string) {

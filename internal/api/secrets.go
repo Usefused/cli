@@ -15,19 +15,19 @@ type SecretMetaResponse struct {
 	ServiceID      string     `json:"service_id"`
 	KeyName        string     `json:"key_name"`
 	CredentialType string     `json:"credential_type"`
-	SDKID          *string    `json:"sdk_id"`
+	BucketID       string     `json:"bucket_id"`
 	ExpiresAt      *time.Time `json:"expires_at,omitempty"`
 	CreatedAt      time.Time  `json:"created_at"`
 	UpdatedAt      time.Time  `json:"updated_at"`
 }
 
-func (c *Client) UpsertSecret(serviceID, keyName, credentialType, value string, sdkID *string, expiresAt *time.Time) error {
+func (c *Client) UpsertSecret(serviceID, keyName, credentialType, value string, bucketID string, expiresAt *time.Time) error {
 	reqBody := map[string]interface{}{
 		"service_id":      serviceID,
 		"key_name":        keyName,
 		"credential_type": credentialType,
 		"value":           value,
-		"sdk_id":          sdkID,
+		"bucket_id":       bucketID,
 		"expires_at":      expiresAt,
 	}
 	body, err := json.Marshal(reqBody)
@@ -58,14 +58,14 @@ func (c *Client) UpsertSecret(serviceID, keyName, credentialType, value string, 
 	return nil
 }
 
-func (c *Client) ListSecrets(sdkID *string) ([]SecretMetaResponse, error) {
+func (c *Client) ListSecrets(bucketID string) ([]SecretMetaResponse, error) {
 	u, err := url.Parse(c.BaseURL + "/workspace/secrets")
 	if err != nil {
 		return nil, err
 	}
-	if sdkID != nil {
+	if bucketID != "" {
 		q := u.Query()
-		q.Set("sdk_id", *sdkID)
+		q.Set("bucket_id", bucketID)
 		u.RawQuery = q.Encode()
 	}
 
@@ -95,7 +95,7 @@ func (c *Client) ListSecrets(sdkID *string) ([]SecretMetaResponse, error) {
 	return out, nil
 }
 
-func (c *Client) DeleteSecret(serviceID, keyName string, sdkID *string) error {
+func (c *Client) DeleteSecret(serviceID, keyName string, bucketID string) error {
 	u, err := url.Parse(c.BaseURL + "/workspace/secrets")
 	if err != nil {
 		return err
@@ -103,8 +103,8 @@ func (c *Client) DeleteSecret(serviceID, keyName string, sdkID *string) error {
 	q := u.Query()
 	q.Set("service_id", serviceID)
 	q.Set("key_name", keyName)
-	if sdkID != nil {
-		q.Set("sdk_id", *sdkID)
+	if bucketID != "" {
+		q.Set("bucket_id", bucketID)
 	}
 	u.RawQuery = q.Encode()
 

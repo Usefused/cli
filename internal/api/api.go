@@ -304,12 +304,21 @@ type ServiceServer struct {
 	Description string `json:"description"`
 }
 
+type AuthConfig struct {
+	Name     string `json:"name"`
+	Type     string `json:"type"`
+	Scheme   string `json:"scheme"`
+	Location string `json:"location"`
+	KeyName  string `json:"key_name"`
+}
+
 type ServiceInfo struct {
-	ID      string          `json:"id"`
-	Name    string          `json:"name"`
-	Slug    string          `json:"slug"`
-	BaseURL string          `json:"base_url"`
-	Servers []ServiceServer `json:"servers"`
+	ID          string          `json:"id"`
+	Name        string          `json:"name"`
+	Slug        string          `json:"slug"`
+	BaseURL     string          `json:"base_url"`
+	Servers     []ServiceServer `json:"servers"`
+	AuthConfigs []AuthConfig    `json:"auth_configs"`
 }
 
 func (c *Client) GetServiceInfo(serviceSlug string) (*ServiceInfo, error) {
@@ -323,6 +332,13 @@ func (c *Client) GetServiceInfo(serviceSlug string) (*ServiceInfo, error) {
 				servers {
 					url
 					description
+				}
+				auth_configs {
+					name
+					type
+					scheme
+					location
+					key_name
 				}
 			}
 		}
@@ -757,16 +773,48 @@ func (c *Client) DownloadSDK(sdkID string) ([]byte, error) {
 	return io.ReadAll(resp.Body)
 }
 
-type MCPActivateResult struct {
-	MCPURL string `json:"mcp_url"`
+// MCPSelection mirrors the Engine's models.SDKSelection wire shape (see
+// backend/internal/shared/models.SDKSelection) -- it's what ActivateMCPServer
+// sends directly to POST /sdk-config/{id}/activate. MCP creation no longer
+// round-trips through Registry SDK generation, so this is a CLI-local type
+// rather than a re-export of the CLI's Registry-facing SDKSelection (which
+// has no ServiceVersionID -- Registry used to resolve that itself during
+// codegen; now the CLI must resolve and send it directly).
+type MCPSelection struct {
+	ServiceID        string   `json:"service_id"`
+	ServiceVersionID string   `json:"service_version_id"`
+	EndpointIDs      []string `json:"endpoint_ids"`
 }
 
-// ActivateMCPServer posts to the Engine to deploy an MCP server.
-func (c *Client) ActivateMCPServer(sdkID string) (*MCPActivateResult, error) {
-	req, err := http.NewRequest("POST", c.BaseURL+"/engine/sdks/"+sdkID+"/activate", nil)
+// MCPActivateRequest is the body for POST /sdk-config/{id}/activate. Bucket
+// names which secret bucket the deployed MCP resolves credentials from --
+// empty means the workspace's default bucket (resolved server-side).
+type MCPActivateRequest struct {
+	Bucket     string         `json:"bucket,omitempty"`
+	Selections []MCPSelection `json:"selections,omitempty"`
+}
+
+type MCPActivateResult struct {
+	Status    string `json:"status"`
+	SDKID     string `json:"sdk_id"`
+	MCPURL    string `json:"mcp_url"`
+	AuthToken string `json:"auth_token,omitempty"`
+}
+
+// ActivateMCPServer posts directly to the Engine to create/activate an MCP
+// server -- no Registry SDK generation involved. sdkID is minted by the
+// caller (uuid.NewString()), not issued by Registry, since there's no
+// generated_sdks row backing this anymore.
+func (c *Client) ActivateMCPServer(sdkID string, activateReq MCPActivateRequest) (*MCPActivateResult, error) {
+	body, err := json.Marshal(activateReq)
 	if err != nil {
 		return nil, err
 	}
+	req, err := http.NewRequest("POST", c.BaseURL+"/sdk-config/"+sdkID+"/activate", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
 	if c.APIKey != "" {
 		req.Header.Set("x-api-key", c.APIKey)
 	}

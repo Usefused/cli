@@ -103,6 +103,12 @@ func runServiceShow(cmd *cobra.Command, serviceSlug string) error {
 			fmt.Fprintf(cmd.OutOrStdout(), "server:\t%s\n", srv.URL)
 		}
 	}
+	if len(info.AuthConfigs) > 0 {
+		fmt.Fprintf(cmd.OutOrStdout(), "\nauth_methods:\n")
+		for _, auth := range info.AuthConfigs {
+			fmt.Fprintf(cmd.OutOrStdout(), "  - %s (type: %s, scheme: %s)\n", auth.Name, auth.Type, auth.Scheme)
+		}
+	}
 	return nil
 }
 

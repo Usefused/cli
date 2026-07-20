@@ -12,26 +12,36 @@ import (
 )
 
 // TestActivateMCPServer_PostsToEngine verifies that calling ActivateMCPServer
-// sends a POST to the Engine's activate endpoint and sets the correct headers.
+// sends a POST straight to the Engine's native activate endpoint (no Registry
+// involved) with the selections/bucket body and correct headers.
 func TestActivateMCPServer_PostsToEngine(t *testing.T) {
 	const testSDKID = "sdk-123"
-	const expectedMCPURL = "http://engine/mcp/stream"
+	const expectedMCPURL = "http://engine/mcp/sdk-123/sse"
 
 	var reqMethod, reqPath, authHeader string
+	var reqBody api.MCPActivateRequest
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		reqMethod = r.Method
 		reqPath = r.URL.Path
 		authHeader = r.Header.Get("x-api-key")
+		_ = json.NewDecoder(r.Body).Decode(&reqBody)
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(api.MCPActivateResult{
-			MCPURL: expectedMCPURL,
+			Status:    "activated",
+			SDKID:     testSDKID,
+			MCPURL:    expectedMCPURL,
+			AuthToken: "fused_sdk_test",
 		})
 	}))
 	defer srv.Close()
 
 	client := api.NewClient(srv.URL, "test-key")
-	res, err := client.ActivateMCPServer(testSDKID)
+	req := api.MCPActivateRequest{
+		Bucket:     "default",
+		Selections: []api.MCPSelection{{ServiceID: "svc-1", ServiceVersionID: "ver-1", EndpointIDs: []string{"ep-1"}}},
+	}
+	res, err := client.ActivateMCPServer(testSDKID, req)
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -39,14 +49,20 @@ func TestActivateMCPServer_PostsToEngine(t *testing.T) {
 	if reqMethod != "POST" {
 		t.Errorf("expected POST, got %s", reqMethod)
 	}
-	if reqPath != "/engine/sdks/"+testSDKID+"/activate" {
-		t.Errorf("expected path /engine/sdks/%s/activate, got %s", testSDKID, reqPath)
+	if reqPath != "/sdk-config/"+testSDKID+"/activate" {
+		t.Errorf("expected path /sdk-config/%s/activate, got %s", testSDKID, reqPath)
 	}
 	if authHeader != "test-key" {
 		t.Errorf("expected auth header test-key, got %s", authHeader)
 	}
+	if reqBody.Bucket != "default" || len(reqBody.Selections) != 1 || reqBody.Selections[0].ServiceVersionID != "ver-1" {
+		t.Errorf("expected selections/bucket to be sent in the request body, got %#v", reqBody)
+	}
 	if res.MCPURL != expectedMCPURL {
 		t.Errorf("expected MCP URL %q, got %q", expectedMCPURL, res.MCPURL)
+	}
+	if res.AuthToken == "" {
+		t.Error("expected an authToken to come back")
 	}
 }
 
@@ -59,7 +75,7 @@ func TestActivateMCPServer_HandlesError(t *testing.T) {
 	defer srv.Close()
 
 	client := api.NewClient(srv.URL, "test-key")
-	_, err := client.ActivateMCPServer("sdk-123")
+	_, err := client.ActivateMCPServer("sdk-123", api.MCPActivateRequest{})
 
 	if err == nil {
 		t.Fatal("expected error on 500 response, got nil")

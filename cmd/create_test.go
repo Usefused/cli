@@ -128,6 +128,68 @@ func TestBuildSelections(t *testing.T) {
 	}
 }
 
+func TestResolveMCPSelections_ResolvesServiceVersionIDFromWorkspace(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/workspace/services" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`[{"service_id":"svc-1","service_version_id":"ver-1","version":"1.0"}]`))
+	}))
+	defer server.Close()
+
+	client := api.NewClient(server.URL, "test-key")
+	cart := map[string]api.Integration{
+		"ep1": {ID: "ep1", ServiceID: "svc-1"},
+		"ep2": {ID: "ep2", ServiceID: "svc-1"},
+	}
+
+	selections, err := resolveMCPSelections(client, cart)
+	if err != nil {
+		t.Fatalf("resolveMCPSelections: %v", err)
+	}
+	if len(selections) != 1 {
+		t.Fatalf("expected one service grouping, got %d", len(selections))
+	}
+	sel := selections[0]
+	if sel.ServiceID != "svc-1" || sel.ServiceVersionID != "ver-1" {
+		t.Errorf("expected svc-1/ver-1, got %#v", sel)
+	}
+	if len(sel.EndpointIDs) != 2 {
+		t.Errorf("expected 2 endpoint ids, got %#v", sel.EndpointIDs)
+	}
+}
+
+func TestResolveMCPSelections_FailsWhenServiceNotActivated(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`[]`))
+	}))
+	defer server.Close()
+
+	client := api.NewClient(server.URL, "test-key")
+	cart := map[string]api.Integration{
+		"ep1": {ID: "ep1", ServiceID: "svc-unactivated"},
+	}
+
+	_, err := resolveMCPSelections(client, cart)
+	if err == nil || !strings.Contains(err.Error(), "svc-unactivated") {
+		t.Fatalf("expected an error naming the unresolved service, got %v", err)
+	}
+}
+
+func TestGroupEndpointIDsByService(t *testing.T) {
+	cart := map[string]api.Integration{
+		"ep1": {ID: "ep1", ServiceID: "svcA"},
+		"ep2": {ID: "ep2", ServiceID: "svcA"},
+		"ep3": {ID: "ep3", ServiceID: "svcB"},
+	}
+	got := groupEndpointIDsByService(cart)
+	if len(got["svcA"]) != 2 || len(got["svcB"]) != 1 {
+		t.Fatalf("unexpected grouping: %#v", got)
+	}
+}
+
 func TestMergeNewEndpoints(t *testing.T) {
 	cart := map[string]api.Integration{
 		"ep1": {ID: "ep1", Name: "existing"},

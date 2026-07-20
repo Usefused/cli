@@ -184,6 +184,44 @@ Manage your local CLI configuration (`set`, `get`, `list`, `reset`). Inherits gl
 #### `service <service-slug> versions`
 List Registry versions visible to the current account for a service slug. Supports provider-qualified slugs such as `@provider/slug`.
 
+#### `service <service-slug> show`
+Show the base URL, servers, and supported authentication methods for a service.
+
+#### `secret set <service-slug> [value]`
+Set an authentication secret for a workspace service.
+If the service supports multiple authentication methods, use `--type` to specify the method, or omit it to use the interactive selection menu.
+
+| Argument | Short | Description | Default |
+|----------|-------|-------------|---------|
+| `--interactive` | `-i` | Force interactive mode to select the authentication method | `false` |
+| `--type` | | Specify the logical authentication method name (e.g., bearerAuth) | `""` |
+| `--bucket-id` | | Set secret as an override for a specific Bucket | `""` |
+| `--expires-at` | | RFC3339 expiry timestamp (e.g. 2026-12-31T23:59:59Z) | `""` |
+
+#### `secret list`
+List all secrets stored in the workspace.
+
+#### `secret remove <service-slug> <key-name>`
+Remove a workspace secret.
+
+#### `bucket create <name>`
+Create a new bucket for storing overrides and secrets.
+
+#### `bucket list`
+List all buckets in the workspace, including their default status and creation dates.
+
+#### `bucket remove <name>`
+Remove a workspace bucket.
+
+#### `value set <bucket-id> <service-slug> <key-name> <location> <value>`
+Set a non-secret configuration value in a bucket.
+
+#### `value list <bucket-id>`
+List all non-secret values stored in a bucket.
+
+#### `value remove <bucket-id> <service-slug> <key-name>`
+Remove a non-secret value from a bucket.
+
 #### `sdk plan`
 Preview changes that will be made to your Fused environment for SDKs.
 
@@ -254,6 +292,15 @@ Compatibility alias for adding operationIds to an existing service in an SDK con
 
 #### `sdk operation remove`
 Compatibility alias for removing operationIds from an existing service in an SDK configuration. Inherits global flags.
+
+#### `sdk token generate <sdk-id> <token-name>`
+Generate a new SDK token for authenticating SDK requests to the Engine.
+
+#### `sdk token list <sdk-id>`
+List all active tokens for an SDK.
+
+#### `sdk token revoke <sdk-id> <token-id>`
+Revoke an SDK token.
 
 #### `workspace plan`
 Preview changes that will be made to your Workspace configuration.
