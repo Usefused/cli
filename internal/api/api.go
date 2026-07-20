@@ -177,8 +177,15 @@ type WorkspaceService struct {
 	Version          string                    `json:"version"`
 	EnabledVersions  []WorkspaceServiceVersion `json:"enabled_versions"`
 	ServiceName      string                    `json:"service_name"`
-	AddedBy          string                    `json:"added_by"`
-	CreatedAt        string                    `json:"created_at"`
+	// ServiceSlug is what `service <slug> show` / `workspace service <slug>
+	// operations` actually expect -- the Engine resolves it fresh from the
+	// Registry on every list call, so it may be empty if that lookup failed
+	// (Registry unreachable), not just if the service genuinely has none.
+	// Already provider-qualified ("@provider/slug") for services this
+	// account doesn't own, since a bare slug is only unique per-account.
+	ServiceSlug string `json:"service_slug"`
+	AddedBy     string `json:"added_by"`
+	CreatedAt   string `json:"created_at"`
 }
 
 type WorkspaceServiceVersion struct {
@@ -792,6 +799,14 @@ type MCPSelection struct {
 type MCPActivateRequest struct {
 	Bucket     string         `json:"bucket,omitempty"`
 	Selections []MCPSelection `json:"selections,omitempty"`
+	// Kind labels the created scope for the MCP servers list page; the CLI's
+	// mcp create flow always sends "mcp" here (see cmd/create.go's
+	// createMCPServer).
+	Kind string `json:"kind,omitempty"`
+	// Name is the CLI's existing --name/-n flag value, threaded straight
+	// through so the same value the SDK path already collects also labels an
+	// MCP deployment.
+	Name string `json:"name,omitempty"`
 }
 
 type MCPActivateResult struct {
@@ -881,6 +896,11 @@ type ConfigApplyResponse struct {
 	Status   string                 `json:"status"`
 	PlanID   string                 `json:"plan_id"`
 	Webhooks []AppliedWebhookConfig `json:"webhooks,omitempty"`
+}
+
+type ConnectMaterial struct {
+	ClientID     string `json:"client_id"`
+	ClientSecret string `json:"client_secret"`
 }
 
 // AppliedWebhookConfig is one webhook registration the apply just created or
@@ -1013,10 +1033,13 @@ func (c *Client) ApplySDKConfig(planID, sourceHash string) (*SDKConfigApplyRespo
 	return &out, nil
 }
 
-func (c *Client) ApplyWorkspaceConfig(planID, sourceHash string) (*ConfigApplyResponse, error) {
+func (c *Client) ApplyWorkspaceConfig(planID, sourceHash string, connectMaterials map[string]ConnectMaterial) (*ConfigApplyResponse, error) {
 	reqBody := map[string]interface{}{
 		"plan_id":     planID,
 		"source_hash": sourceHash,
+	}
+	if len(connectMaterials) > 0 {
+		reqBody["connect_materials"] = connectMaterials
 	}
 	body, err := json.Marshal(reqBody)
 	if err != nil {

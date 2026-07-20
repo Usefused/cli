@@ -53,6 +53,90 @@ services:
 	}
 }
 
+func TestWorkspacePlanPostsConnectEnvRefsWithoutResolvedSecrets(t *testing.T) {
+	t.Setenv("FUSED_TEST_CLIENT_ID", "resolved-client")
+	t.Setenv("FUSED_TEST_CLIENT_SECRET", "resolved-secret")
+	dir := t.TempDir()
+	path := writeSprintConfig(t, dir, "workspace.yaml", `
+kind: workspace
+version: 1
+services:
+  github:
+    service_id: "00000000-0000-0000-0000-000000000001"
+    versions: ["2026-07-01"]
+    runtime_config:
+      connect:
+        bucket: prod
+        auth_type: oauth2
+        client_id_env: FUSED_TEST_CLIENT_ID
+        client_secret_env: FUSED_TEST_CLIENT_SECRET
+        redirect_uri: https://engine.example.com/connect/callback
+`)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		config := body["config"].(map[string]any)
+		service := config["services"].(map[string]any)["github"].(map[string]any)
+		connect := service["runtime_config"].(map[string]any)["connect"].(map[string]any)
+		if connect["client_id_env"] != "FUSED_TEST_CLIENT_ID" || connect["client_secret_env"] != "FUSED_TEST_CLIENT_SECRET" {
+			t.Fatalf("expected connect env refs in plan payload, got %#v", connect)
+		}
+		if _, ok := connect["client_secret"]; ok {
+			t.Fatalf("resolved client_secret must not be posted during plan: %#v", connect)
+		}
+		_, _ = w.Write([]byte(`{"plan_id":"plan-workspace","config_key":"workspace","source_hash":"` + body["source_hash"].(string) + `","base_generation":0,"summary":{}}`))
+	}))
+	defer server.Close()
+
+	runCommandInDir(t, dir, server.URL, []string{"workspace", "plan", "-f", path})
+}
+
+func TestWorkspaceApplyPostsConnectMaterialsFromEnvRefs(t *testing.T) {
+	t.Setenv("FUSED_TEST_CLIENT_ID", "resolved-client")
+	t.Setenv("FUSED_TEST_CLIENT_SECRET", "resolved-secret")
+	dir := t.TempDir()
+	path := writeSprintConfig(t, dir, "workspace.yaml", `
+kind: workspace
+version: 1
+services:
+  github:
+    service_id: "00000000-0000-0000-0000-000000000001"
+    versions: ["2026-07-01"]
+    runtime_config:
+      connect:
+        bucket: prod
+        auth_type: oauth2
+        client_id_env: FUSED_TEST_CLIENT_ID
+        client_secret_env: FUSED_TEST_CLIENT_SECRET
+        redirect_uri: https://engine.example.com/connect/callback
+`)
+	parsed, err := configfile.ParseFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeReceipt(t, dir, planReceipt{ConfigKey: "workspace", PlanID: "plan-workspace", SourceHash: parsed.SourceHash})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			w.Write([]byte(`{"status":"ok","plane":"engine","environment":"staging"}`))
+			return
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		materials := body["connect_materials"].(map[string]any)["github"].(map[string]any)
+		if materials["client_id"] != "resolved-client" || materials["client_secret"] != "resolved-secret" {
+			t.Fatalf("expected resolved connect materials during apply, got %#v", materials)
+		}
+		_, _ = w.Write([]byte(`{"status":"applied","plan_id":"plan-workspace"}`))
+	}))
+	defer server.Close()
+
+	runCommandInDir(t, dir, server.URL, []string{"workspace", "apply", "-f", path})
+}
+
 func TestWorkspaceApplyUsesReceiptWithoutReplanning(t *testing.T) {
 	dir := t.TempDir()
 	path := writeSprintConfig(t, dir, "workspace.yaml", `
@@ -358,25 +442,38 @@ func TestWorkspaceServicesListInteractiveCallsEngine(t *testing.T) {
 
 func TestWorkspaceServiceVersionsUsesSlugResolvedServiceID(t *testing.T) {
 	dir := t.TempDir()
-	var sawGraphQL bool
-	var sawWorkspaceList bool
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	state := &workspaceServiceVersionsSlugState{}
+	server := httptest.NewServer(workspaceServiceVersionsSlugHandler(t, state))
+	defer server.Close()
+
+	out := runCommandInDirOutput(t, dir, server.URL, []string{"workspace", "service", "@acme-inc/github", "versions"})
+	if !state.sawGraphQL || !state.sawWorkspaceList {
+		t.Fatalf("expected graphql and workspace requests, saw graphql=%v workspace=%v", state.sawGraphQL, state.sawWorkspaceList)
+	}
+	if !strings.Contains(out, "2026-07-01") || !strings.Contains(out, "ver-1") {
+		t.Fatalf("expected resolved workspace version output, got %q", out)
+	}
+	if strings.Contains(out, "ver-other") {
+		t.Fatalf("expected service_id match to exclude other service, got %q", out)
+	}
+}
+
+type workspaceServiceVersionsSlugState struct {
+	sawGraphQL       bool
+	sawWorkspaceList bool
+}
+
+func workspaceServiceVersionsSlugHandler(t *testing.T, state *workspaceServiceVersionsSlugState) http.HandlerFunc {
+	t.Helper()
+	return func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/graphql":
-			sawGraphQL = true
-			var body struct {
-				Variables map[string]any `json:"variables"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				t.Fatalf("decode graphql body: %v", err)
-			}
-			if body.Variables["serviceId"] != "github" || body.Variables["provider"] != "acme-inc" {
-				t.Fatalf("expected provider-qualified slug split, got %#v", body.Variables)
-			}
+			state.sawGraphQL = true
+			assertProviderQualifiedSlugRequest(t, r)
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"data":{"serviceVersions":[{"id":"ver-1","service_id":"svc-github","name":"2026-07-01","status":"public","created_at":"2026-07-16T00:00:00Z"}]}}`))
 		case "/workspace/services":
-			sawWorkspaceList = true
+			state.sawWorkspaceList = true
 			if r.URL.Query().Get("names") != "" {
 				t.Fatalf("workspace versions should resolve by service_id, got names query %q", r.URL.RawQuery)
 			}
@@ -388,46 +485,34 @@ func TestWorkspaceServiceVersionsUsesSlugResolvedServiceID(t *testing.T) {
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
-	}))
-	defer server.Close()
-
-	out := runCommandInDirOutput(t, dir, server.URL, []string{"workspace", "service", "@acme-inc/github", "versions"})
-	if !sawGraphQL || !sawWorkspaceList {
-		t.Fatalf("expected graphql and workspace requests, saw graphql=%v workspace=%v", sawGraphQL, sawWorkspaceList)
-	}
-	if !strings.Contains(out, "2026-07-01") || !strings.Contains(out, "ver-1") {
-		t.Fatalf("expected resolved workspace version output, got %q", out)
-	}
-	if strings.Contains(out, "ver-other") {
-		t.Fatalf("expected service_id match to exclude other service, got %q", out)
 	}
 }
 
 func TestWorkspaceServiceOperationsDefaultsToLatestEnabledVersion(t *testing.T) {
 	dir := t.TempDir()
-	var sawVersion string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	state := &workspaceOperationsLatestState{}
+	server := httptest.NewServer(workspaceOperationsLatestHandler(t, state))
+	defer server.Close()
+
+	out := runCommandInDirOutput(t, dir, server.URL, []string{"workspace", "service", "@acme-inc/github", "operations"})
+	if state.sawVersion != "2026-07-16" {
+		t.Fatalf("expected latest enabled version, got %q", state.sawVersion)
+	}
+	if !strings.Contains(out, "reposListForOrg\tGET\t/orgs/{org}/repos") || !strings.Contains(out, "issuesListForRepo") {
+		t.Fatalf("expected operation output, got %q", out)
+	}
+}
+
+type workspaceOperationsLatestState struct {
+	sawVersion string
+}
+
+func workspaceOperationsLatestHandler(t *testing.T, state *workspaceOperationsLatestState) http.HandlerFunc {
+	t.Helper()
+	return func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/graphql":
-			var body struct {
-				Query     string         `json:"query"`
-				Variables map[string]any `json:"variables"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				t.Fatalf("decode graphql body: %v", err)
-			}
-			if strings.Contains(body.Query, "serviceVersions") {
-				if body.Variables["serviceId"] != "github" || body.Variables["provider"] != "acme-inc" {
-					t.Fatalf("expected provider-qualified slug split, got %#v", body.Variables)
-				}
-				_, _ = w.Write([]byte(`{"data":{"serviceVersions":[{"id":"ver-latest","service_id":"svc-github","name":"2026-07-16","status":"public","created_at":"2026-07-16T00:00:00Z"}]}}`))
-				return
-			}
-			sawVersion, _ = body.Variables["version"].(string)
-			if body.Variables["serviceId"] != "svc-github" {
-				t.Fatalf("unexpected operation list variables %#v", body.Variables)
-			}
-			_, _ = w.Write([]byte(`{"data":{"serviceOperations":[{"id":"ep1","name":"reposListForOrg","method":"GET","path":"/orgs/{org}/repos","description":"","service_id":"svc-github"},{"id":"ep2","name":"issuesListForRepo","method":"GET","path":"/repos/{owner}/{repo}/issues","description":"","service_id":"svc-github"}]}}`))
+			handleWorkspaceOperationsGraphQL(t, w, r, state)
 		case "/workspace/services":
 			_, _ = w.Write([]byte(`[
 				{"service_id":"svc-github","service_name":"GitHub REST API","version":"2026-01-01","enabled_versions":[
@@ -438,15 +523,48 @@ func TestWorkspaceServiceOperationsDefaultsToLatestEnabledVersion(t *testing.T) 
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
-	}))
-	defer server.Close()
-
-	out := runCommandInDirOutput(t, dir, server.URL, []string{"workspace", "service", "@acme-inc/github", "operations"})
-	if sawVersion != "2026-07-16" {
-		t.Fatalf("expected latest enabled version, got %q", sawVersion)
 	}
-	if !strings.Contains(out, "reposListForOrg\tGET\t/orgs/{org}/repos") || !strings.Contains(out, "issuesListForRepo") {
-		t.Fatalf("expected operation output, got %q", out)
+}
+
+func handleWorkspaceOperationsGraphQL(t *testing.T, w http.ResponseWriter, r *http.Request, state *workspaceOperationsLatestState) {
+	t.Helper()
+	body := decodeTestGraphQLBody(t, r)
+	if strings.Contains(body.Query, "serviceVersions") {
+		assertProviderQualifiedSlugVariables(t, body.Variables)
+		_, _ = w.Write([]byte(`{"data":{"serviceVersions":[{"id":"ver-latest","service_id":"svc-github","name":"2026-07-16","status":"public","created_at":"2026-07-16T00:00:00Z"}]}}`))
+		return
+	}
+	state.sawVersion, _ = body.Variables["version"].(string)
+	if body.Variables["serviceId"] != "svc-github" {
+		t.Fatalf("unexpected operation list variables %#v", body.Variables)
+	}
+	_, _ = w.Write([]byte(`{"data":{"serviceOperations":[{"id":"ep1","name":"reposListForOrg","method":"GET","path":"/orgs/{org}/repos","description":"","service_id":"svc-github"},{"id":"ep2","name":"issuesListForRepo","method":"GET","path":"/repos/{owner}/{repo}/issues","description":"","service_id":"svc-github"}]}}`))
+}
+
+type testGraphQLBody struct {
+	Query     string         `json:"query"`
+	Variables map[string]any `json:"variables"`
+}
+
+func assertProviderQualifiedSlugRequest(t *testing.T, r *http.Request) {
+	t.Helper()
+	body := decodeTestGraphQLBody(t, r)
+	assertProviderQualifiedSlugVariables(t, body.Variables)
+}
+
+func decodeTestGraphQLBody(t *testing.T, r *http.Request) testGraphQLBody {
+	t.Helper()
+	var body testGraphQLBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		t.Fatalf("decode graphql body: %v", err)
+	}
+	return body
+}
+
+func assertProviderQualifiedSlugVariables(t *testing.T, variables map[string]any) {
+	t.Helper()
+	if variables["serviceId"] != "github" || variables["provider"] != "acme-inc" {
+		t.Fatalf("expected provider-qualified slug split, got %#v", variables)
 	}
 }
 

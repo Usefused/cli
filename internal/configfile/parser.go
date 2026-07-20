@@ -220,10 +220,100 @@ func validateSDKService(name string, svc SDKService) error {
 }
 
 func validateWorkspaceConfig(cfg *WorkspaceConfig) error {
+	for name, svc := range cfg.Services {
+		if err := validateWorkspaceService(name, svc); err != nil {
+			return err
+		}
+	}
 	for _, deprecation := range cfg.Deprecations {
 		if deprecation.ServiceID == "" || deprecation.EffectiveAt == "" {
 			return fmt.Errorf("workspace deprecations require service_id and effective_at")
 		}
 	}
 	return nil
+}
+
+func validateWorkspaceService(name string, svc WorkspaceService) error {
+	if svc.RuntimeConfig == nil || svc.RuntimeConfig.Connect == nil {
+		return nil
+	}
+	connect := svc.RuntimeConfig.Connect
+	if strings.TrimSpace(connect.AuthType) == "" {
+		return fmt.Errorf("workspace service %q connect requires auth_type", name)
+	}
+	if strings.TrimSpace(connect.RedirectURI) == "" {
+		return fmt.Errorf("workspace service %q connect requires redirect_uri", name)
+	}
+	if strings.TrimSpace(connect.ClientID) == "" && strings.TrimSpace(connect.ClientIDEnv) == "" {
+		return fmt.Errorf("workspace service %q connect requires client_id or client_id_env", name)
+	}
+	if strings.TrimSpace(connect.ClientSecret) != "" {
+		return fmt.Errorf("workspace service %q connect must use client_secret_env, not inline client_secret", name)
+	}
+	if strings.TrimSpace(connect.ClientSecretEnv) == "" {
+		return fmt.Errorf("workspace service %q connect requires client_secret_env", name)
+	}
+	return nil
+}
+
+// WorkspaceConnectMaterials returns apply-time OAuth/OIDC material keyed by the
+// workspace service map key. Plan/state store env refs from the file; only apply
+// sends resolved secrets so Engine can encrypt them into the bucket.
+func (p *ParsedConfig) WorkspaceConnectMaterials() (map[string]ConnectMaterial, error) {
+	if p.Workspace == nil {
+		return nil, fmt.Errorf("parsed config is not a workspace")
+	}
+	materials := map[string]ConnectMaterial{}
+	for key, svc := range p.Workspace.Services {
+		material, ok, err := workspaceServiceConnectMaterial(key, svc)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			materials[key] = material
+		}
+	}
+	return materials, nil
+}
+
+func workspaceServiceConnectMaterial(name string, svc WorkspaceService) (ConnectMaterial, bool, error) {
+	if svc.RuntimeConfig == nil || svc.RuntimeConfig.Connect == nil {
+		return ConnectMaterial{}, false, nil
+	}
+	connect := *svc.RuntimeConfig.Connect
+	if err := resolveConnectEnv(name, &connect); err != nil {
+		return ConnectMaterial{}, false, err
+	}
+	return ConnectMaterial{ClientID: connect.ClientID, ClientSecret: connect.ClientSecret}, true, nil
+}
+
+func resolveConnectEnv(name string, connect *ConnectConfig) error {
+	clientID, err := resolveMaybeEnv(connect.ClientID, connect.ClientIDEnv)
+	if err != nil {
+		return fmt.Errorf("workspace service %q connect client_id_env: %w", name, err)
+	}
+	clientSecret, err := resolveMaybeEnv(connect.ClientSecret, connect.ClientSecretEnv)
+	if err != nil {
+		return fmt.Errorf("workspace service %q connect client_secret_env: %w", name, err)
+	}
+	connect.ClientID = clientID
+	connect.ClientSecret = clientSecret
+	connect.ClientIDEnv = ""
+	connect.ClientSecretEnv = ""
+	return nil
+}
+
+func resolveMaybeEnv(value, envName string) (string, error) {
+	if strings.TrimSpace(value) != "" {
+		return value, nil
+	}
+	envName = strings.TrimSpace(envName)
+	if envName == "" {
+		return "", nil
+	}
+	resolved := os.Getenv(envName)
+	if strings.TrimSpace(resolved) == "" {
+		return "", fmt.Errorf("%s is not set", envName)
+	}
+	return resolved, nil
 }

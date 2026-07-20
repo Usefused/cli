@@ -136,6 +136,64 @@ services:
 	}
 }
 
+func TestWorkspaceConnectMaterials_ResolvesConnectEnvRefs(t *testing.T) {
+	t.Setenv("FUSED_TEST_CLIENT_ID", "resolved-client")
+	t.Setenv("FUSED_TEST_CLIENT_SECRET", "resolved-secret")
+	path := writeFile(t, t.TempDir(), "workspace.yaml", `
+kind: workspace
+version: 1
+services:
+  github:
+    service_id: "00000000-0000-0000-0000-000000000001"
+    versions: ["2026-07-01"]
+    runtime_config:
+      connect:
+        bucket: prod
+        auth_type: oauth2
+        client_id_env: FUSED_TEST_CLIENT_ID
+        client_secret_env: FUSED_TEST_CLIENT_SECRET
+        redirect_uri: https://engine.example.com/connect/callback
+`)
+	parsed, err := configfile.ParseFile(path)
+	if err != nil {
+		t.Fatalf("ParseFile failed: %v", err)
+	}
+	materials, err := parsed.WorkspaceConnectMaterials()
+	if err != nil {
+		t.Fatalf("WorkspaceConnectMaterials failed: %v", err)
+	}
+	material := materials["github"]
+	if material.ClientID != "resolved-client" || material.ClientSecret != "resolved-secret" {
+		t.Fatalf("expected env refs resolved, got %#v", material)
+	}
+}
+
+func TestWorkspaceConnectMaterials_RejectsMissingConnectEnvRef(t *testing.T) {
+	t.Setenv("FUSED_TEST_CLIENT_SECRET", "resolved-secret")
+	path := writeFile(t, t.TempDir(), "workspace.yaml", `
+kind: workspace
+version: 1
+services:
+  github:
+    service_id: "00000000-0000-0000-0000-000000000001"
+    versions: ["2026-07-01"]
+    runtime_config:
+      connect:
+        auth_type: oauth2
+        client_id_env: FUSED_TEST_MISSING_CLIENT_ID
+        client_secret_env: FUSED_TEST_CLIENT_SECRET
+        redirect_uri: https://engine.example.com/connect/callback
+`)
+	parsed, err := configfile.ParseFile(path)
+	if err != nil {
+		t.Fatalf("ParseFile failed: %v", err)
+	}
+	_, err = parsed.WorkspaceConnectMaterials()
+	if err == nil || !strings.Contains(err.Error(), "FUSED_TEST_MISSING_CLIENT_ID is not set") {
+		t.Fatalf("expected missing env error, got %v", err)
+	}
+}
+
 func TestLoadRun_DiscoversFusedFolderInOrder(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, ".fused/workspace.yaml", `

@@ -115,10 +115,26 @@ var workspaceServicesListCmd = &cobra.Command{
 		}
 
 		for _, service := range services {
-			fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\n", service.ServiceName, service.ServiceID, service.Version, strings.Join(workspaceServiceVersionNames(service), ", "))
+			fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\t%s\n", service.ServiceName, workspaceServiceSlugColumn(service), service.ServiceID, service.Version, strings.Join(workspaceServiceVersionNames(service), ", "))
 		}
 		return nil
 	}),
+}
+
+// workspaceServiceSlugColumn prints what a user actually needs to act on a
+// listed service -- its Registry slug, the argument `service <slug> show`
+// and `workspace service <slug> operations` expect -- as an ADDITIONAL
+// column alongside the existing UUID (never replacing it: several e2e flows
+// assert the raw service ID appears in this command's output, and other
+// tooling may already parse this column position). Falls back to "-" when
+// the Engine couldn't resolve a slug for this row (e.g. Registry was
+// unreachable at list time), so the column is never confused with an empty
+// string meaning "this service genuinely has no slug".
+func workspaceServiceSlugColumn(service cliapi.WorkspaceService) string {
+	if service.ServiceSlug != "" {
+		return service.ServiceSlug
+	}
+	return "-"
 }
 
 var workspaceHasCmd = &cobra.Command{
@@ -504,7 +520,11 @@ func runForceRemoveWorkspace(serviceID string, version string) error {
 	if sourceHash == "" {
 		sourceHash = cfg.SourceHash
 	}
-	_, err = client.ApplyWorkspaceConfig(planResp.PlanID, sourceHash)
+	materials, err := workspaceConnectMaterials(cfg)
+	if err != nil {
+		return err
+	}
+	_, err = client.ApplyWorkspaceConfig(planResp.PlanID, sourceHash, materials)
 	return err
 }
 

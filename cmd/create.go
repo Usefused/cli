@@ -553,6 +553,8 @@ func createMCPServer(client *api.Client, cart map[string]api.Integration) {
 	res, err := client.ActivateMCPServer(sdkID, api.MCPActivateRequest{
 		Bucket:     bucketName,
 		Selections: selections,
+		Kind:       "mcp",
+		Name:       sdkName,
 	})
 	if err != nil {
 		fmt.Printf("Error activating MCP server on Engine: %v\n", err)

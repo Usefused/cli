@@ -257,7 +257,11 @@ func receiptForApply(cfg *configfile.ParsedConfig, opts applyOptions) (planRecei
 func applyOneConfig(client *api.Client, cfg *configfile.ParsedConfig, receipt planReceipt, download bool) error {
 	switch cfg.Kind {
 	case configfile.KindWorkspace:
-		resp, err := client.ApplyWorkspaceConfig(receipt.PlanID, receipt.SourceHash)
+		materials, err := workspaceConnectMaterials(cfg)
+		if err != nil {
+			return err
+		}
+		resp, err := client.ApplyWorkspaceConfig(receipt.PlanID, receipt.SourceHash, materials)
 		if err != nil {
 			return fmt.Errorf("failed to apply workspace %s: %w", cfg.ConfigKey, err)
 		}
@@ -277,6 +281,18 @@ func applyOneConfig(client *api.Client, cfg *configfile.ParsedConfig, receipt pl
 		}
 	}
 	return nil
+}
+
+func workspaceConnectMaterials(cfg *configfile.ParsedConfig) (map[string]api.ConnectMaterial, error) {
+	materials, err := cfg.WorkspaceConnectMaterials()
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]api.ConnectMaterial, len(materials))
+	for key, material := range materials {
+		out[key] = api.ConnectMaterial{ClientID: material.ClientID, ClientSecret: material.ClientSecret}
+	}
+	return out, nil
 }
 
 // printAppliedWebhooks surfaces each webhook registration's URL right after

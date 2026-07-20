@@ -40,6 +40,8 @@ func TestActivateMCPServer_PostsToEngine(t *testing.T) {
 	req := api.MCPActivateRequest{
 		Bucket:     "default",
 		Selections: []api.MCPSelection{{ServiceID: "svc-1", ServiceVersionID: "ver-1", EndpointIDs: []string{"ep-1"}}},
+		Kind:       "mcp",
+		Name:       "stripe-mcp",
 	}
 	res, err := client.ActivateMCPServer(testSDKID, req)
 
@@ -57,6 +59,9 @@ func TestActivateMCPServer_PostsToEngine(t *testing.T) {
 	}
 	if reqBody.Bucket != "default" || len(reqBody.Selections) != 1 || reqBody.Selections[0].ServiceVersionID != "ver-1" {
 		t.Errorf("expected selections/bucket to be sent in the request body, got %#v", reqBody)
+	}
+	if reqBody.Kind != "mcp" || reqBody.Name != "stripe-mcp" {
+		t.Errorf("expected kind/name to be sent in the request body, got %#v", reqBody)
 	}
 	if res.MCPURL != expectedMCPURL {
 		t.Errorf("expected MCP URL %q, got %q", expectedMCPURL, res.MCPURL)

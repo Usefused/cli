@@ -23,18 +23,35 @@ type WorkspaceConfig struct {
 
 // WorkspaceService represents service versions enabled for a workspace.
 type WorkspaceService struct {
-	ServiceID     string             `yaml:"service_id,omitempty" json:"service_id,omitempty"`
-	Public        *bool              `yaml:"public,omitempty" json:"public,omitempty"`
-	Versions      []string           `yaml:"versions,omitempty" json:"versions,omitempty"`
-	RuntimeConfig *RuntimeConfig     `yaml:"runtime_config,omitempty" json:"runtime_config,omitempty"`
+	ServiceID     string         `yaml:"service_id,omitempty" json:"service_id,omitempty"`
+	Public        *bool          `yaml:"public,omitempty" json:"public,omitempty"`
+	Versions      []string       `yaml:"versions,omitempty" json:"versions,omitempty"`
+	RuntimeConfig *RuntimeConfig `yaml:"runtime_config,omitempty" json:"runtime_config,omitempty"`
 }
 
 type RuntimeConfig struct {
 	BaseURL             string                       `yaml:"base_url,omitempty" json:"base_url,omitempty"`
 	DefaultHeaders      map[string]string            `yaml:"default_headers,omitempty" json:"default_headers,omitempty"`
+	Connect             *ConnectConfig               `yaml:"connect,omitempty" json:"connect,omitempty"`
 	Webhooks            map[string]WebhookConfig     `yaml:"webhooks,omitempty" json:"webhooks,omitempty"`
 	Pagination          *PaginationConfig            `yaml:"pagination,omitempty" json:"pagination,omitempty"`
 	PaginationOverrides map[string]*PaginationConfig `yaml:"pagination_overrides,omitempty" json:"pagination_overrides,omitempty"`
+}
+
+type ConnectConfig struct {
+	Bucket          string `yaml:"bucket,omitempty" json:"bucket,omitempty"`
+	AuthType        string `yaml:"auth_type" json:"auth_type"`
+	Enabled         *bool  `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	ClientID        string `yaml:"client_id,omitempty" json:"client_id,omitempty"`
+	ClientIDEnv     string `yaml:"client_id_env,omitempty" json:"client_id_env,omitempty"`
+	ClientSecret    string `yaml:"client_secret,omitempty" json:"client_secret,omitempty"`
+	ClientSecretEnv string `yaml:"client_secret_env,omitempty" json:"client_secret_env,omitempty"`
+	RedirectURI     string `yaml:"redirect_uri" json:"redirect_uri"`
+}
+
+type ConnectMaterial struct {
+	ClientID     string
+	ClientSecret string
 }
 
 // WebhookConfig is one named webhook ingress registration for a service. The
@@ -75,10 +92,10 @@ type SDKConfig struct {
 
 // SDKService represents the requested version and operations for a specific service in an SDK.
 type SDKService struct {
-	Version         string             `yaml:"version" json:"version"`
-	Operations      []string           `yaml:"operations" json:"operations"`
-	Webhooks        []string           `yaml:"webhooks,omitempty" json:"webhooks,omitempty"`
-	LegacyEndpoints []string           `yaml:"endpoints,omitempty" json:"-"`
+	Version         string   `yaml:"version" json:"version"`
+	Operations      []string `yaml:"operations" json:"operations"`
+	Webhooks        []string `yaml:"webhooks,omitempty" json:"webhooks,omitempty"`
+	LegacyEndpoints []string `yaml:"endpoints,omitempty" json:"-"`
 }
 
 // ParsedConfig is a container for the parsed configuration.
