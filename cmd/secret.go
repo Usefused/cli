@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -28,16 +29,29 @@ var secretSetCmd = &cobra.Command{
 		if secretSetSDKID != "" {
 			sdkID = &secretSetSDKID
 		}
-		err = client.UpsertSecret(serviceID, keyName, credentialType, value, sdkID)
+		var expiresAt *time.Time
+		if secretSetExpiresAt != "" {
+			parsed, err := time.Parse(time.RFC3339, secretSetExpiresAt)
+			if err != nil {
+				return fmt.Errorf("invalid --expires-at %q, expected RFC3339 (e.g. 2026-12-31T23:59:59Z): %w", secretSetExpiresAt, err)
+			}
+			expiresAt = &parsed
+		}
+		err = client.UpsertSecret(serviceID, keyName, credentialType, value, sdkID, expiresAt)
 		if err != nil {
 			return err
 		}
-		fmt.Printf("Secret '%s' set successfully.\n", keyName)
+		if expiresAt != nil {
+			fmt.Printf("Secret '%s' set successfully (expires %s).\n", keyName, expiresAt.Format(time.RFC3339))
+		} else {
+			fmt.Printf("Secret '%s' set successfully.\n", keyName)
+		}
 		return nil
 	}),
 }
 
 var secretSetSDKID string
+var secretSetExpiresAt string
 
 var secretListCmd = &cobra.Command{
 	Use:   "list",
@@ -61,7 +75,14 @@ var secretListCmd = &cobra.Command{
 			if s.SDKID != nil {
 				sdk = *s.SDKID
 			}
-			fmt.Printf("Service: %s, Key: %s, SDK: %s, Type: %s, Updated: %s\n", s.ServiceID, s.KeyName, sdk, s.CredentialType, s.UpdatedAt.Format("2006-01-02 15:04:05"))
+			expiry := "never"
+			if s.ExpiresAt != nil {
+				expiry = s.ExpiresAt.Format("2006-01-02 15:04:05")
+				if s.ExpiresAt.Before(time.Now()) {
+					expiry += " (EXPIRED)"
+				}
+			}
+			fmt.Printf("Service: %s, Key: %s, SDK: %s, Type: %s, Expires: %s, Updated: %s\n", s.ServiceID, s.KeyName, sdk, s.CredentialType, expiry, s.UpdatedAt.Format("2006-01-02 15:04:05"))
 		}
 		return nil
 	}),
@@ -99,6 +120,7 @@ func init() {
 	RootCmd.AddCommand(secretCmd)
 	
 	secretSetCmd.Flags().StringVar(&secretSetSDKID, "sdk-id", "", "Set secret as an override for a specific SDK")
+	secretSetCmd.Flags().StringVar(&secretSetExpiresAt, "expires-at", "", "RFC3339 expiry timestamp (e.g. 2026-12-31T23:59:59Z); omit for no expiry")
 	secretCmd.AddCommand(secretSetCmd)
 
 	secretListCmd.Flags().StringVar(&secretListSDKID, "sdk-id", "", "Filter secrets by SDK ID")

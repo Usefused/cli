@@ -11,22 +11,24 @@ import (
 )
 
 type SecretMetaResponse struct {
-	ID             string    `json:"id"`
-	ServiceID      string    `json:"service_id"`
-	KeyName        string    `json:"key_name"`
-	CredentialType string    `json:"credential_type"`
-	SDKID          *string   `json:"sdk_id"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	ID             string     `json:"id"`
+	ServiceID      string     `json:"service_id"`
+	KeyName        string     `json:"key_name"`
+	CredentialType string     `json:"credential_type"`
+	SDKID          *string    `json:"sdk_id"`
+	ExpiresAt      *time.Time `json:"expires_at,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
 }
 
-func (c *Client) UpsertSecret(serviceID, keyName, credentialType, value string, sdkID *string) error {
+func (c *Client) UpsertSecret(serviceID, keyName, credentialType, value string, sdkID *string, expiresAt *time.Time) error {
 	reqBody := map[string]interface{}{
 		"service_id":      serviceID,
 		"key_name":        keyName,
 		"credential_type": credentialType,
 		"value":           value,
 		"sdk_id":          sdkID,
+		"expires_at":      expiresAt,
 	}
 	body, err := json.Marshal(reqBody)
 	if err != nil {
