@@ -209,33 +209,46 @@ func runWorkspaceServiceAction(cmd *cobra.Command, args []string) error {
 	if len(args) == 1 {
 		return cmd.Help()
 	}
-	// Why: Separate routing logic from command execution to reduce cyclomatic complexity and improve readability.
-	switch args[1] {
-	case "versions":
-		return runWorkspaceServiceVersions(cmd, serviceSlug)
-	case "operations":
-		return runWorkspaceServiceOperations(cmd, serviceSlug, workspaceServiceOperationsVersion)
-	case "webhooks":
-		return runWorkspaceServiceWebhooks(cmd, serviceSlug)
-	case "add":
-		return runWorkspaceServiceAdd(cmd, serviceSlug)
-	case "connect":
-		if workspaceServiceConnectUserRef == "" {
-			return fmt.Errorf("flag --user-ref is required for connect action")
-		}
-		return runWorkspaceServiceConnect(cmd, serviceSlug)
-	case "remove":
-		return runWorkspaceServiceRemove(cmd, serviceSlug)
-	case "deprecate":
-		if workspaceServiceDeprecateAt == "" {
-			return fmt.Errorf("flag --at is required for deprecate action")
-		}
-		return runWorkspaceServiceDeprecate(cmd, serviceSlug)
-	case "version":
+	if args[1] == "version" {
 		return runWorkspaceServiceVersionAction(cmd, serviceSlug, args[2:])
-	default:
+	}
+	action, ok := workspaceServiceActionHandlers()[args[1]]
+	if !ok {
 		return fmt.Errorf("unknown workspace service action %q", args[1])
 	}
+	return action(cmd, serviceSlug)
+}
+
+type workspaceServiceActionHandler func(*cobra.Command, string) error
+
+func workspaceServiceActionHandlers() map[string]workspaceServiceActionHandler {
+	return map[string]workspaceServiceActionHandler{
+		"versions":   runWorkspaceServiceVersions,
+		"operations": runWorkspaceServiceOperationsWithFlagVersion,
+		"webhooks":   runWorkspaceServiceWebhooks,
+		"add":        runWorkspaceServiceAdd,
+		"connect":    runWorkspaceServiceConnectWithRequiredUser,
+		"remove":     runWorkspaceServiceRemove,
+		"deprecate":  runWorkspaceServiceDeprecateWithRequiredDate,
+	}
+}
+
+func runWorkspaceServiceOperationsWithFlagVersion(cmd *cobra.Command, serviceSlug string) error {
+	return runWorkspaceServiceOperations(cmd, serviceSlug, workspaceServiceOperationsVersion)
+}
+
+func runWorkspaceServiceConnectWithRequiredUser(cmd *cobra.Command, serviceSlug string) error {
+	if workspaceServiceConnectUserRef == "" {
+		return fmt.Errorf("flag --user-ref is required for connect action")
+	}
+	return runWorkspaceServiceConnect(cmd, serviceSlug)
+}
+
+func runWorkspaceServiceDeprecateWithRequiredDate(cmd *cobra.Command, serviceSlug string) error {
+	if workspaceServiceDeprecateAt == "" {
+		return fmt.Errorf("flag --at is required for deprecate action")
+	}
+	return runWorkspaceServiceDeprecate(cmd, serviceSlug)
 }
 
 // Why: Separation of concern. Version-specific commands are routed independently to prevent N+1 nesting.
@@ -393,6 +406,8 @@ var workspaceServiceVersionDeprecateAt string
 var workspaceServiceVersionDeprecateReason string
 var workspaceServiceShowVersions bool
 var workspaceServiceOperationsVersion string
+var workspaceServiceOperationsQuery string
+var workspaceServiceListFlags listFlags
 
 func runWorkspaceServiceVersions(cmd *cobra.Command, serviceSlug string) error {
 	client, err := getAPIClient()
@@ -433,7 +448,7 @@ func runWorkspaceServiceOperations(cmd *cobra.Command, serviceSlug, version stri
 	if err != nil {
 		return err
 	}
-	endpoints, err := client.ServiceOperations(serviceID, resolvedVersion)
+	endpoints, err := readWorkspaceServiceOperations(cmd, client, serviceID, resolvedVersion)
 	if err != nil {
 		return err
 	}
@@ -444,6 +459,19 @@ func runWorkspaceServiceOperations(cmd *cobra.Command, serviceSlug, version stri
 		fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", endpoint.Name, endpoint.Method, endpoint.Path)
 	}
 	return nil
+}
+
+func readWorkspaceServiceOperations(cmd *cobra.Command, client *cliapi.Client, serviceID, version string) ([]cliapi.Integration, error) {
+	if strings.TrimSpace(workspaceServiceOperationsQuery) != "" {
+		return client.SearchEndpointsPage(serviceID, version, workspaceServiceOperationsQuery, workspaceServiceListFlags.pageOptions())
+	}
+	if cmd.Flags().Changed("limit") || cmd.Flags().Changed("offset") {
+		return nil, fmt.Errorf("--limit and --offset require --q for workspace service operations because only endpoint search is paginated server-side")
+	}
+	// Why: Workspace membership/version validation happens above; this call
+	// preserves the existing full-list behavior when the user is browsing
+	// rather than searching a server-paginated endpoint set.
+	return client.ServiceOperations(serviceID, version)
 }
 
 // runWorkspaceServiceWebhooks is the read-only visibility command
@@ -485,6 +513,7 @@ func runWorkspaceServiceWebhooks(cmd *cobra.Command, serviceSlug string) error {
 var workspaceServiceConnectBucket string
 var workspaceServiceConnectUserRef string
 var workspaceServiceConnectSDKID string
+
 // runWorkspaceServiceConnect starts auth from the workspace service boundary
 // so connected credentials attach to the same bucket/scope runtime will use.
 func runWorkspaceServiceConnect(cmd *cobra.Command, serviceSlug string) error {
@@ -656,15 +685,25 @@ func runForceRemoveWorkspace(serviceID string, version string) error {
 		}
 	}
 
+	return applyForceRemoveWorkspacePlan(client, cfg, planResp)
+}
+
+// applyForceRemoveWorkspacePlan reuses the normal apply material collection so
+// force-remove cannot accidentally skip encrypted runtime credential writes.
+func applyForceRemoveWorkspacePlan(client *cliapi.Client, cfg *configfile.ParsedConfig, planResp *cliapi.ConfigPlanResponse) error {
 	sourceHash := planResp.SourceHash
 	if sourceHash == "" {
 		sourceHash = cfg.SourceHash
 	}
-	materials, err := workspaceConnectMaterials(cfg)
+	connectMaterials, err := workspaceConnectMaterials(cfg)
 	if err != nil {
 		return err
 	}
-	_, err = client.ApplyWorkspaceConfig(planResp.PlanID, sourceHash, materials)
+	authMaterials, err := workspaceAuthMaterials(cfg)
+	if err != nil {
+		return err
+	}
+	_, err = client.ApplyWorkspaceConfig(planResp.PlanID, sourceHash, connectMaterials, authMaterials)
 	return err
 }
 
@@ -724,22 +763,24 @@ func init() {
 	workspaceServicesCmd.AddCommand(workspaceServicesListCmd)
 	workspaceCmd.AddCommand(workspaceServiceCmd)
 	workspaceCmd.AddCommand(workspaceHasCmd)
-	
+
 	workspaceServiceCmd.Flags().BoolVar(&workspaceServiceShowVersions, "versions", false, "List versions enabled in the workspace for this service slug; supports @provider/slug")
 	workspaceServiceCmd.Flags().StringVar(&workspaceServiceOperationsVersion, "version", "", "Enabled workspace service version for the operations action; omitted uses the latest enabled version")
-	
+	workspaceServiceCmd.Flags().StringVar(&workspaceServiceOperationsQuery, "q", "", "Search query for the operations action")
+	addListFlags(workspaceServiceCmd, &workspaceServiceListFlags)
+
 	workspaceServiceCmd.Flags().StringVar(&workspaceServiceAddVersion, "add-version", "", "Version to enable; omitted resolves latest during plan")
 	workspaceServiceCmd.Flags().StringVar(&workspaceServiceAddID, "service-id", "", "Registry service UUID to store in workspace config")
-	
+
 	workspaceServiceCmd.Flags().StringVar(&workspaceServiceConnectBucket, "bucket", "default", "Workspace credential bucket name or ID")
 	workspaceServiceCmd.Flags().StringVar(&workspaceServiceConnectUserRef, "user-ref", "", "Stable user reference to attach to the connected provider account")
 	workspaceServiceCmd.Flags().StringVar(&workspaceServiceConnectSDKID, "sdk-id", "", "Optional SDK UUID for audit attribution")
 
 	workspaceServiceCmd.Flags().BoolVar(&workspaceServiceRemoveForce, "force", false, "Force removal when the generated plan action is applied")
-	
+
 	workspaceServiceCmd.Flags().StringVar(&workspaceServiceDeprecateAt, "at", "", "Deprecation effective date in YYYY-MM-DD")
 	workspaceServiceCmd.Flags().StringVar(&workspaceServiceDeprecateReason, "reason", "", "Reason for deprecation")
-	
+
 	workspaceServiceCmd.Flags().BoolVar(&workspaceServiceVersionRemoveForce, "version-force", false, "Force removal")
 	workspaceServiceCmd.Flags().StringVar(&workspaceServiceVersionDeprecateAt, "version-at", "", "Deprecation effective date in YYYY-MM-DD")
 	workspaceServiceCmd.Flags().StringVar(&workspaceServiceVersionDeprecateReason, "version-reason", "", "Reason for deprecation")

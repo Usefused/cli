@@ -17,10 +17,17 @@ func TestWorkspaceServiceConnectStartsSession(t *testing.T) {
 		switch r.URL.Path {
 		case "/graphql":
 			_, _ = w.Write([]byte(`{"data":{"serviceVersions":[{"id":"ver-1","service_id":"svc-github","name":"2026-07-01","status":"public","created_at":"2026-07-16T00:00:00Z"}]}}`))
-		case "/workspace/services":
-			_, _ = w.Write([]byte(`[{"service_id":"svc-github","service_name":"GitHub REST API","version":"2026-07-01","enabled_versions":[{"version":"2026-07-01","service_version_id":"ver-1"}]}]`))
-		case "/workspace/buckets":
-			_, _ = w.Write([]byte(`[{"id":"bucket-prod","name":"prod","is_default":false}]`))
+		case "/engine/graphql":
+			body := decodeTestGraphQLBody(t, r)
+			if strings.Contains(body.Query, "workspaceServices") {
+				_, _ = w.Write([]byte(`{"data":{"workspaceServices":[{"service_id":"svc-github","service_name":"GitHub REST API","version":"2026-07-01","enabled_versions":[{"version":"2026-07-01","service_version_id":"ver-1"}]}]}}`))
+				return
+			}
+			if strings.Contains(body.Query, "buckets") {
+				_, _ = w.Write([]byte(`{"data":{"buckets":[{"id":"bucket-prod","name":"prod","is_default":false,"created_at":"2026-07-21T00:00:00Z"}]}}`))
+				return
+			}
+			t.Fatalf("unexpected engine graphql query: %s", body.Query)
 		case "/workspace/buckets/bucket-prod/services/svc-github/connect/sessions":
 			sawConnect = true
 			assertConnectSessionRequest(t, r)

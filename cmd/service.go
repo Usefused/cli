@@ -20,6 +20,9 @@ var serviceCmd = &cobra.Command{
 }
 
 var serviceShowVersions bool
+var serviceListFlags listFlags
+var serviceOperationsQuery string
+var serviceOperationsVersion string
 
 func validateServiceArgs(cmd *cobra.Command, args []string) error {
 	if len(args) == 0 {
@@ -28,28 +31,48 @@ func validateServiceArgs(cmd *cobra.Command, args []string) error {
 	if len(args) > 2 {
 		return fmt.Errorf("service accepts at most <service-slug> and one action")
 	}
-	if len(args) == 2 && args[1] != "versions" && args[1] != "show" {
+	if len(args) == 2 && !isServiceAction(args[1]) {
 		return fmt.Errorf("unknown service action %q", args[1])
 	}
 	return nil
+}
+
+func isServiceAction(action string) bool {
+	_, ok := serviceActionHandlers()[action]
+	return ok
 }
 
 func runServiceAction(cmd *cobra.Command, args []string) error {
 	if len(args) == 0 {
 		return cmd.Help()
 	}
-	if serviceShowVersions || (len(args) == 2 && args[1] == "versions") {
+	if serviceShowVersions {
 		return runServiceVersions(cmd, args[0])
 	}
-	if len(args) == 2 && args[1] == "show" {
-		return runServiceShow(cmd, args[0])
+	if len(args) != 2 {
+		return cmd.Help()
 	}
-	return cmd.Help()
+	action, ok := serviceActionHandlers()[args[1]]
+	if !ok {
+		return fmt.Errorf("unknown service action %q", args[1])
+	}
+	return action(cmd, args[0])
+}
+
+type serviceActionHandler func(*cobra.Command, string) error
+
+func serviceActionHandlers() map[string]serviceActionHandler {
+	return map[string]serviceActionHandler{
+		"versions":   runServiceVersions,
+		"show":       runServiceShow,
+		"operations": runServiceOperations,
+		"webhooks":   runServiceWebhooks,
+	}
 }
 
 func completeServiceArgs(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 	if len(args) == 1 {
-		actions := []string{"versions", "show"}
+		actions := []string{"versions", "show", "operations", "webhooks"}
 		var matches []string
 		for _, a := range actions {
 			if toComplete == "" || strings.HasPrefix(a, toComplete) {
@@ -61,6 +84,67 @@ func completeServiceArgs(cmd *cobra.Command, args []string, toComplete string) (
 		}
 	}
 	return nil, cobra.ShellCompDirectiveNoFileComp
+}
+
+func runServiceOperations(cmd *cobra.Command, serviceSlug string) error {
+	client, err := getAPIClient()
+	if err != nil {
+		return err
+	}
+	service, err := client.GetServiceInfo(serviceSlug)
+	if err != nil {
+		return err
+	}
+	if service == nil {
+		return fmt.Errorf("service %s not found", serviceSlug)
+	}
+	ops, err := readServiceOperations(cmd, client, service.ID)
+	if err != nil {
+		return err
+	}
+	printIntegrations(cmd.OutOrStdout(), ops)
+	return nil
+}
+
+func readServiceOperations(cmd *cobra.Command, client *cliapi.Client, serviceID string) ([]cliapi.Integration, error) {
+	if strings.TrimSpace(serviceOperationsQuery) != "" {
+		return client.SearchEndpointsPage(serviceID, serviceOperationsVersion, serviceOperationsQuery, serviceListFlags.pageOptions())
+	}
+	if cmd.Flags().Changed("limit") || cmd.Flags().Changed("offset") {
+		return nil, fmt.Errorf("--limit and --offset require --q for service operations because only endpoint search is paginated server-side")
+	}
+	// Why: The Registry has a full operation-list field but no paginated
+	// operation-list field yet; avoid slicing in the CLI where it would hide
+	// database work and drift from UI semantics.
+	return client.ServiceOperations(serviceID, serviceOperationsVersion)
+}
+
+func printIntegrations(out io.Writer, integrations []cliapi.Integration) {
+	for _, op := range integrations {
+		fmt.Fprintf(out, "%s\t%s\t%s\t%s\n", op.Name, op.Method, op.Path, op.ID)
+	}
+}
+
+func runServiceWebhooks(cmd *cobra.Command, serviceSlug string) error {
+	client, err := getAPIClient()
+	if err != nil {
+		return err
+	}
+	service, err := client.GetServiceInfo(serviceSlug)
+	if err != nil {
+		return err
+	}
+	if service == nil {
+		return fmt.Errorf("service %s not found", serviceSlug)
+	}
+	webhooks, err := client.FetchWebhooks(service.ID, serviceOperationsVersion)
+	if err != nil {
+		return err
+	}
+	for _, webhook := range webhooks {
+		fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", webhook.Name, webhook.ID, webhook.Description)
+	}
+	return nil
 }
 
 var serviceVersionsCmd = &cobra.Command{
@@ -138,6 +222,9 @@ func printServiceVersions(out io.Writer, service string, versions []cliapi.Servi
 func init() {
 	RootCmd.AddCommand(serviceCmd)
 	serviceCmd.Flags().BoolVar(&serviceShowVersions, "versions", false, "List available versions for the service slug; supports @provider/slug")
+	serviceCmd.Flags().StringVar(&serviceOperationsQuery, "q", "", "Search query for service operations")
+	serviceCmd.Flags().StringVar(&serviceOperationsVersion, "version", "", "Service version for operations/webhooks")
+	addListFlags(serviceCmd, &serviceListFlags)
 	serviceCmd.AddCommand(serviceVersionsCmd)
 	serviceCmd.AddCommand(serviceShowCmd)
 }

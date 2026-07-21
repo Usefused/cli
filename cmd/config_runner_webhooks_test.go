@@ -150,13 +150,20 @@ func TestWorkspaceServiceWebhooks_ListsRegistrationsWithReconstructedURL(t *test
 				t.Fatalf("unexpected graphql query: %s", body.Query)
 			}
 			_, _ = w.Write([]byte(`{"data":{"serviceVersions":[{"id":"ver-latest","service_id":"svc-github","name":"2026-07-01","status":"public","created_at":"2026-07-01T00:00:00Z"}]}}`))
-		case r.URL.Path == "/workspace/services":
-			_, _ = w.Write([]byte(`[{"service_id":"svc-github","service_name":"GitHub REST API","version":"2026-07-01"}]`))
-		case r.URL.Path == "/workspace/services/svc-github/webhooks":
-			_, _ = w.Write([]byte(`[
-				{"label":"repo-a","slug":"slugaaaaaaaaaaaaaaaaa","created_at":"2026-07-18T00:00:00Z"},
-				{"label":"repo-b","slug":"slugbbbbbbbbbbbbbbbbb","created_at":"2026-07-18T00:00:00Z"}
-			]`))
+		case r.URL.Path == "/engine/graphql":
+			body := decodeTestGraphQLBody(t, r)
+			if strings.Contains(body.Query, "workspaceServices") {
+				_, _ = w.Write([]byte(`{"data":{"workspaceServices":[{"service_id":"svc-github","service_name":"GitHub REST API","version":"2026-07-01"}]}}`))
+				return
+			}
+			if strings.Contains(body.Query, "workspaceWebhooks") {
+				_, _ = w.Write([]byte(`{"data":{"workspaceWebhooks":[
+					{"label":"repo-a","slug":"slugaaaaaaaaaaaaaaaaa","created_at":"2026-07-18T00:00:00Z"},
+					{"label":"repo-b","slug":"slugbbbbbbbbbbbbbbbbb","created_at":"2026-07-18T00:00:00Z"}
+				]}}`))
+				return
+			}
+			t.Fatalf("unexpected engine graphql query: %s", body.Query)
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
@@ -184,10 +191,17 @@ func TestWorkspaceServiceWebhooks_NoRegistrations_PrintsMessage(t *testing.T) {
 		switch {
 		case r.URL.Path == "/graphql":
 			_, _ = w.Write([]byte(`{"data":{"serviceVersions":[{"id":"ver-latest","service_id":"svc-github","name":"2026-07-01","status":"public","created_at":"2026-07-01T00:00:00Z"}]}}`))
-		case r.URL.Path == "/workspace/services":
-			_, _ = w.Write([]byte(`[{"service_id":"svc-github","service_name":"GitHub REST API","version":"2026-07-01"}]`))
-		case r.URL.Path == "/workspace/services/svc-github/webhooks":
-			_, _ = w.Write([]byte(`[]`))
+		case r.URL.Path == "/engine/graphql":
+			body := decodeTestGraphQLBody(t, r)
+			if strings.Contains(body.Query, "workspaceServices") {
+				_, _ = w.Write([]byte(`{"data":{"workspaceServices":[{"service_id":"svc-github","service_name":"GitHub REST API","version":"2026-07-01"}]}}`))
+				return
+			}
+			if strings.Contains(body.Query, "workspaceWebhooks") {
+				_, _ = w.Write([]byte(`{"data":{"workspaceWebhooks":[]}}`))
+				return
+			}
+			t.Fatalf("unexpected engine graphql query: %s", body.Query)
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}

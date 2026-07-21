@@ -65,7 +65,7 @@ services:
     runtime_config:
       connect:
         bucket: prod
-        auth_type: oauth2
+        auth_type: oauth
         client_id_env: FUSED_TEST_CLIENT_ID
         client_secret_env: FUSED_TEST_CLIENT_SECRET
         redirect_uri: https://engine.example.com/connect/callback
@@ -95,7 +95,7 @@ services:
     runtime_config:
       connect:
         bucket: prod
-        auth_type: oauth2
+        auth_type: oauth
         client_id: $FUSED_TEST_CLIENT_ID
         client_secret: $FUSED_TEST_CLIENT_SECRET
         redirect_uri: https://engine.example.com/connect/callback
@@ -136,7 +136,7 @@ services:
     runtime_config:
       connect:
         bucket: prod
-        auth_type: oauth2
+        auth_type: oauth
         client_id: $FUSED_TEST_CLIENT_ID
         client_secret: ${FUSED_TEST_CLIENT_SECRET}
         redirect_uri: https://engine.example.com/connect/callback
@@ -164,6 +164,76 @@ services:
 	defer server.Close()
 
 	runCommandInDir(t, dir, server.URL, []string{"workspace", "apply", "-f", path})
+}
+
+func TestWorkspaceApplyPostsStaticAuthMaterialsFromDollarRefs(t *testing.T) {
+	t.Setenv("FUSED_BASIC_USER", "alice")
+	t.Setenv("FUSED_BASIC_PASS", "s3cr3t")
+	dir := t.TempDir()
+	path := writeSprintConfig(t, dir, "workspace.yaml", `
+kind: workspace
+version: 1
+services:
+  github:
+    service_id: "00000000-0000-0000-0000-000000000001"
+    versions: ["2026-07-01"]
+    runtime_config:
+      auth:
+        bucket: prod
+        auth_type: basic
+        username: $FUSED_BASIC_USER
+        password: ${FUSED_BASIC_PASS}
+`)
+	parsed, err := configfile.ParseFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeReceipt(t, dir, planReceipt{ConfigKey: "workspace", PlanID: "plan-workspace", SourceHash: parsed.SourceHash})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			w.Write([]byte(`{"status":"ok","plane":"engine","environment":"staging"}`))
+			return
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		materials := body["auth_materials"].(map[string]any)["github"].(map[string]any)
+		if materials["username"] != "alice" || materials["password"] != "s3cr3t" {
+			t.Fatalf("expected resolved auth materials during apply, got %#v", materials)
+		}
+		_, _ = w.Write([]byte(`{"status":"applied","plan_id":"plan-workspace"}`))
+	}))
+	defer server.Close()
+
+	runCommandInDir(t, dir, server.URL, []string{"workspace", "apply", "-f", path})
+}
+
+func TestWorkspacePlanRejectsInlineStaticAuthMaterial(t *testing.T) {
+	dir := t.TempDir()
+	path := writeSprintConfig(t, dir, "workspace.yaml", `
+kind: workspace
+version: 1
+services:
+  github:
+    service_id: "00000000-0000-0000-0000-000000000001"
+    versions: ["2026-07-01"]
+    runtime_config:
+      auth:
+        bucket: prod
+        auth_type: basic
+        username: alice
+        password: s3cr3t
+`)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("inline static auth material must fail before posting to Engine")
+	}))
+	defer server.Close()
+
+	out := runCommandInDirExpectError(t, dir, server.URL, []string{"workspace", "plan", "-f", path})
+	if !strings.Contains(out, "$ENV credential fields") {
+		t.Fatalf("expected inline auth material rejection, got %s", out)
+	}
 }
 
 func TestWorkspaceApplyUsesReceiptWithoutReplanning(t *testing.T) {
@@ -272,9 +342,6 @@ services:
     operations: ["listLogEvents"]
 `)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/workspace/notifications" {
-			t.Fatal("sdk plan must use notifications embedded in the plan response")
-		}
 		if r.URL.Path != "/sdk-config/plan" {
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
@@ -478,11 +545,10 @@ func TestWorkspaceServicesListCallsEngine(t *testing.T) {
 	dir := t.TempDir()
 	var sawList bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/workspace/services" {
+		if !writeEngineWorkspaceServices(t, w, r, `[{"service_id":"00000000-0000-0000-0000-000000000001","service_name":"okta","version":"2026-07-01","enabled_versions":[{"version":"2026-07-01"},{"version":"2026-07-02"}]}]`) {
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
 		sawList = true
-		_, _ = w.Write([]byte(`[{"service_id":"00000000-0000-0000-0000-000000000001","service_name":"okta","version":"2026-07-01","enabled_versions":[{"version":"2026-07-01"},{"version":"2026-07-02"}]}]`))
 	}))
 	defer server.Close()
 
@@ -499,11 +565,10 @@ func TestWorkspaceServicesListInteractiveCallsEngine(t *testing.T) {
 	dir := t.TempDir()
 	var sawList bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/workspace/services" {
+		if !writeEngineWorkspaceServices(t, w, r, `[{"service_id":"00000000-0000-0000-0000-000000000001","service_name":"okta","version":"2026-07-01","enabled_versions":[{"version":"2026-07-01"},{"version":"2026-07-02"}]}]`) {
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
 		sawList = true
-		_, _ = w.Write([]byte(`[{"service_id":"00000000-0000-0000-0000-000000000001","service_name":"okta","version":"2026-07-01","enabled_versions":[{"version":"2026-07-01"},{"version":"2026-07-02"}]}]`))
 	}))
 	defer server.Close()
 
@@ -552,16 +617,17 @@ func workspaceServiceVersionsSlugHandler(t *testing.T, state *workspaceServiceVe
 			assertProviderQualifiedSlugRequest(t, r)
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"data":{"serviceVersions":[{"id":"ver-1","service_id":"svc-github","name":"2026-07-01","status":"public","created_at":"2026-07-16T00:00:00Z"}]}}`))
-		case "/workspace/services":
+		case "/engine/graphql":
 			state.sawWorkspaceList = true
-			if r.URL.Query().Get("names") != "" {
-				t.Fatalf("workspace versions should resolve by service_id, got names query %q", r.URL.RawQuery)
+			body := decodeTestGraphQLBody(t, r)
+			if !strings.Contains(body.Query, "workspaceServices") {
+				t.Fatalf("unexpected engine graphql query: %s", body.Query)
 			}
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`[
+			_, _ = w.Write([]byte(`{"data":{"workspaceServices":[
 				{"service_id":"svc-other","service_name":"GitHub","version":"2026-01-01","enabled_versions":[{"version":"2026-01-01","service_version_id":"ver-other"}]},
 				{"service_id":"svc-github","service_name":"GitHub REST API","version":"2026-07-01","enabled_versions":[{"version":"2026-07-01","service_version_id":"ver-1","status":"public","enabled_at":"2026-07-16T00:00:00Z"}]}
-			]`))
+			]}}`))
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
@@ -593,13 +659,15 @@ func workspaceOperationsLatestHandler(t *testing.T, state *workspaceOperationsLa
 		switch r.URL.Path {
 		case "/graphql":
 			handleWorkspaceOperationsGraphQL(t, w, r, state)
-		case "/workspace/services":
-			_, _ = w.Write([]byte(`[
+		case "/engine/graphql":
+			if !writeEngineWorkspaceServices(t, w, r, `[
 				{"service_id":"svc-github","service_name":"GitHub REST API","version":"2026-01-01","enabled_versions":[
 					{"version":"2026-01-01","service_version_id":"ver-old","created_at":"2026-01-01T00:00:00Z","enabled_at":"2026-01-02T00:00:00Z"},
 					{"version":"2026-07-16","service_version_id":"ver-latest","created_at":"2026-07-16T00:00:00Z","enabled_at":"2026-07-17T00:00:00Z"}
 				]}
-			]`))
+			]`) {
+				t.Fatalf("unexpected engine graphql query")
+			}
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
@@ -624,6 +692,20 @@ func handleWorkspaceOperationsGraphQL(t *testing.T, w http.ResponseWriter, r *ht
 type testGraphQLBody struct {
 	Query     string         `json:"query"`
 	Variables map[string]any `json:"variables"`
+}
+
+func writeEngineWorkspaceServices(t *testing.T, w http.ResponseWriter, r *http.Request, servicesJSON string) bool {
+	t.Helper()
+	if r.URL.Path != "/engine/graphql" {
+		return false
+	}
+	body := decodeTestGraphQLBody(t, r)
+	if !strings.Contains(body.Query, "workspaceServices") {
+		return false
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write([]byte(`{"data":{"workspaceServices":` + servicesJSON + `}}`))
+	return true
 }
 
 func assertProviderQualifiedSlugRequest(t *testing.T, r *http.Request) {
@@ -667,8 +749,10 @@ func TestWorkspaceServiceOperationsUsesExplicitEnabledVersion(t *testing.T) {
 			}
 			sawVersion, _ = body.Variables["version"].(string)
 			_, _ = w.Write([]byte(`{"data":{"serviceOperations":[{"id":"ep1","name":"reposListForOrg","method":"GET","path":"/orgs/{org}/repos","description":"","service_id":"svc-github"}]}}`))
-		case "/workspace/services":
-			_, _ = w.Write([]byte(`[{"service_id":"svc-github","service_name":"GitHub REST API","version":"2026-07-16","enabled_versions":[{"version":"2026-01-01","service_version_id":"ver-old"},{"version":"2026-07-16","service_version_id":"ver-latest"}]}]`))
+		case "/engine/graphql":
+			if !writeEngineWorkspaceServices(t, w, r, `[{"service_id":"svc-github","service_name":"GitHub REST API","version":"2026-07-16","enabled_versions":[{"version":"2026-01-01","service_version_id":"ver-old"},{"version":"2026-07-16","service_version_id":"ver-latest"}]}]`) {
+				t.Fatalf("unexpected engine graphql query")
+			}
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
@@ -687,8 +771,10 @@ func TestWorkspaceServiceOperationsRejectsNonWorkspaceVersion(t *testing.T) {
 		switch r.URL.Path {
 		case "/graphql":
 			_, _ = w.Write([]byte(`{"data":{"serviceVersions":[{"id":"ver-new","service_id":"svc-github","name":"2026-08-01","status":"public","created_at":"2026-08-01T00:00:00Z"}]}}`))
-		case "/workspace/services":
-			_, _ = w.Write([]byte(`[{"service_id":"svc-github","service_name":"GitHub REST API","version":"2026-07-16","enabled_versions":[{"version":"2026-07-16","service_version_id":"ver-latest"}]}]`))
+		case "/engine/graphql":
+			if !writeEngineWorkspaceServices(t, w, r, `[{"service_id":"svc-github","service_name":"GitHub REST API","version":"2026-07-16","enabled_versions":[{"version":"2026-07-16","service_version_id":"ver-latest"}]}]`) {
+				t.Fatalf("unexpected engine graphql query")
+			}
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
@@ -725,14 +811,19 @@ func TestWorkspaceServiceSlugHelpShowsReadableActions(t *testing.T) {
 func TestWorkspaceHasCallsEngine(t *testing.T) {
 	dir := t.TempDir()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/workspace/services" {
+		if r.URL.Path != "/engine/graphql" {
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
-		name := r.URL.Query().Get("names")
+		body := decodeTestGraphQLBody(t, r)
+		names, _ := body.Variables["names"].([]interface{})
+		name := ""
+		if len(names) > 0 {
+			name, _ = names[0].(string)
+		}
 		if name == "okta" {
-			_, _ = w.Write([]byte(`[{"service_id":"00000000-0000-0000-0000-000000000001","service_name":"okta","version":"2026-07-01","enabled_versions":[{"version":"2026-07-01"},{"version":"2026-07-02"}]}]`))
+			_, _ = w.Write([]byte(`{"data":{"workspaceServices":[{"service_id":"00000000-0000-0000-0000-000000000001","service_name":"okta","version":"2026-07-01","enabled_versions":[{"version":"2026-07-01"},{"version":"2026-07-02"}]}]}}`))
 		} else {
-			_, _ = w.Write([]byte(`[]`))
+			_, _ = w.Write([]byte(`{"data":{"workspaceServices":[]}}`))
 		}
 	}))
 	defer server.Close()
@@ -846,8 +937,10 @@ services:
 	var sawVersion string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/workspace/services":
-			_, _ = w.Write([]byte(`[{"service_id":"00000000-0000-0000-0000-000000000001","service_name":"okta","version":"2026-07-01"}]`))
+		case "/engine/graphql":
+			if !writeEngineWorkspaceServices(t, w, r, `[{"service_id":"00000000-0000-0000-0000-000000000001","service_name":"okta","version":"2026-07-01"}]`) {
+				t.Fatalf("unexpected engine graphql query")
+			}
 		case "/graphql":
 			var body struct {
 				Variables map[string]any `json:"variables"`
@@ -902,8 +995,10 @@ services:
 `)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/workspace/services":
-			_, _ = w.Write([]byte(`[{"service_id":"00000000-0000-0000-0000-000000000001","service_name":"okta","version":"2026-07-01"}]`))
+		case "/engine/graphql":
+			if !writeEngineWorkspaceServices(t, w, r, `[{"service_id":"00000000-0000-0000-0000-000000000001","service_name":"okta","version":"2026-07-01"}]`) {
+				t.Fatalf("unexpected engine graphql query")
+			}
 		case "/graphql":
 			_, _ = w.Write([]byte(`{"data":{"searchEndpoints":[{"id":"ep1","name":"getUser","method":"GET","path":"/users/{id}","description":"","service_id":"00000000-0000-0000-0000-000000000001"},{"id":"ep2","name":"listGroups","method":"GET","path":"/groups","description":"","service_id":"00000000-0000-0000-0000-000000000001"}]}}`))
 		default:

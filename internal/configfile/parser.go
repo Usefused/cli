@@ -234,17 +234,57 @@ func validateWorkspaceConfig(cfg *WorkspaceConfig) error {
 }
 
 func validateWorkspaceService(name string, svc WorkspaceService) error {
-	if svc.RuntimeConfig == nil || svc.RuntimeConfig.Connect == nil {
+	if svc.RuntimeConfig == nil {
+		return nil
+	}
+	if err := validateWorkspaceAuthIntent(name, svc.RuntimeConfig.Auth); err != nil {
+		return err
+	}
+	if svc.RuntimeConfig.Connect == nil {
 		return nil
 	}
 	connect := svc.RuntimeConfig.Connect
 	if strings.TrimSpace(connect.AuthType) == "" {
 		return fmt.Errorf("workspace service %q connect requires auth_type", name)
 	}
+	if !isSupportedConnectAuthType(connect.AuthType) {
+		return fmt.Errorf("workspace service %q connect has unsupported auth_type", name)
+	}
 	if strings.TrimSpace(connect.RedirectURI) == "" {
 		return fmt.Errorf("workspace service %q connect requires redirect_uri", name)
 	}
 	return validateWorkspaceConnectClientMaterial(name, connect)
+}
+
+// validateWorkspaceAuthIntent keeps static auth material out of plan/state by
+// requiring local env references for every credential field.
+func validateWorkspaceAuthIntent(name string, auth *AuthConfig) error {
+	if auth == nil {
+		return nil
+	}
+	switch canonicalStaticAuthType(auth.AuthType) {
+	case "basic":
+		return validateAuthEnvRefs(name, "basic", auth.Username, auth.Password)
+	case "api_key":
+		return validateAuthEnvRefs(name, "api_key", auth.APIKey)
+	case "bearer", "oauth", "oidc":
+		return validateAuthEnvRefs(name, canonicalStaticAuthType(auth.AuthType), auth.Token)
+	default:
+		return fmt.Errorf("workspace service %q auth has unsupported auth_type", name)
+	}
+}
+
+// validateAuthEnvRefs treats static auth fields as secret material even when a
+// provider calls one of them "username", keeping bucket writes apply-only.
+func validateAuthEnvRefs(name, authType string, values ...string) error {
+	for _, value := range values {
+		if strings.TrimSpace(value) == "" || !isEnvRef(value) {
+			// Static auth material is encrypted into Engine bucket secrets during
+			// apply, so the shareable config must carry env refs rather than values.
+			return fmt.Errorf("workspace service %q auth %s requires $ENV credential fields", name, authType)
+		}
+	}
+	return nil
 }
 
 // validateWorkspaceConnectClientMaterial is isolated because this is the
@@ -285,6 +325,62 @@ func (p *ParsedConfig) WorkspaceConnectMaterials() (map[string]ConnectMaterial, 
 	return materials, nil
 }
 
+// WorkspaceAuthMaterials resolves static provider auth env refs only during
+// apply so workspace plan/state files never contain plaintext bucket secrets.
+func (p *ParsedConfig) WorkspaceAuthMaterials() (map[string]AuthMaterial, error) {
+	if p.Workspace == nil {
+		return nil, fmt.Errorf("parsed config is not a workspace")
+	}
+	materials := map[string]AuthMaterial{}
+	for key, svc := range p.Workspace.Services {
+		material, ok, err := workspaceServiceAuthMaterial(key, svc)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			materials[key] = material
+		}
+	}
+	return materials, nil
+}
+
+func workspaceServiceAuthMaterial(name string, svc WorkspaceService) (AuthMaterial, bool, error) {
+	if svc.RuntimeConfig == nil || svc.RuntimeConfig.Auth == nil {
+		return AuthMaterial{}, false, nil
+	}
+	auth := *svc.RuntimeConfig.Auth
+	if err := resolveAuthEnv(name, &auth); err != nil {
+		return AuthMaterial{}, false, err
+	}
+	return AuthMaterial{Username: auth.Username, Password: auth.Password, Token: auth.Token, APIKey: auth.APIKey}, true, nil
+}
+
+// resolveAuthEnv resolves all possible fields; validation decides which fields
+// are required for the selected auth type before this apply-time step.
+func resolveAuthEnv(name string, auth *AuthConfig) error {
+	if err := resolveAuthField(name, "username", &auth.Username); err != nil {
+		return err
+	}
+	if err := resolveAuthField(name, "password", &auth.Password); err != nil {
+		return err
+	}
+	if err := resolveAuthField(name, "token", &auth.Token); err != nil {
+		return err
+	}
+	return resolveAuthField(name, "api_key", &auth.APIKey)
+}
+
+// resolveAuthField gives each env lookup a field-specific error so operators
+// know exactly which local variable is missing.
+func resolveAuthField(name, field string, value *string) error {
+	resolved, err := resolveMaybeEnv(*value)
+	if err != nil {
+		return fmt.Errorf("workspace service %q auth %s: %w", name, field, err)
+	}
+	*value = resolved
+	return nil
+}
+
 func workspaceServiceConnectMaterial(name string, svc WorkspaceService) (ConnectMaterial, bool, error) {
 	if svc.RuntimeConfig == nil || svc.RuntimeConfig.Connect == nil {
 		return ConnectMaterial{}, false, nil
@@ -323,6 +419,30 @@ func resolveMaybeEnv(value string) (string, error) {
 		return lookupRequiredEnv(envRef)
 	}
 	return "", nil
+}
+
+// canonicalStaticAuthType accepts only the public config vocabulary; provider
+// import spellings are normalized inside the Engine, not in user config.
+func canonicalStaticAuthType(authType string) string {
+	normalized := strings.ToLower(strings.TrimSpace(authType))
+	normalized = strings.ReplaceAll(normalized, "-", "_")
+	switch normalized {
+	case "api_key", "oauth", "oidc", "basic", "bearer":
+		return normalized
+	default:
+		return normalized
+	}
+}
+
+// isSupportedConnectAuthType limits connect config to browser/user flows; API
+// key, bearer, and basic credentials belong in bucket secrets instead.
+func isSupportedConnectAuthType(authType string) bool {
+	switch canonicalStaticAuthType(authType) {
+	case "oauth", "oidc":
+		return true
+	default:
+		return false
+	}
 }
 
 // lookupRequiredEnv fails closed so an unset local secret cannot silently apply

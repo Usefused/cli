@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -150,7 +149,7 @@ func TestMergeWorkspaceServicesFromRemote_RemoteWinsOnConflict(t *testing.T) {
 func TestMergeWorkspaceServicesFromRemote_PreservesRuntimeConfig(t *testing.T) {
 	runtimeConfig := &configfile.RuntimeConfig{Connect: &configfile.ConnectConfig{
 		Bucket:       "github",
-		AuthType:     "oauth2",
+		AuthType:     "oauth",
 		ClientID:     "$GITHUB_APP_CLIENT_ID",
 		ClientSecret: "$GITHUB_APP_CLIENT_SECRET",
 		RedirectURI:  "http://127.0.0.1:8081/workspace/connect/callback",
@@ -182,7 +181,7 @@ func TestMergeWorkspaceServicesFromRemote_PreservesRuntimeConfig(t *testing.T) {
 func TestMergeWorkspaceServicesFromRemote_PreservesRuntimeConfigAcrossSlugKeyChange(t *testing.T) {
 	runtimeConfig := &configfile.RuntimeConfig{Connect: &configfile.ConnectConfig{
 		Bucket:       "github",
-		AuthType:     "oauth2",
+		AuthType:     "oauth",
 		ClientID:     "$GITHUB_APP_CLIENT_ID",
 		ClientSecret: "$GITHUB_APP_CLIENT_SECRET",
 		RedirectURI:  "http://127.0.0.1:8081/workspace/connect/callback",
@@ -290,13 +289,10 @@ func TestWorkspaceSyncCreatesDefaultFusedConfig(t *testing.T) {
 	dir := t.TempDir()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/workspace/services":
-			_ = json.NewEncoder(w).Encode([]api.WorkspaceService{{
-				ServiceName:     "github",
-				ServiceID:       "svc-github",
-				Version:         "1.1.4",
-				EnabledVersions: remoteVersions("1.1.4"),
-			}})
+		case "/engine/graphql":
+			if !writeEngineWorkspaceServices(t, w, r, `[{"service_name":"github","service_id":"svc-github","version":"1.1.4","enabled_versions":[{"version":"1.1.4"}]}]`) {
+				t.Fatalf("unexpected engine graphql query")
+			}
 		case "/graphql":
 			_, _ = w.Write([]byte(`{"data":{"servicesByIds":[{"id":"svc-github","slug":"github-rest-api","provider":null,"is_owner":true,"is_public":false}]}}`))
 		default:

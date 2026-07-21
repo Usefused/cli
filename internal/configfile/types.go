@@ -41,10 +41,27 @@ type WorkspaceResolvedVersion struct {
 type RuntimeConfig struct {
 	BaseURL             string                       `yaml:"base_url,omitempty" json:"base_url,omitempty"`
 	DefaultHeaders      map[string]string            `yaml:"default_headers,omitempty" json:"default_headers,omitempty"`
+	Auth                *AuthConfig                  `yaml:"auth,omitempty" json:"auth,omitempty"`
 	Connect             *ConnectConfig               `yaml:"connect,omitempty" json:"connect,omitempty"`
 	Webhooks            map[string]WebhookConfig     `yaml:"webhooks,omitempty" json:"webhooks,omitempty"`
 	Pagination          *PaginationConfig            `yaml:"pagination,omitempty" json:"pagination,omitempty"`
 	PaginationOverrides map[string]*PaginationConfig `yaml:"pagination_overrides,omitempty" json:"pagination_overrides,omitempty"`
+}
+
+type AuthConfig struct {
+	Bucket   string `yaml:"bucket,omitempty" json:"bucket,omitempty"`
+	AuthType string `yaml:"auth_type" json:"auth_type"`
+	Username string `yaml:"username,omitempty" json:"username,omitempty"`
+	Password string `yaml:"password,omitempty" json:"password,omitempty"`
+	Token    string `yaml:"token,omitempty" json:"token,omitempty"`
+	APIKey   string `yaml:"api_key,omitempty" json:"api_key,omitempty"`
+}
+
+type AuthMaterial struct {
+	Username string
+	Password string
+	Token    string
+	APIKey   string
 }
 
 type ConnectConfig struct {

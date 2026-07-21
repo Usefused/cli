@@ -26,6 +26,36 @@ type SDKTokenResponse struct {
 	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
 }
 
+func (t *SDKTokenResponse) UnmarshalJSON(data []byte) error {
+	type rawSDKTokenResponse struct {
+		ID         string `json:"id"`
+		SDKID      string `json:"sdk_id"`
+		Name       string `json:"name"`
+		CreatedAt  string `json:"created_at"`
+		LastUsedAt string `json:"last_used_at"`
+	}
+	var raw rawSDKTokenResponse
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	createdAt, err := parseGraphQLTime(raw.CreatedAt)
+	if err != nil {
+		return fmt.Errorf("parse sdk token created_at: %w", err)
+	}
+	lastUsedAt, err := parseOptionalGraphQLTime(raw.LastUsedAt)
+	if err != nil {
+		return fmt.Errorf("parse sdk token last_used_at: %w", err)
+	}
+	*t = SDKTokenResponse{
+		ID:         raw.ID,
+		SDKID:      raw.SDKID,
+		Name:       raw.Name,
+		CreatedAt:  createdAt,
+		LastUsedAt: lastUsedAt,
+	}
+	return nil
+}
+
 func (c *Client) GenerateSDKToken(sdkID, name string) (*SDKTokenGenerateResponse, error) {
 	reqBody := map[string]interface{}{
 		"name": name,
@@ -71,38 +101,18 @@ func (c *Client) GenerateSDKToken(sdkID, name string) (*SDKTokenGenerateResponse
 }
 
 func (c *Client) ListSDKTokens(sdkID string) ([]SDKTokenResponse, error) {
-	u, err := url.Parse(c.BaseURL + "/workspace/sdk-tokens")
-	if err != nil {
-		return nil, err
+	query := `
+		query SDKTokens($sdkId: String!) {
+			sdkTokens(sdk_id: $sdkId) { id sdk_id name created_at last_used_at }
+		}
+	`
+	var resp struct {
+		Tokens []SDKTokenResponse `json:"sdkTokens"`
 	}
-	q := u.Query()
-	q.Set("sdk_id", sdkID)
-	u.RawQuery = q.Encode()
-
-	req, err := http.NewRequest("GET", u.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-	if c.APIKey != "" {
-		req.Header.Set("x-api-key", c.APIKey)
-	}
-
-	resp, err := c.HTTP.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("list sdk tokens failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(respBody))
-	}
-
-	var out []SDKTokenResponse
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, err
-	}
-	return out, nil
+	// Why: token listing is read-only metadata, while token generation and
+	// revocation stay on REST because they mutate credential state.
+	err := c.EngineGraphQL(query, map[string]interface{}{"sdkId": sdkID}, &resp)
+	return resp.Tokens, err
 }
 
 func (c *Client) RevokeSDKToken(sdkID, name string) error {

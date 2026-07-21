@@ -153,7 +153,7 @@ services:
     runtime_config:
       connect:
         bucket: prod
-        auth_type: oauth2
+        auth_type: oauth
         client_id_env: FUSED_TEST_CLIENT_ID
         client_secret_env: FUSED_TEST_CLIENT_SECRET
         redirect_uri: https://engine.example.com/connect/callback
@@ -177,7 +177,7 @@ services:
     runtime_config:
       connect:
         bucket: prod
-        auth_type: oauth2
+        auth_type: oauth
         client_id: $FUSED_TEST_CLIENT_ID
         client_secret: ${FUSED_TEST_CLIENT_SECRET}
         redirect_uri: https://engine.example.com/connect/callback
@@ -196,7 +196,7 @@ services:
 	}
 }
 
-func TestWorkspaceConnectMaterials_RejectsInlineClientSecret(t *testing.T) {
+func TestWorkspaceConnectMaterials_RejectsOAuth2AuthType(t *testing.T) {
 	path := writeFile(t, t.TempDir(), "workspace.yaml", `
 kind: workspace
 version: 1
@@ -208,6 +208,52 @@ services:
       connect:
         bucket: prod
         auth_type: oauth2
+        client_id: $FUSED_TEST_CLIENT_ID
+        client_secret: $FUSED_TEST_CLIENT_SECRET
+        redirect_uri: https://engine.example.com/connect/callback
+`)
+	_, err := configfile.ParseFile(path)
+	if err == nil || !strings.Contains(err.Error(), "unsupported auth_type") {
+		t.Fatalf("expected oauth2 auth_type rejection, got %v", err)
+	}
+}
+
+func TestWorkspaceConnectMaterials_RejectsImportedAuthTypeAliases(t *testing.T) {
+	for _, authType := range []string{"openidconnect", "open_id_connect"} {
+		path := writeFile(t, t.TempDir(), "workspace.yaml", `
+kind: workspace
+version: 1
+services:
+  github:
+    service_id: "00000000-0000-0000-0000-000000000001"
+    versions: ["2026-07-01"]
+    runtime_config:
+      connect:
+        bucket: prod
+        auth_type: `+authType+`
+        client_id: $FUSED_TEST_CLIENT_ID
+        client_secret: $FUSED_TEST_CLIENT_SECRET
+        redirect_uri: https://engine.example.com/connect/callback
+`)
+		_, err := configfile.ParseFile(path)
+		if err == nil || !strings.Contains(err.Error(), "unsupported auth_type") {
+			t.Fatalf("expected auth_type %q rejection, got %v", authType, err)
+		}
+	}
+}
+
+func TestWorkspaceConnectMaterials_RejectsInlineClientSecret(t *testing.T) {
+	path := writeFile(t, t.TempDir(), "workspace.yaml", `
+kind: workspace
+version: 1
+services:
+  github:
+    service_id: "00000000-0000-0000-0000-000000000001"
+    versions: ["2026-07-01"]
+    runtime_config:
+      connect:
+        bucket: prod
+        auth_type: oauth
         client_id: public-client-id
         client_secret: inline-secret
         redirect_uri: https://engine.example.com/connect/callback
@@ -229,7 +275,7 @@ services:
     versions: ["2026-07-01"]
     runtime_config:
       connect:
-        auth_type: oauth2
+        auth_type: oauth
         client_id: $FUSED_TEST_MISSING_CLIENT_ID
         client_secret: $FUSED_TEST_CLIENT_SECRET
         redirect_uri: https://engine.example.com/connect/callback

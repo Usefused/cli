@@ -295,11 +295,15 @@ func receiptForApply(cfg *configfile.ParsedConfig, opts applyOptions) (planRecei
 func applyOneConfig(client *api.Client, cfg *configfile.ParsedConfig, receipt planReceipt, download bool) error {
 	switch cfg.Kind {
 	case configfile.KindWorkspace:
-		materials, err := workspaceConnectMaterials(cfg)
+		connectMaterials, err := workspaceConnectMaterials(cfg)
 		if err != nil {
 			return err
 		}
-		resp, err := client.ApplyWorkspaceConfig(receipt.PlanID, receipt.SourceHash, materials)
+		authMaterials, err := workspaceAuthMaterials(cfg)
+		if err != nil {
+			return err
+		}
+		resp, err := client.ApplyWorkspaceConfig(receipt.PlanID, receipt.SourceHash, connectMaterials, authMaterials)
 		if err != nil {
 			return fmt.Errorf("failed to apply workspace %s: %w", cfg.ConfigKey, err)
 		}
@@ -319,6 +323,20 @@ func applyOneConfig(client *api.Client, cfg *configfile.ParsedConfig, receipt pl
 		}
 	}
 	return nil
+}
+
+// workspaceAuthMaterials adapts configfile's apply-only static auth material to
+// the API payload shape without writing it into plan receipts or config files.
+func workspaceAuthMaterials(cfg *configfile.ParsedConfig) (map[string]api.AuthMaterial, error) {
+	materials, err := cfg.WorkspaceAuthMaterials()
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]api.AuthMaterial, len(materials))
+	for key, material := range materials {
+		out[key] = api.AuthMaterial{Username: material.Username, Password: material.Password, Token: material.Token, APIKey: material.APIKey}
+	}
+	return out, nil
 }
 
 func workspaceConnectMaterials(cfg *configfile.ParsedConfig) (map[string]api.ConnectMaterial, error) {

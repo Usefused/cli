@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"strings"
 )
 
@@ -25,6 +24,18 @@ func NewClient(baseURL, apiKey string) *Client {
 }
 
 func (c *Client) GraphQL(query string, variables map[string]interface{}, out interface{}) error {
+	return c.graphQLAt("/graphql", query, variables, out)
+}
+
+// EngineGraphQL calls the Engine-native GraphQL endpoint used by the UI for
+// workspace reads. Keeping it separate from Registry GraphQL prevents CLI read
+// commands from accidentally proxying Engine-owned bucket state through the
+// catalogue surface.
+func (c *Client) EngineGraphQL(query string, variables map[string]interface{}, out interface{}) error {
+	return c.graphQLAt("/engine/graphql", query, variables, out)
+}
+
+func (c *Client) graphQLAt(path string, query string, variables map[string]interface{}, out interface{}) error {
 	payload := map[string]interface{}{
 		"query":     query,
 		"variables": variables,
@@ -34,7 +45,7 @@ func (c *Client) GraphQL(query string, variables map[string]interface{}, out int
 		return err
 	}
 
-	req, err := http.NewRequest("POST", c.BaseURL+"/graphql", bytes.NewBuffer(body))
+	req, err := http.NewRequest("POST", c.BaseURL+path, bytes.NewBuffer(body))
 	if err != nil {
 		return err
 	}
@@ -198,36 +209,29 @@ type WorkspaceServiceVersion struct {
 }
 
 func (c *Client) ListWorkspaceServices(names ...string) ([]WorkspaceService, error) {
-	reqURL := c.BaseURL + "/workspace/services"
-	if len(names) > 0 {
-		query := url.Values{}
-		query.Set("names", strings.Join(names, ","))
-		reqURL += "?" + query.Encode()
+	query := `
+		query WorkspaceServices($names: [String]) {
+			workspaceServices(names: $names) {
+				id
+				workspace_id
+				service_id
+				service_version_id
+				version
+				service_name
+				service_slug
+				added_by
+				created_at
+				enabled_versions { id service_version_id version status created_at enabled_at }
+			}
+		}
+	`
+	var resp struct {
+		Services []WorkspaceService `json:"workspaceServices"`
 	}
-	req, err := http.NewRequest("GET", reqURL, nil)
-	if err != nil {
-		return nil, err
-	}
-	if c.APIKey != "" {
-		req.Header.Set("x-api-key", c.APIKey)
-	}
-
-	resp, err := c.HTTP.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("list workspace services failed (HTTP %d): %s", resp.StatusCode, string(respBody))
-	}
-
-	var out []WorkspaceService
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, err
-	}
-	return out, nil
+	// Why: service listing is a read path, and Engine GraphQL now exposes the
+	// same version/slug enrichment REST used to provide without client-side joins.
+	err := c.EngineGraphQL(query, map[string]interface{}{"names": names}, &resp)
+	return resp.Services, err
 }
 
 // WorkspaceWebhook is one registered webhook for a workspace service --
@@ -244,30 +248,16 @@ type WorkspaceWebhook struct {
 // service, so a user can find a registration's URL again without re-running
 // workspace apply just to see the printout it produced once at apply time.
 func (c *Client) ListWorkspaceWebhooks(serviceID string) ([]WorkspaceWebhook, error) {
-	req, err := http.NewRequest("GET", c.BaseURL+"/workspace/services/"+serviceID+"/webhooks", nil)
-	if err != nil {
-		return nil, err
+	query := `
+		query WorkspaceWebhooks($serviceId: String!) {
+			workspaceWebhooks(service_id: $serviceId) { label slug created_at }
+		}
+	`
+	var resp struct {
+		Webhooks []WorkspaceWebhook `json:"workspaceWebhooks"`
 	}
-	if c.APIKey != "" {
-		req.Header.Set("x-api-key", c.APIKey)
-	}
-
-	resp, err := c.HTTP.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("list workspace webhooks failed (HTTP %d): %s", resp.StatusCode, string(respBody))
-	}
-
-	var out []WorkspaceWebhook
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, err
-	}
-	return out, nil
+	err := c.EngineGraphQL(query, map[string]interface{}{"serviceId": serviceID}, &resp)
+	return resp.Webhooks, err
 }
 
 type ConnectSessionStartResponse struct {
@@ -475,9 +465,13 @@ func (c *Client) SearchServices(q string) ([]Service, error) {
 }
 
 func (c *Client) SearchEndpoints(serviceID, version, q string) ([]Integration, error) {
+	return c.SearchEndpointsPage(serviceID, version, q, PageOptions{})
+}
+
+func (c *Client) SearchEndpointsPage(serviceID, version, q string, opts PageOptions) ([]Integration, error) {
 	query := `
-		query SearchEndpoints($serviceId: String!, $version: String, $q: String!) {
-			searchEndpoints(serviceId: $serviceId, version: $version, q: $q) {
+		query SearchEndpoints($serviceId: String!, $version: String, $q: String!, $limit: Int, $offset: Int) {
+			searchEndpoints(serviceId: $serviceId, version: $version, q: $q, limit: $limit, offset: $offset) {
 				id
 				name
 				path
@@ -490,7 +484,7 @@ func (c *Client) SearchEndpoints(serviceID, version, q string) ([]Integration, e
 	var resp struct {
 		SearchEndpoints []Integration `json:"searchEndpoints"`
 	}
-	err := c.GraphQL(query, map[string]interface{}{"serviceId": serviceID, "version": version, "q": q}, &resp)
+	err := c.GraphQL(query, map[string]interface{}{"serviceId": serviceID, "version": version, "q": q, "limit": normalLimit(opts.Limit), "offset": normalOffset(opts.Offset)}, &resp)
 	return resp.SearchEndpoints, err
 }
 
@@ -724,6 +718,8 @@ func (c *Client) GetSDK(sdkID string) (*SDKDetails, error) {
 
 type SDKBasicDetails struct {
 	ID         string `json:"id"`
+	Name       string `json:"name"`
+	Version    string `json:"version"`
 	SandboxURL string `json:"sandbox_url"`
 }
 
@@ -736,6 +732,8 @@ func (c *Client) GetSDKByName(name string, version string) (*SDKBasicDetails, er
 		query GetSDKByName($name: String!, $version: String) {
 			sdkByName(name: $name, version: $version) {
 				id
+				name
+				version
 				sandbox_url
 			}
 		}
@@ -746,6 +744,50 @@ func (c *Client) GetSDKByName(name string, version string) (*SDKBasicDetails, er
 		return nil, err
 	}
 	return &resp.SDK, nil
+}
+
+type SDKListOptions struct {
+	PageOptions
+	TargetType     string
+	TargetLanguage string
+	LatestOnly     bool
+}
+
+type SDKSummary struct {
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	Description    string `json:"description"`
+	Version        string `json:"version"`
+	TargetType     string `json:"target_type"`
+	TargetLanguage string `json:"target_language"`
+	SandboxURL     string `json:"sandbox_url"`
+	CreatedAt      string `json:"created_at"`
+	KilledAt       string `json:"killed_at"`
+}
+
+type SDKPageResponse struct {
+	Items []SDKSummary `json:"items"`
+	Total int          `json:"total"`
+}
+
+func (c *Client) ListSDKs(opts SDKListOptions) (*SDKPageResponse, error) {
+	query := `
+		query ListSDKs($limit: Int!, $offset: Int!, $targetType: String, $targetLanguage: String, $latestOnly: Boolean!) {
+			sdks(limit: $limit, offset: $offset, target_type: $targetType, target_language: $targetLanguage, latest_only: $latestOnly) {
+				total
+				items { id name description version target_type target_language sandbox_url created_at killed_at }
+			}
+		}
+	`
+	var resp struct {
+		Page SDKPageResponse `json:"sdks"`
+	}
+	vars := pageVars(opts.PageOptions)
+	vars["targetType"] = opts.TargetType
+	vars["targetLanguage"] = opts.TargetLanguage
+	vars["latestOnly"] = opts.LatestOnly
+	err := c.GraphQL(query, vars, &resp)
+	return &resp.Page, err
 }
 
 type SDKSelectionDetail struct {
@@ -772,9 +814,13 @@ type SDKWithSelections struct {
 // version to sdkByName resolves to the latest generated SDK -- there's no
 // separate "latest" query; this is the documented way to get it.
 func (c *Client) GetSDKSelectionsByName(name string) (*SDKWithSelections, error) {
+	return c.GetSDKSelectionsByNameVersion(name, "")
+}
+
+func (c *Client) GetSDKSelectionsByNameVersion(name string, version string) (*SDKWithSelections, error) {
 	query := `
-		query GetSDKSelectionsByName($name: String!) {
-			sdkByName(name: $name, version: "") {
+		query GetSDKSelectionsByName($name: String!, $version: String) {
+			sdkByName(name: $name, version: $version) {
 				id
 				version
 				detailed_selections {
@@ -794,7 +840,7 @@ func (c *Client) GetSDKSelectionsByName(name string) (*SDKWithSelections, error)
 	var resp struct {
 		SDK SDKWithSelections `json:"sdkByName"`
 	}
-	if err := c.GraphQL(query, map[string]interface{}{"name": name}, &resp); err != nil {
+	if err := c.GraphQL(query, map[string]interface{}{"name": name, "version": version}, &resp); err != nil {
 		return nil, err
 	}
 	return &resp.SDK, nil
@@ -972,6 +1018,13 @@ type ConnectMaterial struct {
 	ClientSecret string `json:"client_secret"`
 }
 
+type AuthMaterial struct {
+	Username string `json:"username,omitempty"`
+	Password string `json:"password,omitempty"`
+	Token    string `json:"token,omitempty"`
+	APIKey   string `json:"api_key,omitempty"`
+}
+
 // AppliedWebhookConfig is one webhook registration the apply just created or
 // refreshed. Slug is the opaque path segment only -- the CLI builds the full
 // display URL itself (base URL + "/webhook/" + Slug + "-" + ServiceKey)
@@ -1102,13 +1155,16 @@ func (c *Client) ApplySDKConfig(planID, sourceHash string) (*SDKConfigApplyRespo
 	return &out, nil
 }
 
-func (c *Client) ApplyWorkspaceConfig(planID, sourceHash string, connectMaterials map[string]ConnectMaterial) (*ConfigApplyResponse, error) {
+func (c *Client) ApplyWorkspaceConfig(planID, sourceHash string, connectMaterials map[string]ConnectMaterial, authMaterials map[string]AuthMaterial) (*ConfigApplyResponse, error) {
 	reqBody := map[string]interface{}{
 		"plan_id":     planID,
 		"source_hash": sourceHash,
 	}
 	if len(connectMaterials) > 0 {
 		reqBody["connect_materials"] = connectMaterials
+	}
+	if len(authMaterials) > 0 {
+		reqBody["auth_materials"] = authMaterials
 	}
 	body, err := json.Marshal(reqBody)
 	if err != nil {

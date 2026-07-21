@@ -130,11 +130,9 @@ func TestBuildSelections(t *testing.T) {
 
 func TestResolveMCPSelections_ResolvesServiceVersionIDFromWorkspace(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/workspace/services" {
+		if !writeEngineWorkspaceServices(t, w, r, `[{"service_id":"svc-1","service_version_id":"ver-1","version":"1.0"}]`) {
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`[{"service_id":"svc-1","service_version_id":"ver-1","version":"1.0"}]`))
 	}))
 	defer server.Close()
 
@@ -162,8 +160,9 @@ func TestResolveMCPSelections_ResolvesServiceVersionIDFromWorkspace(t *testing.T
 
 func TestResolveMCPSelections_FailsWhenServiceNotActivated(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`[]`))
+		if !writeEngineWorkspaceServices(t, w, r, `[]`) {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
 	}))
 	defer server.Close()
 
@@ -303,9 +302,7 @@ func TestCollectGenerationResult_BothChannelsCloseWithoutTerminalEvent(t *testin
 func newGraphQLTestServer(t *testing.T, responders map[string]string, workspaceServicesJSON string) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/workspace/services" {
-			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte(workspaceServicesJSON))
+		if writeEngineWorkspaceServices(t, w, r, workspaceServicesJSON) {
 			return
 		}
 		if r.URL.Path != "/graphql" {

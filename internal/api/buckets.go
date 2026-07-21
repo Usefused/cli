@@ -58,30 +58,19 @@ func (c *Client) CreateBucket(name string) error {
 }
 
 func (c *Client) ListBuckets() ([]BucketMetaResponse, error) {
-	req, err := http.NewRequest("GET", c.BaseURL+"/workspace/buckets", nil)
-	if err != nil {
-		return nil, err
+	query := `
+		query Buckets {
+			buckets { id name is_default created_at }
+		}
+	`
+	var resp struct {
+		Buckets []BucketMetaResponse `json:"buckets"`
 	}
-	if c.APIKey != "" {
-		req.Header.Set("x-api-key", c.APIKey)
-	}
-
-	resp, err := c.HTTP.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("list buckets failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(respBody))
-	}
-
-	var out []BucketMetaResponse
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, err
-	}
-	return out, nil
+	// Why: Bucket listing is a read path shared by completions and name
+	// resolution, so route it through the same Engine GraphQL surface as the
+	// UI instead of keeping a REST-only backdoor for fetches.
+	err := c.EngineGraphQL(query, nil, &resp)
+	return resp.Buckets, err
 }
 
 func (c *Client) UpsertBucketValue(bucketID, serviceID, keyName, location, value string) error {
@@ -120,30 +109,16 @@ func (c *Client) UpsertBucketValue(bucketID, serviceID, keyName, location, value
 }
 
 func (c *Client) ListBucketValues(bucketID string) ([]BucketValueResponse, error) {
-	req, err := http.NewRequest("GET", fmt.Sprintf("%s/workspace/buckets/%s/values", c.BaseURL, bucketID), nil)
-	if err != nil {
-		return nil, err
+	query := `
+		query BucketValues($bucketId: String!) {
+			bucketValues(bucket_id: $bucketId) { id service_id key_name location value }
+		}
+	`
+	var resp struct {
+		Values []BucketValueResponse `json:"bucketValues"`
 	}
-	if c.APIKey != "" {
-		req.Header.Set("x-api-key", c.APIKey)
-	}
-
-	resp, err := c.HTTP.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("list bucket values failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(respBody))
-	}
-
-	var values []BucketValueResponse
-	if err := json.NewDecoder(resp.Body).Decode(&values); err != nil {
-		return nil, err
-	}
-	return values, nil
+	err := c.EngineGraphQL(query, map[string]interface{}{"bucketId": bucketID}, &resp)
+	return resp.Values, err
 }
 
 func (c *Client) DeleteBucketValue(bucketID, serviceID, keyName string) error {

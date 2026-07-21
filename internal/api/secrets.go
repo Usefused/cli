@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -19,6 +20,74 @@ type SecretMetaResponse struct {
 	ExpiresAt      *time.Time `json:"expires_at,omitempty"`
 	CreatedAt      time.Time  `json:"created_at"`
 	UpdatedAt      time.Time  `json:"updated_at"`
+}
+
+func (s *SecretMetaResponse) UnmarshalJSON(data []byte) error {
+	type rawSecretMetaResponse struct {
+		ID             string `json:"id"`
+		ServiceID      string `json:"service_id"`
+		KeyName        string `json:"key_name"`
+		CredentialType string `json:"credential_type"`
+		BucketID       string `json:"bucket_id"`
+		ExpiresAt      string `json:"expires_at"`
+		CreatedAt      string `json:"created_at"`
+		UpdatedAt      string `json:"updated_at"`
+	}
+	var raw rawSecretMetaResponse
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	expiresAt, err := parseOptionalGraphQLTime(raw.ExpiresAt)
+	if err != nil {
+		return fmt.Errorf("parse secret expires_at: %w", err)
+	}
+	createdAt, err := parseGraphQLTime(raw.CreatedAt)
+	if err != nil {
+		return fmt.Errorf("parse secret created_at: %w", err)
+	}
+	updatedAt, err := parseGraphQLTime(raw.UpdatedAt)
+	if err != nil {
+		return fmt.Errorf("parse secret updated_at: %w", err)
+	}
+
+	*s = SecretMetaResponse{
+		ID:             raw.ID,
+		ServiceID:      raw.ServiceID,
+		KeyName:        raw.KeyName,
+		CredentialType: raw.CredentialType,
+		BucketID:       raw.BucketID,
+		ExpiresAt:      expiresAt,
+		CreatedAt:      createdAt,
+		UpdatedAt:      updatedAt,
+	}
+	return nil
+}
+
+func parseOptionalGraphQLTime(value string) (*time.Time, error) {
+	if strings.TrimSpace(value) == "" {
+		return nil, nil
+	}
+	parsed, err := parseGraphQLTime(value)
+	if err != nil {
+		return nil, err
+	}
+	return &parsed, nil
+}
+
+func parseGraphQLTime(value string) (time.Time, error) {
+	// Why: Engine GraphQL serializes optional timestamps as empty strings, so
+	// CLI decoding normalizes that API detail at the boundary instead of
+	// leaking string checks through command rendering.
+	if strings.TrimSpace(value) == "" {
+		return time.Time{}, nil
+	}
+	return time.Parse(time.RFC3339, value)
+}
+
+type SecretMetaPageResponse struct {
+	Items []SecretMetaResponse `json:"items"`
+	Total int                  `json:"total"`
 }
 
 func (c *Client) UpsertSecret(serviceID, keyName, credentialType, value string, bucketID string, expiresAt *time.Time) error {
@@ -59,40 +128,21 @@ func (c *Client) UpsertSecret(serviceID, keyName, credentialType, value string, 
 }
 
 func (c *Client) ListSecrets(bucketID string) ([]SecretMetaResponse, error) {
-	u, err := url.Parse(c.BaseURL + "/workspace/secrets")
-	if err != nil {
-		return nil, err
+	if bucketID == "" {
+		return nil, fmt.Errorf("bucket_id is required for GraphQL secret listing")
 	}
-	if bucketID != "" {
-		q := u.Query()
-		q.Set("bucket_id", bucketID)
-		u.RawQuery = q.Encode()
+	query := `
+		query SecretMetas($bucketId: String!) {
+			secretMetas(bucket_id: $bucketId) { id service_id key_name credential_type bucket_id expires_at created_at updated_at }
+		}
+	`
+	var resp struct {
+		Secrets []SecretMetaResponse `json:"secretMetas"`
 	}
-
-	req, err := http.NewRequest("GET", u.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-	if c.APIKey != "" {
-		req.Header.Set("x-api-key", c.APIKey)
-	}
-
-	resp, err := c.HTTP.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("list secrets failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(respBody))
-	}
-
-	var out []SecretMetaResponse
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, err
-	}
-	return out, nil
+	// Why: Secret listing returns metadata only and is a read path, so keep it
+	// on Engine GraphQL while leaving secret writes/revokes on REST.
+	err := c.EngineGraphQL(query, map[string]interface{}{"bucketId": bucketID}, &resp)
+	return resp.Secrets, err
 }
 
 func (c *Client) DeleteSecret(serviceID, keyName string, bucketID string) error {

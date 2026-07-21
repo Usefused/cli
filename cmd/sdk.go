@@ -83,6 +83,10 @@ var sdkValidateCmd = &cobra.Command{
 }
 
 var sdkDownloadOutDir string
+var sdkListFlags listFlags
+var sdkListTarget string
+var sdkListLanguage string
+var sdkListLatestOnly bool
 
 type sdkDownloadTarget struct {
 	Name    string
@@ -135,13 +139,136 @@ func runSDKDynamicAction(cmd *cobra.Command, args []string) error {
 	if len(args) == 0 {
 		return cmd.Help()
 	}
+	if len(args) == 1 && args[0] == "list" {
+		return runSDKList(cmd)
+	}
 	if len(args) == 2 && args[1] == "download" {
 		if err := validateSDKDownloadArgs([]string{args[0]}); err != nil {
 			return err
 		}
 		return runSDKDownloadTargets([]sdkDownloadTarget{downloadTargetFromName(args[0])})
 	}
+	if len(args) == 2 {
+		return runSDKReadAction(cmd, args[0], args[1])
+	}
 	return fmt.Errorf("unknown sdk command %q", strings.Join(args, " "))
+}
+
+func runSDKReadAction(cmd *cobra.Command, rawName, action string) error {
+	target := downloadTargetFromName(rawName)
+	switch action {
+	case "show":
+		return runSDKShow(cmd, target)
+	case "services":
+		return runSDKServices(cmd, target)
+	case "buckets":
+		return runSDKBuckets(cmd, target)
+	case "tokens":
+		return runSDKTokens(cmd, target)
+	default:
+		return fmt.Errorf("unknown sdk action %q", action)
+	}
+}
+
+func runSDKList(cmd *cobra.Command) error {
+	client, err := getAPIClient()
+	if err != nil {
+		return err
+	}
+	page, err := client.ListSDKs(api.SDKListOptions{
+		PageOptions:    sdkListFlags.pageOptions(),
+		TargetType:     sdkListTarget,
+		TargetLanguage: sdkListLanguage,
+		LatestOnly:     sdkListLatestOnly,
+	})
+	if err != nil {
+		return err
+	}
+	for _, sdk := range page.Items {
+		fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\t%s\n", sdk.Name, sdk.Version, sdk.TargetType, sdk.TargetLanguage, sdk.ID)
+	}
+	printPageSummary(cmd.OutOrStdout(), page.Total, sdkListFlags)
+	return nil
+}
+
+func runSDKShow(cmd *cobra.Command, target sdkDownloadTarget) error {
+	client, err := getAPIClient()
+	if err != nil {
+		return err
+	}
+	sdk, err := client.GetSDKByName(target.Name, target.Version)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "name:\t%s\nversion:\t%s\nid:\t%s\nsandbox_url:\t%s\n", sdk.Name, sdk.Version, sdk.ID, sdk.SandboxURL)
+	return nil
+}
+
+func runSDKServices(cmd *cobra.Command, target sdkDownloadTarget) error {
+	client, err := getAPIClient()
+	if err != nil {
+		return err
+	}
+	sdk, err := client.GetSDKSelectionsByNameVersion(target.Name, target.Version)
+	if err != nil {
+		return err
+	}
+	for _, service := range sdk.DetailedSelections {
+		fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\tversion:%s\tselect_all:%t\tendpoints:%d\twebhooks:%d\n", displaySDKServiceSlug(service), service.ServiceID, service.ServiceVersionName, service.SelectAll, len(service.EndpointIDs), len(service.WebhookIDs))
+	}
+	return nil
+}
+
+func runSDKBuckets(cmd *cobra.Command, target sdkDownloadTarget) error {
+	client, sdk, err := sdkClientAndDetails(target)
+	if err != nil {
+		return err
+	}
+	buckets, err := client.ListSDKBuckets(sdk.ID)
+	if err != nil {
+		return err
+	}
+	for _, bucket := range buckets {
+		fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\tdefault:%t\n", bucket.Name, bucket.ID, bucket.IsDefault)
+	}
+	return nil
+}
+
+func runSDKTokens(cmd *cobra.Command, target sdkDownloadTarget) error {
+	client, sdk, err := sdkClientAndDetails(target)
+	if err != nil {
+		return err
+	}
+	tokens, err := client.ListSDKTokens(sdk.ID)
+	if err != nil {
+		return err
+	}
+	for _, token := range tokens {
+		fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", token.Name, token.ID, token.CreatedAt.Format("2006-01-02 15:04:05"))
+	}
+	return nil
+}
+
+func sdkClientAndDetails(target sdkDownloadTarget) (*api.Client, *api.SDKBasicDetails, error) {
+	client, err := getAPIClient()
+	if err != nil {
+		return nil, nil, err
+	}
+	sdk, err := client.GetSDKByName(target.Name, target.Version)
+	if err != nil {
+		return nil, nil, err
+	}
+	return client, sdk, nil
+}
+
+func displaySDKServiceSlug(service api.SDKSelectionDetail) string {
+	if service.ServiceProvider != "" && service.ServiceSlug != "" {
+		return "@" + service.ServiceProvider + "/" + service.ServiceSlug
+	}
+	if service.ServiceSlug != "" {
+		return service.ServiceSlug
+	}
+	return service.ServiceName
 }
 
 func downloadTargetFromName(name string) sdkDownloadTarget {
@@ -793,6 +920,10 @@ func selectedIndex(rawChoice string, size int) (int, error) {
 func init() {
 	RootCmd.AddCommand(sdkCmd)
 	sdkCmd.Flags().StringVarP(&sdkDownloadOutDir, "out", "o", ".", "Output directory for SDK download")
+	addListFlags(sdkCmd, &sdkListFlags)
+	sdkCmd.Flags().StringVar(&sdkListTarget, "target", "sdk", "Target type for sdk list")
+	sdkCmd.Flags().StringVar(&sdkListLanguage, "language", "", "Target language for sdk list")
+	sdkCmd.Flags().BoolVar(&sdkListLatestOnly, "latest-only", true, "Only show the latest SDK per name")
 
 	sdkCmd.AddCommand(sdkPlanCmd)
 	sdkPlanCmd.Flags().BoolVar(&sdkPlanJSON, "json", false, "Print plan receipt JSON instead of writing default receipt")

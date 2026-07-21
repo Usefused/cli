@@ -90,12 +90,24 @@ func TestActivateMCPServer_HandlesError(t *testing.T) {
 	}
 }
 
-func TestListWorkspaceServices_EscapesNameFilter(t *testing.T) {
-	var rawQuery string
+func TestListWorkspaceServices_SendsNameFilterAsGraphQLVariable(t *testing.T) {
+	var sawPath string
+	var sawNames []interface{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		rawQuery = r.URL.RawQuery
+		sawPath = r.URL.Path
+		var body struct {
+			Query     string         `json:"query"`
+			Variables map[string]any `json:"variables"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode graphql body: %v", err)
+		}
+		if !strings.Contains(body.Query, "workspaceServices") {
+			t.Fatalf("expected workspaceServices query, got %s", body.Query)
+		}
+		sawNames, _ = body.Variables["names"].([]interface{})
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`[]`))
+		w.Write([]byte(`{"data":{"workspaceServices":[]}}`))
 	}))
 	defer srv.Close()
 
@@ -103,8 +115,11 @@ func TestListWorkspaceServices_EscapesNameFilter(t *testing.T) {
 	if _, err := client.ListWorkspaceServices("E2E Service Name"); err != nil {
 		t.Fatalf("ListWorkspaceServices: %v", err)
 	}
-	if rawQuery != "names=E2E+Service+Name" {
-		t.Fatalf("expected escaped names query, got %q", rawQuery)
+	if sawPath != "/engine/graphql" {
+		t.Fatalf("expected /engine/graphql, got %s", sawPath)
+	}
+	if len(sawNames) != 1 || sawNames[0] != "E2E Service Name" {
+		t.Fatalf("expected names variable with preserved spaces, got %#v", sawNames)
 	}
 }
 

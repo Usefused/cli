@@ -21,8 +21,8 @@ type workspaceSyncResult struct {
 }
 
 // mergeWorkspaceServicesFromRemote is Task 4's core logic
-// (engine_workspace_registration_plan.md): full-mirrors the Engine's
-// authoritative GET /workspace/services list (Fact 9) into cfg.Services --
+// (engine_workspace_registration_plan.md): full-mirrors the Engine GraphQL
+// workspaceServices list into cfg.Services --
 // every remote workspace service is added or updated locally with the
 // Engine's data winning on any conflict, and any local entry whose service
 // is no longer enabled remotely is removed, not just flagged. Pure and

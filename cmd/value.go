@@ -26,23 +26,18 @@ func validateValueArgs(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("value requires an action (e.g. set, list, remove)")
 	}
 	action := args[1]
-	if action != "set" && action != "list" && action != "remove" {
+	expected, ok := valueActionArgCounts()[action]
+	if !ok {
 		return fmt.Errorf("unknown value action %q", action)
 	}
-	if action == "set" {
-		if len(args) != 6 {
-			return fmt.Errorf("set accepts exactly 4 args after action (service-slug, key-name, location, value)")
-		}
-	} else if action == "list" {
-		if len(args) != 2 {
-			return fmt.Errorf("list accepts exactly 0 args after action")
-		}
-	} else if action == "remove" {
-		if len(args) != 4 {
-			return fmt.Errorf("remove accepts exactly 2 args after action (service-slug, key-name)")
-		}
+	if len(args) != expected {
+		return fmt.Errorf("%s accepts exactly %d arg(s) after action", action, expected-2)
 	}
 	return nil
+}
+
+func valueActionArgCounts() map[string]int {
+	return map[string]int{"set": 6, "list": 2, "remove": 4}
 }
 
 func runValueAction(cmd *cobra.Command, args []string) error {

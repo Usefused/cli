@@ -6,11 +6,12 @@ import (
 	"time"
 
 	cliapi "github.com/Usefused/cli/internal/api"
+	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 )
 
 var bucketCmd = &cobra.Command{
-	Use:   "bucket <name|list> [create|remove]",
+	Use:   "bucket <name-or-id|list> [create|remove|show|services|secrets|values|connections|sdks]",
 	Short: "Manage workspace buckets",
 	Args:  validateBucketArgs,
 	// Why: Write to OTEL to audit user/agent-triggered mutative execution.
@@ -19,6 +20,10 @@ var bucketCmd = &cobra.Command{
 	}),
 	ValidArgsFunction: completeBucketArgs,
 }
+
+var bucketListFlags listFlags
+var bucketConnectionsService string
+var bucketConnectionsUser string
 
 func validateBucketArgs(cmd *cobra.Command, args []string) error {
 	if len(args) == 0 {
@@ -34,7 +39,7 @@ func validateBucketArgs(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("bucket requires an action (e.g. create, remove)")
 	}
 	action := args[1]
-	if action != "create" && action != "remove" {
+	if !isBucketAction(action) {
 		return fmt.Errorf("unknown bucket action %q", action)
 	}
 	if len(args) > 2 {
@@ -50,18 +55,31 @@ func runBucketAction(cmd *cobra.Command, args []string) error {
 	if args[0] == "list" {
 		return runBucketList(cmd, args)
 	}
-
-	name := args[0]
-	action := args[1]
-
-	switch action {
-	case "create":
-		return runBucketCreate(cmd, name)
-	case "remove":
-		return runBucketRemove(cmd, name)
-	default:
-		return fmt.Errorf("unknown action %s", action)
+	action, ok := bucketActionHandlers()[args[1]]
+	if !ok {
+		return fmt.Errorf("unknown action %s", args[1])
 	}
+	return action(cmd, args[0])
+}
+
+type bucketActionHandler func(*cobra.Command, string) error
+
+func bucketActionHandlers() map[string]bucketActionHandler {
+	return map[string]bucketActionHandler{
+		"create":      runBucketCreate,
+		"remove":      runBucketRemove,
+		"show":        runBucketShow,
+		"services":    runBucketServices,
+		"secrets":     runBucketSecrets,
+		"values":      runBucketValues,
+		"connections": runBucketConnections,
+		"sdks":        runBucketSDKs,
+	}
+}
+
+func isBucketAction(action string) bool {
+	_, ok := bucketActionHandlers()[action]
+	return ok
 }
 
 func runBucketCreate(cmd *cobra.Command, name string) error {
@@ -82,17 +100,18 @@ func runBucketList(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	buckets, err := client.ListBuckets()
+	page, err := client.ListBucketSummariesPage(bucketListFlags.pageOptions())
 	if err != nil {
 		return err
 	}
-	for _, b := range buckets {
+	for _, b := range page.Items {
 		defStr := ""
 		if b.IsDefault {
 			defStr = " (default)"
 		}
-		fmt.Printf("Name: %s%s, Created: %s\n", b.Name, defStr, b.CreatedAt.Format(time.RFC3339))
+		fmt.Fprintf(cmd.OutOrStdout(), "%s%s\t%s\tsecrets:%d\tvalues:%d\n", b.Name, defStr, b.ID, b.SecretCount, b.ValueCount)
 	}
+	printPageSummary(cmd.OutOrStdout(), page.Total, bucketListFlags)
 	return nil
 }
 
@@ -107,6 +126,129 @@ func runBucketRemove(cmd *cobra.Command, name string) error {
 	}
 	fmt.Printf("Bucket '%s' removed successfully.\n", name)
 	return nil
+}
+
+func runBucketShow(cmd *cobra.Command, nameOrID string) error {
+	client, bucketID, err := bucketClientAndID(nameOrID)
+	if err != nil {
+		return err
+	}
+	bucket, err := client.GetBucketSummary(bucketID)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "name:\t%s\nid:\t%s\nsecrets:\t%d\nvalues:\t%d\ncreated_at:\t%s\n", bucket.Name, bucket.ID, bucket.SecretCount, bucket.ValueCount, bucket.CreatedAt)
+	return nil
+}
+
+func runBucketServices(cmd *cobra.Command, nameOrID string) error {
+	client, bucketID, err := bucketClientAndID(nameOrID)
+	if err != nil {
+		return err
+	}
+	page, err := client.ListBucketServicePage(bucketID, bucketListFlags.pageOptions())
+	if err != nil {
+		return err
+	}
+	for _, service := range page.Items {
+		fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\tsecrets:%d\tvalues:%d\tconnect:%d\tusers:%d\n", service.ServiceName, service.ServiceID, service.SecretCount, service.ValueCount, service.ConnectConfigCount, service.ConnectedUserCount)
+	}
+	printPageSummary(cmd.OutOrStdout(), page.Total, bucketListFlags)
+	return nil
+}
+
+func runBucketSecrets(cmd *cobra.Command, nameOrID string) error {
+	client, bucketID, err := bucketClientAndID(nameOrID)
+	if err != nil {
+		return err
+	}
+	page, err := client.ListSecretMetaPage(bucketID, bucketListFlags.pageOptions())
+	if err != nil {
+		return err
+	}
+	for _, secret := range page.Items {
+		fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\texpires:%s\n", secret.ServiceID, secret.KeyName, secret.CredentialType, formatOptionalTime(secret.ExpiresAt))
+	}
+	printPageSummary(cmd.OutOrStdout(), page.Total, bucketListFlags)
+	return nil
+}
+
+func runBucketValues(cmd *cobra.Command, nameOrID string) error {
+	client, bucketID, err := bucketClientAndID(nameOrID)
+	if err != nil {
+		return err
+	}
+	page, err := client.ListBucketValuesPage(bucketID, bucketListFlags.pageOptions())
+	if err != nil {
+		return err
+	}
+	for _, value := range page.Items {
+		fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", value.ServiceID, value.KeyName, value.Location)
+	}
+	printPageSummary(cmd.OutOrStdout(), page.Total, bucketListFlags)
+	return nil
+}
+
+func runBucketConnections(cmd *cobra.Command, nameOrID string) error {
+	client, bucketID, err := bucketClientAndID(nameOrID)
+	if err != nil {
+		return err
+	}
+	serviceID, err := resolveOptionalServiceID(client, bucketConnectionsService)
+	if err != nil {
+		return err
+	}
+	page, err := client.ListAuthConnectionPage(bucketID, serviceID, bucketConnectionsUser, bucketListFlags.pageOptions())
+	if err != nil {
+		return err
+	}
+	for _, conn := range page.Items {
+		fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\t%s\n", conn.EndUserRef, conn.ServiceID, conn.AuthType, conn.RefreshState, conn.ID)
+	}
+	printPageSummary(cmd.OutOrStdout(), page.Total, bucketListFlags)
+	return nil
+}
+
+func runBucketSDKs(cmd *cobra.Command, nameOrID string) error {
+	client, bucketID, err := bucketClientAndID(nameOrID)
+	if err != nil {
+		return err
+	}
+	page, err := client.ListBucketSDKPage(bucketID, bucketListFlags.pageOptions())
+	if err != nil {
+		return err
+	}
+	for _, sdk := range page.Items {
+		fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\tactive:%t\n", sdk.Name, sdk.ID, sdk.Kind, sdk.Active)
+	}
+	printPageSummary(cmd.OutOrStdout(), page.Total, bucketListFlags)
+	return nil
+}
+
+func bucketClientAndID(nameOrID string) (*cliapi.Client, string, error) {
+	client, err := getAPIClient()
+	if err != nil {
+		return nil, "", err
+	}
+	bucketID, err := resolveBucketID(client, nameOrID)
+	if err != nil {
+		return nil, "", err
+	}
+	return client, bucketID, nil
+}
+
+func resolveOptionalServiceID(client *cliapi.Client, serviceSlug string) (string, error) {
+	if strings.TrimSpace(serviceSlug) == "" {
+		return "", nil
+	}
+	return resolveServiceIDFromSlug(client, serviceSlug)
+}
+
+func formatOptionalTime(value *time.Time) string {
+	if value == nil {
+		return "never"
+	}
+	return value.Format(time.RFC3339)
 }
 
 func completeBucketArgs(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
@@ -134,25 +276,35 @@ func completeBucketArgs(cmd *cobra.Command, args []string, toComplete string) ([
 		if args[0] == "list" {
 			return nil, cobra.ShellCompDirectiveNoFileComp
 		}
-		actions := []string{"create", "remove"}
-		var matches []string
-		for _, a := range actions {
-			if strings.HasPrefix(a, toComplete) {
-				matches = append(matches, a)
-			}
-		}
-		return matches, cobra.ShellCompDirectiveNoFileComp
+		return matchingBucketActions(toComplete), cobra.ShellCompDirectiveNoFileComp
 	}
 	return nil, cobra.ShellCompDirectiveNoFileComp
 }
 
+func matchingBucketActions(toComplete string) []string {
+	actions := []string{"create", "remove", "show", "services", "secrets", "values", "connections", "sdks"}
+	var matches []string
+	for _, action := range actions {
+		if strings.HasPrefix(action, toComplete) {
+			matches = append(matches, action)
+		}
+	}
+	return matches
+}
+
 func init() {
+	addListFlags(bucketCmd, &bucketListFlags)
+	bucketCmd.Flags().StringVar(&bucketConnectionsService, "service", "", "Service slug for connections")
+	bucketCmd.Flags().StringVar(&bucketConnectionsUser, "user", "", "End-user reference for connections")
 	RootCmd.AddCommand(bucketCmd)
 }
 
 func resolveBucketID(client *cliapi.Client, nameOrID string) (string, error) {
 	if nameOrID == "" {
 		return "", nil
+	}
+	if _, err := uuid.Parse(nameOrID); err == nil {
+		return nameOrID, nil
 	}
 	buckets, err := client.ListBuckets()
 	if err != nil {
@@ -170,6 +322,9 @@ func resolveBucketIDPrompt(client *cliapi.Client, nameOrID string) (string, erro
 	if nameOrID == "" {
 		return "", nil
 	}
+	if _, err := uuid.Parse(nameOrID); err == nil {
+		return nameOrID, nil
+	}
 	buckets, err := client.ListBuckets()
 	if err != nil {
 		return "", err
@@ -179,6 +334,10 @@ func resolveBucketIDPrompt(client *cliapi.Client, nameOrID string) (string, erro
 			return b.ID, nil
 		}
 	}
+	return createMissingBucketPrompt(client, nameOrID)
+}
+
+func createMissingBucketPrompt(client *cliapi.Client, nameOrID string) (string, error) {
 	fmt.Printf("Bucket '%s' doesn't exist. Create it? [y/N] ", nameOrID)
 	var ans string
 	fmt.Scanln(&ans)

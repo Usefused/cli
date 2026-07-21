@@ -14,7 +14,7 @@ var secretCmd = &cobra.Command{
 	Use:   "secret <service-slug|list> [set|remove] [args...]",
 	Short: "Manage workspace secrets",
 	Args:  validateSecretArgs,
-	// Why: Write to OTEL to audit user/agent-triggered mutative execution.
+	// Write to OTEL to audit user/agent-triggered mutative execution.
 	RunE: WithTelemetry("cli.secret", func(cmd *cobra.Command, args []string) error {
 		return runSecretAction(cmd, args)
 	}),
@@ -29,34 +29,35 @@ var secretListBucketID string
 var secretRemoveBucketID string
 
 func validateSecretArgs(cmd *cobra.Command, args []string) error {
-	if len(args) == 0 {
-		return nil
-	}
-	if args[0] == "list" {
+	if len(args) == 0 || args[0] == "list" {
 		return nil
 	}
 	if len(args) < 2 {
 		return fmt.Errorf("secret requires an action (e.g. set, remove)")
 	}
 	action := args[1]
-	if action != "set" && action != "remove" {
-		return fmt.Errorf("unknown secret action %q", action)
-	}
 	if action == "set" {
-		if secretSetInteractive {
-			if len(args) != 2 {
-				return fmt.Errorf("accepts exactly 1 arg after action (value is omitted) when using interactive mode")
-			}
-		} else {
-			if len(args) != 3 {
-				return fmt.Errorf("set accepts exactly 1 arg after action (value). Use -i for interactive mode if the service has multiple auth methods")
-			}
-		}
+		return validateSecretSetArgs(args)
 	}
 	if action == "remove" {
 		if len(args) != 3 {
 			return fmt.Errorf("remove accepts exactly 1 arg after action (key-name)")
 		}
+		return nil
+	}
+	return fmt.Errorf("unknown secret action %q", action)
+}
+
+func validateSecretSetArgs(args []string) error {
+	// Interactive mode handles value input dynamically through UI prompts, so we don't expect it as a CLI argument.
+	if secretSetInteractive {
+		if len(args) != 2 {
+			return fmt.Errorf("accepts exactly 1 arg after action (value is omitted) when using interactive mode")
+		}
+		return nil
+	}
+	if len(args) != 3 {
+		return fmt.Errorf("set accepts exactly 1 arg after action (value). Use -i for interactive mode if the service has multiple auth methods")
 	}
 	return nil
 }
@@ -68,7 +69,7 @@ func runSecretAction(cmd *cobra.Command, args []string) error {
 	if args[0] == "list" {
 		return runSecretList(cmd, args)
 	}
-	
+
 	serviceSlug := args[0]
 	action := args[1]
 
@@ -87,134 +88,166 @@ func runSecretAction(cmd *cobra.Command, args []string) error {
 	}
 }
 
+// runSecretSet resolves the bucket and service before inspecting auth metadata
+// so secret keys are stored under the same provider-specific names the Engine
+// later uses for request-time credential resolution.
 func runSecretSet(cmd *cobra.Command, serviceSlug, value string) error {
 	client, err := getAPIClient()
 	if err != nil {
 		return err
 	}
-	bucketID := secretSetBucketID
-	var expiresAt *time.Time
-	if secretSetExpiresAt != "" {
-		parsed, err := time.Parse(time.RFC3339, secretSetExpiresAt)
-		if err != nil {
-			return fmt.Errorf("invalid --expires-at %q, expected RFC3339 (e.g. 2026-12-31T23:59:59Z): %w", secretSetExpiresAt, err)
-		}
-		expiresAt = &parsed
-	}
-	resolvedBucketID, err := resolveBucketIDPrompt(client, bucketID)
+	expiresAt, err := parseSecretExpiresAt()
 	if err != nil {
 		return err
 	}
-	bucketID = resolvedBucketID
-
+	bucketID, err := resolveBucketIDPrompt(client, secretSetBucketID)
+	if err != nil {
+		return err
+	}
 	serviceID, err := resolveServiceIDFromSlug(client, serviceSlug)
 	if err != nil {
 		return err
 	}
-
 	info, err := client.GetServiceInfo(serviceSlug)
 	if err != nil {
 		return err
 	}
+	auth, err := selectSecretAuth(info, serviceSlug)
+	if err != nil {
+		return err
+	}
+	// Basic auth requires two distinct inputs (username and password) which can't be cleanly parsed from a single positional argument, so we route it to a specialized handler.
+	if auth.Type == "http" && strings.EqualFold(auth.Scheme, "basic") {
+		return handleBasicSecretSet(client, serviceID, bucketID, auth, value, expiresAt)
+	}
+	return handleTokenSecretSet(client, serviceID, bucketID, auth, value, expiresAt, serviceSlug)
+}
+
+// parseSecretExpiresAt validates expiry locally so malformed timestamps do not
+// reach the API and create ambiguous secret lifecycle state.
+func parseSecretExpiresAt() (*time.Time, error) {
+	if secretSetExpiresAt == "" {
+		return nil, nil
+	}
+	parsed, err := time.Parse(time.RFC3339, secretSetExpiresAt)
+	if err != nil {
+		return nil, fmt.Errorf("invalid --expires-at %q, expected RFC3339 (e.g. 2026-12-31T23:59:59Z): %w", secretSetExpiresAt, err)
+	}
+	return &parsed, nil
+}
+
+// selectSecretAuth keeps manual secret setup tied to the service's declared
+// auth scheme; bucket secrets must use those names for runtime lookup to work.
+func selectSecretAuth(info *api.ServiceInfo, serviceSlug string) (*api.AuthConfig, error) {
 	if len(info.AuthConfigs) == 0 {
-		return fmt.Errorf("service %s does not declare any authentication methods in its OpenAPI spec", serviceSlug)
+		return nil, fmt.Errorf("service %s does not declare any authentication methods in its OpenAPI spec", serviceSlug)
 	}
-
-	var selectedAuth *api.AuthConfig
 	if secretSetType != "" {
-		for _, a := range info.AuthConfigs {
-			if a.Name == secretSetType {
-				selectedAuth = &a
-				break
-			}
-		}
-		if selectedAuth == nil {
-			var validTypes []string
-			for _, a := range info.AuthConfigs {
-				validTypes = append(validTypes, a.Name)
-			}
-			return fmt.Errorf("service %s does not support authentication method '%s'. Valid methods are: %s. Run 'fused-cli service %s show' for details", serviceSlug, secretSetType, strings.Join(validTypes, ", "), serviceSlug)
-		}
+		return selectSecretAuthByType(info, serviceSlug)
 	}
-
-	// If no type specified and not already forced into interactive mode, try to auto-select
-	if selectedAuth == nil && !secretSetInteractive {
+	// If only one method is available and we're not in interactive mode, auto-select it for better UX rather than forcing the user to specify it.
+	if !secretSetInteractive {
 		if len(info.AuthConfigs) == 1 {
-			selectedAuth = &info.AuthConfigs[0]
-		} else {
-			var validTypes []string
-			for _, a := range info.AuthConfigs {
-				validTypes = append(validTypes, a.Name)
-			}
-			return fmt.Errorf("service %s has multiple authentication methods. Please use interactive mode (-i) or specify --type. Valid methods are: %s. Run 'fused-cli service %s show' for details", serviceSlug, strings.Join(validTypes, ", "), serviceSlug)
+			return &info.AuthConfigs[0], nil
+		}
+		var validTypes []string
+		for _, a := range info.AuthConfigs {
+			validTypes = append(validTypes, a.Name)
+		}
+		return nil, fmt.Errorf("service %s has multiple authentication methods. Please use interactive mode (-i) or specify --type. Valid methods are: %s. Run 'fused-cli service %s show' for details", serviceSlug, strings.Join(validTypes, ", "), serviceSlug)
+	}
+	return promptSecretAuthSelect(info)
+}
+
+// selectSecretAuthByType treats --type as a concrete auth scheme name rather
+// than a broad family because static secrets are keyed by scheme identity.
+func selectSecretAuthByType(info *api.ServiceInfo, serviceSlug string) (*api.AuthConfig, error) {
+	for i := range info.AuthConfigs {
+		if info.AuthConfigs[i].Name == secretSetType {
+			return &info.AuthConfigs[i], nil
 		}
 	}
-
-	// If interactive mode is enabled and we still haven't selected an auth, prompt for one
-	if secretSetInteractive && selectedAuth == nil {
-		options := make([]huh.Option[int], len(info.AuthConfigs))
-		for i, auth := range info.AuthConfigs {
-			title := fmt.Sprintf("%s (Key: %s)", auth.Name, auth.Name)
-			if auth.Type == "http" {
-				title = fmt.Sprintf("HTTP %s (%s)", auth.Scheme, auth.Name)
-			}
-			options[i] = huh.NewOption(title, i)
-		}
-		
-		var selected int
-		err = huh.NewSelect[int]().
-			Title("Which authentication method would you like to configure?").
-			Options(options...).
-			Value(&selected).
-			Run()
-		if err != nil {
-			return err
-		}
-		selectedAuth = &info.AuthConfigs[selected]
+	var validTypes []string
+	for _, a := range info.AuthConfigs {
+		validTypes = append(validTypes, a.Name)
 	}
+	return nil, fmt.Errorf("service %s does not support authentication method '%s'. Valid methods are: %s. Run 'fused-cli service %s show' for details", serviceSlug, secretSetType, strings.Join(validTypes, ", "), serviceSlug)
+}
 
-	auth := *selectedAuth
-
-	// Handle Basic Auth (Requires 2 inputs)
-	if auth.Type == "http" && strings.ToLower(auth.Scheme) == "basic" {
-		if value != "" && !secretSetInteractive {
-			return fmt.Errorf("basic auth requires two values (username and password). Please use interactive mode (-i)")
+// promptSecretAuthSelect shows scheme names next to labels because those names
+// become the bucket secret keys the Engine reads during execution.
+func promptSecretAuthSelect(info *api.ServiceInfo) (*api.AuthConfig, error) {
+	options := make([]huh.Option[int], len(info.AuthConfigs))
+	for i, auth := range info.AuthConfigs {
+		title := fmt.Sprintf("%s (Key: %s)", auth.Name, auth.Name)
+		if auth.Type == "http" {
+			title = fmt.Sprintf("HTTP %s (%s)", auth.Scheme, auth.Name)
 		}
-		var username, password string
-		err = huh.NewInput().Title("Username:").Value(&username).Run()
-		if err != nil { return err }
-		err = huh.NewInput().Title("Password:").EchoMode(huh.EchoModePassword).Value(&password).Run()
-		if err != nil { return err }
-
-		err = client.UpsertSecret(serviceID, auth.Name+"_username", "basic", username, bucketID, expiresAt)
-		if err != nil { return err }
-		err = client.UpsertSecret(serviceID, auth.Name+"_password", "basic", password, bucketID, expiresAt)
-		if err != nil { return err }
-		fmt.Printf("Basic Auth secrets set successfully.\n")
-		return nil
+		options[i] = huh.NewOption(title, i)
 	}
+	var selected int
+	err := huh.NewSelect[int]().
+		Title("Which authentication method would you like to configure?").
+		Options(options...).
+		Value(&selected).
+		Run()
+	if err != nil {
+		return nil, err
+	}
+	return &info.AuthConfigs[selected], nil
+}
 
-	// Handle all other single-token auth methods
+// handleBasicSecretSet stores username and password separately so the Engine
+// can validate incomplete basic credentials instead of guessing from one blob.
+func handleBasicSecretSet(client *api.Client, serviceID, bucketID string, auth *api.AuthConfig, value string, expiresAt *time.Time) error {
+	// Passing a single string value for basic auth is ambiguous (is it username:password or just a token?). We enforce interactive mode to explicitly capture both fields.
+	if value != "" && !secretSetInteractive {
+		return fmt.Errorf("basic auth requires two values (username and password). Please use interactive mode (-i)")
+	}
+	var username, password string
+	err := huh.NewInput().Title("Username:").Value(&username).Run()
+	if err != nil {
+		return err
+	}
+	err = huh.NewInput().Title("Password:").EchoMode(huh.EchoModePassword).Value(&password).Run()
+	if err != nil {
+		return err
+	}
+	err = client.UpsertSecret(serviceID, auth.Name+"_username", "basic", username, bucketID, expiresAt)
+	if err != nil {
+		return err
+	}
+	err = client.UpsertSecret(serviceID, auth.Name+"_password", "basic", password, bucketID, expiresAt)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Basic Auth secrets set successfully.\n")
+	return nil
+}
+
+// handleTokenSecretSet maps imported auth spellings onto the public credential
+// families while preserving the scheme key used for provider injection.
+func handleTokenSecretSet(client *api.Client, serviceID, bucketID string, auth *api.AuthConfig, value string, expiresAt *time.Time, serviceSlug string) error {
 	keyName := auth.Name
 	credType := auth.Type
 	promptTitle := fmt.Sprintf("Enter %s:", keyName)
 
-	if auth.Type == "http" && strings.ToLower(auth.Scheme) == "bearer" {
+	if auth.Type == "http" && strings.EqualFold(auth.Scheme, "bearer") {
 		credType = "bearer"
 		promptTitle = "Enter Bearer Token:"
-	} else if auth.Type == "oauth2" || auth.Type == "openIdConnect" {
-		promptTitle = "Enter OAuth2 Token:"
+	} else if auth.Type == "oauth2" || auth.Type == "openIdConnect" || auth.Type == "oidc" {
+		credType = "oauth"
+		promptTitle = "Enter OAuth Token:"
 	}
 
-	// Prompt for value if it wasn't provided
 	if value == "" {
-		err = huh.NewInput().Title(promptTitle).EchoMode(huh.EchoModePassword).Value(&value).Run()
+		err := huh.NewInput().Title(promptTitle).EchoMode(huh.EchoModePassword).Value(&value).Run()
 		if err != nil {
 			return err
 		}
 	}
 
-	err = client.UpsertSecret(serviceID, keyName, credType, value, bucketID, expiresAt)
+	err := client.UpsertSecret(serviceID, keyName, credType, value, bucketID, expiresAt)
 	if err != nil {
 		return err
 	}
@@ -230,6 +263,9 @@ func runSecretList(cmd *cobra.Command, args []string) error {
 	client, err := getAPIClient()
 	if err != nil {
 		return err
+	}
+	if secretListBucketID == "" {
+		return fmt.Errorf("flag --list-bucket-id is required for secret list; use 'bucket <name-or-id> secrets' for bucket-scoped browsing")
 	}
 	bucketID := secretListBucketID
 	resolvedBucketID, err := resolveBucketID(client, bucketID)
@@ -281,45 +317,50 @@ func runSecretRemove(cmd *cobra.Command, serviceSlug, keyName string) error {
 
 func completeSecretArgs(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 	if len(args) == 0 {
-		client, err := getAPIClient()
-		if err != nil {
-			return nil, cobra.ShellCompDirectiveNoFileComp
-		}
-		services, err := client.ListWorkspaceServices()
-		if err != nil {
-			return nil, cobra.ShellCompDirectiveNoFileComp
-		}
-		var candidates []string
-		if strings.HasPrefix("list", toComplete) {
-			candidates = append(candidates, "list")
-		}
-		for _, service := range services {
-			slug := workspaceServiceSlugColumn(service)
-			if slug != "-" && strings.HasPrefix(slug, toComplete) {
-				candidates = append(candidates, slug)
-			}
-		}
-		return candidates, cobra.ShellCompDirectiveNoFileComp
+		return completeSecretFirstArg(toComplete)
 	}
-	if len(args) == 1 {
-		if args[0] == "list" {
-			return nil, cobra.ShellCompDirectiveNoFileComp
-		}
-		actions := []string{"set", "remove"}
-		var matches []string
-		for _, a := range actions {
-			if strings.HasPrefix(a, toComplete) {
-				matches = append(matches, a)
-			}
-		}
-		return matches, cobra.ShellCompDirectiveNoFileComp
+	if len(args) == 1 && args[0] != "list" {
+		return completeSecretActionArg(toComplete)
 	}
 	return nil, cobra.ShellCompDirectiveNoFileComp
 }
 
+func completeSecretFirstArg(toComplete string) ([]string, cobra.ShellCompDirective) {
+	client, err := getAPIClient()
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	services, err := client.ListWorkspaceServices()
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	var candidates []string
+	if strings.HasPrefix("list", toComplete) {
+		candidates = append(candidates, "list")
+	}
+	for _, service := range services {
+		slug := workspaceServiceSlugColumn(service)
+		if slug != "-" && strings.HasPrefix(slug, toComplete) {
+			candidates = append(candidates, slug)
+		}
+	}
+	return candidates, cobra.ShellCompDirectiveNoFileComp
+}
+
+func completeSecretActionArg(toComplete string) ([]string, cobra.ShellCompDirective) {
+	actions := []string{"set", "remove"}
+	var matches []string
+	for _, a := range actions {
+		if strings.HasPrefix(a, toComplete) {
+			matches = append(matches, a)
+		}
+	}
+	return matches, cobra.ShellCompDirectiveNoFileComp
+}
+
 func init() {
 	RootCmd.AddCommand(secretCmd)
-	
+
 	// Flags for the "set" action
 	secretCmd.Flags().StringVar(&secretSetBucketID, "bucket-id", "", "Set secret as an override for a specific Bucket (for 'set' action)")
 	secretCmd.Flags().StringVar(&secretSetExpiresAt, "expires-at", "", "RFC3339 expiry timestamp (e.g. 2026-12-31T23:59:59Z); omit for no expiry (for 'set' action)")
