@@ -53,9 +53,7 @@ services:
 	}
 }
 
-func TestWorkspacePlanPostsConnectEnvRefsWithoutResolvedSecrets(t *testing.T) {
-	t.Setenv("FUSED_TEST_CLIENT_ID", "resolved-client")
-	t.Setenv("FUSED_TEST_CLIENT_SECRET", "resolved-secret")
+func TestWorkspacePlanRejectsLegacyConnectEnvFields(t *testing.T) {
 	dir := t.TempDir()
 	path := writeSprintConfig(t, dir, "workspace.yaml", `
 kind: workspace
@@ -73,27 +71,17 @@ services:
         redirect_uri: https://engine.example.com/connect/callback
 `)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Fatalf("decode body: %v", err)
-		}
-		config := body["config"].(map[string]any)
-		service := config["services"].(map[string]any)["github"].(map[string]any)
-		connect := service["runtime_config"].(map[string]any)["connect"].(map[string]any)
-		if connect["client_id_env"] != "FUSED_TEST_CLIENT_ID" || connect["client_secret_env"] != "FUSED_TEST_CLIENT_SECRET" {
-			t.Fatalf("expected connect env refs in plan payload, got %#v", connect)
-		}
-		if _, ok := connect["client_secret"]; ok {
-			t.Fatalf("resolved client_secret must not be posted during plan: %#v", connect)
-		}
-		_, _ = w.Write([]byte(`{"plan_id":"plan-workspace","config_key":"workspace","source_hash":"` + body["source_hash"].(string) + `","base_generation":0,"summary":{}}`))
+		t.Fatalf("legacy *_env config must fail before posting to Engine")
 	}))
 	defer server.Close()
 
-	runCommandInDir(t, dir, server.URL, []string{"workspace", "plan", "-f", path})
+	out := runCommandInDirExpectError(t, dir, server.URL, []string{"workspace", "plan", "-f", path})
+	if !strings.Contains(out, "not *_env fields") {
+		t.Fatalf("expected legacy *_env rejection, got %s", out)
+	}
 }
 
-func TestWorkspaceApplyPostsConnectMaterialsFromEnvRefs(t *testing.T) {
+func TestWorkspacePlanPostsDollarConnectRefsWithoutResolvedSecrets(t *testing.T) {
 	t.Setenv("FUSED_TEST_CLIENT_ID", "resolved-client")
 	t.Setenv("FUSED_TEST_CLIENT_SECRET", "resolved-secret")
 	dir := t.TempDir()
@@ -108,8 +96,49 @@ services:
       connect:
         bucket: prod
         auth_type: oauth2
-        client_id_env: FUSED_TEST_CLIENT_ID
-        client_secret_env: FUSED_TEST_CLIENT_SECRET
+        client_id: $FUSED_TEST_CLIENT_ID
+        client_secret: $FUSED_TEST_CLIENT_SECRET
+        redirect_uri: https://engine.example.com/connect/callback
+`)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		config := body["config"].(map[string]any)
+		service := config["services"].(map[string]any)["github"].(map[string]any)
+		connect := service["runtime_config"].(map[string]any)["connect"].(map[string]any)
+		if connect["client_id"] != "$FUSED_TEST_CLIENT_ID" || connect["client_secret"] != "$FUSED_TEST_CLIENT_SECRET" {
+			t.Fatalf("expected dollar refs in plan payload, got %#v", connect)
+		}
+		encoded, _ := json.Marshal(connect)
+		if strings.Contains(string(encoded), "resolved-secret") {
+			t.Fatalf("resolved client_secret must not be posted during plan: %#v", connect)
+		}
+		_, _ = w.Write([]byte(`{"plan_id":"plan-workspace","config_key":"workspace","source_hash":"` + body["source_hash"].(string) + `","base_generation":0,"summary":{}}`))
+	}))
+	defer server.Close()
+
+	runCommandInDir(t, dir, server.URL, []string{"workspace", "plan", "-f", path})
+}
+
+func TestWorkspaceApplyPostsConnectMaterialsFromDollarRefs(t *testing.T) {
+	t.Setenv("FUSED_TEST_CLIENT_ID", "resolved-client")
+	t.Setenv("FUSED_TEST_CLIENT_SECRET", "resolved-secret")
+	dir := t.TempDir()
+	path := writeSprintConfig(t, dir, "workspace.yaml", `
+kind: workspace
+version: 1
+services:
+  github:
+    service_id: "00000000-0000-0000-0000-000000000001"
+    versions: ["2026-07-01"]
+    runtime_config:
+      connect:
+        bucket: prod
+        auth_type: oauth2
+        client_id: $FUSED_TEST_CLIENT_ID
+        client_secret: ${FUSED_TEST_CLIENT_SECRET}
         redirect_uri: https://engine.example.com/connect/callback
 `)
 	parsed, err := configfile.ParseFile(path)

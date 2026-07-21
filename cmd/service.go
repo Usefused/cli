@@ -94,7 +94,7 @@ func runServiceShow(cmd *cobra.Command, serviceSlug string) error {
 		return fmt.Errorf("service %s not found", serviceSlug)
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "name:\t%s\n", info.Name)
-	fmt.Fprintf(cmd.OutOrStdout(), "slug:\t%s\n", info.Slug)
+	fmt.Fprintf(cmd.OutOrStdout(), "slug:\t%s\n", info.DisplaySlug())
 	fmt.Fprintf(cmd.OutOrStdout(), "base_url:\t%s\n", info.BaseURL)
 	for _, srv := range info.Servers {
 		if srv.Description != "" {

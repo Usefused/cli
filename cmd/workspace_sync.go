@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 
@@ -32,14 +33,11 @@ func mergeWorkspaceServicesFromRemote(cfg *configfile.WorkspaceConfig, remote []
 	}
 	var result workspaceSyncResult
 
-	remoteByName := make(map[string]api.WorkspaceService, len(remote))
-	for _, svc := range remote {
-		key, err := workspaceServiceConfigKey(svc, visibility)
-		if err != nil {
-			return result, err
-		}
-		remoteByName[key] = svc
+	remoteByName, err := workspaceServicesByConfigKey(remote, visibility)
+	if err != nil {
+		return result, err
 	}
+	localByServiceID := workspaceServicesByID(cfg.Services)
 
 	// Remove local entries no longer enabled remotely.
 	for name := range cfg.Services {
@@ -51,17 +49,14 @@ func mergeWorkspaceServicesFromRemote(cfg *configfile.WorkspaceConfig, remote []
 
 	// Add/update from remote -- remote always wins over whatever was there.
 	for _, svc := range remote {
-		key, err := workspaceServiceConfigKey(svc, visibility)
+		key, changed, err := mergeRemoteWorkspaceService(cfg.Services, svc, visibility, localByServiceID)
 		if err != nil {
 			return result, err
 		}
-		newEntry := workspaceServiceFromRemote(svc, visibility)
-		existing, existed := cfg.Services[key]
-		cfg.Services[key] = newEntry
-		switch {
-		case !existed:
+		switch changed {
+		case workspaceSyncAdded:
 			result.Added = append(result.Added, key)
-		case !workspaceServiceEqual(existing, newEntry):
+		case workspaceSyncUpdated:
 			result.Updated = append(result.Updated, key)
 		}
 	}
@@ -70,6 +65,67 @@ func mergeWorkspaceServicesFromRemote(cfg *configfile.WorkspaceConfig, remote []
 	sort.Strings(result.Updated)
 	sort.Strings(result.Removed)
 	return result, nil
+}
+
+type workspaceSyncChange int
+
+const (
+	workspaceSyncUnchanged workspaceSyncChange = iota
+	workspaceSyncAdded
+	workspaceSyncUpdated
+)
+
+func workspaceServicesByConfigKey(remote []api.WorkspaceService, visibility map[string]api.ServiceVisibility) (map[string]api.WorkspaceService, error) {
+	byName := make(map[string]api.WorkspaceService, len(remote))
+	for _, svc := range remote {
+		key, err := workspaceServiceConfigKey(svc, visibility)
+		if err != nil {
+			return nil, err
+		}
+		byName[key] = svc
+	}
+	return byName, nil
+}
+
+func workspaceServicesByID(services map[string]configfile.WorkspaceService) map[string]configfile.WorkspaceService {
+	byID := make(map[string]configfile.WorkspaceService, len(services))
+	for _, svc := range services {
+		if svc.ServiceID != "" {
+			byID[svc.ServiceID] = svc
+		}
+	}
+	return byID
+}
+
+func mergeRemoteWorkspaceService(services map[string]configfile.WorkspaceService, svc api.WorkspaceService, visibility map[string]api.ServiceVisibility, localByServiceID map[string]configfile.WorkspaceService) (string, workspaceSyncChange, error) {
+	key, err := workspaceServiceConfigKey(svc, visibility)
+	if err != nil {
+		return "", workspaceSyncUnchanged, err
+	}
+	newEntry := workspaceServiceFromRemote(svc, visibility)
+	// Runtime config is local deployment intent, not Engine inventory. Sync
+	// refreshes the Engine-owned identity/version fields while keeping
+	// bucket/connect/webhook settings that a later apply must not erase.
+	existing, existed := services[key]
+	if !existed {
+		existing = localByServiceID[svc.ServiceID]
+	}
+	newEntry = workspaceServiceWithLocalState(newEntry, existing)
+	services[key] = newEntry
+	if !existed {
+		return key, workspaceSyncAdded, nil
+	}
+	if !workspaceServiceEqual(existing, newEntry) {
+		return key, workspaceSyncUpdated, nil
+	}
+	return key, workspaceSyncUnchanged, nil
+}
+
+func workspaceServiceWithLocalState(remote, local configfile.WorkspaceService) configfile.WorkspaceService {
+	if local.RuntimeConfig != nil {
+		remote.RuntimeConfig = local.RuntimeConfig
+	}
+	return remote
 }
 
 func workspaceServiceConfigKey(svc api.WorkspaceService, visibility map[string]api.ServiceVisibility) (string, error) {
@@ -99,8 +155,9 @@ func workspaceServiceFromRemote(svc api.WorkspaceService, visibility map[string]
 		versions = append(append([]string{}, versions...), svc.Version)
 	}
 	newEntry := configfile.WorkspaceService{
-		ServiceID: svc.ServiceID,
-		Versions:  versions,
+		ServiceID:        svc.ServiceID,
+		Versions:         versions,
+		ResolvedVersions: workspaceServiceResolvedVersions(svc),
 	}
 	if vis, ok := visibility[svc.ServiceID]; ok && vis.IsOwner {
 		newEntry.Public = boolPtr(vis.IsPublic)
@@ -112,7 +169,11 @@ func workspaceServiceFromRemote(svc api.WorkspaceService, visibility map[string]
 // Versions is compared as a set so harmless remote ordering changes do not
 // churn local files.
 func workspaceServiceEqual(a, b configfile.WorkspaceService) bool {
-	return a.ServiceID == b.ServiceID && sameStringSet(a.Versions, b.Versions) && sameBoolPtr(a.Public, b.Public)
+	return a.ServiceID == b.ServiceID &&
+		sameStringSet(a.Versions, b.Versions) &&
+		sameResolvedVersions(a.ResolvedVersions, b.ResolvedVersions) &&
+		sameBoolPtr(a.Public, b.Public) &&
+		reflect.DeepEqual(a.RuntimeConfig, b.RuntimeConfig)
 }
 
 func boolPtr(value bool) *bool {
@@ -132,6 +193,45 @@ func workspaceServiceVersionNames(svc api.WorkspaceService) []string {
 		versions = append(versions, version.Version)
 	}
 	return versions
+}
+
+// workspaceServiceResolvedVersions carries Engine-resolved IDs into config so
+// future applies do not depend on mutable version display names.
+func workspaceServiceResolvedVersions(svc api.WorkspaceService) []configfile.WorkspaceResolvedVersion {
+	versions := make([]configfile.WorkspaceResolvedVersion, 0, len(svc.EnabledVersions))
+	for _, version := range svc.EnabledVersions {
+		if version.ServiceVersionID == "" {
+			// Older Engines may not return IDs; omitting incomplete pairs keeps
+			// sync backward-compatible instead of writing config that apply will
+			// reject as a malformed resolved version.
+			continue
+		}
+		versions = append(versions, configfile.WorkspaceResolvedVersion{
+			Version:          version.Version,
+			ServiceVersionID: version.ServiceVersionID,
+		})
+	}
+	return versions
+}
+
+// sameResolvedVersions compares identity pairs as a set because remote order
+// is not part of the workspace contract.
+func sameResolvedVersions(a, b []configfile.WorkspaceResolvedVersion) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	// Treat resolved versions as identity pairs rather than ordered YAML
+	// slices so a harmless Engine ordering change does not churn local config.
+	byVersion := make(map[string]string, len(a))
+	for _, version := range a {
+		byVersion[version.Version] = version.ServiceVersionID
+	}
+	for _, version := range b {
+		if byVersion[version.Version] != version.ServiceVersionID {
+			return false
+		}
+	}
+	return true
 }
 
 func sameStringSet(a, b []string) bool {

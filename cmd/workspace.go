@@ -371,6 +371,59 @@ func runWorkspaceServiceWebhooks(cmd *cobra.Command, serviceSlug string) error {
 	return nil
 }
 
+var workspaceServiceConnectBucket string
+var workspaceServiceConnectUserRef string
+var workspaceServiceConnectSDKID string
+var workspaceServiceConnectCmd = &cobra.Command{
+	Use:   "connect <service-slug>",
+	Short: "Start a browser auth session for a workspace service",
+	Args:  cobra.ExactArgs(1),
+	RunE: WithTelemetry("cli.workspace.service.connect", func(cmd *cobra.Command, args []string) error {
+		return runWorkspaceServiceConnect(cmd, args[0])
+	}),
+}
+
+// runWorkspaceServiceConnect starts auth from the workspace service boundary
+// so connected credentials attach to the same bucket/scope runtime will use.
+func runWorkspaceServiceConnect(cmd *cobra.Command, serviceSlug string) error {
+	client, err := getAPIClient()
+	if err != nil {
+		return err
+	}
+	serviceID, err := resolveServiceIDFromSlug(client, serviceSlug)
+	if err != nil {
+		return err
+	}
+	// Connect sessions are only valid for workspace-enabled services; this
+	// keeps auth material attached to the same allowlist/bucket boundary the
+	// Engine will enforce later at execution time.
+	if _, err := workspaceServiceByID(client, serviceID, serviceSlug); err != nil {
+		return err
+	}
+	// Buckets are user-facing by name in config/CLI, while the Engine route is
+	// ID-scoped so a renamed or duplicate-looking label cannot target the
+	// wrong credential container.
+	bucketID, err := resolveBucketID(client, connectBucketName())
+	if err != nil {
+		return err
+	}
+	session, err := client.StartConnectSession(bucketID, serviceID, workspaceServiceConnectUserRef, workspaceServiceConnectSDKID)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "%s\n", session.AuthorizeURL)
+	return nil
+}
+
+// connectBucketName keeps the CLI default aligned with config defaults while
+// still allowing explicit bucket names/IDs for multi-tenant user stores.
+func connectBucketName() string {
+	if strings.TrimSpace(workspaceServiceConnectBucket) == "" {
+		return "default"
+	}
+	return workspaceServiceConnectBucket
+}
+
 func workspaceServiceByID(client *cliapi.Client, serviceID, serviceSlug string) (cliapi.WorkspaceService, error) {
 	services, err := client.ListWorkspaceServices()
 	if err != nil {
@@ -694,6 +747,11 @@ func init() {
 	workspaceServiceCmd.AddCommand(workspaceServiceOperationsCmd)
 	workspaceServiceOperationsCmd.Flags().StringVar(&workspaceServiceOperationsVersion, "version", "", "Enabled workspace service version; omitted uses the latest enabled version")
 	workspaceServiceCmd.AddCommand(workspaceServiceWebhooksCmd)
+	workspaceServiceCmd.AddCommand(workspaceServiceConnectCmd)
+	workspaceServiceConnectCmd.Flags().StringVar(&workspaceServiceConnectBucket, "bucket", "default", "Workspace credential bucket name or ID")
+	workspaceServiceConnectCmd.Flags().StringVar(&workspaceServiceConnectUserRef, "user-ref", "", "Stable user reference to attach to the connected provider account")
+	workspaceServiceConnectCmd.Flags().StringVar(&workspaceServiceConnectSDKID, "sdk-id", "", "Optional SDK UUID for audit attribution")
+	workspaceServiceConnectCmd.MarkFlagRequired("user-ref")
 
 	workspaceServiceCmd.AddCommand(workspaceServiceRemoveCmd)
 	workspaceServiceRemoveCmd.Flags().BoolVar(&workspaceServiceRemoveForce, "force", false, "Force removal when the generated plan action is applied")

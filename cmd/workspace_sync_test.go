@@ -22,6 +22,16 @@ func remoteVersions(values ...string) []api.WorkspaceServiceVersion {
 	return out
 }
 
+// remoteVersionsWithIDs creates explicit version identity pairs so sync tests
+// can prove config stores immutable Engine IDs, not just labels.
+func remoteVersionsWithIDs(values ...string) []api.WorkspaceServiceVersion {
+	out := make([]api.WorkspaceServiceVersion, 0, len(values)/2)
+	for i := 0; i+1 < len(values); i += 2 {
+		out = append(out, api.WorkspaceServiceVersion{Version: values[i], ServiceVersionID: values[i+1]})
+	}
+	return out
+}
+
 func workspaceSyncVisibility(remote ...api.WorkspaceService) map[string]api.ServiceVisibility {
 	visibility := make(map[string]api.ServiceVisibility, len(remote))
 	for _, svc := range remote {
@@ -66,6 +76,25 @@ func TestMergeWorkspaceServicesFromRemote_AddsNewRemoteService(t *testing.T) {
 	}
 	if got.ServiceID != "svc-1" || !reflect.DeepEqual(got.Versions, []string{"2026-01-01"}) {
 		t.Errorf("unexpected merged entry: %+v", got)
+	}
+}
+
+// TestMergeWorkspaceServicesFromRemote_WritesResolvedVersionIDs guards the
+// config field Engine apply needs to avoid registry-version drift.
+func TestMergeWorkspaceServicesFromRemote_WritesResolvedVersionIDs(t *testing.T) {
+	cfg := &configfile.WorkspaceConfig{Services: map[string]configfile.WorkspaceService{}}
+	remote := []api.WorkspaceService{{
+		ServiceName:     "stripe",
+		ServiceID:       "svc-1",
+		Version:         "2026-01-01",
+		EnabledVersions: remoteVersionsWithIDs("2026-01-01", "ver-1"),
+	}}
+
+	mustMergeWorkspaceServicesFromRemote(t, cfg, remote, nil)
+
+	got := cfg.Services["stripe"].ResolvedVersions
+	if len(got) != 1 || got[0].Version != "2026-01-01" || got[0].ServiceVersionID != "ver-1" {
+		t.Fatalf("expected resolved version IDs from remote, got %+v", got)
 	}
 }
 
@@ -115,6 +144,70 @@ func TestMergeWorkspaceServicesFromRemote_RemoteWinsOnConflict(t *testing.T) {
 	got := cfg.Services["stripe"]
 	if got.ServiceID != "svc-1" || !sameStringSet(got.Versions, []string{"2025-01-01", "2026-01-01"}) {
 		t.Errorf("expected remote values to win, got %+v", got)
+	}
+}
+
+func TestMergeWorkspaceServicesFromRemote_PreservesRuntimeConfig(t *testing.T) {
+	runtimeConfig := &configfile.RuntimeConfig{Connect: &configfile.ConnectConfig{
+		Bucket:       "github",
+		AuthType:     "oauth2",
+		ClientID:     "$GITHUB_APP_CLIENT_ID",
+		ClientSecret: "$GITHUB_APP_CLIENT_SECRET",
+		RedirectURI:  "http://127.0.0.1:8081/workspace/connect/callback",
+	}}
+	cfg := &configfile.WorkspaceConfig{Services: map[string]configfile.WorkspaceService{
+		"github-user": {ServiceID: "svc-github", Versions: []string{"1.1.3"}, RuntimeConfig: runtimeConfig},
+	}}
+	remote := []api.WorkspaceService{{
+		ServiceName:     "github-user",
+		ServiceID:       "svc-github",
+		Version:         "1.1.4",
+		EnabledVersions: remoteVersionsWithIDs("1.1.4", "ver-github"),
+	}}
+
+	result := mustMergeWorkspaceServicesFromRemote(t, cfg, remote, nil)
+
+	if !reflect.DeepEqual(result.Updated, []string{"github-user"}) {
+		t.Fatalf("expected github-user to be updated, got %+v", result)
+	}
+	got := cfg.Services["github-user"]
+	if got.RuntimeConfig == nil || got.RuntimeConfig.Connect == nil {
+		t.Fatalf("workspace sync dropped runtime_config: %+v", got)
+	}
+	if got.RuntimeConfig.Connect.ClientSecret != "$GITHUB_APP_CLIENT_SECRET" {
+		t.Fatalf("workspace sync changed connect material ref: %+v", got.RuntimeConfig.Connect)
+	}
+}
+
+func TestMergeWorkspaceServicesFromRemote_PreservesRuntimeConfigAcrossSlugKeyChange(t *testing.T) {
+	runtimeConfig := &configfile.RuntimeConfig{Connect: &configfile.ConnectConfig{
+		Bucket:       "github",
+		AuthType:     "oauth2",
+		ClientID:     "$GITHUB_APP_CLIENT_ID",
+		ClientSecret: "$GITHUB_APP_CLIENT_SECRET",
+		RedirectURI:  "http://127.0.0.1:8081/workspace/connect/callback",
+	}}
+	cfg := &configfile.WorkspaceConfig{Services: map[string]configfile.WorkspaceService{
+		"GitHub REST API": {ServiceID: "svc-github", Versions: []string{"1.1.4"}, RuntimeConfig: runtimeConfig},
+	}}
+	remote := []api.WorkspaceService{{
+		ServiceName:     "GitHub REST API",
+		ServiceID:       "svc-github",
+		Version:         "1.1.4",
+		EnabledVersions: remoteVersionsWithIDs("1.1.4", "ver-github"),
+	}}
+	visibility := map[string]api.ServiceVisibility{
+		"svc-github": {ServiceID: "svc-github", Slug: "github-user", IsOwner: true},
+	}
+
+	result := mustMergeWorkspaceServicesFromRemote(t, cfg, remote, visibility)
+
+	if !reflect.DeepEqual(result.Added, []string{"github-user"}) || !reflect.DeepEqual(result.Removed, []string{"GitHub REST API"}) {
+		t.Fatalf("expected key migration, got %+v", result)
+	}
+	got := cfg.Services["github-user"]
+	if got.RuntimeConfig == nil || got.RuntimeConfig.Connect == nil {
+		t.Fatalf("workspace sync dropped runtime_config during key migration: %+v", got)
 	}
 }
 

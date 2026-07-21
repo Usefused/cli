@@ -270,6 +270,52 @@ func (c *Client) ListWorkspaceWebhooks(serviceID string) ([]WorkspaceWebhook, er
 	return out, nil
 }
 
+type ConnectSessionStartResponse struct {
+	AuthorizeURL string `json:"authorize_url"`
+	ExpiresAt    string `json:"expires_at"`
+}
+
+// StartConnectSession calls the Engine's bucket-scoped connect route so CLI
+// onboarding uses the same ownership checks as runtime credential resolution.
+func (c *Client) StartConnectSession(bucketID, serviceID, endUserRef, createdBySDKID string) (*ConnectSessionStartResponse, error) {
+	payload := map[string]string{"end_user_ref": endUserRef}
+	if strings.TrimSpace(createdBySDKID) != "" {
+		// SDK attribution is optional because CLI-initiated onboarding may
+		// happen before a generated SDK exists, but preserving it when known
+		// makes later auth audits line up with runtime use.
+		payload["created_by_sdk_id"] = createdBySDKID
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	reqURL := fmt.Sprintf("%s/workspace/buckets/%s/services/%s/connect/sessions", c.BaseURL, bucketID, serviceID)
+	req, err := http.NewRequest("POST", reqURL, bytes.NewBuffer(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if c.APIKey != "" {
+		req.Header.Set("x-api-key", c.APIKey)
+	}
+
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("start connect session failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(respBody))
+	}
+
+	var out ConnectSessionStartResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 func (c *Client) ServiceVisibilities(serviceIDs []string) (map[string]ServiceVisibility, error) {
 	out := map[string]ServiceVisibility{}
 	if len(serviceIDs) == 0 {
@@ -326,6 +372,27 @@ type ServiceInfo struct {
 	BaseURL     string          `json:"base_url"`
 	Servers     []ServiceServer `json:"servers"`
 	AuthConfigs []AuthConfig    `json:"auth_configs"`
+	// Provider/IsOwner mirror ServiceVisibility -- Provider is only ever set
+	// (by the Registry) for a service this account doesn't own. Slug is bare
+	// regardless of ownership (slugs are only unique per-account), so
+	// DisplaySlug is what callers should print back to a user, not Slug
+	// directly.
+	Provider string `json:"provider"`
+	IsOwner  bool   `json:"is_owner"`
+}
+
+// DisplaySlug returns what a user should be shown/type back for this
+// service: the bare slug if they own it, "@provider/slug" otherwise. Safe to
+// call unconditionally here (unlike the Engine's workspace-service listing,
+// which needs an explicit is_public check) because `service <slug> show`
+// only ever returns a non-owned service when it's public in the first place
+// -- the Registry's own resolveAccountScopedService already gates on that
+// before this struct is ever populated.
+func (s *ServiceInfo) DisplaySlug() string {
+	if s.IsOwner || s.Provider == "" {
+		return s.Slug
+	}
+	return "@" + s.Provider + "/" + s.Slug
 }
 
 func (c *Client) GetServiceInfo(serviceSlug string) (*ServiceInfo, error) {
@@ -336,6 +403,8 @@ func (c *Client) GetServiceInfo(serviceSlug string) (*ServiceInfo, error) {
 				name
 				slug
 				base_url
+				provider
+				is_owner
 				servers {
 					url
 					description

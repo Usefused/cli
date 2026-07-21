@@ -23,10 +23,19 @@ type WorkspaceConfig struct {
 
 // WorkspaceService represents service versions enabled for a workspace.
 type WorkspaceService struct {
-	ServiceID     string         `yaml:"service_id,omitempty" json:"service_id,omitempty"`
-	Public        *bool          `yaml:"public,omitempty" json:"public,omitempty"`
-	Versions      []string       `yaml:"versions,omitempty" json:"versions,omitempty"`
-	RuntimeConfig *RuntimeConfig `yaml:"runtime_config,omitempty" json:"runtime_config,omitempty"`
+	ServiceID string   `yaml:"service_id,omitempty" json:"service_id,omitempty"`
+	Public    *bool    `yaml:"public,omitempty" json:"public,omitempty"`
+	Versions  []string `yaml:"versions,omitempty" json:"versions,omitempty"`
+	// Engine apply needs immutable version IDs, not just display names; keeping
+	// the resolved pair in config lets CLI/CI re-apply without a fresh registry
+	// lookup that could drift under a reused version label.
+	ResolvedVersions []WorkspaceResolvedVersion `yaml:"resolved_versions,omitempty" json:"resolved_versions,omitempty"`
+	RuntimeConfig    *RuntimeConfig             `yaml:"runtime_config,omitempty" json:"runtime_config,omitempty"`
+}
+
+type WorkspaceResolvedVersion struct {
+	Version          string `yaml:"version" json:"version"`
+	ServiceVersionID string `yaml:"service_version_id" json:"service_version_id"`
 }
 
 type RuntimeConfig struct {

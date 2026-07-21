@@ -89,6 +89,9 @@ services:
     versions:
       - "2026-07-01"
       - "2026-08-01"
+    resolved_versions:
+      - version: "2026-07-01"
+        service_version_id: "10000000-0000-0000-0000-000000000001"
 deprecations:
   - service_id: "00000000-0000-0000-0000-000000000001"
     version: "2026-07-01"
@@ -113,6 +116,9 @@ deprecations:
 	if got := cfg.Workspace.Services["okta"].ServiceID; got != "00000000-0000-0000-0000-000000000001" {
 		t.Errorf("service_id: got %q", got)
 	}
+	if got := cfg.Workspace.Services["okta"].ResolvedVersions; len(got) != 1 || got[0].ServiceVersionID != "10000000-0000-0000-0000-000000000001" {
+		t.Errorf("resolved_versions not parsed: %+v", got)
+	}
 	if got := cfg.Workspace.Deprecations; len(got) != 1 || got[0].EffectiveAt != "2026-10-01" {
 		t.Errorf("deprecations not parsed: %+v", got)
 	}
@@ -136,9 +142,7 @@ services:
 	}
 }
 
-func TestWorkspaceConnectMaterials_ResolvesConnectEnvRefs(t *testing.T) {
-	t.Setenv("FUSED_TEST_CLIENT_ID", "resolved-client")
-	t.Setenv("FUSED_TEST_CLIENT_SECRET", "resolved-secret")
+func TestWorkspaceConnectMaterials_RejectsLegacyConnectEnvFields(t *testing.T) {
 	path := writeFile(t, t.TempDir(), "workspace.yaml", `
 kind: workspace
 version: 1
@@ -154,6 +158,30 @@ services:
         client_secret_env: FUSED_TEST_CLIENT_SECRET
         redirect_uri: https://engine.example.com/connect/callback
 `)
+	_, err := configfile.ParseFile(path)
+	if err == nil || !strings.Contains(err.Error(), "not *_env fields") {
+		t.Fatalf("expected legacy *_env rejection, got %v", err)
+	}
+}
+
+func TestWorkspaceConnectMaterials_ResolvesDollarEnvRefs(t *testing.T) {
+	t.Setenv("FUSED_TEST_CLIENT_ID", "resolved-client")
+	t.Setenv("FUSED_TEST_CLIENT_SECRET", "resolved-secret")
+	path := writeFile(t, t.TempDir(), "workspace.yaml", `
+kind: workspace
+version: 1
+services:
+  github:
+    service_id: "00000000-0000-0000-0000-000000000001"
+    versions: ["2026-07-01"]
+    runtime_config:
+      connect:
+        bucket: prod
+        auth_type: oauth2
+        client_id: $FUSED_TEST_CLIENT_ID
+        client_secret: ${FUSED_TEST_CLIENT_SECRET}
+        redirect_uri: https://engine.example.com/connect/callback
+`)
 	parsed, err := configfile.ParseFile(path)
 	if err != nil {
 		t.Fatalf("ParseFile failed: %v", err)
@@ -164,7 +192,29 @@ services:
 	}
 	material := materials["github"]
 	if material.ClientID != "resolved-client" || material.ClientSecret != "resolved-secret" {
-		t.Fatalf("expected env refs resolved, got %#v", material)
+		t.Fatalf("expected dollar env refs resolved, got %#v", material)
+	}
+}
+
+func TestWorkspaceConnectMaterials_RejectsInlineClientSecret(t *testing.T) {
+	path := writeFile(t, t.TempDir(), "workspace.yaml", `
+kind: workspace
+version: 1
+services:
+  github:
+    service_id: "00000000-0000-0000-0000-000000000001"
+    versions: ["2026-07-01"]
+    runtime_config:
+      connect:
+        bucket: prod
+        auth_type: oauth2
+        client_id: public-client-id
+        client_secret: inline-secret
+        redirect_uri: https://engine.example.com/connect/callback
+`)
+	_, err := configfile.ParseFile(path)
+	if err == nil || !strings.Contains(err.Error(), "client_secret: $ENV") {
+		t.Fatalf("expected inline client_secret rejection, got %v", err)
 	}
 }
 
@@ -180,8 +230,8 @@ services:
     runtime_config:
       connect:
         auth_type: oauth2
-        client_id_env: FUSED_TEST_MISSING_CLIENT_ID
-        client_secret_env: FUSED_TEST_CLIENT_SECRET
+        client_id: $FUSED_TEST_MISSING_CLIENT_ID
+        client_secret: $FUSED_TEST_CLIENT_SECRET
         redirect_uri: https://engine.example.com/connect/callback
 `)
 	parsed, err := configfile.ParseFile(path)
