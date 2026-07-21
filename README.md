@@ -1,7 +1,6 @@
 # Fused CLI
 
-The `fused-cli` is the official command-line interface for [Fused](https://usefused.com). It allows you to rapidly generate hyper-targeted API SDKs directly from natural language using the power of AI.
-
+The `fused-cli` is the official command-line interface for [Fused](https://usefused.com). It serves as your command center for the Fused integration layer, allowing you to register API services, orchestrate secure credential routing, and instantly generate type-safe SDKs or MCP servers interfaces for your integrations. Ready for production.
 ## Installation
 
 ### Option 1: One-Line Install Script (Recommended)

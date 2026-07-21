@@ -24,9 +24,10 @@ var (
 var RootCmd = &cobra.Command{
 	Use:     "fused-cli",
 	Version: Version,
-	Short:   "Turn any API into a typed SDK or MCP server — powered by Fused.",
-	Long: `Fused CLI lets you register API services, select the endpoints you care about,
-and instantly generate type-safe SDKs or MCP servers ready for production.`,
+	Short:   "A unified integration layer for your APIs — powered by Fused.",
+	Long: `Fused CLI is your command center for the Fused integration layer.
+Register and manage API services, orchestrate secure credential routing,
+and instantly generate type-safe SDKs or MCP servers interfaces for your integrations. Ready for production.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		if showReadme {
 			fmt.Print(ReadmeContent)
@@ -48,7 +49,7 @@ func NewRootCommand() *cobra.Command {
 
 func Execute() {
 	startUpdateCheck()
-	
+
 	shutdown := InitTelemetry()
 	defer func() {
 		// Do not pass a nil context
