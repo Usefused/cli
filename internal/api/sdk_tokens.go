@@ -82,7 +82,7 @@ func (c *Client) GenerateSDKToken(sdkID, name string) (*SDKTokenGenerateResponse
 		req.Header.Set("x-api-key", c.APIKey)
 	}
 
-	resp, err := c.HTTP.Do(req)
+	resp, err := c.doRequest(req)
 	if err != nil {
 		return nil, err
 	}
@@ -133,7 +133,7 @@ func (c *Client) RevokeSDKToken(sdkID, name string) error {
 		req.Header.Set("x-api-key", c.APIKey)
 	}
 
-	resp, err := c.HTTP.Do(req)
+	resp, err := c.doRequest(req)
 	if err != nil {
 		return err
 	}

@@ -334,7 +334,14 @@ func workspaceAuthMaterials(cfg *configfile.ParsedConfig) (map[string]api.AuthMa
 	}
 	out := make(map[string]api.AuthMaterial, len(materials))
 	for key, material := range materials {
-		out[key] = api.AuthMaterial{Username: material.Username, Password: material.Password, Token: material.Token, APIKey: material.APIKey}
+		out[key] = api.AuthMaterial{
+			Username: material.Username,
+			Password: material.Password,
+			Token:    material.Token,
+			APIKey:   material.APIKey,
+			Cert:     material.Cert,
+			Key:      material.Key,
+		}
 	}
 	return out, nil
 }

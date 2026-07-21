@@ -187,6 +187,19 @@ List Registry versions visible to the current account for a service slug. Suppor
 #### `service <service-slug> show`
 Show the base URL, servers, and supported authentication methods for a service.
 
+#### `service <service-slug> operations`
+List or search Registry operations for a service. Passing `--q` uses the server-side endpoint search path and supports pagination.
+
+| Argument | Short | Description | Default |
+|----------|-------|-------------|---------|
+| `--q` | | Search query for service operations | `""` |
+| `--version` | | Service version for operations | `""` |
+| `--limit` | | Maximum rows to read; requires `--q` | `20` |
+| `--offset` | | Rows to skip before reading; requires `--q` | `0` |
+
+#### `service <service-slug> webhooks`
+List Registry webhook definitions for a service.
+
 #### `secret <service-slug> set [value]`
 Set an authentication secret for a workspace service.
 If the service supports multiple authentication methods, use `--type` to specify the method, or use the `--interactive` flag to select from a menu.
@@ -201,7 +214,11 @@ If the service supports multiple authentication methods, use `--type` to specify
 | `--expires-at` | | RFC3339 expiry timestamp (e.g. 2026-12-31T23:59:59Z) | `""` |
 
 #### `secret list`
-List all secrets stored in the workspace.
+List secret metadata in a specific bucket. Secret values are never read back.
+
+| Argument | Short | Description | Default |
+|----------|-------|-------------|---------|
+| `--list-bucket-id` | | Bucket name or ID to inspect | `""` |
 
 #### `secret <service-slug> remove <key-name>`
 Remove a workspace secret.
@@ -210,7 +227,57 @@ Remove a workspace secret.
 Create a new bucket for storing overrides and secrets.
 
 #### `bucket list`
-List all buckets in the workspace, including their default status and creation dates.
+List workspace buckets from the Engine GraphQL page used by the UI.
+
+| Argument | Short | Description | Default |
+|----------|-------|-------------|---------|
+| `--limit` | | Maximum rows to read | `20` |
+| `--offset` | | Rows to skip before reading | `0` |
+
+#### `bucket <name-or-id> show`
+Show bucket counts and metadata.
+
+#### `bucket <name-or-id> services`
+List services represented in a bucket, including secret, value, Connect config, and connected-user counts.
+
+| Argument | Short | Description | Default |
+|----------|-------|-------------|---------|
+| `--limit` | | Maximum rows to read | `20` |
+| `--offset` | | Rows to skip before reading | `0` |
+
+#### `bucket <name-or-id> secrets`
+List secret metadata in a bucket without reading secret values.
+
+| Argument | Short | Description | Default |
+|----------|-------|-------------|---------|
+| `--limit` | | Maximum rows to read | `20` |
+| `--offset` | | Rows to skip before reading | `0` |
+
+#### `bucket <name-or-id> values`
+List non-secret values in a bucket.
+
+| Argument | Short | Description | Default |
+|----------|-------|-------------|---------|
+| `--limit` | | Maximum rows to read | `20` |
+| `--offset` | | Rows to skip before reading | `0` |
+
+#### `bucket <name-or-id> connections`
+List connected users in a bucket. Filters are sent to Engine GraphQL.
+
+| Argument | Short | Description | Default |
+|----------|-------|-------------|---------|
+| `--service` | | Service slug to filter connections | `""` |
+| `--user` | | End-user reference to filter connections | `""` |
+| `--limit` | | Maximum rows to read | `20` |
+| `--offset` | | Rows to skip before reading | `0` |
+
+#### `bucket <name-or-id> sdks`
+List SDK or MCP scopes linked to a bucket.
+
+| Argument | Short | Description | Default |
+|----------|-------|-------------|---------|
+| `--limit` | | Maximum rows to read | `20` |
+| `--offset` | | Rows to skip before reading | `0` |
 
 #### `bucket <name> remove`
 Remove a workspace bucket.
@@ -248,6 +315,29 @@ Usage: `fused-cli sdk sync <name> -f .fused/sdks/<name>.yaml`
 
 #### `sdk validate`
 Validates an SDK configuration file. Inherits global flags.
+
+#### `sdk list`
+List generated SDK records.
+
+| Argument | Short | Description | Default |
+|----------|-------|-------------|---------|
+| `--target` | | Target type to list (`sdk` or `mcp`) | `"sdk"` |
+| `--language` | | Target language to filter by | `""` |
+| `--latest-only` | | Only show the latest SDK per name | `true` |
+| `--limit` | | Maximum rows to read | `20` |
+| `--offset` | | Rows to skip before reading | `0` |
+
+#### `sdk <sdk-name[@version]> show`
+Show the generated SDK ID, version, and sandbox URL.
+
+#### `sdk <sdk-name[@version]> services`
+List services selected by a generated SDK.
+
+#### `sdk <sdk-name[@version]> buckets`
+List credential buckets linked to a generated SDK scope.
+
+#### `sdk <sdk-name[@version]> tokens`
+List tokens for the generated SDK.
 
 #### `sdk <sdk-name> download`
 Download generated SDK artifacts from Registry records through the Engine. Pass an SDK name to download the latest generated SDK, or use `name@version` to request a specific SDK version.
@@ -303,6 +393,14 @@ List all active tokens for an SDK.
 
 #### `sdk token <sdk-id> revoke <token-name>`
 Revoke an SDK token.
+
+#### `mcp list`
+List deployed MCP servers from the Engine GraphQL page used by the UI.
+
+| Argument | Short | Description | Default |
+|----------|-------|-------------|---------|
+| `--limit` | | Maximum rows to read | `20` |
+| `--offset` | | Rows to skip before reading | `0` |
 
 #### `workspace plan`
 Preview changes that will be made to your Workspace configuration.
@@ -363,11 +461,14 @@ Deprecate a service in your Workspace configuration.
 List versions enabled in the workspace for a service slug. Supports provider-qualified slugs such as `@provider/slug`.
 
 #### `workspace service <service-slug> operations`
-List operationIds available for an enabled workspace service.
+List or search operationIds available for an enabled workspace service. Passing `--q` uses server-side endpoint search and supports pagination.
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
+| `--q` | | Search query for the operations action | `""` |
 | `--version` | | Enabled workspace service version; omitted uses the latest enabled version | `""` |
+| `--limit` | | Maximum rows to read; requires `--q` | `20` |
+| `--offset` | | Rows to skip before reading; requires `--q` | `0` |
 
 #### `workspace service <service-slug> version add <version>`
 Add an allowed version to a workspace service. Inherits global flags.

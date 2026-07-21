@@ -113,7 +113,7 @@ func (c *Client) UpsertSecret(serviceID, keyName, credentialType, value string, 
 		req.Header.Set("x-api-key", c.APIKey)
 	}
 
-	resp, err := c.HTTP.Do(req)
+	resp, err := c.doRequest(req)
 	if err != nil {
 		return err
 	}
@@ -124,6 +124,48 @@ func (c *Client) UpsertSecret(serviceID, keyName, credentialType, value string, 
 		return fmt.Errorf("upsert secret failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(respBody))
 	}
 
+	return nil
+}
+
+type SecretUpsertRequest struct {
+	ServiceID      string     `json:"service_id"`
+	KeyName        string     `json:"key_name"`
+	CredentialType string     `json:"credential_type"`
+	Value          string     `json:"value"`
+	ExpiresAt      *time.Time `json:"expires_at,omitempty"`
+}
+
+// UpsertSecrets sends paired credential material as one admin action so Engine
+// can validate and persist the group atomically at the store boundary.
+func (c *Client) UpsertSecrets(bucketID string, secrets []SecretUpsertRequest) error {
+	reqBody := map[string]interface{}{
+		"bucket_id": bucketID,
+		"secrets":   secrets,
+	}
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequest("PUT", c.BaseURL+"/workspace/secrets/bulk", bytes.NewBuffer(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if c.APIKey != "" {
+		req.Header.Set("x-api-key", c.APIKey)
+	}
+
+	resp, err := c.doRequest(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("upsert secrets failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(respBody))
+	}
 	return nil
 }
 
@@ -166,7 +208,7 @@ func (c *Client) DeleteSecret(serviceID, keyName string, bucketID string) error 
 		req.Header.Set("x-api-key", c.APIKey)
 	}
 
-	resp, err := c.HTTP.Do(req)
+	resp, err := c.doRequest(req)
 	if err != nil {
 		return err
 	}

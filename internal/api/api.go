@@ -6,13 +6,37 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
+
+	"github.com/charmbracelet/huh/spinner"
 )
 
 type Client struct {
 	BaseURL string
 	APIKey  string
 	HTTP    *http.Client
+}
+
+// doRequest executes an HTTP request while showing a spinner to the user on stderr.
+func (c *Client) doRequest(req *http.Request) (*http.Response, error) {
+	var resp *http.Response
+	var err error
+
+	action := func() {
+		resp, err = c.HTTP.Do(req)
+	}
+
+	fi, _ := os.Stderr.Stat()
+	isTTY := (fi.Mode() & os.ModeCharDevice) != 0
+
+	if isTTY {
+		_ = spinner.New().Title("Working...").Output(os.Stderr).Action(action).Run()
+	} else {
+		action()
+	}
+
+	return resp, err
 }
 
 func NewClient(baseURL, apiKey string) *Client {
@@ -54,7 +78,7 @@ func (c *Client) graphQLAt(path string, query string, variables map[string]inter
 		req.Header.Set("x-api-key", c.APIKey)
 	}
 
-	resp, err := c.HTTP.Do(req)
+	resp, err := c.doRequest(req)
 	if err != nil {
 		return err
 	}
@@ -139,7 +163,7 @@ func (c *Client) Health() (*HealthStatus, error) {
 		req.Header.Set("x-api-key", c.APIKey)
 	}
 
-	resp, err := c.HTTP.Do(req)
+	resp, err := c.doRequest(req)
 	if err != nil {
 		return nil, err
 	}
@@ -268,42 +292,33 @@ type ConnectSessionStartResponse struct {
 // StartConnectSession calls the Engine's bucket-scoped connect route so CLI
 // onboarding uses the same ownership checks as runtime credential resolution.
 func (c *Client) StartConnectSession(bucketID, serviceID, endUserRef, createdBySDKID string) (*ConnectSessionStartResponse, error) {
-	payload := map[string]string{"end_user_ref": endUserRef}
+	query := `
+		mutation StartConnectSession($bucketId: String!, $serviceId: String!, $endUserRef: String!, $createdBySdkId: String) {
+			startConnectSession(bucket_id: $bucketId, service_id: $serviceId, end_user_ref: $endUserRef, created_by_sdk_id: $createdBySdkId) {
+				authorize_url
+				expires_at
+			}
+		}
+	`
+	vars := map[string]interface{}{
+		"bucketId":   bucketID,
+		"serviceId":  serviceID,
+		"endUserRef": endUserRef,
+	}
 	if strings.TrimSpace(createdBySDKID) != "" {
-		// SDK attribution is optional because CLI-initiated onboarding may
-		// happen before a generated SDK exists, but preserving it when known
-		// makes later auth audits line up with runtime use.
-		payload["created_by_sdk_id"] = createdBySDKID
-	}
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return nil, err
-	}
-	reqURL := fmt.Sprintf("%s/workspace/buckets/%s/services/%s/connect/sessions", c.BaseURL, bucketID, serviceID)
-	req, err := http.NewRequest("POST", reqURL, bytes.NewBuffer(body))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if c.APIKey != "" {
-		req.Header.Set("x-api-key", c.APIKey)
+		vars["createdBySdkId"] = createdBySDKID
 	}
 
-	resp, err := c.HTTP.Do(req)
+	var resp struct {
+		StartConnectSession ConnectSessionStartResponse `json:"startConnectSession"`
+	}
+
+	err := c.EngineGraphQL(query, vars, &resp)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
-		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("start connect session failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(respBody))
-	}
 
-	var out ConnectSessionStartResponse
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, err
-	}
-	return &out, nil
+	return &resp.StartConnectSession, nil
 }
 
 func (c *Client) ServiceVisibilities(serviceIDs []string) (map[string]ServiceVisibility, error) {
@@ -600,7 +615,7 @@ func (c *Client) GenerateSDK(reqBody GenerateSDKRequest) (*GenerateSDKResponse, 
 		req.Header.Set("x-api-key", c.APIKey)
 	}
 
-	resp, err := c.HTTP.Do(req)
+	resp, err := c.doRequest(req)
 	if err != nil {
 		return nil, err
 	}
@@ -637,7 +652,7 @@ func (c *Client) StreamSDKGenerationEvents(jobID string, eventChan chan<- SDKEve
 	}
 	req.Header.Set("Accept", "text/event-stream")
 
-	resp, err := c.HTTP.Do(req)
+	resp, err := c.doRequest(req)
 	if err != nil {
 		errChan <- err
 		return
@@ -882,7 +897,7 @@ func (c *Client) DownloadSDK(sdkID string) ([]byte, error) {
 		req.Header.Set("x-api-key", c.APIKey)
 	}
 
-	resp, err := c.HTTP.Do(req)
+	resp, err := c.doRequest(req)
 	if err != nil {
 		return nil, err
 	}
@@ -949,7 +964,7 @@ func (c *Client) ActivateMCPServer(sdkID string, activateReq MCPActivateRequest)
 		req.Header.Set("x-api-key", c.APIKey)
 	}
 
-	resp, err := c.HTTP.Do(req)
+	resp, err := c.doRequest(req)
 	if err != nil {
 		return nil, err
 	}
@@ -1023,6 +1038,8 @@ type AuthMaterial struct {
 	Password string `json:"password,omitempty"`
 	Token    string `json:"token,omitempty"`
 	APIKey   string `json:"api_key,omitempty"`
+	Cert     string `json:"cert,omitempty"`
+	Key      string `json:"key,omitempty"`
 }
 
 // AppliedWebhookConfig is one webhook registration the apply just created or
@@ -1055,7 +1072,7 @@ func (c *Client) PlanSDKConfig(sourceHash, configKey string, config json.RawMess
 		req.Header.Set("x-api-key", c.APIKey)
 	}
 
-	resp, err := c.HTTP.Do(req)
+	resp, err := c.doRequest(req)
 	if err != nil {
 		return nil, err
 	}
@@ -1093,7 +1110,7 @@ func (c *Client) PlanWorkspaceConfig(sourceHash, configKey string, config json.R
 		req.Header.Set("x-api-key", c.APIKey)
 	}
 
-	resp, err := c.HTTP.Do(req)
+	resp, err := c.doRequest(req)
 	if err != nil {
 		return nil, err
 	}
@@ -1137,7 +1154,7 @@ func (c *Client) ApplySDKConfig(planID, sourceHash string) (*SDKConfigApplyRespo
 		req.Header.Set("x-api-key", c.APIKey)
 	}
 
-	resp, err := c.HTTP.Do(req)
+	resp, err := c.doRequest(req)
 	if err != nil {
 		return nil, err
 	}
@@ -1180,7 +1197,7 @@ func (c *Client) ApplyWorkspaceConfig(planID, sourceHash string, connectMaterial
 		req.Header.Set("x-api-key", c.APIKey)
 	}
 
-	resp, err := c.HTTP.Do(req)
+	resp, err := c.doRequest(req)
 	if err != nil {
 		return nil, err
 	}
@@ -1225,7 +1242,7 @@ func (c *Client) UpdateWorkspacePlanAction(planID string, actions []map[string]a
 		req.Header.Set("x-api-key", c.APIKey)
 	}
 
-	resp, err := c.HTTP.Do(req)
+	resp, err := c.doRequest(req)
 	if err != nil {
 		return err
 	}
@@ -1368,7 +1385,7 @@ func (c *Client) ApplySpecImport(planID, sourceHash string) (*SpecImportApplyRes
 		req.Header.Set("x-api-key", c.APIKey)
 	}
 
-	resp, err := c.HTTP.Do(req)
+	resp, err := c.doRequest(req)
 	if err != nil {
 		return nil, err
 	}
@@ -1395,7 +1412,7 @@ func (c *Client) DownloadGeneratedSDK(configKey string) ([]byte, error) {
 		req.Header.Set("x-api-key", c.APIKey)
 	}
 
-	resp, err := c.HTTP.Do(req)
+	resp, err := c.doRequest(req)
 	if err != nil {
 		return nil, err
 	}

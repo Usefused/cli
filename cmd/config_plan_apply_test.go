@@ -209,6 +209,51 @@ services:
 	runCommandInDir(t, dir, server.URL, []string{"workspace", "apply", "-f", path})
 }
 
+// TestWorkspaceApplyPostsMTLSAuthMaterialsFromDollarRefs proves cert/key env
+// refs resolve only during apply, not during shareable plan creation.
+func TestWorkspaceApplyPostsMTLSAuthMaterialsFromDollarRefs(t *testing.T) {
+	t.Setenv("FUSED_CLIENT_CERT", "CERT-PEM")
+	t.Setenv("FUSED_CLIENT_KEY", "KEY-PEM")
+	dir := t.TempDir()
+	path := writeSprintConfig(t, dir, "workspace.yaml", `
+kind: workspace
+version: 1
+services:
+  github:
+    service_id: "00000000-0000-0000-0000-000000000001"
+    versions: ["2026-07-01"]
+    runtime_config:
+      auth:
+        bucket: prod
+        auth_type: mtls
+        cert: $FUSED_CLIENT_CERT
+        key: ${FUSED_CLIENT_KEY}
+`)
+	parsed, err := configfile.ParseFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeReceipt(t, dir, planReceipt{ConfigKey: "workspace", PlanID: "plan-workspace", SourceHash: parsed.SourceHash})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			w.Write([]byte(`{"status":"ok","plane":"engine","environment":"staging"}`))
+			return
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		materials := body["auth_materials"].(map[string]any)["github"].(map[string]any)
+		if materials["cert"] != "CERT-PEM" || materials["key"] != "KEY-PEM" {
+			t.Fatalf("expected resolved mTLS auth materials during apply, got %#v", materials)
+		}
+		_, _ = w.Write([]byte(`{"status":"applied","plan_id":"plan-workspace"}`))
+	}))
+	defer server.Close()
+
+	runCommandInDir(t, dir, server.URL, []string{"workspace", "apply", "-f", path})
+}
+
 func TestWorkspacePlanRejectsInlineStaticAuthMaterial(t *testing.T) {
 	dir := t.TempDir()
 	path := writeSprintConfig(t, dir, "workspace.yaml", `

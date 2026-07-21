@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -27,11 +26,13 @@ func TestWorkspaceServiceConnectStartsSession(t *testing.T) {
 				_, _ = w.Write([]byte(`{"data":{"buckets":[{"id":"bucket-prod","name":"prod","is_default":false,"created_at":"2026-07-21T00:00:00Z"}]}}`))
 				return
 			}
+			if strings.Contains(body.Query, "startConnectSession") {
+				sawConnect = true
+				assertConnectSessionGraphQLRequest(t, body)
+				_, _ = w.Write([]byte(`{"data":{"startConnectSession":{"authorize_url":"https://provider.example/authorize?state=abc","expires_at":"2026-07-20T23:00:00Z"}}}`))
+				return
+			}
 			t.Fatalf("unexpected engine graphql query: %s", body.Query)
-		case "/workspace/buckets/bucket-prod/services/svc-github/connect/sessions":
-			sawConnect = true
-			assertConnectSessionRequest(t, r)
-			_, _ = w.Write([]byte(`{"authorize_url":"https://provider.example/authorize?state=abc","expires_at":"2026-07-20T23:00:00Z"}`))
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
@@ -47,18 +48,11 @@ func TestWorkspaceServiceConnectStartsSession(t *testing.T) {
 	}
 }
 
-// assertConnectSessionRequest verifies the CLI sends only the stable user ref,
-// leaving token generation and storage to Engine-owned connect runtime.
-func assertConnectSessionRequest(t *testing.T, r *http.Request) {
+// assertConnectSessionGraphQLRequest verifies the CLI sends only stable connect
+// identifiers; provider token generation/storage remains Engine-owned.
+func assertConnectSessionGraphQLRequest(t *testing.T, body testGraphQLBody) {
 	t.Helper()
-	if r.Method != http.MethodPost {
-		t.Fatalf("expected POST, got %s", r.Method)
-	}
-	var body map[string]string
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		t.Fatalf("decode connect session body: %v", err)
-	}
-	if body["end_user_ref"] != "user_123" {
-		t.Fatalf("expected end_user_ref user_123, got %#v", body)
+	if body.Variables["bucketId"] != "bucket-prod" || body.Variables["serviceId"] != "svc-github" || body.Variables["endUserRef"] != "user_123" {
+		t.Fatalf("unexpected connect session variables: %#v", body.Variables)
 	}
 }

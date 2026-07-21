@@ -1,6 +1,9 @@
 package cmd
 
 import (
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/pem"
 	"fmt"
 	"strings"
 	"time"
@@ -116,9 +119,13 @@ func runSecretSet(cmd *cobra.Command, serviceSlug, value string) error {
 	if err != nil {
 		return err
 	}
+	authType := canonicalSecretAuthType(auth)
 	// Basic auth requires two distinct inputs (username and password) which can't be cleanly parsed from a single positional argument, so we route it to a specialized handler.
-	if auth.Type == "http" && strings.EqualFold(auth.Scheme, "basic") {
+	if authType == "basic" {
 		return handleBasicSecretSet(client, serviceID, bucketID, auth, value, expiresAt)
+	}
+	if authType == "mtls" {
+		return handleMTLSSecretSet(client, serviceID, bucketID, auth, value, expiresAt)
 	}
 	return handleTokenSecretSet(client, serviceID, bucketID, auth, value, expiresAt, serviceSlug)
 }
@@ -162,8 +169,10 @@ func selectSecretAuth(info *api.ServiceInfo, serviceSlug string) (*api.AuthConfi
 // selectSecretAuthByType treats --type as a concrete auth scheme name rather
 // than a broad family because static secrets are keyed by scheme identity.
 func selectSecretAuthByType(info *api.ServiceInfo, serviceSlug string) (*api.AuthConfig, error) {
+	requested := canonicalSecretTypeName(secretSetType)
 	for i := range info.AuthConfigs {
-		if info.AuthConfigs[i].Name == secretSetType {
+		auth := &info.AuthConfigs[i]
+		if auth.Name == secretSetType || canonicalSecretAuthType(auth) == requested {
 			return &info.AuthConfigs[i], nil
 		}
 	}
@@ -213,11 +222,11 @@ func handleBasicSecretSet(client *api.Client, serviceID, bucketID string, auth *
 	if err != nil {
 		return err
 	}
-	err = client.UpsertSecret(serviceID, auth.Name+"_username", "basic", username, bucketID, expiresAt)
-	if err != nil {
-		return err
-	}
-	err = client.UpsertSecret(serviceID, auth.Name+"_password", "basic", password, bucketID, expiresAt)
+	name := secretAuthCredentialName(auth)
+	err = client.UpsertSecrets(bucketID, []api.SecretUpsertRequest{
+		{ServiceID: serviceID, KeyName: name + "_username", CredentialType: "basic", Value: username, ExpiresAt: expiresAt},
+		{ServiceID: serviceID, KeyName: name + "_password", CredentialType: "basic", Value: password, ExpiresAt: expiresAt},
+	})
 	if err != nil {
 		return err
 	}
@@ -225,17 +234,47 @@ func handleBasicSecretSet(client *api.Client, serviceID, bucketID string, auth *
 	return nil
 }
 
+// handleMTLSSecretSet stores cert/key as an explicit pair because mTLS cannot
+// be safely applied when only one half of the transport credential exists.
+func handleMTLSSecretSet(client *api.Client, serviceID, bucketID string, auth *api.AuthConfig, value string, expiresAt *time.Time) error {
+	if value != "" && !secretSetInteractive {
+		return fmt.Errorf("mTLS auth requires certificate and key values. Please use interactive mode (-i)")
+	}
+	var cert, key string
+	err := huh.NewText().Title("Client certificate PEM:").Value(&cert).Run()
+	if err != nil {
+		return err
+	}
+	err = huh.NewText().Title("Client private key PEM:").Value(&key).Run()
+	if err != nil {
+		return err
+	}
+	if err := validateMTLSSecretPair(cert, key); err != nil {
+		return err
+	}
+	name := secretAuthCredentialName(auth)
+	if err := client.UpsertSecrets(bucketID, []api.SecretUpsertRequest{
+		{ServiceID: serviceID, KeyName: name + "_cert", CredentialType: "mtls", Value: cert, ExpiresAt: expiresAt},
+		{ServiceID: serviceID, KeyName: name + "_key", CredentialType: "mtls", Value: key, ExpiresAt: expiresAt},
+	}); err != nil {
+		return err
+	}
+	fmt.Printf("mTLS secrets set successfully.\n")
+	return nil
+}
+
 // handleTokenSecretSet maps imported auth spellings onto the public credential
 // families while preserving the scheme key used for provider injection.
 func handleTokenSecretSet(client *api.Client, serviceID, bucketID string, auth *api.AuthConfig, value string, expiresAt *time.Time, serviceSlug string) error {
-	keyName := auth.Name
-	credType := auth.Type
+	keyName := secretAuthCredentialName(auth)
+	authType := canonicalSecretAuthType(auth)
+	credType := authType
 	promptTitle := fmt.Sprintf("Enter %s:", keyName)
 
-	if auth.Type == "http" && strings.EqualFold(auth.Scheme, "bearer") {
+	if authType == "bearer" {
 		credType = "bearer"
 		promptTitle = "Enter Bearer Token:"
-	} else if auth.Type == "oauth2" || auth.Type == "openIdConnect" || auth.Type == "oidc" {
+	} else if authType == "oauth" {
 		credType = "oauth"
 		promptTitle = "Enter OAuth Token:"
 	}
@@ -257,6 +296,83 @@ func handleTokenSecretSet(client *api.Client, serviceID, bucketID string, auth *
 		fmt.Printf("Secret set successfully for %s.\n", serviceSlug)
 	}
 	return nil
+}
+
+// canonicalSecretAuthType lets the CLI accept imported service metadata while
+// still writing bucket secrets under the public credential family.
+func canonicalSecretAuthType(auth *api.AuthConfig) string {
+	normalized := canonicalSecretTypeName(auth.Type)
+	if normalized == "mutualtls" || normalized == "mutual_tls" || normalized == "mtls" {
+		return "mtls"
+	}
+	if normalized == "apikey" {
+		return "api_key"
+	}
+	if normalized == "openidconnect" || normalized == "open_id_connect" {
+		return "oidc"
+	}
+	if normalized == "oauth2" || normalized == "oauth2_authorization_code" {
+		return "oauth"
+	}
+	if normalized == "http" {
+		return canonicalSecretTypeName(auth.Scheme)
+	}
+	return normalized
+}
+
+// canonicalSecretTypeName keeps --type matching on public auth families while
+// still accepting provider scheme names for teams that know the exact key.
+func canonicalSecretTypeName(value string) string {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	return strings.ReplaceAll(normalized, "-", "_")
+}
+
+// validateMTLSSecretPair fails before any upsert so manual CLI setup cannot
+// leave the bucket with one invalid half of a transport credential pair.
+func validateMTLSSecretPair(certPEM, keyPEM string) error {
+	if strings.TrimSpace(certPEM) == "" || strings.TrimSpace(keyPEM) == "" {
+		return fmt.Errorf("mTLS certificate and key are required")
+	}
+	if _, err := tls.X509KeyPair([]byte(certPEM), []byte(keyPEM)); err != nil {
+		return fmt.Errorf("mTLS certificate/key invalid or mismatched")
+	}
+	if mtlsSecretCertExpired(certPEM) {
+		return fmt.Errorf("mTLS certificate is expired")
+	}
+	return nil
+}
+
+// mtlsSecretCertExpired checks certificate NotAfter locally so expired client
+// certs are rejected before they become bucket secrets.
+func mtlsSecretCertExpired(certPEM string) bool {
+	block, _ := pem.Decode([]byte(certPEM))
+	if block == nil {
+		return true
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return true
+	}
+	return time.Now().UTC().After(cert.NotAfter)
+}
+
+// secretAuthCredentialName mirrors Engine credential naming so manual bucket
+// writes land under the exact keys request execution reads later.
+func secretAuthCredentialName(auth *api.AuthConfig) string {
+	if name := strings.TrimSpace(auth.Name); name != "" {
+		return name
+	}
+	authType := canonicalSecretAuthType(auth)
+	if authType == "api_key" && strings.TrimSpace(auth.KeyName) != "" {
+		return strings.TrimSpace(auth.KeyName)
+	}
+	if authType == "mtls" {
+		return "mtls"
+	}
+	if authType == "oauth" || authType == "oidc" || authType == "bearer" {
+		return "Authorization"
+	}
+	return ""
 }
 
 func runSecretList(cmd *cobra.Command, args []string) error {

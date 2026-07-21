@@ -43,7 +43,7 @@ func (c *Client) CreateBucket(name string) error {
 		req.Header.Set("x-api-key", c.APIKey)
 	}
 
-	resp, err := c.HTTP.Do(req)
+	resp, err := c.doRequest(req)
 	if err != nil {
 		return err
 	}
@@ -94,7 +94,7 @@ func (c *Client) UpsertBucketValue(bucketID, serviceID, keyName, location, value
 		req.Header.Set("x-api-key", c.APIKey)
 	}
 
-	resp, err := c.HTTP.Do(req)
+	resp, err := c.doRequest(req)
 	if err != nil {
 		return err
 	}
@@ -130,7 +130,7 @@ func (c *Client) DeleteBucketValue(bucketID, serviceID, keyName string) error {
 		req.Header.Set("x-api-key", c.APIKey)
 	}
 
-	resp, err := c.HTTP.Do(req)
+	resp, err := c.doRequest(req)
 	if err != nil {
 		return err
 	}
@@ -153,7 +153,7 @@ func (c *Client) DeleteBucket(name string) error {
 		req.Header.Set("x-api-key", c.APIKey)
 	}
 
-	resp, err := c.HTTP.Do(req)
+	resp, err := c.doRequest(req)
 	if err != nil {
 		return err
 	}

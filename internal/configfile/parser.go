@@ -267,6 +267,8 @@ func validateWorkspaceAuthIntent(name string, auth *AuthConfig) error {
 		return validateAuthEnvRefs(name, "basic", auth.Username, auth.Password)
 	case "api_key":
 		return validateAuthEnvRefs(name, "api_key", auth.APIKey)
+	case "mtls":
+		return validateAuthEnvRefs(name, "mtls", auth.Cert, auth.Key)
 	case "bearer", "oauth", "oidc":
 		return validateAuthEnvRefs(name, canonicalStaticAuthType(auth.AuthType), auth.Token)
 	default:
@@ -352,7 +354,7 @@ func workspaceServiceAuthMaterial(name string, svc WorkspaceService) (AuthMateri
 	if err := resolveAuthEnv(name, &auth); err != nil {
 		return AuthMaterial{}, false, err
 	}
-	return AuthMaterial{Username: auth.Username, Password: auth.Password, Token: auth.Token, APIKey: auth.APIKey}, true, nil
+	return AuthMaterial{Username: auth.Username, Password: auth.Password, Token: auth.Token, APIKey: auth.APIKey, Cert: auth.Cert, Key: auth.Key}, true, nil
 }
 
 // resolveAuthEnv resolves all possible fields; validation decides which fields
@@ -367,7 +369,13 @@ func resolveAuthEnv(name string, auth *AuthConfig) error {
 	if err := resolveAuthField(name, "token", &auth.Token); err != nil {
 		return err
 	}
-	return resolveAuthField(name, "api_key", &auth.APIKey)
+	if err := resolveAuthField(name, "api_key", &auth.APIKey); err != nil {
+		return err
+	}
+	if err := resolveAuthField(name, "cert", &auth.Cert); err != nil {
+		return err
+	}
+	return resolveAuthField(name, "key", &auth.Key)
 }
 
 // resolveAuthField gives each env lookup a field-specific error so operators
@@ -427,7 +435,7 @@ func canonicalStaticAuthType(authType string) string {
 	normalized := strings.ToLower(strings.TrimSpace(authType))
 	normalized = strings.ReplaceAll(normalized, "-", "_")
 	switch normalized {
-	case "api_key", "oauth", "oidc", "basic", "bearer":
+	case "api_key", "oauth", "oidc", "basic", "bearer", "mtls":
 		return normalized
 	default:
 		return normalized

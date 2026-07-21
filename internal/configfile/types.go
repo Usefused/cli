@@ -55,6 +55,8 @@ type AuthConfig struct {
 	Password string `yaml:"password,omitempty" json:"password,omitempty"`
 	Token    string `yaml:"token,omitempty" json:"token,omitempty"`
 	APIKey   string `yaml:"api_key,omitempty" json:"api_key,omitempty"`
+	Cert     string `yaml:"cert,omitempty" json:"cert,omitempty"`
+	Key      string `yaml:"key,omitempty" json:"key,omitempty"`
 }
 
 type AuthMaterial struct {
@@ -62,6 +64,8 @@ type AuthMaterial struct {
 	Password string
 	Token    string
 	APIKey   string
+	Cert     string
+	Key      string
 }
 
 type ConnectConfig struct {
