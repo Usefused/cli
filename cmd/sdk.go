@@ -25,6 +25,7 @@ var sdkCmd = &cobra.Command{
 	Example: `  fused-cli sdk security-sdk download
   fused-cli sdk security-sdk@1.2.0 download`,
 	Args: cobra.ArbitraryArgs,
+	// Why: Write to OTEL to audit user/agent-triggered mutative execution.
 	RunE: WithTelemetry("cli.sdk", func(cmd *cobra.Command, args []string) error {
 		return runSDKDynamicAction(cmd, args)
 	}),
@@ -33,6 +34,7 @@ var sdkCmd = &cobra.Command{
 var sdkPlanCmd = &cobra.Command{
 	Use:   "plan",
 	Short: "Plan SDK configuration",
+	// Why: Write to OTEL to audit user/agent-triggered mutative execution.
 	RunE: WithTelemetry("cli.sdk.plan", func(cmd *cobra.Command, args []string) error {
 		return runConfigPlan(planOptions{filter: filterSDK, jsonOut: sdkPlanJSON, receiptOut: sdkPlanReceiptOut})
 	}),
@@ -46,6 +48,7 @@ var sdkApplyReceiptPath string
 var sdkApplyCmd = &cobra.Command{
 	Use:   "apply",
 	Short: "Apply SDK configuration",
+	// Why: Write to OTEL to audit user/agent-triggered mutative execution.
 	RunE: WithTelemetry("cli.sdk.apply", func(cmd *cobra.Command, args []string) error {
 		return runConfigApply(applyOptions{
 			filter:      filterSDK,
@@ -59,6 +62,7 @@ var sdkApplyCmd = &cobra.Command{
 var sdkValidateCmd = &cobra.Command{
 	Use:   "validate",
 	Short: "Validate SDK configuration",
+	// Why: Write to OTEL to audit user/agent-triggered mutative execution.
 	RunE: WithTelemetry("cli.sdk.validate", func(cmd *cobra.Command, args []string) error {
 		run, err := configfile.LoadRun(effectiveConfigFile())
 		if err != nil {
@@ -150,6 +154,7 @@ var sdkDownloadCmd = &cobra.Command{
 	Short:  "Download the generated SDK for a config",
 	Hidden: true,
 	Args:   cobra.MaximumNArgs(1),
+	// Why: Write to OTEL to audit user/agent-triggered mutative execution.
 	RunE: WithTelemetry("cli.sdk.download", func(cmd *cobra.Command, args []string) error {
 		if err := validateSDKDownloadArgs(args); err != nil {
 			return err
@@ -205,6 +210,7 @@ var sdkServiceCmd = &cobra.Command{
 	Use:   "service <service-slug> [add|remove] [operationId...]",
 	Short: "Manage services in SDK config",
 	Args:  validateSDKServiceArgs,
+	// Why: Write to OTEL to audit user/agent-triggered mutative execution.
 	RunE: WithTelemetry("cli.sdk.service", func(cmd *cobra.Command, args []string) error {
 		return runSDKServiceAction(cmd, args)
 	}),
@@ -350,6 +356,7 @@ var sdkAddServiceCmd = &cobra.Command{
 	Use:   "add <service>",
 	Short: "Add a service to SDK config",
 	Args:  cobra.ExactArgs(1),
+	// Why: Write to OTEL to audit user/agent-triggered mutative execution.
 	RunE: WithTelemetry("cli.sdk.service.add", func(cmd *cobra.Command, args []string) error {
 		if err := addSDKService(ConfigFile, args[0], sdkAddServiceVersion); err != nil {
 			return err
@@ -360,128 +367,178 @@ var sdkAddServiceCmd = &cobra.Command{
 }
 
 var sdkOperationCmd = &cobra.Command{
-	Use:   "operation",
+	Use:   "operation <service-slug> [add|remove] [operationId...]",
 	Short: "Manage operations in SDK config",
+	Args:  validateSDKOperationArgs,
+	// Why: Write to OTEL to audit user/agent-triggered mutative execution.
+	RunE: WithTelemetry("cli.sdk.operation", func(cmd *cobra.Command, args []string) error {
+		return runSDKOperationAction(cmd, args)
+	}),
+	ValidArgsFunction: completeSDKOperationArgs,
 }
 
 var sdkAddOperationInteractive bool
 var sdkAddOperationApply bool
 var sdkAddOperationDownload bool
-var sdkAddOperationCmd = &cobra.Command{
-	Use:   "add <service> [operationId...]",
-	Short: "Add one or more operationIds to SDK config",
-	Args: func(cmd *cobra.Command, args []string) error {
-		if len(args) == 0 && sdkAddOperationInteractive {
-			return nil
-		}
-		if len(args) < 1 {
-			return fmt.Errorf("service is required unless --interactive is set")
-		}
+
+func validateSDKOperationArgs(cmd *cobra.Command, args []string) error {
+	if len(args) == 0 {
 		return nil
-	},
-	RunE: WithTelemetry("cli.sdk.operation.add", func(cmd *cobra.Command, args []string) error {
-		serviceName, operations := "", []string{}
-		if len(args) > 0 {
-			serviceName = args[0]
-			operations = append(operations, args[1:]...)
-		}
-		if len(operations) == 0 && sdkAddOperationInteractive {
-			selectedService, selectedOperations, err := selectSDKOperationsInteractively(ConfigFile, serviceName)
-			if err != nil {
-				return err
-			}
-			serviceName = selectedService
-			operations = append(operations, selectedOperations...)
-		}
-		if len(operations) == 0 {
-			return fmt.Errorf("at least one operationId is required unless --interactive is set")
-		}
-		if err := addSDKOperations(ConfigFile, serviceName, operations); err != nil {
-			return err
-		}
-		fmt.Fprintf(cmd.OutOrStdout(), "Added %d operationId(s) to service %s: %s\n", len(operations), serviceName, strings.Join(operations, ", "))
-		if sdkAddOperationDownload {
-			sdkAddOperationApply = true
-		}
-		if sdkAddOperationApply {
-			if err := runConfigPlan(planOptions{filter: filterSDK}); err != nil {
-				return err
-			}
-			return runConfigApply(applyOptions{filter: filterSDK, download: sdkAddOperationDownload})
-		}
-		return nil
-	}),
+	}
+	if len(args) < 2 {
+		return fmt.Errorf("sdk operation action is required (e.g. add, remove)")
+	}
+	action := args[1]
+	if action != "add" && action != "remove" {
+		return fmt.Errorf("unknown sdk operation action %q", action)
+	}
+	return nil
 }
 
-var sdkRemoveOperationCmd = &cobra.Command{
-	Use:   "remove <service> <operationId...>",
-	Short: "Remove one or more operationIds from SDK config",
-	Args:  cobra.MinimumNArgs(2),
-	RunE: WithTelemetry("cli.sdk.operation.remove", func(cmd *cobra.Command, args []string) error {
-		operations := append([]string(nil), args[1:]...)
-		if err := removeSDKOperations(ConfigFile, args[0], operations); err != nil {
+func runSDKOperationAction(cmd *cobra.Command, args []string) error {
+	if len(args) == 0 {
+		return cmd.Help()
+	}
+	serviceName := args[0]
+	action := args[1]
+	operations := append([]string(nil), args[2:]...)
+	switch action {
+	case "add":
+		return runSDKAddOperationAction(cmd, serviceName, operations)
+	case "remove":
+		return runSDKRemoveOperationAction(cmd, serviceName, operations)
+	default:
+		return fmt.Errorf("unknown sdk operation action %q", action)
+	}
+}
+
+func runSDKAddOperationAction(cmd *cobra.Command, serviceName string, operations []string) error {
+	if len(operations) == 0 && sdkAddOperationInteractive {
+		selectedService, selectedOperations, err := selectSDKOperationsInteractively(ConfigFile, serviceName)
+		if err != nil {
 			return err
 		}
-		fmt.Printf("Removed %d operationId(s) from service %s: %s\n", len(operations), args[0], strings.Join(operations, ", "))
-		return nil
-	}),
+		serviceName = selectedService
+		operations = append(operations, selectedOperations...)
+	}
+	if len(operations) == 0 {
+		return fmt.Errorf("at least one operationId is required unless --interactive is set")
+	}
+	if err := addSDKOperations(ConfigFile, serviceName, operations); err != nil {
+		return err
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "Added %d operationId(s) to service %s: %s\n", len(operations), serviceName, strings.Join(operations, ", "))
+	if sdkAddOperationDownload {
+		sdkAddOperationApply = true
+	}
+	if sdkAddOperationApply {
+		if err := runConfigPlan(planOptions{filter: filterSDK}); err != nil {
+			return err
+		}
+		return runConfigApply(applyOptions{filter: filterSDK, download: sdkAddOperationDownload})
+	}
+	return nil
+}
+
+func runSDKRemoveOperationAction(cmd *cobra.Command, serviceName string, operations []string) error {
+	if err := removeSDKOperations(ConfigFile, serviceName, operations); err != nil {
+		return err
+	}
+	fmt.Printf("Removed %d operationId(s) from service %s: %s\n", len(operations), serviceName, strings.Join(operations, ", "))
+	return nil
+}
+
+func completeSDKOperationArgs(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	switch len(args) {
+	case 0:
+		return completeSDKConfigServices(toComplete), cobra.ShellCompDirectiveNoFileComp
+	case 1:
+		return filteredSDKServiceActions(toComplete), cobra.ShellCompDirectiveNoFileComp
+	default:
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
 }
 
 var sdkWebhookCmd = &cobra.Command{
-	Use:   "webhook",
+	Use:   "webhook <service-slug> [add|remove] [webhookId...]",
 	Short: "Manage webhooks in SDK config",
+	Args:  validateSDKWebhookArgs,
+	// Why: Write to OTEL to audit user/agent-triggered mutative execution.
+	RunE: WithTelemetry("cli.sdk.webhook", func(cmd *cobra.Command, args []string) error {
+		return runSDKWebhookAction(cmd, args)
+	}),
+	ValidArgsFunction: completeSDKWebhookArgs,
 }
 
 var sdkAddWebhookInteractive bool
-var sdkAddWebhookCmd = &cobra.Command{
-	Use:   "add <service> [webhookId...]",
-	Short: "Add one or more webhooks to SDK config",
-	Args: func(cmd *cobra.Command, args []string) error {
-		if len(args) == 0 && sdkAddWebhookInteractive {
-			return nil
-		}
-		if len(args) < 1 {
-			return fmt.Errorf("service is required unless --interactive is set")
-		}
+
+func validateSDKWebhookArgs(cmd *cobra.Command, args []string) error {
+	if len(args) == 0 {
 		return nil
-	},
-	RunE: WithTelemetry("cli.sdk.webhook.add", func(cmd *cobra.Command, args []string) error {
-		serviceName, webhooks := "", []string{}
-		if len(args) > 0 {
-			serviceName = args[0]
-			webhooks = append(webhooks, args[1:]...)
-		}
-		if len(webhooks) == 0 && sdkAddWebhookInteractive {
-			selectedService, selectedWebhooks, err := selectSDKWebhooksInteractively(ConfigFile, serviceName)
-			if err != nil {
-				return err
-			}
-			serviceName = selectedService
-			webhooks = append(webhooks, selectedWebhooks...)
-		}
-		if len(webhooks) == 0 {
-			return fmt.Errorf("at least one webhook is required unless --interactive is set")
-		}
-		if err := addSDKWebhooks(ConfigFile, serviceName, webhooks); err != nil {
-			return err
-		}
-		fmt.Fprintf(cmd.OutOrStdout(), "Added %d webhook(s) to service %s: %s\n", len(webhooks), serviceName, strings.Join(webhooks, ", "))
-		return nil
-	}),
+	}
+	if len(args) < 2 {
+		return fmt.Errorf("sdk webhook action is required (e.g. add, remove)")
+	}
+	action := args[1]
+	if action != "add" && action != "remove" {
+		return fmt.Errorf("unknown sdk webhook action %q", action)
+	}
+	return nil
 }
 
-var sdkRemoveWebhookCmd = &cobra.Command{
-	Use:   "remove <service> <webhookId...>",
-	Short: "Remove one or more webhooks from SDK config",
-	Args:  cobra.MinimumNArgs(2),
-	RunE: WithTelemetry("cli.sdk.webhook.remove", func(cmd *cobra.Command, args []string) error {
-		webhooks := append([]string(nil), args[1:]...)
-		if err := removeSDKWebhooks(ConfigFile, args[0], webhooks); err != nil {
+func runSDKWebhookAction(cmd *cobra.Command, args []string) error {
+	if len(args) == 0 {
+		return cmd.Help()
+	}
+	serviceName := args[0]
+	action := args[1]
+	webhooks := append([]string(nil), args[2:]...)
+	switch action {
+	case "add":
+		return runSDKAddWebhookAction(cmd, serviceName, webhooks)
+	case "remove":
+		return runSDKRemoveWebhookAction(cmd, serviceName, webhooks)
+	default:
+		return fmt.Errorf("unknown sdk webhook action %q", action)
+	}
+}
+
+func runSDKAddWebhookAction(cmd *cobra.Command, serviceName string, webhooks []string) error {
+	if len(webhooks) == 0 && sdkAddWebhookInteractive {
+		selectedService, selectedWebhooks, err := selectSDKWebhooksInteractively(ConfigFile, serviceName)
+		if err != nil {
 			return err
 		}
-		fmt.Printf("Removed %d webhook(s) from service %s: %s\n", len(webhooks), args[0], strings.Join(webhooks, ", "))
-		return nil
-	}),
+		serviceName = selectedService
+		webhooks = append(webhooks, selectedWebhooks...)
+	}
+	if len(webhooks) == 0 {
+		return fmt.Errorf("at least one webhook is required unless --interactive is set")
+	}
+	if err := addSDKWebhooks(ConfigFile, serviceName, webhooks); err != nil {
+		return err
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "Added %d webhook(s) to service %s: %s\n", len(webhooks), serviceName, strings.Join(webhooks, ", "))
+	return nil
+}
+
+func runSDKRemoveWebhookAction(cmd *cobra.Command, serviceName string, webhooks []string) error {
+	if err := removeSDKWebhooks(ConfigFile, serviceName, webhooks); err != nil {
+		return err
+	}
+	fmt.Printf("Removed %d webhook(s) from service %s: %s\n", len(webhooks), serviceName, strings.Join(webhooks, ", "))
+	return nil
+}
+
+func completeSDKWebhookArgs(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	switch len(args) {
+	case 0:
+		return completeSDKConfigServices(toComplete), cobra.ShellCompDirectiveNoFileComp
+	case 1:
+		return filteredSDKServiceActions(toComplete), cobra.ShellCompDirectiveNoFileComp
+	default:
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
 }
 
 func selectSDKOperationsInteractively(path, requestedService string) (string, []string, error) {
@@ -756,18 +813,12 @@ func init() {
 	sdkServiceCmd.Flags().BoolVarP(&sdkServiceActionInteractive, "interactive", "i", false, "Interactively select operations for the service add action")
 	sdkServiceCmd.Flags().BoolVar(&sdkServiceActionApply, "apply", false, "Apply SDK config after adding operations")
 	sdkServiceCmd.Flags().BoolVar(&sdkServiceActionDownload, "download", false, "Download SDK after apply (implies --apply)")
-	sdkServiceCmd.AddCommand(sdkAddServiceCmd)
-	sdkAddServiceCmd.Flags().StringVar(&sdkAddServiceVersion, "version", "", "Specific version to use for the service")
 
 	sdkCmd.AddCommand(sdkOperationCmd)
-	sdkOperationCmd.AddCommand(sdkAddOperationCmd)
-	sdkAddOperationCmd.Flags().BoolVarP(&sdkAddOperationInteractive, "interactive", "i", false, "Interactive operation selection")
-	sdkAddOperationCmd.Flags().BoolVar(&sdkAddOperationApply, "apply", false, "Apply changes after adding operation")
-	sdkAddOperationCmd.Flags().BoolVar(&sdkAddOperationDownload, "download", false, "Download SDK after apply (implies --apply)")
-	sdkOperationCmd.AddCommand(sdkRemoveOperationCmd)
+	sdkOperationCmd.Flags().BoolVarP(&sdkAddOperationInteractive, "interactive", "i", false, "Interactive operation selection")
+	sdkOperationCmd.Flags().BoolVar(&sdkAddOperationApply, "apply", false, "Apply changes after adding operation")
+	sdkOperationCmd.Flags().BoolVar(&sdkAddOperationDownload, "download", false, "Download SDK after apply (implies --apply)")
 
 	sdkCmd.AddCommand(sdkWebhookCmd)
-	sdkWebhookCmd.AddCommand(sdkAddWebhookCmd)
-	sdkAddWebhookCmd.Flags().BoolVarP(&sdkAddWebhookInteractive, "interactive", "i", false, "Interactive webhook selection")
-	sdkWebhookCmd.AddCommand(sdkRemoveWebhookCmd)
+	sdkWebhookCmd.Flags().BoolVarP(&sdkAddWebhookInteractive, "interactive", "i", false, "Interactive webhook selection")
 }

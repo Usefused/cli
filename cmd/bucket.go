@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	cliapi "github.com/Usefused/cli/internal/api"
@@ -9,76 +10,143 @@ import (
 )
 
 var bucketCmd = &cobra.Command{
-	Use:   "bucket",
+	Use:   "bucket <name|list> [create|remove]",
 	Short: "Manage workspace buckets",
-}
-
-var bucketCreateCmd = &cobra.Command{
-	Use:   "create <name>",
-	Short: "Create a new bucket",
-	Args:  cobra.ExactArgs(1),
-	RunE: WithTelemetry("cli.bucket.create", func(cmd *cobra.Command, args []string) error {
-		client, err := getAPIClient()
-		if err != nil {
-			return err
-		}
-		name := args[0]
-		err = client.CreateBucket(name)
-		if err != nil {
-			return err
-		}
-		fmt.Printf("Bucket '%s' created successfully.\n", name)
-		return nil
+	Args:  validateBucketArgs,
+	// Why: Write to OTEL to audit user/agent-triggered mutative execution.
+	RunE: WithTelemetry("cli.bucket", func(cmd *cobra.Command, args []string) error {
+		return runBucketAction(cmd, args)
 	}),
+	ValidArgsFunction: completeBucketArgs,
 }
 
-var bucketListCmd = &cobra.Command{
-	Use:   "list",
-	Short: "List workspace buckets",
-	Args:  cobra.NoArgs,
-	RunE: WithTelemetry("cli.bucket.list", func(cmd *cobra.Command, args []string) error {
+func validateBucketArgs(cmd *cobra.Command, args []string) error {
+	if len(args) == 0 {
+		return nil
+	}
+	if args[0] == "list" {
+		if len(args) > 1 {
+			return fmt.Errorf("list accepts no additional arguments")
+		}
+		return nil
+	}
+	if len(args) < 2 {
+		return fmt.Errorf("bucket requires an action (e.g. create, remove)")
+	}
+	action := args[1]
+	if action != "create" && action != "remove" {
+		return fmt.Errorf("unknown bucket action %q", action)
+	}
+	if len(args) > 2 {
+		return fmt.Errorf("too many arguments for %s action", action)
+	}
+	return nil
+}
+
+func runBucketAction(cmd *cobra.Command, args []string) error {
+	if len(args) == 0 {
+		return cmd.Help()
+	}
+	if args[0] == "list" {
+		return runBucketList(cmd, args)
+	}
+
+	name := args[0]
+	action := args[1]
+
+	switch action {
+	case "create":
+		return runBucketCreate(cmd, name)
+	case "remove":
+		return runBucketRemove(cmd, name)
+	default:
+		return fmt.Errorf("unknown action %s", action)
+	}
+}
+
+func runBucketCreate(cmd *cobra.Command, name string) error {
+	client, err := getAPIClient()
+	if err != nil {
+		return err
+	}
+	err = client.CreateBucket(name)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Bucket '%s' created successfully.\n", name)
+	return nil
+}
+
+func runBucketList(cmd *cobra.Command, args []string) error {
+	client, err := getAPIClient()
+	if err != nil {
+		return err
+	}
+	buckets, err := client.ListBuckets()
+	if err != nil {
+		return err
+	}
+	for _, b := range buckets {
+		defStr := ""
+		if b.IsDefault {
+			defStr = " (default)"
+		}
+		fmt.Printf("Name: %s%s, Created: %s\n", b.Name, defStr, b.CreatedAt.Format(time.RFC3339))
+	}
+	return nil
+}
+
+func runBucketRemove(cmd *cobra.Command, name string) error {
+	client, err := getAPIClient()
+	if err != nil {
+		return err
+	}
+	err = client.DeleteBucket(name)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Bucket '%s' removed successfully.\n", name)
+	return nil
+}
+
+func completeBucketArgs(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	if len(args) == 0 {
 		client, err := getAPIClient()
 		if err != nil {
-			return err
+			return nil, cobra.ShellCompDirectiveNoFileComp
 		}
 		buckets, err := client.ListBuckets()
 		if err != nil {
-			return err
+			return nil, cobra.ShellCompDirectiveNoFileComp
 		}
-		for _, b := range buckets {
-			defStr := ""
-			if b.IsDefault {
-				defStr = " (default)"
+		var candidates []string
+		if strings.HasPrefix("list", toComplete) {
+			candidates = append(candidates, "list")
+		}
+		for _, bucket := range buckets {
+			if strings.HasPrefix(bucket.Name, toComplete) {
+				candidates = append(candidates, bucket.Name)
 			}
-			fmt.Printf("Name: %s%s, Created: %s\n", b.Name, defStr, b.CreatedAt.Format(time.RFC3339))
 		}
-		return nil
-	}),
-}
-
-var bucketRemoveCmd = &cobra.Command{
-	Use:   "remove <name>",
-	Short: "Remove a workspace bucket",
-	Args:  cobra.ExactArgs(1),
-	RunE: WithTelemetry("cli.bucket.remove", func(cmd *cobra.Command, args []string) error {
-		client, err := getAPIClient()
-		if err != nil {
-			return err
+		return candidates, cobra.ShellCompDirectiveNoFileComp
+	}
+	if len(args) == 1 {
+		if args[0] == "list" {
+			return nil, cobra.ShellCompDirectiveNoFileComp
 		}
-		name := args[0]
-		err = client.DeleteBucket(name)
-		if err != nil {
-			return err
+		actions := []string{"create", "remove"}
+		var matches []string
+		for _, a := range actions {
+			if strings.HasPrefix(a, toComplete) {
+				matches = append(matches, a)
+			}
 		}
-		fmt.Printf("Bucket '%s' removed successfully.\n", name)
-		return nil
-	}),
+		return matches, cobra.ShellCompDirectiveNoFileComp
+	}
+	return nil, cobra.ShellCompDirectiveNoFileComp
 }
 
 func init() {
-	bucketCmd.AddCommand(bucketCreateCmd)
-	bucketCmd.AddCommand(bucketListCmd)
-	bucketCmd.AddCommand(bucketRemoveCmd)
 	RootCmd.AddCommand(bucketCmd)
 }
 

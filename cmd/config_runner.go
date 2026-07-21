@@ -61,6 +61,9 @@ func runConfigPlan(opts planOptions) error {
 	if len(configs) == 0 {
 		return fmt.Errorf("no %s configs found", configFilterName(opts.filter))
 	}
+	if !opts.jsonOut {
+		printResolvedConfigPaths(configs)
+	}
 	client, err := getAPIClient()
 	if err != nil {
 		return err
@@ -187,6 +190,7 @@ func runConfigApply(opts applyOptions) error {
 	if err := validateApplyOptions(opts, len(configs)); err != nil {
 		return err
 	}
+	printResolvedConfigPaths(configs)
 	client, err := getAPIClient()
 	if err != nil {
 		return err
@@ -227,10 +231,44 @@ func effectiveConfigFile() string {
 	if _, err := os.Stat(ConfigFile); err == nil {
 		return ConfigFile
 	}
+	if resolved := resolveFusedConfigShortcut(ConfigFile); resolved != "" {
+		return resolved
+	}
 	if _, err := os.Stat(".fused"); err == nil {
 		return ""
 	}
 	return ConfigFile
+}
+
+func resolveFusedConfigShortcut(path string) string {
+	if _, err := os.Stat(".fused"); err == nil {
+		candidates := fusedConfigShortcutCandidates(path)
+		for _, candidate := range candidates {
+			if _, err := os.Stat(candidate); err == nil {
+				return candidate
+			}
+		}
+	}
+	return ""
+}
+
+func fusedConfigShortcutCandidates(path string) []string {
+	name := filepath.Base(path)
+	// A short -f value is common during local work; resolve it into the
+	// declarative .fused layout so the CLI loads exactly what the user named.
+	return []string{
+		filepath.Join(".fused", name),
+		filepath.Join(".fused", "sdks", name),
+	}
+}
+
+func printResolvedConfigPaths(configs []*configfile.ParsedConfig) {
+	for _, cfg := range configs {
+		if cfg.Path == "" {
+			continue
+		}
+		fmt.Printf("Using config: %s\n", cfg.Path)
+	}
 }
 
 func receiptForApply(cfg *configfile.ParsedConfig, opts applyOptions) (planReceipt, error) {

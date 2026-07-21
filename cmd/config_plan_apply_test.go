@@ -312,6 +312,57 @@ services:
 	}
 }
 
+func TestSDKPlanResolvesFusedSDKShortcutAndPrintsConfigPath(t *testing.T) {
+	dir := t.TempDir()
+	writeSprintConfig(t, dir, ".fused/sdks/security.yaml", `
+kind: sdk
+version: 1
+name: security
+sdkVersion: "1.0.0"
+language: typescript
+target: sdk
+services:
+  okta:
+    operations: ["listLogEvents"]
+`)
+	writeSprintConfig(t, dir, ".fused/sdks/other.yaml", `
+kind: sdk
+version: 1
+name: other
+sdkVersion: "1.0.0"
+language: typescript
+target: sdk
+services:
+  github:
+    operations: ["listRepos"]
+`)
+	var planCount int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		planCount++
+		if r.URL.Path != "/sdk-config/plan" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		if body["config_key"] != "sdk:security" {
+			t.Fatalf("expected shortcut to select security only, got %#v", body["config_key"])
+		}
+		_, _ = w.Write([]byte(`{"plan_id":"plan-sdk","config_key":"sdk:security","source_hash":"` + body["source_hash"].(string) + `","base_generation":0,"summary":{}}`))
+	}))
+	defer server.Close()
+
+	out := runCommandInDirOutput(t, dir, server.URL, []string{"sdk", "plan", "-f", "security.yaml"})
+
+	if planCount != 1 {
+		t.Fatalf("expected one SDK plan request, got %d", planCount)
+	}
+	if !strings.Contains(out, "Using config: .fused/sdks/security.yaml") {
+		t.Fatalf("expected resolved config path in output, got %q", out)
+	}
+}
+
 func TestSDKAddAndRemoveOperationWriteYaml(t *testing.T) {
 	dir := t.TempDir()
 	path := writeSprintConfig(t, dir, "fused.yaml", `
@@ -663,10 +714,10 @@ func TestWorkspaceServiceActionCompletionAfterSlug(t *testing.T) {
 func TestWorkspaceServiceSlugHelpShowsReadableActions(t *testing.T) {
 	dir := t.TempDir()
 	out := runCommandInDirOutput(t, dir, "", []string{"workspace", "service", "github", "--help"})
-	if !strings.Contains(out, "service <service-slug> [versions|operations|webhooks]") {
+	if !strings.Contains(out, "service <service-slug> [versions|operations|webhooks|add|connect|remove|deprecate|version]") {
 		t.Fatalf("expected readable service use in help, got %q", out)
 	}
-	if !strings.Contains(out, "operations") || !strings.Contains(out, "versions") || !strings.Contains(out, "webhooks") {
+	if !strings.Contains(out, "operations") || !strings.Contains(out, "versions") || !strings.Contains(out, "webhooks") || !strings.Contains(out, "add") {
 		t.Fatalf("expected service actions in help, got %q", out)
 	}
 }
@@ -747,7 +798,7 @@ services:
 	}))
 	defer server.Close()
 
-	runCommandInDir(t, dir, server.URL, []string{"workspace", "service", "version", "remove", "okta", "2026-07-01", "-f", path, "--force"})
+	runCommandInDir(t, dir, server.URL, []string{"workspace", "service", "okta", "version", "remove", "2026-07-01", "-f", path, "--version-force"})
 
 	if got := strings.Join(paths, ","); got != "/workspace/config/plan,/config/plans/plan-workspace/actions,/workspace/config/apply" {
 		t.Fatalf("unexpected request order %s", got)
@@ -764,7 +815,7 @@ kind: workspace
 version: 1
 services: {}
 `)
-	runCommandInDir(t, dir, "", []string{"workspace", "service", "add", "okta", "-f", path, "--version", "2026-07-01"})
+	runCommandInDir(t, dir, "", []string{"workspace", "service", "okta", "add", "-f", path, "--add-version", "2026-07-01"})
 
 	after, err := os.ReadFile(path)
 	if err != nil {
@@ -819,7 +870,7 @@ services:
 	sdkInput = strings.NewReader("all\n")
 	t.Cleanup(func() { sdkInput = oldInput })
 
-	runCommandInDir(t, dir, server.URL, []string{"sdk", "operation", "add", "--interactive", "-f", path})
+	runCommandInDir(t, dir, server.URL, []string{"sdk", "service", "", "add", "--interactive", "-f", path})
 	if sawVersion != "2026-07-01" {
 		t.Fatalf("expected versioned endpoint search, got %q", sawVersion)
 	}
@@ -865,7 +916,7 @@ services:
 	sdkInput = strings.NewReader("2\n1-2\n")
 	t.Cleanup(func() { sdkInput = oldInput })
 
-	runCommandInDir(t, dir, server.URL, []string{"sdk", "operation", "add", "--interactive", "-f", path})
+	runCommandInDir(t, dir, server.URL, []string{"sdk", "service", "", "add", "--interactive", "-f", path})
 	after, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)

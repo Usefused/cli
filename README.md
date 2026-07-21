@@ -187,7 +187,7 @@ List Registry versions visible to the current account for a service slug. Suppor
 #### `service <service-slug> show`
 Show the base URL, servers, and supported authentication methods for a service.
 
-#### `secret set <service-slug> [value]`
+#### `secret <service-slug> set [value]`
 Set an authentication secret for a workspace service.
 If the service supports multiple authentication methods, use `--type` to specify the method, or use the `--interactive` flag to select from a menu.
 
@@ -203,25 +203,25 @@ If the service supports multiple authentication methods, use `--type` to specify
 #### `secret list`
 List all secrets stored in the workspace.
 
-#### `secret remove <service-slug> <key-name>`
+#### `secret <service-slug> remove <key-name>`
 Remove a workspace secret.
 
-#### `bucket create <name>`
+#### `bucket <name> create`
 Create a new bucket for storing overrides and secrets.
 
 #### `bucket list`
 List all buckets in the workspace, including their default status and creation dates.
 
-#### `bucket remove <name>`
+#### `bucket <name> remove`
 Remove a workspace bucket.
 
-#### `value set <bucket-id> <service-slug> <key-name> <location> <value>`
+#### `value <bucket-id> set <service-slug> <key-name> <location> <value>`
 Set a non-secret configuration value in a bucket.
 
-#### `value list <bucket-id>`
+#### `value <bucket-id> list`
 List all non-secret values stored in a bucket.
 
-#### `value remove <bucket-id> <service-slug> <key-name>`
+#### `value <bucket-id> remove <service-slug> <key-name>`
 Remove a non-secret value from a bucket.
 
 #### `sdk plan`
@@ -283,7 +283,7 @@ Add one or more operationIds to an existing service in an SDK configuration.
 #### `sdk service <service-slug> remove <operationId...>`
 Remove one or more operationIds from an existing service in an SDK configuration. Inherits global flags.
 
-#### `sdk operation add`
+#### `sdk operation <service-slug> add [operationId...]`
 Compatibility alias for adding operationIds to an existing service in an SDK configuration.
 
 | Argument | Short | Description | Default |
@@ -292,16 +292,16 @@ Compatibility alias for adding operationIds to an existing service in an SDK con
 | `--apply` | | Apply changes after adding operation | `false` |
 | `--download` | | Download SDK after apply (implies `--apply`) | `false` |
 
-#### `sdk operation remove`
+#### `sdk operation <service-slug> remove <operationId...>`
 Compatibility alias for removing operationIds from an existing service in an SDK configuration. Inherits global flags.
 
-#### `sdk token generate <sdk-id> <token-name>`
+#### `sdk token <sdk-id> generate <token-name>`
 Generate a new SDK token for authenticating SDK requests to the Engine.
 
-#### `sdk token list <sdk-id>`
+#### `sdk token <sdk-id> list`
 List all active tokens for an SDK.
 
-#### `sdk token revoke <sdk-id> <token-id>`
+#### `sdk token <sdk-id> revoke <token-name>`
 Revoke an SDK token.
 
 #### `workspace plan`
@@ -336,7 +336,7 @@ List workspace services along with their enabled versions.
 Check if a specific service is available in the workspace and output its enabled versions.
 Usage: `fused-cli workspace has <service_name>`
 
-#### `workspace service add`
+#### `workspace service <service-slug> add`
 Add a service to your Workspace configuration.
 
 | Argument | Short | Description | Default |
@@ -344,14 +344,14 @@ Add a service to your Workspace configuration.
 | `--version` | | Default version to add | `""` |
 | `--service-id` | | Optional service ID to store when editing a local config directly | `""` |
 
-#### `workspace service remove`
+#### `workspace service <service-slug> remove`
 Remove a service from your Workspace configuration.
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
 | `--force` | | Force removal when the generated plan action is applied | `false` |
 
-#### `workspace service deprecate`
+#### `workspace service <service-slug> deprecate`
 Deprecate a service in your Workspace configuration.
 
 | Argument | Short | Description | Default |
@@ -369,17 +369,17 @@ List operationIds available for an enabled workspace service.
 |----------|-------|-------------|---------|
 | `--version` | | Enabled workspace service version; omitted uses the latest enabled version | `""` |
 
-#### `workspace service version add`
+#### `workspace service <service-slug> version add <version>`
 Add an allowed version to a workspace service. Inherits global flags.
 
-#### `workspace service version remove`
+#### `workspace service <service-slug> version remove <version>`
 Remove a specific version of a service from your Workspace configuration.
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
 | `--force` | | Force removal | `false` |
 
-#### `workspace service version deprecate`
+#### `workspace service <service-slug> version deprecate <version>`
 Deprecate a specific version of a service in your Workspace configuration.
 
 | Argument | Short | Description | Default |

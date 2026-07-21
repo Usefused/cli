@@ -31,7 +31,7 @@ func TestWorkspaceServiceConnectStartsSession(t *testing.T) {
 	}))
 	defer server.Close()
 
-	out := runCommandInDirOutput(t, dir, server.URL, []string{"workspace", "service", "connect", "github", "--bucket", "prod", "--user-ref", "user_123"})
+	out := runCommandInDirOutput(t, dir, server.URL, []string{"workspace", "service", "github", "connect", "--bucket", "prod", "--user-ref", "user_123"})
 	if !sawConnect {
 		t.Fatal("expected connect session request")
 	}

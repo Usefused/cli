@@ -60,13 +60,13 @@ func TestApplyCmdSkeleton(t *testing.T) {
 }
 
 func TestWorkspaceServiceAddCmdSkeleton(t *testing.T) {
-	RootCmd.SetArgs([]string{"workspace", "service", "add", "okta", "--version", "2026-07-01"})
+	RootCmd.SetArgs([]string{"workspace", "service", "okta", "add", "--add-version", "2026-07-01"})
 
-	origRunE := workspaceServiceAddCmd.RunE
-	defer func() { workspaceServiceAddCmd.RunE = origRunE }()
+	origRunE := workspaceServiceCmd.RunE
+	defer func() { workspaceServiceCmd.RunE = origRunE }()
 
-	workspaceServiceAddCmd.RunE = func(cmd *cobra.Command, args []string) error {
-		if len(args) != 1 || args[0] != "okta" {
+	workspaceServiceCmd.RunE = func(cmd *cobra.Command, args []string) error {
+		if len(args) != 2 || args[0] != "okta" || args[1] != "add" && args[1] != "deprecate" {
 			t.Errorf("expected arg 'okta', got %v", args)
 		}
 		if workspaceServiceAddVersion != "2026-07-01" {
@@ -103,13 +103,13 @@ func TestWorkspaceServiceVersionsCmdSkeleton(t *testing.T) {
 }
 
 func TestSdkAddOperationCmdSkeleton(t *testing.T) {
-	RootCmd.SetArgs([]string{"sdk", "operation", "add", "okta", "listLogEvents", "--interactive", "--apply", "--download"})
+	RootCmd.SetArgs([]string{"sdk", "operation", "okta", "add", "listLogEvents", "--interactive", "--apply", "--download"})
 
-	origRunE := sdkAddOperationCmd.RunE
-	defer func() { sdkAddOperationCmd.RunE = origRunE }()
+	origRunE := sdkOperationCmd.RunE
+	defer func() { sdkOperationCmd.RunE = origRunE }()
 
-	sdkAddOperationCmd.RunE = func(cmd *cobra.Command, args []string) error {
-		if len(args) != 2 || args[0] != "okta" || args[1] != "listLogEvents" {
+	sdkOperationCmd.RunE = func(cmd *cobra.Command, args []string) error {
+		if len(args) != 3 || args[0] != "okta" || args[1] != "add" || args[2] != "listLogEvents" {
 			t.Errorf("expected args 'okta listLogEvents', got %v", args)
 		}
 		if !sdkAddOperationInteractive {
@@ -161,13 +161,13 @@ func TestSdkServiceDynamicAddCmdSkeleton(t *testing.T) {
 }
 
 func TestWorkspaceServiceDeprecateCmdSkeleton(t *testing.T) {
-	RootCmd.SetArgs([]string{"workspace", "service", "deprecate", "okta", "--at", "2026-10-01", "--reason", "migration"})
+	RootCmd.SetArgs([]string{"workspace", "service", "okta", "deprecate", "--at", "2026-10-01", "--reason", "migration"})
 
-	origRunE := workspaceServiceDeprecateCmd.RunE
-	defer func() { workspaceServiceDeprecateCmd.RunE = origRunE }()
+	origRunE := workspaceServiceCmd.RunE
+	defer func() { workspaceServiceCmd.RunE = origRunE }()
 
-	workspaceServiceDeprecateCmd.RunE = func(cmd *cobra.Command, args []string) error {
-		if len(args) != 1 || args[0] != "okta" {
+	workspaceServiceCmd.RunE = func(cmd *cobra.Command, args []string) error {
+		if len(args) != 2 || args[0] != "okta" || args[1] != "add" && args[1] != "deprecate" {
 			t.Errorf("expected arg 'okta', got %v", args)
 		}
 		if workspaceServiceDeprecateAt != "2026-10-01" {
