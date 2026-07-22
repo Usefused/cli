@@ -289,12 +289,74 @@ type ConnectSessionStartResponse struct {
 	ExpiresAt    string `json:"expires_at"`
 }
 
+type ConnectionResource struct {
+	ID                 string   `json:"id"`
+	ConnectionID       string   `json:"connection_id"`
+	ServiceID          string   `json:"service_id"`
+	ProviderResourceID string   `json:"provider_resource_id"`
+	ResourceType       string   `json:"resource_type"`
+	DisplayName        string   `json:"display_name"`
+	BaseURL            string   `json:"base_url"`
+	Scopes             []string `json:"scopes"`
+	IsDefault          bool     `json:"is_default"`
+	CreatedAt          string   `json:"created_at"`
+	UpdatedAt          string   `json:"updated_at"`
+}
+
+// ListConnectionResources reads the already-filtered Engine resource list;
+// provider discovery bodies and token material never reach the CLI.
+func (c *Client) ListConnectionResources(connectionID string) ([]ConnectionResource, error) {
+	query := `query ConnectionResources($connectionId: String!) {
+		connectionResources(connection_id: $connectionId) {
+			id connection_id service_id provider_resource_id resource_type display_name base_url scopes is_default created_at updated_at
+		}
+	}`
+	var response struct {
+		Resources []ConnectionResource `json:"connectionResources"`
+	}
+	err := c.EngineGraphQL(query, map[string]interface{}{"connectionId": connectionID}, &response)
+	return response.Resources, err
+}
+
+// SetDefaultConnectionResource uses the audited GraphQL mutation shared with
+// UI so all user-triggered default changes follow one ownership path.
+func (c *Client) SetDefaultConnectionResource(connectionID, resourceID string) (*ConnectionResource, error) {
+	query := `mutation SetDefaultConnectionResource($connectionId: String!, $resourceId: String!) {
+		setDefaultConnectionResource(connection_id: $connectionId, resource_id: $resourceId) {
+			id connection_id service_id provider_resource_id resource_type display_name base_url scopes is_default created_at updated_at
+		}
+	}`
+	var response struct {
+		Resource ConnectionResource `json:"setDefaultConnectionResource"`
+	}
+	err := c.EngineGraphQL(query, map[string]interface{}{"connectionId": connectionID, "resourceId": resourceID}, &response)
+	if err != nil {
+		return nil, err
+	}
+	return &response.Resource, nil
+}
+
+// RediscoverConnectionResources invokes the audited Engine lifecycle action and
+// returns only the reconciled non-secret resource projection.
+func (c *Client) RediscoverConnectionResources(connectionID string) ([]ConnectionResource, error) {
+	query := `mutation RediscoverConnectionResources($connectionId: String!) {
+		rediscoverConnectionResources(connection_id: $connectionId) {
+			id connection_id service_id provider_resource_id resource_type display_name base_url scopes is_default created_at updated_at
+		}
+	}`
+	var response struct {
+		Resources []ConnectionResource `json:"rediscoverConnectionResources"`
+	}
+	err := c.EngineGraphQL(query, map[string]interface{}{"connectionId": connectionID}, &response)
+	return response.Resources, err
+}
+
 // StartConnectSession calls the Engine's bucket-scoped connect route so CLI
 // onboarding uses the same ownership checks as runtime credential resolution.
-func (c *Client) StartConnectSession(bucketID, serviceID, endUserRef, createdBySDKID string) (*ConnectSessionStartResponse, error) {
+func (c *Client) StartConnectSession(bucketID, serviceID, endUserRef, createdBySDKID string, resourceInput map[string]string) (*ConnectSessionStartResponse, error) {
 	query := `
-		mutation StartConnectSession($bucketId: String!, $serviceId: String!, $endUserRef: String!, $createdBySdkId: String) {
-			startConnectSession(bucket_id: $bucketId, service_id: $serviceId, end_user_ref: $endUserRef, created_by_sdk_id: $createdBySdkId) {
+		mutation StartConnectSession($bucketId: String!, $serviceId: String!, $endUserRef: String!, $createdBySdkId: String, $resourceInput: EngineJSON) {
+			startConnectSession(bucket_id: $bucketId, service_id: $serviceId, end_user_ref: $endUserRef, created_by_sdk_id: $createdBySdkId, resource_input: $resourceInput) {
 				authorize_url
 				expires_at
 			}
@@ -307,6 +369,9 @@ func (c *Client) StartConnectSession(bucketID, serviceID, endUserRef, createdByS
 	}
 	if strings.TrimSpace(createdBySDKID) != "" {
 		vars["createdBySdkId"] = createdBySDKID
+	}
+	if len(resourceInput) > 0 {
+		vars["resourceInput"] = resourceInput
 	}
 
 	var resp struct {
@@ -1029,8 +1094,9 @@ type ConfigApplyResponse struct {
 }
 
 type ConnectMaterial struct {
-	ClientID     string `json:"client_id"`
-	ClientSecret string `json:"client_secret"`
+	ClientID      string            `json:"client_id"`
+	ClientSecret  string            `json:"client_secret"`
+	BindingValues map[string]string `json:"binding_values,omitempty"`
 }
 
 type AuthMaterial struct {

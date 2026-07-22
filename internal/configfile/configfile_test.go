@@ -196,6 +196,50 @@ services:
 	}
 }
 
+func TestWorkspaceConnectMaterialsResolvesProfileBindingEnvOutOfBand(t *testing.T) {
+	t.Setenv("FUSED_TEST_CLIENT_ID", "resolved-client")
+	t.Setenv("FUSED_TEST_CLIENT_SECRET", "resolved-secret")
+	t.Setenv("SHOPIFY_API_VERSION", "2026-07")
+	path := writeFile(t, t.TempDir(), "workspace.yaml", `
+kind: workspace
+version: 1
+services:
+  shopify:
+    service_id: "00000000-0000-0000-0000-000000000001"
+    versions: ["2026-07-01"]
+    runtime_config:
+      connect:
+        bucket: prod
+        auth_type: oauth
+        client_id: $FUSED_TEST_CLIENT_ID
+        client_secret: $FUSED_TEST_CLIENT_SECRET
+        redirect_uri: https://engine.example.com/connect/callback
+        profile:
+          auth_type: oauth
+          resource_input:
+            fields: [{name: shop, required: true}]
+            base_url_template: "https://{shop}.myshopify.com"
+            resource_type: shop
+            allowed_hosts: ["*.myshopify.com"]
+          bindings:
+            - value: $SHOPIFY_API_VERSION
+              location: header
+              name: X-Shopify-API-Version
+              mode: force
+`)
+	parsed, err := configfile.ParseFile(path)
+	if err != nil {
+		t.Fatalf("ParseFile failed: %v", err)
+	}
+	materials, err := parsed.WorkspaceConnectMaterials()
+	if err != nil {
+		t.Fatalf("WorkspaceConnectMaterials: %v", err)
+	}
+	if materials["shopify"].BindingValues["SHOPIFY_API_VERSION"] != "2026-07" {
+		t.Fatalf("profile binding env was not handed off: %#v", materials["shopify"])
+	}
+}
+
 func TestWorkspaceConnectMaterials_RejectsOAuth2AuthType(t *testing.T) {
 	path := writeFile(t, t.TempDir(), "workspace.yaml", `
 kind: workspace

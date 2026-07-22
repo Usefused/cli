@@ -39,7 +39,7 @@ func TestWorkspaceServiceConnectStartsSession(t *testing.T) {
 	}))
 	defer server.Close()
 
-	out := runCommandInDirOutput(t, dir, server.URL, []string{"workspace", "service", "github", "connect", "--bucket", "prod", "--user-ref", "user_123"})
+	out := runCommandInDirOutput(t, dir, server.URL, []string{"workspace", "service", "github", "connect", "--bucket", "prod", "--user-ref", "user_123", "--resource-input", "subdomain=acme"})
 	if !sawConnect {
 		t.Fatal("expected connect session request")
 	}
@@ -54,5 +54,21 @@ func assertConnectSessionGraphQLRequest(t *testing.T, body testGraphQLBody) {
 	t.Helper()
 	if body.Variables["bucketId"] != "bucket-prod" || body.Variables["serviceId"] != "svc-github" || body.Variables["endUserRef"] != "user_123" {
 		t.Fatalf("unexpected connect session variables: %#v", body.Variables)
+	}
+	resourceInput, ok := body.Variables["resourceInput"].(map[string]interface{})
+	if !ok || resourceInput["subdomain"] != "acme" {
+		t.Fatalf("unexpected resource input: %#v", body.Variables["resourceInput"])
+	}
+}
+
+// TestParseResourceInputFlags rejects malformed values before a connect session
+// is created, so untrusted tenant input never becomes callback state.
+func TestParseResourceInputFlags(t *testing.T) {
+	values, err := parseResourceInputFlags([]string{"subdomain=acme", "region=eu"})
+	if err != nil || values["subdomain"] != "acme" || values["region"] != "eu" {
+		t.Fatalf("unexpected parsed inputs: values=%#v err=%v", values, err)
+	}
+	if _, err := parseResourceInputFlags([]string{"missing-separator"}); err == nil {
+		t.Fatal("expected malformed resource input to fail")
 	}
 }

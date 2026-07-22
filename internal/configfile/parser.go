@@ -397,7 +397,29 @@ func workspaceServiceConnectMaterial(name string, svc WorkspaceService) (Connect
 	if err := resolveConnectEnv(name, &connect); err != nil {
 		return ConnectMaterial{}, false, err
 	}
-	return ConnectMaterial{ClientID: connect.ClientID, ClientSecret: connect.ClientSecret}, true, nil
+	bindingValues, err := workspaceProfileBindingValues(name, connect.Profile)
+	if err != nil {
+		return ConnectMaterial{}, false, err
+	}
+	return ConnectMaterial{ClientID: connect.ClientID, ClientSecret: connect.ClientSecret, BindingValues: bindingValues}, true, nil
+}
+
+func workspaceProfileBindingValues(serviceName string, profile map[string]interface{}) (map[string]string, error) {
+	bindings, _ := profile["bindings"].([]interface{})
+	values := map[string]string{}
+	for _, raw := range bindings {
+		binding, _ := raw.(map[string]interface{})
+		name := envRefName(fmt.Sprint(binding["value"]))
+		if name == "" {
+			continue
+		}
+		value, ok := os.LookupEnv(name)
+		if !ok {
+			return nil, fmt.Errorf("workspace service %q profile binding environment variable %s is not set", serviceName, name)
+		}
+		values[name] = value
+	}
+	return values, nil
 }
 
 func resolveConnectEnv(name string, connect *ConnectConfig) error {

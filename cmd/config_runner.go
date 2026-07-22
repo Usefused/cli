@@ -353,7 +353,7 @@ func workspaceConnectMaterials(cfg *configfile.ParsedConfig) (map[string]api.Con
 	}
 	out := make(map[string]api.ConnectMaterial, len(materials))
 	for key, material := range materials {
-		out[key] = api.ConnectMaterial{ClientID: material.ClientID, ClientSecret: material.ClientSecret}
+		out[key] = api.ConnectMaterial{ClientID: material.ClientID, ClientSecret: material.ClientSecret, BindingValues: material.BindingValues}
 	}
 	return out, nil
 }

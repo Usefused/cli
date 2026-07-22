@@ -69,19 +69,22 @@ type AuthMaterial struct {
 }
 
 type ConnectConfig struct {
-	Bucket          string `yaml:"bucket,omitempty" json:"bucket,omitempty"`
-	AuthType        string `yaml:"auth_type" json:"auth_type"`
-	Enabled         *bool  `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	ClientID        string `yaml:"client_id,omitempty" json:"client_id,omitempty"`
-	ClientIDEnv     string `yaml:"client_id_env,omitempty" json:"client_id_env,omitempty"`
-	ClientSecret    string `yaml:"client_secret,omitempty" json:"client_secret,omitempty"`
-	ClientSecretEnv string `yaml:"client_secret_env,omitempty" json:"client_secret_env,omitempty"`
-	RedirectURI     string `yaml:"redirect_uri" json:"redirect_uri"`
+	Bucket          string                 `yaml:"bucket,omitempty" json:"bucket,omitempty"`
+	AuthType        string                 `yaml:"auth_type" json:"auth_type"`
+	Enabled         *bool                  `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	ClientID        string                 `yaml:"client_id,omitempty" json:"client_id,omitempty"`
+	ClientIDEnv     string                 `yaml:"client_id_env,omitempty" json:"client_id_env,omitempty"`
+	ClientSecret    string                 `yaml:"client_secret,omitempty" json:"client_secret,omitempty"`
+	ClientSecretEnv string                 `yaml:"client_secret_env,omitempty" json:"client_secret_env,omitempty"`
+	RedirectURI     string                 `yaml:"redirect_uri" json:"redirect_uri"`
+	Profile         map[string]interface{} `yaml:"profile,omitempty" json:"profile,omitempty"`
+	ProfileID       string                 `yaml:"profile_id,omitempty" json:"profile_id,omitempty"`
 }
 
 type ConnectMaterial struct {
-	ClientID     string
-	ClientSecret string
+	ClientID      string
+	ClientSecret  string
+	BindingValues map[string]string
 }
 
 // WebhookConfig is one named webhook ingress registration for a service. The

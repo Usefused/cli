@@ -513,6 +513,7 @@ func runWorkspaceServiceWebhooks(cmd *cobra.Command, serviceSlug string) error {
 var workspaceServiceConnectBucket string
 var workspaceServiceConnectUserRef string
 var workspaceServiceConnectSDKID string
+var workspaceServiceConnectResourceInput []string
 
 // runWorkspaceServiceConnect starts auth from the workspace service boundary
 // so connected credentials attach to the same bucket/scope runtime will use.
@@ -538,12 +539,30 @@ func runWorkspaceServiceConnect(cmd *cobra.Command, serviceSlug string) error {
 	if err != nil {
 		return err
 	}
-	session, err := client.StartConnectSession(bucketID, serviceID, workspaceServiceConnectUserRef, workspaceServiceConnectSDKID)
+	resourceInput, err := parseResourceInputFlags(workspaceServiceConnectResourceInput)
+	if err != nil {
+		return err
+	}
+	session, err := client.StartConnectSession(bucketID, serviceID, workspaceServiceConnectUserRef, workspaceServiceConnectSDKID, resourceInput)
 	if err != nil {
 		return err
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "%s\n", session.AuthorizeURL)
 	return nil
+}
+
+// parseResourceInputFlags converts repeatable key=value flags into the map the
+// Engine validates against the service's declared resource_input fields.
+func parseResourceInputFlags(flags []string) (map[string]string, error) {
+	values := make(map[string]string, len(flags))
+	for _, flag := range flags {
+		key, value, ok := strings.Cut(flag, "=")
+		if !ok || strings.TrimSpace(key) == "" {
+			return nil, fmt.Errorf("resource input must use key=value")
+		}
+		values[strings.TrimSpace(key)] = strings.TrimSpace(value)
+	}
+	return values, nil
 }
 
 // connectBucketName keeps the CLI default aligned with config defaults while
@@ -775,6 +794,7 @@ func init() {
 	workspaceServiceCmd.Flags().StringVar(&workspaceServiceConnectBucket, "bucket", "default", "Workspace credential bucket name or ID")
 	workspaceServiceCmd.Flags().StringVar(&workspaceServiceConnectUserRef, "user-ref", "", "Stable user reference to attach to the connected provider account")
 	workspaceServiceCmd.Flags().StringVar(&workspaceServiceConnectSDKID, "sdk-id", "", "Optional SDK UUID for audit attribution")
+	workspaceServiceCmd.Flags().StringSliceVar(&workspaceServiceConnectResourceInput, "resource-input", nil, "Tenant input as key=value; repeat for multiple declared fields")
 
 	workspaceServiceCmd.Flags().BoolVar(&workspaceServiceRemoveForce, "force", false, "Force removal when the generated plan action is applied")
 
