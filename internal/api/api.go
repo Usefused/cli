@@ -1094,10 +1094,13 @@ type AppliedWebhookConfig struct {
 	Slug       string `json:"slug"`
 }
 
+// PlanSDKConfig sends native SDK desired state through the shared artifact
+// plan client while preserving the SDK-specific Engine route.
 func (c *Client) PlanSDKConfig(sourceHash, configKey string, config json.RawMessage) (*SDKConfigPlanResponse, error) {
 	return c.planArtifactConfig("sdk", sourceHash, configKey, config)
 }
 
+// PlanMCPConfig plans an Engine runtime without invoking Registry generation.
 func (c *Client) PlanMCPConfig(sourceHash, configKey string, config json.RawMessage) (*SDKConfigPlanResponse, error) {
 	return c.planArtifactConfig("mcp", sourceHash, configKey, config)
 }
@@ -1233,6 +1236,8 @@ func (c *Client) ApplySDKConfig(planID, sourceHash string) (*SDKConfigApplyRespo
 	return &out, nil
 }
 
+// ApplyMCPConfig activates the resolved Engine scope and returns its plaintext
+// execution token only when the runtime is first created.
 func (c *Client) ApplyMCPConfig(planID, sourceHash string) (*MCPConfigApplyResponse, error) {
 	reqBody := map[string]interface{}{"plan_id": planID, "source_hash": sourceHash}
 	body, err := json.Marshal(reqBody)

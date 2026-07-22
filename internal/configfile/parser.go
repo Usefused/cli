@@ -157,6 +157,8 @@ func Parse(data []byte, sourcePath string) (*ParsedConfig, error) {
 	return parsed, nil
 }
 
+// parseTypedConfig keeps kind-specific decoding explicit so retired fields
+// cannot leak between workspace, SDK, and MCP documents.
 func parseTypedConfig(data []byte, kind ConfigKind, parsed *ParsedConfig) error {
 	switch kind {
 	case KindWorkspace:
@@ -213,8 +215,12 @@ func validateSDKConfig(cfg *SDKConfig) error {
 	return nil
 }
 
+// validateMCPConfig reuses the artifact rules while preserving MCP-specific
+// language and webhook restrictions.
 func validateMCPConfig(cfg *MCPConfig) error { return validateArtifactConfig(cfg, KindMCP) }
 
+// validateArtifactConfig centralizes shared identity, selection, and auth
+// policy checks so SDK and MCP files cannot drift.
 func validateArtifactConfig(cfg *ArtifactConfig, kind ConfigKind) error {
 	if cfg.Name == "" {
 		return fmt.Errorf("%s config requires a name", kind)
@@ -228,9 +234,15 @@ func validateArtifactConfig(cfg *ArtifactConfig, kind ConfigKind) error {
 	if kind == KindMCP && strings.TrimSpace(cfg.Language) != "" {
 		return fmt.Errorf("mcp config must not set language")
 	}
+	if len(cfg.Services) == 0 {
+		return fmt.Errorf("%s config requires at least one service", kind)
+	}
 	for svcName, svc := range cfg.Services {
 		if err := validateSDKService(svcName, svc); err != nil {
 			return err
+		}
+		if kind == KindMCP && len(svc.Webhooks) > 0 {
+			return fmt.Errorf("mcp service %q cannot select webhooks", svcName)
 		}
 	}
 	return nil
@@ -238,14 +250,19 @@ func validateArtifactConfig(cfg *ArtifactConfig, kind ConfigKind) error {
 
 var artifactVersionPattern = regexp.MustCompile(`^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$`)
 
+// isSDKLanguage limits package generation to emitters the Registry owns.
 func isSDKLanguage(language string) bool {
 	return language == "typescript" || language == "go" || language == "python"
 }
 
+// artifactConfigKey includes version because artifact releases are immutable
+// desired-state identities rather than revisions of one mutable row.
 func artifactConfigKey(kind ConfigKind, name, version string) string {
 	return fmt.Sprintf("%s:%s:%s", kind, name, version)
 }
 
+// strictUnmarshal makes misspelled config fields actionable instead of
+// silently dropping security or selection policy.
 func strictUnmarshal(data []byte, target any) error {
 	decoder := yaml.NewDecoder(strings.NewReader(string(data)))
 	decoder.KnownFields(true)
@@ -253,9 +270,6 @@ func strictUnmarshal(data []byte, target any) error {
 }
 
 func validateSDKService(name string, svc SDKService) error {
-	if len(svc.LegacyEndpoints) > 0 {
-		return fmt.Errorf("sdk service %q uses legacy endpoints; use operations instead", name)
-	}
 	if len(svc.Operations) == 0 && !svc.SelectAll {
 		return fmt.Errorf("sdk service %q requires at least one operation", name)
 	}
@@ -268,6 +282,8 @@ func validateSDKService(name string, svc SDKService) error {
 	return nil
 }
 
+// isArtifactAuthType mirrors Engine validation using the public Fused auth
+// vocabulary rather than raw OpenAPI scheme shapes.
 func isArtifactAuthType(value string) bool {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "basic", "bearer", "api_key", "oauth", "oidc", "mtls":

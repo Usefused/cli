@@ -134,13 +134,12 @@ type MCPConfig = ArtifactConfig
 // ArtifactService represents the requested immutable provider version and
 // selected surface shared by SDK and MCP artifact declarations.
 type ArtifactService struct {
-	Version         string           `yaml:"version" json:"version"`
-	Operations      []string         `yaml:"operations" json:"operations"`
-	Webhooks        []string         `yaml:"webhooks,omitempty" json:"webhooks,omitempty"`
-	SelectAll       bool             `yaml:"select_all,omitempty" json:"select_all,omitempty"`
-	Auth            *ArtifactAuth    `yaml:"auth,omitempty" json:"auth,omitempty"`
-	Connect         *ArtifactConnect `yaml:"connect,omitempty" json:"connect,omitempty"`
-	LegacyEndpoints []string         `yaml:"endpoints,omitempty" json:"-"`
+	Version    string           `yaml:"version" json:"version"`
+	Operations []string         `yaml:"operations" json:"operations"`
+	Webhooks   []string         `yaml:"webhooks,omitempty" json:"webhooks,omitempty"`
+	SelectAll  bool             `yaml:"select_all,omitempty" json:"select_all,omitempty"`
+	Auth       *ArtifactAuth    `yaml:"auth,omitempty" json:"auth,omitempty"`
+	Connect    *ArtifactConnect `yaml:"connect,omitempty" json:"connect,omitempty"`
 }
 
 // ArtifactAuth selects a Registry-declared scheme; credential material stays
@@ -150,6 +149,8 @@ type ArtifactAuth struct {
 	Name string `yaml:"name,omitempty" json:"name,omitempty"`
 }
 
+// ArtifactConnect narrows OAuth/OIDC consent without carrying tokens or
+// provider application secrets in source control.
 type ArtifactConnect struct {
 	Scopes []string `yaml:"scopes,omitempty" json:"scopes,omitempty"`
 }
