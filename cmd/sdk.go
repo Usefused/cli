@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"text/tabwriter"
 
 	"github.com/spf13/cobra"
 
@@ -184,9 +185,12 @@ func runSDKList(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
+	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 8, 2, ' ', 0)
+	fmt.Fprintln(w, "NAME\tVERSION\tTARGET_TYPE\tLANGUAGE\tID")
 	for _, sdk := range page.Items {
-		fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\t%s\n", sdk.Name, sdk.Version, sdk.TargetType, sdk.TargetLanguage, sdk.ID)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", sdk.Name, sdk.Version, sdk.TargetType, sdk.TargetLanguage, sdk.ID)
 	}
+	w.Flush()
 	printPageSummary(cmd.OutOrStdout(), page.Total, sdkListFlags)
 	return nil
 }
@@ -213,9 +217,12 @@ func runSDKServices(cmd *cobra.Command, target sdkDownloadTarget) error {
 	if err != nil {
 		return err
 	}
+	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 8, 2, ' ', 0)
+	fmt.Fprintln(w, "SERVICE\tSERVICE_ID\tVERSION\tSELECT_ALL\tENDPOINTS\tWEBHOOKS")
 	for _, service := range sdk.DetailedSelections {
-		fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\tversion:%s\tselect_all:%t\tendpoints:%d\twebhooks:%d\n", displaySDKServiceSlug(service), service.ServiceID, service.ServiceVersionName, service.SelectAll, len(service.EndpointIDs), len(service.WebhookIDs))
+		fmt.Fprintf(w, "%s\t%s\t%s\t%t\t%d\t%d\n", displaySDKServiceSlug(service), service.ServiceID, service.ServiceVersionName, service.SelectAll, len(service.EndpointIDs), len(service.WebhookIDs))
 	}
+	w.Flush()
 	return nil
 }
 
@@ -228,9 +235,12 @@ func runSDKBuckets(cmd *cobra.Command, target sdkDownloadTarget) error {
 	if err != nil {
 		return err
 	}
+	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 8, 2, ' ', 0)
+	fmt.Fprintln(w, "NAME\tID\tDEFAULT")
 	for _, bucket := range buckets {
-		fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\tdefault:%t\n", bucket.Name, bucket.ID, bucket.IsDefault)
+		fmt.Fprintf(w, "%s\t%s\t%t\n", bucket.Name, bucket.ID, bucket.IsDefault)
 	}
+	w.Flush()
 	return nil
 }
 
@@ -243,9 +253,12 @@ func runSDKTokens(cmd *cobra.Command, target sdkDownloadTarget) error {
 	if err != nil {
 		return err
 	}
+	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 8, 2, ' ', 0)
+	fmt.Fprintln(w, "NAME\tID\tCREATED_AT")
 	for _, token := range tokens {
-		fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", token.Name, token.ID, token.CreatedAt.Format("2006-01-02 15:04:05"))
+		fmt.Fprintf(w, "%s\t%s\t%s\n", token.Name, token.ID, token.CreatedAt.Format("2006-01-02 15:04:05"))
 	}
+	w.Flush()
 	return nil
 }
 

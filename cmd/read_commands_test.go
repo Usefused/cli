@@ -36,7 +36,7 @@ func TestBucketListUsesPagedEngineGraphQL(t *testing.T) {
 	if sawVariables["limit"] != float64(1) || sawVariables["offset"] != float64(1) {
 		t.Fatalf("unexpected variables: %#v", sawVariables)
 	}
-	if !strings.Contains(out, "prod (default)") || !strings.Contains(out, "secrets:3") {
+	if !strings.Contains(out, "prod (default)") || !strings.Contains(out, "bucket-1") || !strings.Contains(out, "NAME") {
 		t.Fatalf("unexpected output: %q", out)
 	}
 }

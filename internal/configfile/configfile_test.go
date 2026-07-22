@@ -196,6 +196,8 @@ services:
 	}
 }
 
+// TestWorkspaceConnectMaterialsResolvesProfileBindingEnvOutOfBand proves plan
+// data keeps the env reference while apply receives the local resolved value.
 func TestWorkspaceConnectMaterialsResolvesProfileBindingEnvOutOfBand(t *testing.T) {
 	t.Setenv("FUSED_TEST_CLIENT_ID", "resolved-client")
 	t.Setenv("FUSED_TEST_CLIENT_SECRET", "resolved-secret")
@@ -237,6 +239,51 @@ services:
 	}
 	if materials["shopify"].BindingValues["SHOPIFY_API_VERSION"] != "2026-07" {
 		t.Fatalf("profile binding env was not handed off: %#v", materials["shopify"])
+	}
+}
+
+// TestWorkspaceConnectProfileDetachRequiresExclusiveIntent protects bucket
+// routing from a config that simultaneously requests replacement and removal.
+func TestWorkspaceConnectProfileDetachRequiresExclusiveIntent(t *testing.T) {
+	dir := t.TempDir()
+	valid := writeFile(t, dir, "detach.yaml", `
+kind: workspace
+version: 1
+services:
+  jira:
+    service_id: "00000000-0000-0000-0000-000000000001"
+    versions: ["2026-07-01"]
+    runtime_config:
+      connect:
+        bucket: customers
+        auth_type: oauth
+        client_id: $JIRA_CLIENT_ID
+        client_secret: $JIRA_CLIENT_SECRET
+        redirect_uri: https://engine.example.com/workspace/connect/callback
+        profile_mode: detach
+`)
+	if _, err := configfile.ParseFile(valid); err != nil {
+		t.Fatalf("valid profile detach: %v", err)
+	}
+	conflict := writeFile(t, dir, "detach-conflict.yaml", `
+kind: workspace
+version: 1
+services:
+  jira:
+    service_id: "00000000-0000-0000-0000-000000000001"
+    versions: ["2026-07-01"]
+    runtime_config:
+      connect:
+        bucket: customers
+        auth_type: oauth
+        client_id: $JIRA_CLIENT_ID
+        client_secret: $JIRA_CLIENT_SECRET
+        redirect_uri: https://engine.example.com/workspace/connect/callback
+        profile_id: "00000000-0000-0000-0000-000000000002"
+        profile_mode: detach
+`)
+	if _, err := configfile.ParseFile(conflict); err == nil {
+		t.Fatal("profile detach with profile_id was accepted")
 	}
 }
 

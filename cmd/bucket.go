@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"strings"
+	"text/tabwriter"
 	"time"
 
 	cliapi "github.com/Usefused/cli/internal/api"
@@ -104,13 +105,16 @@ func runBucketList(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 8, 2, ' ', 0)
+	fmt.Fprintln(w, "NAME\tID\tSECRETS\tVALUES")
 	for _, b := range page.Items {
 		defStr := ""
 		if b.IsDefault {
 			defStr = " (default)"
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "%s%s\t%s\tsecrets:%d\tvalues:%d\n", b.Name, defStr, b.ID, b.SecretCount, b.ValueCount)
+		fmt.Fprintf(w, "%s%s\t%s\t%d\t%d\n", b.Name, defStr, b.ID, b.SecretCount, b.ValueCount)
 	}
+	w.Flush()
 	printPageSummary(cmd.OutOrStdout(), page.Total, bucketListFlags)
 	return nil
 }
@@ -150,9 +154,12 @@ func runBucketServices(cmd *cobra.Command, nameOrID string) error {
 	if err != nil {
 		return err
 	}
+	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 8, 2, ' ', 0)
+	fmt.Fprintln(w, "SERVICE_NAME\tSERVICE_ID\tSECRETS\tVALUES\tCONNECT_CONFIGS\tUSERS")
 	for _, service := range page.Items {
-		fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\tsecrets:%d\tvalues:%d\tconnect:%d\tusers:%d\n", service.ServiceName, service.ServiceID, service.SecretCount, service.ValueCount, service.ConnectConfigCount, service.ConnectedUserCount)
+		fmt.Fprintf(w, "%s\t%s\t%d\t%d\t%d\t%d\n", service.ServiceName, service.ServiceID, service.SecretCount, service.ValueCount, service.ConnectConfigCount, service.ConnectedUserCount)
 	}
+	w.Flush()
 	printPageSummary(cmd.OutOrStdout(), page.Total, bucketListFlags)
 	return nil
 }
@@ -166,9 +173,12 @@ func runBucketSecrets(cmd *cobra.Command, nameOrID string) error {
 	if err != nil {
 		return err
 	}
+	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 8, 2, ' ', 0)
+	fmt.Fprintln(w, "SERVICE_ID\tKEY_NAME\tTYPE\tEXPIRES")
 	for _, secret := range page.Items {
-		fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\texpires:%s\n", secret.ServiceID, secret.KeyName, secret.CredentialType, formatOptionalTime(secret.ExpiresAt))
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", secret.ServiceID, secret.KeyName, secret.CredentialType, formatOptionalTime(secret.ExpiresAt))
 	}
+	w.Flush()
 	printPageSummary(cmd.OutOrStdout(), page.Total, bucketListFlags)
 	return nil
 }
@@ -182,9 +192,12 @@ func runBucketValues(cmd *cobra.Command, nameOrID string) error {
 	if err != nil {
 		return err
 	}
+	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 8, 2, ' ', 0)
+	fmt.Fprintln(w, "SERVICE_ID\tKEY_NAME\tLOCATION")
 	for _, value := range page.Items {
-		fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", value.ServiceID, value.KeyName, value.Location)
+		fmt.Fprintf(w, "%s\t%s\t%s\n", value.ServiceID, value.KeyName, value.Location)
 	}
+	w.Flush()
 	printPageSummary(cmd.OutOrStdout(), page.Total, bucketListFlags)
 	return nil
 }
@@ -202,9 +215,12 @@ func runBucketConnections(cmd *cobra.Command, nameOrID string) error {
 	if err != nil {
 		return err
 	}
+	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 8, 2, ' ', 0)
+	fmt.Fprintln(w, "USER_REF\tSERVICE_ID\tAUTH_TYPE\tREFRESH_STATE\tID")
 	for _, conn := range page.Items {
-		fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\t%s\n", conn.EndUserRef, conn.ServiceID, conn.AuthType, conn.RefreshState, conn.ID)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", conn.EndUserRef, conn.ServiceID, conn.AuthType, conn.RefreshState, conn.ID)
 	}
+	w.Flush()
 	printPageSummary(cmd.OutOrStdout(), page.Total, bucketListFlags)
 	return nil
 }
@@ -218,9 +234,12 @@ func runBucketSDKs(cmd *cobra.Command, nameOrID string) error {
 	if err != nil {
 		return err
 	}
+	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 8, 2, ' ', 0)
+	fmt.Fprintln(w, "NAME\tID\tKIND\tACTIVE")
 	for _, sdk := range page.Items {
-		fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\tactive:%t\n", sdk.Name, sdk.ID, sdk.Kind, sdk.Active)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%t\n", sdk.Name, sdk.ID, sdk.Kind, sdk.Active)
 	}
+	w.Flush()
 	printPageSummary(cmd.OutOrStdout(), page.Total, bucketListFlags)
 	return nil
 }

@@ -232,6 +232,30 @@ type WorkspaceServiceVersion struct {
 	EnabledAt        string `json:"enabled_at"`
 }
 
+// WorkspaceConnectProfile is the secret-free attachment snapshot returned by
+// Engine GraphQL for declarative workspace reconstruction.
+type WorkspaceConnectProfile struct {
+	ServiceVersionID  string                 `json:"service_version_id"`
+	AuthType          string                 `json:"auth_type"`
+	RegistryProfileID string                 `json:"registry_profile_id"`
+	Provenance        string                 `json:"provenance"`
+	Profile           map[string]interface{} `json:"profile"`
+}
+
+// WorkspaceConnectConfig is the bucket-scoped, masked connect state consumed
+// by workspace sync; encrypted OAuth app credentials are presence flags only.
+type WorkspaceConnectConfig struct {
+	BucketID        string                    `json:"bucket_id"`
+	BucketName      string                    `json:"bucket_name"`
+	ServiceID       string                    `json:"service_id"`
+	AuthType        string                    `json:"auth_type"`
+	Enabled         bool                      `json:"enabled"`
+	RedirectURI     string                    `json:"redirect_uri"`
+	HasClientID     bool                      `json:"has_client_id"`
+	HasClientSecret bool                      `json:"has_client_secret"`
+	Profiles        []WorkspaceConnectProfile `json:"profiles"`
+}
+
 func (c *Client) ListWorkspaceServices(names ...string) ([]WorkspaceService, error) {
 	query := `
 		query WorkspaceServices($names: [String]) {
@@ -256,6 +280,31 @@ func (c *Client) ListWorkspaceServices(names ...string) ([]WorkspaceService, err
 	// same version/slug enrichment REST used to provide without client-side joins.
 	err := c.EngineGraphQL(query, map[string]interface{}{"names": names}, &resp)
 	return resp.Services, err
+}
+
+// ListWorkspaceConnectConfigs uses the Engine GraphQL read model so CLI sync
+// never bypasses the product's authenticated GraphQL boundary.
+func (c *Client) ListWorkspaceConnectConfigs() ([]WorkspaceConnectConfig, error) {
+	query := `
+		query WorkspaceConnectConfigs {
+			workspaceConnectConfigs {
+				bucket_id
+				bucket_name
+				service_id
+				auth_type
+				enabled
+				redirect_uri
+				has_client_id
+				has_client_secret
+				profiles { service_version_id auth_type registry_profile_id provenance profile }
+			}
+		}
+	`
+	var resp struct {
+		Configs []WorkspaceConnectConfig `json:"workspaceConnectConfigs"`
+	}
+	err := c.EngineGraphQL(query, nil, &resp)
+	return resp.Configs, err
 }
 
 // WorkspaceWebhook is one registered webhook for a workspace service --

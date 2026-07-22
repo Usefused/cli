@@ -381,7 +381,7 @@ func runSecretList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if secretListBucketID == "" {
-		return fmt.Errorf("flag --list-bucket-id is required for secret list; use 'bucket <name-or-id> secrets' for bucket-scoped browsing")
+		return fmt.Errorf("flag --list-bucket is required for secret list; use 'bucket <name-or-id> secrets' for bucket-scoped browsing")
 	}
 	bucketID := secretListBucketID
 	resolvedBucketID, err := resolveBucketID(client, bucketID)
@@ -478,14 +478,14 @@ func init() {
 	RootCmd.AddCommand(secretCmd)
 
 	// Flags for the "set" action
-	secretCmd.Flags().StringVar(&secretSetBucketID, "bucket-id", "", "Set secret as an override for a specific Bucket (for 'set' action)")
+	secretCmd.Flags().StringVar(&secretSetBucketID, "bucket", "", "Set secret as an override for a specific Bucket (name or ID) (for 'set' action)")
 	secretCmd.Flags().StringVar(&secretSetExpiresAt, "expires-at", "", "RFC3339 expiry timestamp (e.g. 2026-12-31T23:59:59Z); omit for no expiry (for 'set' action)")
 	secretCmd.Flags().StringVar(&secretSetType, "type", "", "Specify the logical authentication method name (e.g., bearerAuth) (for 'set' action)")
 	secretCmd.Flags().BoolVarP(&secretSetInteractive, "interactive", "i", false, "Interactive mode to prompt for service's supported authentication methods (for 'set' action)")
 
 	// Flags for the "list" action
-	secretCmd.Flags().StringVar(&secretListBucketID, "list-bucket-id", "", "Filter secrets by Bucket ID (for 'list' action)")
+	secretCmd.Flags().StringVar(&secretListBucketID, "list-bucket", "", "Filter secrets by Bucket (name or ID) (for 'list' action)")
 
 	// Flags for the "remove" action
-	secretCmd.Flags().StringVar(&secretRemoveBucketID, "remove-bucket-id", "", "Remove override secret for a specific Bucket (for 'remove' action)")
+	secretCmd.Flags().StringVar(&secretRemoveBucketID, "remove-bucket", "", "Remove override secret for a specific Bucket (name or ID) (for 'remove' action)")
 }

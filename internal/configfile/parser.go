@@ -253,7 +253,23 @@ func validateWorkspaceService(name string, svc WorkspaceService) error {
 	if strings.TrimSpace(connect.RedirectURI) == "" {
 		return fmt.Errorf("workspace service %q connect requires redirect_uri", name)
 	}
+	if err := validateWorkspaceConnectProfileMode(name, connect); err != nil {
+		return err
+	}
 	return validateWorkspaceConnectClientMaterial(name, connect)
+}
+
+// validateWorkspaceConnectProfileMode makes bucket profile deletion explicit
+// and prevents a detach declaration from carrying replacement data as well.
+func validateWorkspaceConnectProfileMode(name string, connect *ConnectConfig) error {
+	connect.ProfileMode = strings.ToLower(strings.TrimSpace(connect.ProfileMode))
+	if connect.ProfileMode != "" && connect.ProfileMode != "detach" {
+		return fmt.Errorf("workspace service %q connection profile_mode must be detach when set", name)
+	}
+	if connect.ProfileMode == "detach" && (connect.Profile != nil || strings.TrimSpace(connect.ProfileID) != "") {
+		return fmt.Errorf("workspace service %q connection profile detach cannot include profile or profile_id", name)
+	}
+	return nil
 }
 
 // validateWorkspaceAuthIntent keeps static auth material out of plan/state by
@@ -404,6 +420,8 @@ func workspaceServiceConnectMaterial(name string, svc WorkspaceService) (Connect
 	return ConnectMaterial{ClientID: connect.ClientID, ClientSecret: connect.ClientSecret, BindingValues: bindingValues}, true, nil
 }
 
+// workspaceProfileBindingValues resolves only declared binding references so
+// unrelated process environment values can never cross the apply boundary.
 func workspaceProfileBindingValues(serviceName string, profile map[string]interface{}) (map[string]string, error) {
 	bindings, _ := profile["bindings"].([]interface{})
 	values := map[string]string{}
@@ -488,6 +506,12 @@ func lookupRequiredEnv(envName string) (string, error) {
 // isEnvRef keeps validation aligned with apply-time resolution: client_secret
 // may be present in config only when it is a local-env pointer, never a secret.
 func isEnvRef(value string) bool {
+	return IsEnvironmentReference(value)
+}
+
+// IsEnvironmentReference exposes the parser's canonical whole-value $ENV
+// check so sync can preserve safe references without duplicating its grammar.
+func IsEnvironmentReference(value string) bool {
 	return envRefName(value) != ""
 }
 

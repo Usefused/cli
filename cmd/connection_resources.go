@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"text/tabwriter"
 
 	"github.com/spf13/cobra"
 )
@@ -54,9 +55,12 @@ func runConnectionResourcesList(cmd *cobra.Command, connectionID string) error {
 	if err != nil {
 		return err
 	}
+	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 8, 2, ' ', 0)
+	fmt.Fprintln(w, "ID\tDISPLAY_NAME\tRESOURCE_TYPE\tDEFAULT")
 	for _, resource := range resources {
-		fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\tdefault:%t\n", resource.ID, resource.DisplayName, resource.ResourceType, resource.IsDefault)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%t\n", resource.ID, resource.DisplayName, resource.ResourceType, resource.IsDefault)
 	}
+	w.Flush()
 	return nil
 }
 

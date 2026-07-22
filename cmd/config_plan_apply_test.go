@@ -648,6 +648,30 @@ func TestWorkspaceServiceVersionsUsesSlugResolvedServiceID(t *testing.T) {
 	}
 }
 
+// TestWorkspaceServiceVersionsRejectsUnapprovedService keeps Registry
+// visibility separate from Engine workspace approval.
+func TestWorkspaceServiceVersionsRejectsUnapprovedService(t *testing.T) {
+	dir := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/graphql":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":{"serviceVersions":[{"id":"ver-1","service_id":"svc-github","name":"2026-07-01","status":"public"}]}}`))
+		case "/engine/graphql":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":{"workspaceServices":[{"service_id":"svc-other","service_name":"Other","enabled_versions":[]}]}}`))
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	errText := runCommandInDirExpectError(t, dir, server.URL, []string{"workspace", "service", "@acme-inc/github", "versions"})
+	if !strings.Contains(errText, "not found in workspace") {
+		t.Fatalf("expected workspace approval rejection, got %q", errText)
+	}
+}
+
 type workspaceServiceVersionsSlugState struct {
 	sawGraphQL       bool
 	sawWorkspaceList bool
@@ -689,7 +713,7 @@ func TestWorkspaceServiceOperationsDefaultsToLatestEnabledVersion(t *testing.T) 
 	if state.sawVersion != "2026-07-16" {
 		t.Fatalf("expected latest enabled version, got %q", state.sawVersion)
 	}
-	if !strings.Contains(out, "reposListForOrg\tGET\t/orgs/{org}/repos") || !strings.Contains(out, "issuesListForRepo") {
+	if !strings.Contains(out, "reposListForOrg") || !strings.Contains(out, "issuesListForRepo") || !strings.Contains(out, "NAME") {
 		t.Fatalf("expected operation output, got %q", out)
 	}
 }

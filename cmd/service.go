@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"text/tabwriter"
 
 	cliapi "github.com/Usefused/cli/internal/api"
 	"github.com/spf13/cobra"
@@ -120,9 +121,12 @@ func readServiceOperations(cmd *cobra.Command, client *cliapi.Client, serviceID 
 }
 
 func printIntegrations(out io.Writer, integrations []cliapi.Integration) {
+	w := tabwriter.NewWriter(out, 0, 8, 2, ' ', 0)
+	fmt.Fprintln(w, "NAME\tMETHOD\tPATH\tID")
 	for _, op := range integrations {
-		fmt.Fprintf(out, "%s\t%s\t%s\t%s\n", op.Name, op.Method, op.Path, op.ID)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", op.Name, op.Method, op.Path, op.ID)
 	}
+	w.Flush()
 }
 
 func runServiceWebhooks(cmd *cobra.Command, serviceSlug string) error {
@@ -141,9 +145,12 @@ func runServiceWebhooks(cmd *cobra.Command, serviceSlug string) error {
 	if err != nil {
 		return err
 	}
+	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 8, 2, ' ', 0)
+	fmt.Fprintln(w, "NAME\tID\tDESCRIPTION")
 	for _, webhook := range webhooks {
-		fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", webhook.Name, webhook.ID, webhook.Description)
+		fmt.Fprintf(w, "%s\t%s\t%s\n", webhook.Name, webhook.ID, webhook.Description)
 	}
+	w.Flush()
 	return nil
 }
 
@@ -214,9 +221,12 @@ func printServiceVersions(out io.Writer, service string, versions []cliapi.Servi
 		fmt.Fprintf(out, "No versions found for service %s.\n", service)
 		return
 	}
+	w := tabwriter.NewWriter(out, 0, 8, 2, ' ', 0)
+	fmt.Fprintln(w, "NAME\tID\tSTATUS\tCREATED_AT")
 	for _, version := range versions {
-		fmt.Fprintf(out, "%s\t%s\t%s\t%s\n", version.Name, version.ID, version.Status, version.CreatedAt)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", version.Name, version.ID, version.Status, version.CreatedAt)
 	}
+	w.Flush()
 }
 
 func init() {

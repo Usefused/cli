@@ -123,6 +123,40 @@ func TestListWorkspaceServices_SendsNameFilterAsGraphQLVariable(t *testing.T) {
 	}
 }
 
+// TestListWorkspaceConnectConfigsUsesEngineGraphQL verifies sync reads bucket
+// connect state through the authenticated GraphQL surface rather than REST.
+func TestListWorkspaceConnectConfigsUsesEngineGraphQL(t *testing.T) {
+	var sawPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sawPath = r.URL.Path
+		var body struct {
+			Query string `json:"query"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode graphql body: %v", err)
+		}
+		if !strings.Contains(body.Query, "workspaceConnectConfigs") || !strings.Contains(body.Query, "profiles") {
+			t.Fatalf("expected batched workspace connect query, got %s", body.Query)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"workspaceConnectConfigs":[{"bucket_id":"bucket-1","bucket_name":"customers","service_id":"svc-1","auth_type":"oauth","enabled":true,"redirect_uri":"https://engine.example.com/callback","has_client_id":true,"has_client_secret":true,"profiles":[]}]}}`))
+	}))
+	defer srv.Close()
+
+	client := api.NewClient(srv.URL, "test-key")
+	configs, err := client.ListWorkspaceConnectConfigs()
+
+	if err != nil {
+		t.Fatalf("ListWorkspaceConnectConfigs: %v", err)
+	}
+	if sawPath != "/engine/graphql" {
+		t.Fatalf("expected /engine/graphql, got %s", sawPath)
+	}
+	if len(configs) != 1 || configs[0].BucketName != "customers" || !configs[0].HasClientSecret {
+		t.Fatalf("unexpected workspace connect configs: %#v", configs)
+	}
+}
+
 func TestServiceVisibilitiesUsesSingleGraphQLBatch(t *testing.T) {
 	var sawIDs []interface{}
 	var sawQuery string

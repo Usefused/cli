@@ -8,6 +8,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"text/tabwriter"
 
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
@@ -114,9 +115,12 @@ var workspaceServicesListCmd = &cobra.Command{
 			return nil
 		}
 
+		w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 8, 2, ' ', 0)
+		fmt.Fprintln(w, "SERVICE_NAME\tSLUG\tSERVICE_ID\tVERSION\tENABLED_VERSIONS")
 		for _, service := range services {
-			fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\t%s\n", service.ServiceName, workspaceServiceSlugColumn(service), service.ServiceID, service.Version, strings.Join(workspaceServiceVersionNames(service), ", "))
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", service.ServiceName, workspaceServiceSlugColumn(service), service.ServiceID, service.Version, strings.Join(workspaceServiceVersionNames(service), ", "))
 		}
+		w.Flush()
 		return nil
 	}),
 }
@@ -409,6 +413,8 @@ var workspaceServiceOperationsVersion string
 var workspaceServiceOperationsQuery string
 var workspaceServiceListFlags listFlags
 
+// runWorkspaceServiceVersions resolves public identity in Registry, then
+// requires the canonical ID to be present in Engine's approved workspace set.
 func runWorkspaceServiceVersions(cmd *cobra.Command, serviceSlug string) error {
 	client, err := getAPIClient()
 	if err != nil {
@@ -455,9 +461,12 @@ func runWorkspaceServiceOperations(cmd *cobra.Command, serviceSlug, version stri
 	if len(endpoints) == 0 {
 		return fmt.Errorf("no operations found for service %s version %s", serviceSlug, resolvedVersion)
 	}
+	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 8, 2, ' ', 0)
+	fmt.Fprintln(w, "NAME\tMETHOD\tPATH")
 	for _, endpoint := range endpoints {
-		fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", endpoint.Name, endpoint.Method, endpoint.Path)
+		fmt.Fprintf(w, "%s\t%s\t%s\n", endpoint.Name, endpoint.Method, endpoint.Path)
 	}
+	w.Flush()
 	return nil
 }
 
@@ -503,10 +512,13 @@ func runWorkspaceServiceWebhooks(cmd *cobra.Command, serviceSlug string) error {
 		fmt.Fprintf(cmd.OutOrStdout(), "No webhook registrations for service %s.\n", serviceSlug)
 		return nil
 	}
+	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 8, 2, ' ', 0)
+	fmt.Fprintln(w, "LABEL\tURL\tCREATED_AT")
 	for _, wh := range webhooks {
 		url := appliedWebhookURL(client.BaseURL, cliapi.AppliedWebhookConfig{ServiceKey: serviceSlug, Label: wh.Label, Slug: wh.Slug})
-		fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", wh.Label, url, wh.CreatedAt)
+		fmt.Fprintf(w, "%s\t%s\t%s\n", wh.Label, url, wh.CreatedAt)
 	}
+	w.Flush()
 	return nil
 }
 
@@ -629,6 +641,8 @@ func latestWorkspaceServiceVersion(service cliapi.WorkspaceService) string {
 	return bestVersion
 }
 
+// resolveServiceIDFromSlug asks the Registry because provider-qualified slugs
+// are public identities; callers still enforce workspace approval in Engine.
 func resolveServiceIDFromSlug(client *cliapi.Client, serviceSlug string) (string, error) {
 	versions, err := client.ServiceVersions(serviceSlug)
 	if err != nil {

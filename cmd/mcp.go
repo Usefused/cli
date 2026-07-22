@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"text/tabwriter"
 
 	"github.com/spf13/cobra"
 )
@@ -43,9 +44,12 @@ func runMCPList(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
+	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 8, 2, ' ', 0)
+	fmt.Fprintln(w, "NAME\tID\tACTIVE\tURL")
 	for _, server := range page.Items {
-		fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\tactive:%t\t%s\n", server.Name, server.ID, server.Active, server.MCPURL)
+		fmt.Fprintf(w, "%s\t%s\t%t\t%s\n", server.Name, server.ID, server.Active, server.MCPURL)
 	}
+	w.Flush()
 	printPageSummary(cmd.OutOrStdout(), page.Total, mcpListFlags)
 	return nil
 }

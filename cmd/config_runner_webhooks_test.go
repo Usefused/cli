@@ -172,10 +172,10 @@ func TestWorkspaceServiceWebhooks_ListsRegistrationsWithReconstructedURL(t *test
 
 	out := runCommandInDirOutput(t, dir, server.URL, []string{"workspace", "service", "github", "webhooks"})
 
-	if !strings.Contains(out, "repo-a\t"+server.URL+"/webhook/slugaaaaaaaaaaaaaaaaa-github") {
+	if !strings.Contains(out, "repo-a") || !strings.Contains(out, server.URL+"/webhook/slugaaaaaaaaaaaaaaaaa-github") {
 		t.Fatalf("expected repo-a URL line, got:\n%s", out)
 	}
-	if !strings.Contains(out, "repo-b\t"+server.URL+"/webhook/slugbbbbbbbbbbbbbbbbb-github") {
+	if !strings.Contains(out, "repo-b") || !strings.Contains(out, server.URL+"/webhook/slugbbbbbbbbbbbbbbbbb-github") {
 		t.Fatalf("expected repo-b URL line, got:\n%s", out)
 	}
 	// The endpoint never sends a signing secret back, so there is nothing to

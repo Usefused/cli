@@ -79,6 +79,7 @@ type ConnectConfig struct {
 	RedirectURI     string                 `yaml:"redirect_uri" json:"redirect_uri"`
 	Profile         map[string]interface{} `yaml:"profile,omitempty" json:"profile,omitempty"`
 	ProfileID       string                 `yaml:"profile_id,omitempty" json:"profile_id,omitempty"`
+	ProfileMode     string                 `yaml:"profile_mode,omitempty" json:"profile_mode,omitempty"`
 }
 
 type ConnectMaterial struct {

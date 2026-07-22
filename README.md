@@ -209,7 +209,7 @@ If the service supports multiple authentication methods, use `--type` to specify
 |----------|-------|-------------|---------|
 | `--interactive` | `-i` | Force interactive mode to select the authentication method | `false` |
 | `--type` | | Specify the logical authentication method name (e.g., bearerAuth) | `""` |
-| `--bucket-id` | | Set secret as an override for a specific Bucket | `""` |
+| `--bucket` | | Set secret as an override for a specific Bucket | `""` |
 | `--expires-at` | | RFC3339 expiry timestamp (e.g. 2026-12-31T23:59:59Z) | `""` |
 
 #### `secret list`
