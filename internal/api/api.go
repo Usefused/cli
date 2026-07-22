@@ -1520,3 +1520,24 @@ func (c *Client) DownloadGeneratedSDK(configKey string) ([]byte, error) {
 
 	return io.ReadAll(resp.Body)
 }
+
+func (c *Client) DeactivateSDK(sdkID string) error {
+	req, err := http.NewRequest(http.MethodPost, c.BaseURL+"/sdk-config/"+sdkID+"/deactivate", nil)
+	if err != nil {
+		return err
+	}
+	if c.APIKey != "" {
+		req.Header.Set("x-api-key", c.APIKey)
+	}
+	resp, err := c.doRequest(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("deactivate failed with status %d: %s", resp.StatusCode, string(b))
+	}
+	return nil
+}

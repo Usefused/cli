@@ -523,42 +523,52 @@ enabled remotely: adds or updates every remote workspace service (the
 Engine's data wins on any conflict) and removes any local service entry
 	that's no longer enabled remotely.`,
 	RunE: WithTelemetry("cli.workspace.sync", func(cmd *cobra.Command, args []string) error {
-		path, cfg, err := loadWorkspaceConfigForSync(ConfigFile)
-		if err != nil {
-			return err
-		}
 		client, err := getAPIClient()
 		if err != nil {
 			return err
 		}
-		remote, err := client.ListWorkspaceServices()
+		result, err := PerformWorkspaceSync(cmd.Context(), client, ConfigFile)
 		if err != nil {
 			return err
 		}
-		connectConfigs, err := client.ListWorkspaceConnectConfigs()
-		if err != nil {
-			return err
+		if result != nil {
+			printWorkspaceSyncResult(cmd, *result)
 		}
-		visibility, err := client.ServiceVisibilities(serviceIDsFromWorkspaceServices(remote))
-		if err != nil {
-			return err
-		}
-		result, err := mergeWorkspaceServicesFromRemote(cfg, remote, visibility)
-		if err != nil {
-			return err
-		}
-		connectUpdates, err := mergeWorkspaceConnectConfigsFromRemote(cfg, remote, connectConfigs)
-		if err != nil {
-			return err
-		}
-		result.Updated = mergeWorkspaceSyncUpdates(result, connectUpdates)
-		if err := writeWorkspaceConfig(path, cfg); err != nil {
-			return err
-		}
-		recordWorkspaceSyncWrite(cmd.Context(), result, len(connectConfigs))
-		printWorkspaceSyncResult(cmd, result)
 		return nil
 	}),
+}
+
+func PerformWorkspaceSync(ctx context.Context, client *api.Client, configPath string) (*workspaceSyncResult, error) {
+	path, cfg, err := loadWorkspaceConfigForSync(configPath)
+	if err != nil {
+		return nil, err
+	}
+	remote, err := client.ListWorkspaceServices()
+	if err != nil {
+		return nil, err
+	}
+	connectConfigs, err := client.ListWorkspaceConnectConfigs()
+	if err != nil {
+		return nil, err
+	}
+	visibility, err := client.ServiceVisibilities(serviceIDsFromWorkspaceServices(remote))
+	if err != nil {
+		return nil, err
+	}
+	result, err := mergeWorkspaceServicesFromRemote(cfg, remote, visibility)
+	if err != nil {
+		return nil, err
+	}
+	connectUpdates, err := mergeWorkspaceConnectConfigsFromRemote(cfg, remote, connectConfigs)
+	if err != nil {
+		return nil, err
+	}
+	result.Updated = mergeWorkspaceSyncUpdates(result, connectUpdates)
+	if err := writeWorkspaceConfig(path, cfg); err != nil {
+		return nil, err
+	}
+	recordWorkspaceSyncWrite(ctx, result, len(connectConfigs))
+	return &result, nil
 }
 
 // mergeWorkspaceSyncUpdates adds connect changes to the service-level result

@@ -1,5 +1,7 @@
 package api
 
+import "fmt"
+
 type PageOptions struct {
 	Limit  int
 	Offset int
@@ -242,6 +244,30 @@ func (c *Client) ListMCPServers(opts PageOptions) (*MCPServerPageResponse, error
 	}
 	err := c.EngineGraphQL(query, pageVars(opts), &resp)
 	return &resp.Page, err
+}
+
+func (c *Client) GetMCPServerByName(name, version string) (*MCPServerResponse, error) {
+	query := `
+		query MCPServerByName($name: String!, $version: String) {
+			mcpServerByName(name: $name, version: $version) {
+				id name version mcp_url active deactivated_at created_at
+			}
+		}
+	`
+	var resp struct {
+		Server *MCPServerResponse `json:"mcpServerByName"`
+	}
+	vars := map[string]interface{}{"name": name}
+	if version != "" {
+		vars["version"] = version
+	}
+	if err := c.EngineGraphQL(query, vars, &resp); err != nil {
+		return nil, err
+	}
+	if resp.Server == nil {
+		return nil, fmt.Errorf("mcp server not found")
+	}
+	return resp.Server, nil
 }
 
 func pageVars(opts PageOptions) map[string]interface{} {
