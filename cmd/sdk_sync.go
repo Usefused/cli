@@ -14,11 +14,13 @@ import (
 // sdkSyncResult summarizes what mergeSDKServicesFromRemote did, so the
 // command can report a diff without re-deriving it itself.
 type sdkSyncResult struct {
-	SDKVersionFrom string
-	SDKVersionTo   string
-	Added          []string
-	Updated        []string
-	Removed        []string
+	ArtifactVersionFrom string
+	ArtifactVersionTo   string
+	RemoteVersion       string
+	SyncVersion         bool
+	Added               []string
+	Updated             []string
+	Removed             []string
 }
 
 // sdkSyncRemoteService is the fully-resolved remote view of one service's
@@ -33,29 +35,31 @@ type sdkSyncRemoteService struct {
 	Operations []string
 }
 
+var sdkSyncVersion bool
+
 // mergeSDKServicesFromRemote is Task 4's core logic for `sdk sync`
 // (engine_workspace_registration_plan.md): full-mirrors the most recently
 // generated remote SDK's selections into cfg.Services -- every service the
 // remote SDK currently selects is added or updated locally with the
 // Registry's resolved data winning on any conflict, and any local service
-// entry the remote SDK no longer selects is removed, not just flagged. Also
-// bumps cfg.SDKVersion to the synced SDK's version. Pure and side-effect-free
+// entry the remote SDK no longer selects is removed, not just flagged. The
+// artifact version is identity-bearing, so sync only changes it when the caller
+// explicitly opts in with --sync-version. Pure and side-effect-free
 // (no file or network I/O) so it's directly testable, mirroring
 // mergeWorkspaceServicesFromRemote's structure (workspace_sync.go).
-func mergeSDKServicesFromRemote(cfg *configfile.SDKConfig, sdkVersion string, remote []sdkSyncRemoteService) (sdkSyncResult, error) {
+func mergeSDKServicesFromRemote(cfg *configfile.SDKConfig, sdkVersion string, remote []sdkSyncRemoteService, syncVersion bool) (sdkSyncResult, error) {
 	if cfg.Services == nil {
 		cfg.Services = map[string]configfile.SDKService{}
 	}
-	result := sdkSyncResult{SDKVersionFrom: cfg.SDKVersion, SDKVersionTo: sdkVersion}
-	cfg.SDKVersion = sdkVersion
-
-	remoteByName := make(map[string]sdkSyncRemoteService, len(remote))
-	for _, svc := range remote {
-		key, err := sdkSyncServiceConfigKey(svc)
-		if err != nil {
-			return result, err
-		}
-		remoteByName[key] = svc
+	result := newSDKSyncResult(cfg.Version, sdkVersion, syncVersion)
+	if syncVersion {
+		// The top-level version is part of the config identity, so default sync
+		// preserves it and only changes it after an explicit operator choice.
+		cfg.Version = sdkVersion
+	}
+	remoteByName, err := sdkSyncRemoteByName(remote)
+	if err != nil {
+		return result, err
 	}
 
 	// Remove local entries the remote SDK no longer selects.
@@ -92,6 +96,33 @@ func mergeSDKServicesFromRemote(cfg *configfile.SDKConfig, sdkVersion string, re
 	sort.Strings(result.Updated)
 	sort.Strings(result.Removed)
 	return result, nil
+}
+
+func newSDKSyncResult(localVersion, remoteVersion string, syncVersion bool) sdkSyncResult {
+	result := sdkSyncResult{
+		ArtifactVersionFrom: localVersion,
+		ArtifactVersionTo:   localVersion,
+		RemoteVersion:       remoteVersion,
+		SyncVersion:         syncVersion,
+	}
+	if syncVersion {
+		result.ArtifactVersionTo = remoteVersion
+	}
+	return result
+}
+
+func sdkSyncRemoteByName(remote []sdkSyncRemoteService) (map[string]sdkSyncRemoteService, error) {
+	remoteByName := make(map[string]sdkSyncRemoteService, len(remote))
+	for _, svc := range remote {
+		key, err := sdkSyncServiceConfigKey(svc)
+		if err != nil {
+			return nil, err
+		}
+		// Service refs are stable config keys; display names can drift or collide
+		// across providers and would make sync rewrite YAML unpredictably.
+		remoteByName[key] = svc
+	}
+	return remoteByName, nil
 }
 
 func sdkSyncServiceConfigKey(svc sdkSyncRemoteService) (string, error) {
@@ -162,7 +193,7 @@ var sdkSyncCmd = &cobra.Command{
 recently generated remote SDK of the given name: adds or updates every
 selected service (the Registry's resolved version and operations win on any
 conflict) and removes any local service entry the remote SDK no longer
-selects. Also bumps the local sdkVersion to match.`,
+selects. The local artifact version is preserved unless --sync-version is set.`,
 	Args: cobra.ExactArgs(1),
 	RunE: WithTelemetry("cli.sdk.sync", func(cmd *cobra.Command, args []string) error {
 		path, cfg, err := loadSDKConfigForSync(ConfigFile, args[0])
@@ -177,7 +208,7 @@ selects. Also bumps the local sdkVersion to match.`,
 		if err != nil {
 			return err
 		}
-		result, err := mergeSDKServicesFromRemote(cfg, sdkVersion, remote)
+		result, err := mergeSDKServicesFromRemote(cfg, sdkVersion, remote, sdkSyncVersion)
 		if err != nil {
 			return err
 		}
@@ -190,8 +221,10 @@ selects. Also bumps the local sdkVersion to match.`,
 }
 
 func printSDKSyncResult(cmd *cobra.Command, result sdkSyncResult) {
-	if result.SDKVersionFrom != result.SDKVersionTo {
-		fmt.Fprintf(cmd.OutOrStdout(), "~ sdkVersion: %s -> %s\n", result.SDKVersionFrom, result.SDKVersionTo)
+	if result.ArtifactVersionFrom != result.ArtifactVersionTo {
+		fmt.Fprintf(cmd.OutOrStdout(), "~ version: %s -> %s\n", result.ArtifactVersionFrom, result.ArtifactVersionTo)
+	} else if result.RemoteVersion != "" && result.RemoteVersion != result.ArtifactVersionFrom {
+		fmt.Fprintf(cmd.OutOrStdout(), "remote SDK version is %s; local config version remains %s (use --sync-version to update it)\n", result.RemoteVersion, result.ArtifactVersionFrom)
 	}
 	if len(result.Added) == 0 && len(result.Updated) == 0 && len(result.Removed) == 0 {
 		fmt.Fprintln(cmd.OutOrStdout(), "SDK config already in sync.")
@@ -209,5 +242,6 @@ func printSDKSyncResult(cmd *cobra.Command, result sdkSyncResult) {
 }
 
 func init() {
+	sdkSyncCmd.Flags().BoolVar(&sdkSyncVersion, "sync-version", false, "Update the local SDK artifact version to match the remote SDK")
 	sdkCmd.AddCommand(sdkSyncCmd)
 }

@@ -112,7 +112,7 @@ func loadWorkspaceConfigForSync(path string) (string, *configfile.WorkspaceConfi
 	data, err := os.ReadFile(target)
 	if os.IsNotExist(err) {
 		return target, &configfile.WorkspaceConfig{
-			BaseConfig: configfile.BaseConfig{Kind: configfile.KindWorkspace, Version: 1},
+			BaseConfig: configfile.BaseConfig{APIVersion: configfile.APIVersionV1, Kind: configfile.KindWorkspace},
 			Services:   map[string]configfile.WorkspaceService{},
 		}, nil
 	}

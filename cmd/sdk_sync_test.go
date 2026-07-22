@@ -16,7 +16,7 @@ import (
 
 func mustMergeSDKServicesFromRemote(t *testing.T, cfg *configfile.SDKConfig, sdkVersion string, remote []sdkSyncRemoteService) sdkSyncResult {
 	t.Helper()
-	result, err := mergeSDKServicesFromRemote(cfg, sdkVersion, remote)
+	result, err := mergeSDKServicesFromRemote(cfg, sdkVersion, remote, false)
 	if err != nil {
 		t.Fatalf("mergeSDKServicesFromRemote: %v", err)
 	}
@@ -78,7 +78,7 @@ func TestMergeSDKServicesFromRemote_RejectsMissingSlugRef(t *testing.T) {
 	cfg := &configfile.SDKConfig{Services: map[string]configfile.SDKService{}}
 	remote := []sdkSyncRemoteService{{Name: "GitHub REST API", Version: "1.1.4"}}
 
-	_, err := mergeSDKServicesFromRemote(cfg, "1.0.0", remote)
+	_, err := mergeSDKServicesFromRemote(cfg, "1.0.0", remote, false)
 
 	if err == nil || !strings.Contains(err.Error(), "missing service slug") {
 		t.Fatalf("expected missing slug error, got %v", err)
@@ -207,19 +207,32 @@ func TestMergeSDKServicesFromRemote_NilServicesMapInitialized(t *testing.T) {
 	}
 }
 
-// TestMergeSDKServicesFromRemote_BumpsSDKVersion confirms the top-level
-// sdkVersion field is synced to the remote generated SDK's version, and the
-// result records the before/after for reporting.
-func TestMergeSDKServicesFromRemote_BumpsSDKVersion(t *testing.T) {
-	cfg := &configfile.SDKConfig{SDKVersion: "1.1.0", Services: map[string]configfile.SDKService{}}
+func TestMergeSDKServicesFromRemote_PreservesArtifactVersionByDefault(t *testing.T) {
+	cfg := &configfile.SDKConfig{Version: "1.1.0", Services: map[string]configfile.SDKService{}}
 
 	result := mustMergeSDKServicesFromRemote(t, cfg, "1.2.0", nil)
 
-	if cfg.SDKVersion != "1.2.0" {
-		t.Errorf("expected cfg.SDKVersion to be bumped to 1.2.0, got %s", cfg.SDKVersion)
+	if cfg.Version != "1.1.0" {
+		t.Errorf("expected cfg.Version to stay 1.1.0, got %s", cfg.Version)
 	}
-	if result.SDKVersionFrom != "1.1.0" || result.SDKVersionTo != "1.2.0" {
-		t.Errorf("expected SDKVersionFrom/To to record the change, got %+v", result)
+	if result.RemoteVersion != "1.2.0" || result.ArtifactVersionTo != "1.1.0" {
+		t.Errorf("expected remote version to be reported without changing local version, got %+v", result)
+	}
+}
+
+func TestMergeSDKServicesFromRemote_SyncVersionBumpsArtifactVersion(t *testing.T) {
+	cfg := &configfile.SDKConfig{Version: "1.1.0", Services: map[string]configfile.SDKService{}}
+
+	result, err := mergeSDKServicesFromRemote(cfg, "1.2.0", nil, true)
+	if err != nil {
+		t.Fatalf("mergeSDKServicesFromRemote: %v", err)
+	}
+
+	if cfg.Version != "1.2.0" {
+		t.Errorf("expected cfg.Version to be bumped to 1.2.0, got %s", cfg.Version)
+	}
+	if result.ArtifactVersionFrom != "1.1.0" || result.ArtifactVersionTo != "1.2.0" {
+		t.Errorf("expected artifact version change to be recorded, got %+v", result)
 	}
 }
 
@@ -305,12 +318,11 @@ func TestResolveSDKDownloadTargets_UsesVersionSuffix(t *testing.T) {
 
 func TestResolveSDKDownloadConfigKeys_UsesSingleConfigFile(t *testing.T) {
 	path := writeSprintConfig(t, t.TempDir(), "security.yaml", `
+apiVersion: fused/v1
 kind: sdk
-version: 1
 name: security-sdk
-sdkVersion: "1.0.0"
+version: "1.0.0"
 language: typescript
-target: sdk
 services:
   github:
     operations: ["repos_list_for_authenticated_user"]
@@ -327,8 +339,8 @@ services:
 
 func TestResolveSDKDownloadConfigKeys_RejectsWorkspaceConfigFile(t *testing.T) {
 	path := writeSprintConfig(t, t.TempDir(), "workspace.yaml", `
+apiVersion: fused/v1
 kind: workspace
-version: 1
 services:
   github:
     versions: ["1.1.4"]
@@ -381,26 +393,9 @@ func TestSDKNameDownloadRoutesThroughEngineToRegistrySDKRecord(t *testing.T) {
 }
 
 func TestSDKSyncCreatesDefaultFusedConfig(t *testing.T) {
+	sdkSyncVersion = false
 	dir := t.TempDir()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/graphql" {
-			t.Fatalf("unexpected path %s", r.URL.Path)
-		}
-		var body struct {
-			Query string `json:"query"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Fatalf("decode graphql request: %v", err)
-		}
-		switch {
-		case strings.Contains(body.Query, "sdkByName"):
-			_, _ = w.Write([]byte(`{"data":{"sdkByName":{"id":"sdk-record-123","version":"1.0.0","detailed_selections":[{"service_id":"svc-github","service_name":"GitHub REST API","service_slug":"github-rest-api","service_provider":null,"endpoint_ids":["ep-1"],"webhook_ids":[],"select_all":false,"service_version_id":"sv-1","service_version_name":"1.1.4"}]}}}`))
-		case strings.Contains(body.Query, "sdkSelectionResources"):
-			_, _ = w.Write([]byte(`{"data":{"sdkSelectionResources":[{"name":"repos_list_for_authenticated_user"}]}}`))
-		default:
-			t.Fatalf("unexpected graphql query %s", body.Query)
-		}
-	}))
+	server := newSDKSyncServer(t, "1.2.0")
 	defer server.Close()
 
 	runCommandInDir(t, dir, server.URL, []string{"sdk", "sync", "security-sdk"})
@@ -410,7 +405,53 @@ func TestSDKSyncCreatesDefaultFusedConfig(t *testing.T) {
 		t.Fatalf("expected default sdk config to be created: %v", err)
 	}
 	text := string(data)
-	if !strings.Contains(text, "kind: sdk") || !strings.Contains(text, "name: security-sdk") || !strings.Contains(text, "github-rest-api:") || !strings.Contains(text, "repos_list_for_authenticated_user") {
+	if !strings.Contains(text, "version: 1.0.0") || !strings.Contains(text, "kind: sdk") || !strings.Contains(text, "name: security-sdk") || !strings.Contains(text, "github-rest-api:") || !strings.Contains(text, "repos_list_for_authenticated_user") {
 		t.Fatalf("unexpected sdk sync file:\n%s", text)
+	}
+}
+
+func TestSDKSyncVersionFlagUpdatesArtifactVersion(t *testing.T) {
+	sdkSyncVersion = false
+	t.Cleanup(func() { sdkSyncVersion = false })
+	dir := t.TempDir()
+	server := newSDKSyncServer(t, "1.2.0")
+	defer server.Close()
+
+	runCommandInDir(t, dir, server.URL, []string{"sdk", "sync", "security-sdk", "--sync-version"})
+
+	data, err := os.ReadFile(filepath.Join(dir, ".fused", "sdks", "security-sdk.yaml"))
+	if err != nil {
+		t.Fatalf("expected default sdk config to be created: %v", err)
+	}
+	if text := string(data); !strings.Contains(text, "version: 1.2.0") {
+		t.Fatalf("expected --sync-version to update artifact version:\n%s", text)
+	}
+}
+
+func newSDKSyncServer(t *testing.T, sdkVersion string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handleSDKSyncGraphQL(t, w, r, sdkVersion)
+	}))
+}
+
+func handleSDKSyncGraphQL(t *testing.T, w http.ResponseWriter, r *http.Request, sdkVersion string) {
+	t.Helper()
+	if r.URL.Path != "/graphql" {
+		t.Fatalf("unexpected path %s", r.URL.Path)
+	}
+	var body struct {
+		Query string `json:"query"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		t.Fatalf("decode graphql request: %v", err)
+	}
+	switch {
+	case strings.Contains(body.Query, "sdkByName"):
+		_, _ = w.Write([]byte(`{"data":{"sdkByName":{"id":"sdk-record-123","version":"` + sdkVersion + `","detailed_selections":[{"service_id":"svc-github","service_name":"GitHub REST API","service_slug":"github-rest-api","service_provider":null,"endpoint_ids":["ep-1"],"webhook_ids":[],"select_all":false,"service_version_id":"sv-1","service_version_name":"1.1.4"}]}}}`))
+	case strings.Contains(body.Query, "sdkSelectionResources"):
+		_, _ = w.Write([]byte(`{"data":{"sdkSelectionResources":[{"name":"repos_list_for_authenticated_user"}]}}`))
+	default:
+		t.Fatalf("unexpected graphql query %s", body.Query)
 	}
 }

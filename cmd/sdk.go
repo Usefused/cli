@@ -118,7 +118,7 @@ func resolveSDKDownloadTargets(args []string, configPath string) ([]sdkDownloadT
 		if cfg.Kind == configfile.KindSDK {
 			targets = append(targets, sdkDownloadTarget{
 				Name:    cfg.SDK.Name,
-				Version: strings.TrimSpace(cfg.SDK.SDKVersion),
+				Version: strings.TrimSpace(cfg.SDK.Version),
 			})
 		}
 	}

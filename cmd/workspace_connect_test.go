@@ -39,7 +39,7 @@ func TestWorkspaceServiceConnectStartsSession(t *testing.T) {
 	}))
 	defer server.Close()
 
-	out := runCommandInDirOutput(t, dir, server.URL, []string{"workspace", "service", "github", "connect", "--bucket", "prod", "--user-ref", "user_123", "--resource-input", "subdomain=acme"})
+	out := runCommandInDirOutput(t, dir, server.URL, []string{"workspace", "service", "github", "connect", "--bucket", "prod", "--user-ref", "user_123", "--resource-input", "subdomain=acme", "--scope", "repo:read", "--scope", "offline_access"})
 	if !sawConnect {
 		t.Fatal("expected connect session request")
 	}
@@ -58,6 +58,10 @@ func assertConnectSessionGraphQLRequest(t *testing.T, body testGraphQLBody) {
 	resourceInput, ok := body.Variables["resourceInput"].(map[string]interface{})
 	if !ok || resourceInput["subdomain"] != "acme" {
 		t.Fatalf("unexpected resource input: %#v", body.Variables["resourceInput"])
+	}
+	scopes, ok := body.Variables["scopes"].([]interface{})
+	if !ok || len(scopes) != 2 || scopes[0] != "repo:read" || scopes[1] != "offline_access" {
+		t.Fatalf("unexpected connect scopes: %#v", body.Variables["scopes"])
 	}
 }
 

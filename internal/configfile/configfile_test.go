@@ -11,12 +11,11 @@ import (
 
 func TestLoadRun_SingleSDKFile(t *testing.T) {
 	path := writeFile(t, t.TempDir(), "fused.yaml", `
+apiVersion: fused/v1
 kind: sdk
-version: 1
 name: security-detection
-sdkVersion: "1.2.0"
+version: "1.2.0"
 language: typescript
-target: sdk
 services:
   okta:
     version: "2026-07-01"
@@ -42,7 +41,7 @@ func assertSingleSDKConfig(t *testing.T, cfg *configfile.ParsedConfig) {
 	if cfg.Kind != configfile.KindSDK {
 		t.Fatalf("kind: got %q", cfg.Kind)
 	}
-	if cfg.ConfigKey != "sdk:security-detection" {
+	if cfg.ConfigKey != "sdk:security-detection:1.2.0" {
 		t.Errorf("config key: got %q", cfg.ConfigKey)
 	}
 	if cfg.SDK.Services["okta"].Version != "2026-07-01" {
@@ -58,12 +57,11 @@ func assertSingleSDKConfig(t *testing.T, cfg *configfile.ParsedConfig) {
 
 func TestLoadRun_SDKServiceVersionIsOptional(t *testing.T) {
 	path := writeFile(t, t.TempDir(), "security.yaml", `
+apiVersion: fused/v1
 kind: sdk
-version: 1
 name: security-detection
-sdkVersion: "1.2.0"
+version: "1.2.0"
 language: typescript
-target: sdk
 services:
   okta:
     operations:
@@ -81,8 +79,8 @@ services:
 
 func TestLoadRun_SingleWorkspaceFile(t *testing.T) {
 	path := writeFile(t, t.TempDir(), "workspace.yaml", `
+apiVersion: fused/v1
 kind: workspace
-version: 1
 services:
   okta:
     service_id: "00000000-0000-0000-0000-000000000001"
@@ -103,7 +101,11 @@ deprecations:
 	if err != nil {
 		t.Fatalf("LoadRun failed: %v", err)
 	}
-	cfg := run.Configs[0]
+	assertWorkspaceConfigParsed(t, run.Configs[0])
+}
+
+func assertWorkspaceConfigParsed(t *testing.T, cfg *configfile.ParsedConfig) {
+	t.Helper()
 	if cfg.Kind != configfile.KindWorkspace {
 		t.Fatalf("kind: got %q", cfg.Kind)
 	}
@@ -126,8 +128,8 @@ deprecations:
 
 func TestLoadRun_WorkspaceAllowsSlugOnlyService(t *testing.T) {
 	path := writeFile(t, t.TempDir(), "workspace.yaml", `
+apiVersion: fused/v1
 kind: workspace
-version: 1
 services:
   okta:
     versions: ["2026-07-01"]
@@ -144,8 +146,8 @@ services:
 
 func TestWorkspaceConnectMaterials_RejectsLegacyConnectEnvFields(t *testing.T) {
 	path := writeFile(t, t.TempDir(), "workspace.yaml", `
+apiVersion: fused/v1
 kind: workspace
-version: 1
 services:
   github:
     service_id: "00000000-0000-0000-0000-000000000001"
@@ -168,8 +170,8 @@ func TestWorkspaceConnectMaterials_ResolvesDollarEnvRefs(t *testing.T) {
 	t.Setenv("FUSED_TEST_CLIENT_ID", "resolved-client")
 	t.Setenv("FUSED_TEST_CLIENT_SECRET", "resolved-secret")
 	path := writeFile(t, t.TempDir(), "workspace.yaml", `
+apiVersion: fused/v1
 kind: workspace
-version: 1
 services:
   github:
     service_id: "00000000-0000-0000-0000-000000000001"
@@ -203,8 +205,8 @@ func TestWorkspaceConnectMaterialsResolvesProfileBindingEnvOutOfBand(t *testing.
 	t.Setenv("FUSED_TEST_CLIENT_SECRET", "resolved-secret")
 	t.Setenv("SHOPIFY_API_VERSION", "2026-07")
 	path := writeFile(t, t.TempDir(), "workspace.yaml", `
+apiVersion: fused/v1
 kind: workspace
-version: 1
 services:
   shopify:
     service_id: "00000000-0000-0000-0000-000000000001"
@@ -247,8 +249,8 @@ services:
 func TestWorkspaceConnectProfileDetachRequiresExclusiveIntent(t *testing.T) {
 	dir := t.TempDir()
 	valid := writeFile(t, dir, "detach.yaml", `
+apiVersion: fused/v1
 kind: workspace
-version: 1
 services:
   jira:
     service_id: "00000000-0000-0000-0000-000000000001"
@@ -266,8 +268,8 @@ services:
 		t.Fatalf("valid profile detach: %v", err)
 	}
 	conflict := writeFile(t, dir, "detach-conflict.yaml", `
+apiVersion: fused/v1
 kind: workspace
-version: 1
 services:
   jira:
     service_id: "00000000-0000-0000-0000-000000000001"
@@ -289,8 +291,8 @@ services:
 
 func TestWorkspaceConnectMaterials_RejectsOAuth2AuthType(t *testing.T) {
 	path := writeFile(t, t.TempDir(), "workspace.yaml", `
+apiVersion: fused/v1
 kind: workspace
-version: 1
 services:
   github:
     service_id: "00000000-0000-0000-0000-000000000001"
@@ -312,8 +314,8 @@ services:
 func TestWorkspaceConnectMaterials_RejectsImportedAuthTypeAliases(t *testing.T) {
 	for _, authType := range []string{"openidconnect", "open_id_connect"} {
 		path := writeFile(t, t.TempDir(), "workspace.yaml", `
+apiVersion: fused/v1
 kind: workspace
-version: 1
 services:
   github:
     service_id: "00000000-0000-0000-0000-000000000001"
@@ -335,8 +337,8 @@ services:
 
 func TestWorkspaceConnectMaterials_RejectsInlineClientSecret(t *testing.T) {
 	path := writeFile(t, t.TempDir(), "workspace.yaml", `
+apiVersion: fused/v1
 kind: workspace
-version: 1
 services:
   github:
     service_id: "00000000-0000-0000-0000-000000000001"
@@ -358,8 +360,8 @@ services:
 func TestWorkspaceConnectMaterials_RejectsMissingConnectEnvRef(t *testing.T) {
 	t.Setenv("FUSED_TEST_CLIENT_SECRET", "resolved-secret")
 	path := writeFile(t, t.TempDir(), "workspace.yaml", `
+apiVersion: fused/v1
 kind: workspace
-version: 1
 services:
   github:
     service_id: "00000000-0000-0000-0000-000000000001"
@@ -384,20 +386,19 @@ services:
 func TestLoadRun_DiscoversFusedFolderInOrder(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, ".fused/workspace.yaml", `
+apiVersion: fused/v1
 kind: workspace
-version: 1
 services:
   okta:
     service_id: "00000000-0000-0000-0000-000000000001"
     versions: ["2026-07-01"]
 `)
 	writeFile(t, dir, ".fused/sdks/security.yaml", `
+apiVersion: fused/v1
 kind: sdk
-version: 1
 name: security
-sdkVersion: "1.0.0"
+version: "1.0.0"
 language: typescript
-target: sdk
 services:
   okta:
     version: "2026-07-01"
@@ -448,26 +449,25 @@ func TestLoadRun_RejectsDuplicateSDKNames(t *testing.T) {
 func TestLoadRun_RejectsInvalidFiles(t *testing.T) {
 	tests := map[string]string{
 		"unknown kind": `
+apiVersion: fused/v1
 kind: service
-version: 1
 `,
 		"invalid language": `
+apiVersion: fused/v1
 kind: sdk
-version: 1
 name: security
-sdkVersion: "1.0.0"
+version: "1.0.0"
 language: ruby
-target: sdk
 services:
   okta:
     version: "2026-07-01"
     operations: ["listLogEvents"]
 `,
 		"invalid target": `
+apiVersion: fused/v1
 kind: sdk
-version: 1
 name: security
-sdkVersion: "1.0.0"
+version: "1.0.0"
 language: typescript
 target: mobile
 services:
@@ -476,23 +476,21 @@ services:
     operations: ["listLogEvents"]
 `,
 		"malformed sdk service": `
+apiVersion: fused/v1
 kind: sdk
-version: 1
 name: security
-sdkVersion: "1.0.0"
+version: "1.0.0"
 language: typescript
-target: sdk
 services:
   okta:
     version: "2026-07-01"
 `,
 		"legacy endpoints key rejected": `
+apiVersion: fused/v1
 kind: sdk
-version: 1
 name: security
-sdkVersion: "1.0.0"
+version: "1.0.0"
 language: typescript
-target: sdk
 services:
   okta:
     version: "2026-07-01"
@@ -513,12 +511,11 @@ services:
 func writeSDK(t *testing.T, dir, rel, name string) {
 	t.Helper()
 	writeFile(t, dir, rel, `
+apiVersion: fused/v1
 kind: sdk
-version: 1
 name: `+name+`
-sdkVersion: "1.0.0"
+version: "1.0.0"
 language: typescript
-target: sdk
 services:
   okta:
     version: "2026-07-01"
@@ -536,4 +533,44 @@ func writeFile(t *testing.T, dir, rel, body string) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+func TestParseRejectsRetiredArtifactFields(t *testing.T) {
+	for name, body := range map[string]string{
+		"numeric version": "kind: sdk\nversion: 1\nname: reader\nsdkVersion: 1.0.0\nlanguage: typescript\nservices: {}\n",
+		"sdkVersion":      "apiVersion: fused/v1\nkind: sdk\nname: reader\nversion: 1.0.0\nsdkVersion: 1.0.0\nlanguage: typescript\nservices: {}\n",
+		"target":          "apiVersion: fused/v1\nkind: sdk\nname: reader\nversion: 1.0.0\nlanguage: typescript\ntarget: mcp\nservices: {}\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := configfile.Parse([]byte(body), "test.yaml"); err == nil {
+				t.Fatal("expected retired config field to be rejected")
+			}
+		})
+	}
+}
+
+func TestParseMCPConfigCarriesAuthPolicyWithoutCredentials(t *testing.T) {
+	parsed, err := configfile.Parse([]byte(`
+apiVersion: fused/v1
+kind: mcp
+name: github-agent
+version: 1.0.0
+bucket: customers
+services:
+  github:
+    version: "2026-07-01"
+    operations: [reposList]
+    auth:
+      type: oauth
+      name: oauthAuth
+    connect:
+      scopes: [read:user]
+`), "mcp.yaml")
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	service := parsed.MCP.Services["github"]
+	if parsed.ConfigKey != "mcp:github-agent:1.0.0" || service.Auth.Type != "oauth" || service.Connect.Scopes[0] != "read:user" {
+		t.Fatalf("unexpected parsed MCP config: %#v", parsed)
+	}
 }

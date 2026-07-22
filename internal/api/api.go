@@ -401,11 +401,11 @@ func (c *Client) RediscoverConnectionResources(connectionID string) ([]Connectio
 }
 
 // StartConnectSession calls the Engine's bucket-scoped connect route so CLI
-// onboarding uses the same ownership checks as runtime credential resolution.
-func (c *Client) StartConnectSession(bucketID, serviceID, endUserRef, createdBySDKID string, resourceInput map[string]string) (*ConnectSessionStartResponse, error) {
+// onboarding and scope reduction use the same policy as generated SDKs.
+func (c *Client) StartConnectSession(bucketID, serviceID, endUserRef, createdBySDKID string, resourceInput map[string]string, scopes []string) (*ConnectSessionStartResponse, error) {
 	query := `
-		mutation StartConnectSession($bucketId: String!, $serviceId: String!, $endUserRef: String!, $createdBySdkId: String, $resourceInput: EngineJSON) {
-			startConnectSession(bucket_id: $bucketId, service_id: $serviceId, end_user_ref: $endUserRef, created_by_sdk_id: $createdBySdkId, resource_input: $resourceInput) {
+		mutation StartConnectSession($bucketId: String!, $serviceId: String!, $endUserRef: String!, $createdBySdkId: String, $resourceInput: EngineJSON, $scopes: [String!]) {
+			startConnectSession(bucket_id: $bucketId, service_id: $serviceId, end_user_ref: $endUserRef, created_by_sdk_id: $createdBySdkId, resource_input: $resourceInput, scopes: $scopes) {
 				authorize_url
 				expires_at
 			}
@@ -421,6 +421,9 @@ func (c *Client) StartConnectSession(bucketID, serviceID, endUserRef, createdByS
 	}
 	if len(resourceInput) > 0 {
 		vars["resourceInput"] = resourceInput
+	}
+	if len(scopes) > 0 {
+		vars["scopes"] = scopes
 	}
 
 	var resp struct {
@@ -1024,82 +1027,6 @@ func (c *Client) DownloadSDK(sdkID string) ([]byte, error) {
 	return io.ReadAll(resp.Body)
 }
 
-// MCPSelection mirrors the Engine's models.SDKSelection wire shape (see
-// backend/internal/shared/models.SDKSelection) -- it's what ActivateMCPServer
-// sends directly to POST /sdk-config/{id}/activate. MCP creation no longer
-// round-trips through Registry SDK generation, so this is a CLI-local type
-// rather than a re-export of the CLI's Registry-facing SDKSelection (which
-// has no ServiceVersionID -- Registry used to resolve that itself during
-// codegen; now the CLI must resolve and send it directly).
-type MCPSelection struct {
-	ServiceID        string   `json:"service_id"`
-	ServiceVersionID string   `json:"service_version_id"`
-	EndpointIDs      []string `json:"endpoint_ids"`
-}
-
-// MCPActivateRequest is the body for POST /sdk-config/{id}/activate. Bucket
-// names which secret bucket the deployed MCP resolves credentials from --
-// empty means the workspace's default bucket (resolved server-side).
-type MCPActivateRequest struct {
-	Bucket     string         `json:"bucket,omitempty"`
-	Selections []MCPSelection `json:"selections,omitempty"`
-	// Kind labels the created scope for the MCP servers list page; the CLI's
-	// mcp create flow always sends "mcp" here (see cmd/create.go's
-	// createMCPServer).
-	Kind string `json:"kind,omitempty"`
-	// Name is the CLI's existing --name/-n flag value, threaded straight
-	// through so the same value the SDK path already collects also labels an
-	// MCP deployment.
-	Name string `json:"name,omitempty"`
-}
-
-type MCPActivateResult struct {
-	Status    string `json:"status"`
-	SDKID     string `json:"sdk_id"`
-	MCPURL    string `json:"mcp_url"`
-	AuthToken string `json:"auth_token,omitempty"`
-}
-
-// ActivateMCPServer posts directly to the Engine to create/activate an MCP
-// server -- no Registry SDK generation involved. sdkID is minted by the
-// caller (uuid.NewString()), not issued by Registry, since there's no
-// generated_sdks row backing this anymore.
-func (c *Client) ActivateMCPServer(sdkID string, activateReq MCPActivateRequest) (*MCPActivateResult, error) {
-	body, err := json.Marshal(activateReq)
-	if err != nil {
-		return nil, err
-	}
-	req, err := http.NewRequest("POST", c.BaseURL+"/sdk-config/"+sdkID+"/activate", bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if c.APIKey != "" {
-		req.Header.Set("x-api-key", c.APIKey)
-	}
-
-	resp, err := c.doRequest(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		respBody, _ := io.ReadAll(resp.Body)
-		bodyStr := string(respBody)
-		if len(bodyStr) > 200 {
-			bodyStr = bodyStr[:200] + "..."
-		}
-		return nil, fmt.Errorf("failed to activate MCP server (HTTP %d): %s", resp.StatusCode, bodyStr)
-	}
-
-	var out MCPActivateResult
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, err
-	}
-	return &out, nil
-}
-
 type SDKConfigPlanResponse struct {
 	PlanID        string                 `json:"plan_id"`
 	ConfigKey     string                 `json:"config_key"`
@@ -1168,6 +1095,16 @@ type AppliedWebhookConfig struct {
 }
 
 func (c *Client) PlanSDKConfig(sourceHash, configKey string, config json.RawMessage) (*SDKConfigPlanResponse, error) {
+	return c.planArtifactConfig("sdk", sourceHash, configKey, config)
+}
+
+func (c *Client) PlanMCPConfig(sourceHash, configKey string, config json.RawMessage) (*SDKConfigPlanResponse, error) {
+	return c.planArtifactConfig("mcp", sourceHash, configKey, config)
+}
+
+// planArtifactConfig keeps SDK and MCP command behavior identical while the
+// Engine routes each kind to its distinct executor.
+func (c *Client) planArtifactConfig(kind, sourceHash, configKey string, config json.RawMessage) (*SDKConfigPlanResponse, error) {
 	reqBody := map[string]interface{}{
 		"source_hash": sourceHash,
 		"config_key":  configKey,
@@ -1178,7 +1115,7 @@ func (c *Client) PlanSDKConfig(sourceHash, configKey string, config json.RawMess
 		return nil, err
 	}
 
-	req, err := http.NewRequest("POST", c.BaseURL+"/sdk-config/plan", bytes.NewBuffer(body))
+	req, err := http.NewRequest("POST", c.BaseURL+"/"+kind+"-config/plan", bytes.NewBuffer(body))
 	if err != nil {
 		return nil, err
 	}
@@ -1195,7 +1132,7 @@ func (c *Client) PlanSDKConfig(sourceHash, configKey string, config json.RawMess
 
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("plan SDK config failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(respBody))
+		return nil, fmt.Errorf("plan %s config failed (HTTP %d): %s", kind, resp.StatusCode, formatHTTPErrorBody(respBody))
 	}
 
 	var out SDKConfigPlanResponse
@@ -1250,6 +1187,15 @@ type SDKConfigApplyResponse struct {
 	JobID  string `json:"job_id"`
 }
 
+type MCPConfigApplyResponse struct {
+	Status         string `json:"status"`
+	PlanID         string `json:"plan_id"`
+	ConfigKey      string `json:"config_key"`
+	MCPID          string `json:"mcp_id"`
+	MCPURL         string `json:"mcp_url"`
+	ExecutionToken string `json:"execution_token"`
+}
+
 func (c *Client) ApplySDKConfig(planID, sourceHash string) (*SDKConfigApplyResponse, error) {
 	reqBody := map[string]interface{}{
 		"plan_id":     planID,
@@ -1281,6 +1227,36 @@ func (c *Client) ApplySDKConfig(planID, sourceHash string) (*SDKConfigApplyRespo
 	}
 
 	var out SDKConfigApplyResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (c *Client) ApplyMCPConfig(planID, sourceHash string) (*MCPConfigApplyResponse, error) {
+	reqBody := map[string]interface{}{"plan_id": planID, "source_hash": sourceHash}
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequest("POST", c.BaseURL+"/mcp-config/apply", bytes.NewBuffer(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if c.APIKey != "" {
+		req.Header.Set("x-api-key", c.APIKey)
+	}
+	resp, err := c.doRequest(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("apply mcp config failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(respBody))
+	}
+	var out MCPConfigApplyResponse
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return nil, err
 	}

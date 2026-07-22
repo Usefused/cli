@@ -18,8 +18,8 @@ import (
 func TestWorkspacePlanWritesReceiptAndPostsToEngine(t *testing.T) {
 	dir := t.TempDir()
 	path := writeSprintConfig(t, dir, "workspace.yaml", `
+apiVersion: fused/v1
 kind: workspace
-version: 1
 services:
   okta:
     service_id: "00000000-0000-0000-0000-000000000001"
@@ -53,11 +53,56 @@ services:
 	}
 }
 
+func TestMCPPlanAndApplyUseDedicatedEngineRoutes(t *testing.T) {
+	dir := t.TempDir()
+	path := writeSprintConfig(t, dir, "mcp.yaml", `
+apiVersion: fused/v1
+kind: mcp
+name: github-agent
+version: 1.0.0
+bucket: default
+services:
+  github:
+    version: "2026-07-01"
+    operations: [reposList]
+    auth:
+      type: oauth
+    connect:
+      scopes: [read:user]
+`)
+	var sourceHash string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/health":
+			_, _ = w.Write([]byte(`{"status":"ok","plane":"engine","environment":"staging"}`))
+		case "/mcp-config/plan":
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			sourceHash = body["source_hash"].(string)
+			if body["config_key"] != "mcp:github-agent:1.0.0" {
+				t.Fatalf("unexpected config key: %#v", body)
+			}
+			_, _ = w.Write([]byte(`{"plan_id":"plan-mcp","config_key":"mcp:github-agent:1.0.0","source_hash":"` + sourceHash + `","summary":{}}`))
+		case "/mcp-config/apply":
+			_, _ = w.Write([]byte(`{"status":"applied","plan_id":"plan-mcp","config_key":"mcp:github-agent:1.0.0","mcp_id":"runtime-1","mcp_url":"https://engine.example/mcp/runtime-1/sse","execution_token":"shown-once"}`))
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	runCommandInDir(t, dir, server.URL, []string{"mcp", "plan", "-f", path})
+	runCommandInDir(t, dir, server.URL, []string{"mcp", "apply", "-f", path})
+	if sourceHash == "" {
+		t.Fatal("MCP plan did not include a source hash")
+	}
+}
+
 func TestWorkspacePlanRejectsLegacyConnectEnvFields(t *testing.T) {
 	dir := t.TempDir()
 	path := writeSprintConfig(t, dir, "workspace.yaml", `
+apiVersion: fused/v1
 kind: workspace
-version: 1
 services:
   github:
     service_id: "00000000-0000-0000-0000-000000000001"
@@ -86,8 +131,8 @@ func TestWorkspacePlanPostsDollarConnectRefsWithoutResolvedSecrets(t *testing.T)
 	t.Setenv("FUSED_TEST_CLIENT_SECRET", "resolved-secret")
 	dir := t.TempDir()
 	path := writeSprintConfig(t, dir, "workspace.yaml", `
+apiVersion: fused/v1
 kind: workspace
-version: 1
 services:
   github:
     service_id: "00000000-0000-0000-0000-000000000001"
@@ -127,8 +172,8 @@ func TestWorkspaceApplyPostsConnectMaterialsFromDollarRefs(t *testing.T) {
 	t.Setenv("FUSED_TEST_CLIENT_SECRET", "resolved-secret")
 	dir := t.TempDir()
 	path := writeSprintConfig(t, dir, "workspace.yaml", `
+apiVersion: fused/v1
 kind: workspace
-version: 1
 services:
   github:
     service_id: "00000000-0000-0000-0000-000000000001"
@@ -171,8 +216,8 @@ func TestWorkspaceApplyPostsStaticAuthMaterialsFromDollarRefs(t *testing.T) {
 	t.Setenv("FUSED_BASIC_PASS", "s3cr3t")
 	dir := t.TempDir()
 	path := writeSprintConfig(t, dir, "workspace.yaml", `
+apiVersion: fused/v1
 kind: workspace
-version: 1
 services:
   github:
     service_id: "00000000-0000-0000-0000-000000000001"
@@ -216,8 +261,8 @@ func TestWorkspaceApplyPostsMTLSAuthMaterialsFromDollarRefs(t *testing.T) {
 	t.Setenv("FUSED_CLIENT_KEY", "KEY-PEM")
 	dir := t.TempDir()
 	path := writeSprintConfig(t, dir, "workspace.yaml", `
+apiVersion: fused/v1
 kind: workspace
-version: 1
 services:
   github:
     service_id: "00000000-0000-0000-0000-000000000001"
@@ -257,8 +302,8 @@ services:
 func TestWorkspacePlanRejectsInlineStaticAuthMaterial(t *testing.T) {
 	dir := t.TempDir()
 	path := writeSprintConfig(t, dir, "workspace.yaml", `
+apiVersion: fused/v1
 kind: workspace
-version: 1
 services:
   github:
     service_id: "00000000-0000-0000-0000-000000000001"
@@ -284,8 +329,8 @@ services:
 func TestWorkspaceApplyUsesReceiptWithoutReplanning(t *testing.T) {
 	dir := t.TempDir()
 	path := writeSprintConfig(t, dir, "workspace.yaml", `
+apiVersion: fused/v1
 kind: workspace
-version: 1
 services:
   okta:
     service_id: "00000000-0000-0000-0000-000000000001"
@@ -333,20 +378,19 @@ services:
 func TestAggregatePlanOrdersWorkspaceBeforeSDK(t *testing.T) {
 	dir := t.TempDir()
 	writeSprintConfig(t, dir, ".fused/workspace.yaml", `
+apiVersion: fused/v1
 kind: workspace
-version: 1
 services:
   okta:
     service_id: "00000000-0000-0000-0000-000000000001"
     versions: ["2026-07-01"]
 `)
 	writeSprintConfig(t, dir, ".fused/sdks/security.yaml", `
+apiVersion: fused/v1
 kind: sdk
-version: 1
 name: security
-sdkVersion: "1.0.0"
+version: "1.0.0"
 language: typescript
-target: sdk
 services:
   okta:
     version: "2026-07-01"
@@ -359,7 +403,7 @@ services:
 		case "/workspace/config/plan":
 			_, _ = w.Write([]byte(`{"plan_id":"plan-workspace","config_key":"workspace","source_hash":"hash","base_generation":0,"summary":{}}`))
 		case "/sdk-config/plan":
-			_, _ = w.Write([]byte(`{"plan_id":"plan-sdk","config_key":"sdk:security","source_hash":"hash","base_generation":0,"summary":{}}`))
+			_, _ = w.Write([]byte(`{"plan_id":"plan-sdk","config_key":"sdk:security:1.0.0","source_hash":"hash","base_generation":0,"summary":{}}`))
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
@@ -375,12 +419,11 @@ services:
 func TestSDKPlanPrintsNotificationsFromPlanResponse(t *testing.T) {
 	dir := t.TempDir()
 	path := writeSprintConfig(t, dir, "security.yaml", `
+apiVersion: fused/v1
 kind: sdk
-version: 1
 name: security
-sdkVersion: "1.0.0"
+version: "1.0.0"
 language: typescript
-target: sdk
 services:
   okta:
     version: "2026-07-01"
@@ -392,7 +435,7 @@ services:
 		}
 		_, _ = w.Write([]byte(`{
 			"plan_id":"plan-sdk",
-			"config_key":"sdk:security",
+				"config_key":"sdk:security:1.0.0",
 			"source_hash":"hash",
 			"base_generation":0,
 			"summary":{},
@@ -413,7 +456,7 @@ services:
 	defer server.Close()
 
 	out := runCommandInDirOutput(t, dir, server.URL, []string{"sdk", "plan", "-f", path})
-	if !strings.Contains(out, "Workspace notifications for sdk:security") {
+	if !strings.Contains(out, "Workspace notifications for sdk:security:1.0.0") {
 		t.Fatalf("expected notification heading, got %q", out)
 	}
 	if !strings.Contains(out, "Endpoint drift detected for listLogEvents") {
@@ -427,23 +470,21 @@ services:
 func TestSDKPlanResolvesFusedSDKShortcutAndPrintsConfigPath(t *testing.T) {
 	dir := t.TempDir()
 	writeSprintConfig(t, dir, ".fused/sdks/security.yaml", `
+apiVersion: fused/v1
 kind: sdk
-version: 1
 name: security
-sdkVersion: "1.0.0"
+version: "1.0.0"
 language: typescript
-target: sdk
 services:
   okta:
     operations: ["listLogEvents"]
 `)
 	writeSprintConfig(t, dir, ".fused/sdks/other.yaml", `
+apiVersion: fused/v1
 kind: sdk
-version: 1
 name: other
-sdkVersion: "1.0.0"
+version: "1.0.0"
 language: typescript
-target: sdk
 services:
   github:
     operations: ["listRepos"]
@@ -458,10 +499,10 @@ services:
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatalf("decode body: %v", err)
 		}
-		if body["config_key"] != "sdk:security" {
+		if body["config_key"] != "sdk:security:1.0.0" {
 			t.Fatalf("expected shortcut to select security only, got %#v", body["config_key"])
 		}
-		_, _ = w.Write([]byte(`{"plan_id":"plan-sdk","config_key":"sdk:security","source_hash":"` + body["source_hash"].(string) + `","base_generation":0,"summary":{}}`))
+		_, _ = w.Write([]byte(`{"plan_id":"plan-sdk","config_key":"sdk:security:1.0.0","source_hash":"` + body["source_hash"].(string) + `","base_generation":0,"summary":{}}`))
 	}))
 	defer server.Close()
 
@@ -478,12 +519,11 @@ services:
 func TestSDKAddAndRemoveOperationWriteYaml(t *testing.T) {
 	dir := t.TempDir()
 	path := writeSprintConfig(t, dir, "fused.yaml", `
+apiVersion: fused/v1
 kind: sdk
-version: 1
 name: security
-sdkVersion: "1.0.0"
+version: "1.0.0"
 language: typescript
-target: sdk
 services:
   okta:
     version: "2026-07-01"
@@ -514,12 +554,11 @@ services:
 func TestSDKAddServiceWritesYaml(t *testing.T) {
 	dir := t.TempDir()
 	path := writeSprintConfig(t, dir, "fused.yaml", `
+apiVersion: fused/v1
 kind: sdk
-version: 1
 name: security
-sdkVersion: "1.0.0"
+version: "1.0.0"
 language: typescript
-target: sdk
 services:
   okta:
     version: "2026-07-01"
@@ -569,12 +608,11 @@ func TestSDKServiceSlugHelpShowsReadableActions(t *testing.T) {
 func TestSDKValidateLoadsOnlySDKConfigs(t *testing.T) {
 	dir := t.TempDir()
 	path := writeSprintConfig(t, dir, "fused.yaml", `
+apiVersion: fused/v1
 kind: sdk
-version: 1
 name: security
-sdkVersion: "1.0.0"
+version: "1.0.0"
 language: typescript
-target: sdk
 services:
   okta:
     version: "2026-07-01"
@@ -906,8 +944,8 @@ func TestWorkspaceHasCallsEngine(t *testing.T) {
 func TestWorkspaceVersionRemoveForceUpdatesPlanActionBeforeApply(t *testing.T) {
 	dir := t.TempDir()
 	path := writeSprintConfig(t, dir, "workspace.yaml", `
+apiVersion: fused/v1
 kind: workspace
-version: 1
 services:
   okta:
     service_id: "00000000-0000-0000-0000-000000000001"
@@ -971,8 +1009,8 @@ services:
 func TestWorkspaceAddServiceWritesSlugOnlyYaml(t *testing.T) {
 	dir := t.TempDir()
 	path := writeSprintConfig(t, dir, "workspace.yaml", `
+apiVersion: fused/v1
 kind: workspace
-version: 1
 services: {}
 `)
 	runCommandInDir(t, dir, "", []string{"workspace", "service", "okta", "add", "-f", path, "--add-version", "2026-07-01"})
@@ -992,12 +1030,11 @@ services: {}
 func TestSDKInteractiveAddOperationUsesWorkspaceAndVersion(t *testing.T) {
 	dir := t.TempDir()
 	path := writeSprintConfig(t, dir, "fused.yaml", `
+apiVersion: fused/v1
 kind: sdk
-version: 1
 name: security
-sdkVersion: "1.0.0"
+version: "1.0.0"
 language: typescript
-target: sdk
 services:
   okta:
     version: "2026-07-01"
@@ -1048,12 +1085,11 @@ services:
 func TestSDKInteractiveAddOperationPromptsForService(t *testing.T) {
 	dir := t.TempDir()
 	path := writeSprintConfig(t, dir, "fused.yaml", `
+apiVersion: fused/v1
 kind: sdk
-version: 1
 name: security
-sdkVersion: "1.0.0"
+version: "1.0.0"
 language: typescript
-target: sdk
 services:
   github:
     version: "2026-06-15"

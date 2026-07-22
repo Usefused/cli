@@ -58,12 +58,11 @@ func TestConfigCommandSurface(t *testing.T) {
 func TestValidateCommandResolvesFile(t *testing.T) {
 	dir := t.TempDir()
 	path := writeConfigCommandFile(t, dir, "fused.yaml", `
+apiVersion: fused/v1
 kind: sdk
-version: 1
 name: security
-sdkVersion: "1.0.0"
+version: "1.0.0"
 language: typescript
-target: sdk
 services:
   okta:
     version: "2026-07-01"
@@ -87,8 +86,8 @@ services:
 func TestPlanCommandDiscoversFusedFolder(t *testing.T) {
 	dir := t.TempDir()
 	writeConfigCommandFile(t, dir, ".fused/workspace.yaml", `
+apiVersion: fused/v1
 kind: workspace
-version: 1
 services:
   okta:
     service_id: "00000000-0000-0000-0000-000000000001"

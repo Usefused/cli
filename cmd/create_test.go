@@ -12,52 +12,6 @@ import (
 	"github.com/Usefused/cli/internal/api"
 )
 
-func TestIsMCPTarget(t *testing.T) {
-	cases := []struct {
-		name       string
-		targetType string
-		want       bool
-	}{
-		{"mcp target", "mcp", true},
-		{"sdk target", "sdk", false},
-		{"empty target", "", false},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := isMCPTarget(tc.targetType); got != tc.want {
-				t.Errorf("isMCPTarget(%q) = %v, want %v", tc.targetType, got, tc.want)
-			}
-		})
-	}
-}
-
-func TestValidateCreateFlags(t *testing.T) {
-	cases := []struct {
-		name           string
-		targetType     string
-		targetLanguage string
-		wantErr        bool
-	}{
-		{"mcp + python is rejected", "mcp", "python", true},
-		{"mcp + typescript is allowed", "mcp", "typescript", false},
-		{"sdk + python is allowed", "sdk", "python", false},
-		{"sdk + typescript is allowed", "sdk", "typescript", false},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			err := validateCreateFlags(tc.targetType, tc.targetLanguage)
-			if tc.wantErr && err == nil {
-				t.Errorf("validateCreateFlags(%q, %q) = nil, want error", tc.targetType, tc.targetLanguage)
-			}
-			if !tc.wantErr && err != nil {
-				t.Errorf("validateCreateFlags(%q, %q) = %v, want nil", tc.targetType, tc.targetLanguage, err)
-			}
-		})
-	}
-}
-
 // --- pure helpers extracted from runCreate ---
 
 func TestGroupCartByService(t *testing.T) {
@@ -125,55 +79,6 @@ func TestBuildSelections(t *testing.T) {
 	}
 	if got := byService["svcB"]; len(got) != 1 || got[0] != "ep3" {
 		t.Errorf("svcB selections = %v, want [ep3]", got)
-	}
-}
-
-func TestResolveMCPSelections_ResolvesServiceVersionIDFromWorkspace(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !writeEngineWorkspaceServices(t, w, r, `[{"service_id":"svc-1","service_version_id":"ver-1","version":"1.0"}]`) {
-			t.Fatalf("unexpected path %s", r.URL.Path)
-		}
-	}))
-	defer server.Close()
-
-	client := api.NewClient(server.URL, "test-key")
-	cart := map[string]api.Integration{
-		"ep1": {ID: "ep1", ServiceID: "svc-1"},
-		"ep2": {ID: "ep2", ServiceID: "svc-1"},
-	}
-
-	selections, err := resolveMCPSelections(client, cart)
-	if err != nil {
-		t.Fatalf("resolveMCPSelections: %v", err)
-	}
-	if len(selections) != 1 {
-		t.Fatalf("expected one service grouping, got %d", len(selections))
-	}
-	sel := selections[0]
-	if sel.ServiceID != "svc-1" || sel.ServiceVersionID != "ver-1" {
-		t.Errorf("expected svc-1/ver-1, got %#v", sel)
-	}
-	if len(sel.EndpointIDs) != 2 {
-		t.Errorf("expected 2 endpoint ids, got %#v", sel.EndpointIDs)
-	}
-}
-
-func TestResolveMCPSelections_FailsWhenServiceNotActivated(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !writeEngineWorkspaceServices(t, w, r, `[]`) {
-			t.Fatalf("unexpected path %s", r.URL.Path)
-		}
-	}))
-	defer server.Close()
-
-	client := api.NewClient(server.URL, "test-key")
-	cart := map[string]api.Integration{
-		"ep1": {ID: "ep1", ServiceID: "svc-unactivated"},
-	}
-
-	_, err := resolveMCPSelections(client, cart)
-	if err == nil || !strings.Contains(err.Error(), "svc-unactivated") {
-		t.Fatalf("expected an error naming the unresolved service, got %v", err)
 	}
 }
 

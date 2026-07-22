@@ -216,9 +216,9 @@ func runBucketConnections(cmd *cobra.Command, nameOrID string) error {
 		return err
 	}
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 8, 2, ' ', 0)
-	fmt.Fprintln(w, "USER_REF\tSERVICE_ID\tAUTH_TYPE\tREFRESH_STATE\tID")
+	fmt.Fprintln(w, "USER_REF\tSERVICE_ID\tAUTH_TYPE\tREFRESH_STATE\tLAST_FAILURE\tTRACE_ID\tID")
 	for _, conn := range page.Items {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", conn.EndUserRef, conn.ServiceID, conn.AuthType, conn.RefreshState, conn.ID)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", conn.EndUserRef, conn.ServiceID, conn.AuthType, conn.RefreshState, conn.LastFailureCode, conn.LastFailureTraceID, conn.ID)
 	}
 	w.Flush()
 	printPageSummary(cmd.OutOrStdout(), page.Total, bucketListFlags)

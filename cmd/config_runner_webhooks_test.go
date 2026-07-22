@@ -93,8 +93,8 @@ func TestPrintAppliedWebhooks_NoOutputWhenNoWebhooks(t *testing.T) {
 func TestWorkspaceApplyPrintsWebhookURLs(t *testing.T) {
 	dir := t.TempDir()
 	path := writeSprintConfig(t, dir, "workspace.yaml", `
+apiVersion: fused/v1
 kind: workspace
-version: 1
 services:
   github:
     service_id: "00000000-0000-0000-0000-000000000001"
@@ -137,36 +137,7 @@ services:
 func TestWorkspaceServiceWebhooks_ListsRegistrationsWithReconstructedURL(t *testing.T) {
 	dir := t.TempDir()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.URL.Path == "/graphql":
-			var body struct {
-				Query     string         `json:"query"`
-				Variables map[string]any `json:"variables"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				t.Fatalf("decode graphql body: %v", err)
-			}
-			if !strings.Contains(body.Query, "serviceVersions") {
-				t.Fatalf("unexpected graphql query: %s", body.Query)
-			}
-			_, _ = w.Write([]byte(`{"data":{"serviceVersions":[{"id":"ver-latest","service_id":"svc-github","name":"2026-07-01","status":"public","created_at":"2026-07-01T00:00:00Z"}]}}`))
-		case r.URL.Path == "/engine/graphql":
-			body := decodeTestGraphQLBody(t, r)
-			if strings.Contains(body.Query, "workspaceServices") {
-				_, _ = w.Write([]byte(`{"data":{"workspaceServices":[{"service_id":"svc-github","service_name":"GitHub REST API","version":"2026-07-01"}]}}`))
-				return
-			}
-			if strings.Contains(body.Query, "workspaceWebhooks") {
-				_, _ = w.Write([]byte(`{"data":{"workspaceWebhooks":[
-					{"label":"repo-a","slug":"slugaaaaaaaaaaaaaaaaa","created_at":"2026-07-18T00:00:00Z"},
-					{"label":"repo-b","slug":"slugbbbbbbbbbbbbbbbbb","created_at":"2026-07-18T00:00:00Z"}
-				]}}`))
-				return
-			}
-			t.Fatalf("unexpected engine graphql query: %s", body.Query)
-		default:
-			t.Fatalf("unexpected path %s", r.URL.Path)
-		}
+		handleWorkspaceWebhookListRequest(t, w, r)
 	}))
 	defer server.Close()
 
@@ -183,6 +154,50 @@ func TestWorkspaceServiceWebhooks_ListsRegistrationsWithReconstructedURL(t *test
 	if strings.Contains(out, "whsec") {
 		t.Fatalf("output should never contain a signing secret, got:\n%s", out)
 	}
+}
+
+func handleWorkspaceWebhookListRequest(t *testing.T, w http.ResponseWriter, r *http.Request) {
+	t.Helper()
+	switch r.URL.Path {
+	case "/graphql":
+		writeServiceVersionsForWebhookList(t, w, r)
+	case "/engine/graphql":
+		writeEngineWebhookListResponse(t, w, r)
+	default:
+		t.Fatalf("unexpected path %s", r.URL.Path)
+	}
+}
+
+func writeServiceVersionsForWebhookList(t *testing.T, w http.ResponseWriter, r *http.Request) {
+	t.Helper()
+	var body struct {
+		Query     string         `json:"query"`
+		Variables map[string]any `json:"variables"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		t.Fatalf("decode graphql body: %v", err)
+	}
+	if !strings.Contains(body.Query, "serviceVersions") {
+		t.Fatalf("unexpected graphql query: %s", body.Query)
+	}
+	_, _ = w.Write([]byte(`{"data":{"serviceVersions":[{"id":"ver-latest","service_id":"svc-github","name":"2026-07-01","status":"public","created_at":"2026-07-01T00:00:00Z"}]}}`))
+}
+
+func writeEngineWebhookListResponse(t *testing.T, w http.ResponseWriter, r *http.Request) {
+	t.Helper()
+	body := decodeTestGraphQLBody(t, r)
+	if strings.Contains(body.Query, "workspaceServices") {
+		_, _ = w.Write([]byte(`{"data":{"workspaceServices":[{"service_id":"svc-github","service_name":"GitHub REST API","version":"2026-07-01"}]}}`))
+		return
+	}
+	if strings.Contains(body.Query, "workspaceWebhooks") {
+		_, _ = w.Write([]byte(`{"data":{"workspaceWebhooks":[
+			{"label":"repo-a","slug":"slugaaaaaaaaaaaaaaaaa","created_at":"2026-07-18T00:00:00Z"},
+			{"label":"repo-b","slug":"slugbbbbbbbbbbbbbbbbb","created_at":"2026-07-18T00:00:00Z"}
+		]}}`))
+		return
+	}
+	t.Fatalf("unexpected engine graphql query: %s", body.Query)
 }
 
 func TestWorkspaceServiceWebhooks_NoRegistrations_PrintsMessage(t *testing.T) {

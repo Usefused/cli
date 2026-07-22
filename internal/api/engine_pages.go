@@ -54,19 +54,22 @@ type BucketSDKSummaryPageResponse struct {
 }
 
 type AuthConnectionResponse struct {
-	ID             string   `json:"id"`
-	BucketID       string   `json:"bucket_id"`
-	ServiceID      string   `json:"service_id"`
-	EndUserRef     string   `json:"end_user_ref"`
-	AuthType       string   `json:"auth_type"`
-	TokenType      string   `json:"token_type"`
-	Scopes         []string `json:"scopes"`
-	ExpiresAt      string   `json:"expires_at"`
-	LastUsedAt     string   `json:"last_used_at"`
-	RefreshState   string   `json:"refresh_state"`
-	CreatedAt      string   `json:"created_at"`
-	UpdatedAt      string   `json:"updated_at"`
-	CreatedBySDKID string   `json:"created_by_sdk_id"`
+	ID                 string   `json:"id"`
+	BucketID           string   `json:"bucket_id"`
+	ServiceID          string   `json:"service_id"`
+	EndUserRef         string   `json:"end_user_ref"`
+	AuthType           string   `json:"auth_type"`
+	TokenType          string   `json:"token_type"`
+	Scopes             []string `json:"scopes"`
+	ExpiresAt          string   `json:"expires_at"`
+	LastUsedAt         string   `json:"last_used_at"`
+	RefreshState       string   `json:"refresh_state"`
+	LastFailureCode    string   `json:"last_failure_code"`
+	LastFailureAt      string   `json:"last_failure_at"`
+	LastFailureTraceID string   `json:"last_failure_trace_id"`
+	CreatedAt          string   `json:"created_at"`
+	UpdatedAt          string   `json:"updated_at"`
+	CreatedBySDKID     string   `json:"created_by_sdk_id"`
 }
 
 type AuthConnectionPageResponse struct {
@@ -86,6 +89,7 @@ type BucketResponse struct {
 type MCPServerResponse struct {
 	ID            string `json:"id"`
 	Name          string `json:"name"`
+	Version       string `json:"version"`
 	MCPURL        string `json:"mcp_url"`
 	Active        bool   `json:"active"`
 	DeactivatedAt string `json:"deactivated_at"`
@@ -165,7 +169,7 @@ func (c *Client) ListAuthConnectionPage(bucketID string, serviceID string, endUs
 		query AuthConnectionPage($bucketId: String!, $serviceId: String, $endUserRef: String, $limit: Int!, $offset: Int!) {
 			authConnectionPage(bucket_id: $bucketId, service_id: $serviceId, end_user_ref: $endUserRef, limit: $limit, offset: $offset) {
 				total
-				items { id bucket_id service_id end_user_ref auth_type token_type scopes expires_at last_used_at refresh_state created_at updated_at created_by_sdk_id }
+				items { id bucket_id service_id end_user_ref auth_type token_type scopes expires_at last_used_at refresh_state last_failure_code last_failure_at last_failure_trace_id created_at updated_at created_by_sdk_id }
 			}
 		}
 	`
@@ -229,7 +233,7 @@ func (c *Client) ListMCPServers(opts PageOptions) (*MCPServerPageResponse, error
 		query MCPServers($limit: Int!, $offset: Int!) {
 			mcpServers(limit: $limit, offset: $offset) {
 				total
-				items { id name mcp_url active deactivated_at created_at }
+				items { id name version mcp_url active deactivated_at created_at }
 			}
 		}
 	`

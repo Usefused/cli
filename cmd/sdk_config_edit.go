@@ -103,10 +103,10 @@ func loadSDKConfigForSync(path, sdkName string) (string, *configfile.SDKConfig, 
 	data, err := os.ReadFile(target)
 	if os.IsNotExist(err) {
 		return target, &configfile.SDKConfig{
-			BaseConfig: configfile.BaseConfig{Kind: configfile.KindSDK, Version: 1},
+			BaseConfig: configfile.BaseConfig{APIVersion: configfile.APIVersionV1, Kind: configfile.KindSDK},
 			Name:       sdkName,
+			Version:    "1.0.0",
 			Language:   "typescript",
-			Target:     "sdk",
 			Services:   map[string]configfile.SDKService{},
 		}, nil
 	}

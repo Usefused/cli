@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -131,8 +132,11 @@ func Parse(data []byte, sourcePath string) (*ParsedConfig, error) {
 		return nil, fmt.Errorf("failed to parse base config: %w", err)
 	}
 
-	if base.Version != 1 {
-		return nil, fmt.Errorf("unsupported config version: %d", base.Version)
+	if base.APIVersion == "" {
+		return nil, fmt.Errorf("config apiVersion is required; use %q", APIVersionV1)
+	}
+	if base.APIVersion != APIVersionV1 {
+		return nil, fmt.Errorf("unsupported config apiVersion %q; use %q", base.APIVersion, APIVersionV1)
 	}
 
 	hash := sha256.Sum256(data)
@@ -142,25 +146,8 @@ func Parse(data []byte, sourcePath string) (*ParsedConfig, error) {
 		SourceHash: fmt.Sprintf("sha256:%x", hash),
 	}
 
-	switch base.Kind {
-	case KindWorkspace:
-		var wsConfig WorkspaceConfig
-		if err := yaml.Unmarshal(data, &wsConfig); err != nil {
-			return nil, fmt.Errorf("failed to parse workspace config: %w", err)
-		}
-		parsed.Workspace = &wsConfig
-		parsed.ConfigKey = "workspace"
-
-	case KindSDK:
-		var sdkConfig SDKConfig
-		if err := yaml.Unmarshal(data, &sdkConfig); err != nil {
-			return nil, fmt.Errorf("failed to parse sdk config: %w", err)
-		}
-		parsed.SDK = &sdkConfig
-		parsed.ConfigKey = fmt.Sprintf("sdk:%s", sdkConfig.Name)
-
-	default:
-		return nil, fmt.Errorf("unknown config kind: %q", base.Kind)
+	if err := parseTypedConfig(data, base.Kind, parsed); err != nil {
+		return nil, err
 	}
 
 	if err := validateConfig(parsed); err != nil {
@@ -170,11 +157,46 @@ func Parse(data []byte, sourcePath string) (*ParsedConfig, error) {
 	return parsed, nil
 }
 
+func parseTypedConfig(data []byte, kind ConfigKind, parsed *ParsedConfig) error {
+	switch kind {
+	case KindWorkspace:
+		var wsConfig WorkspaceConfig
+		if err := strictUnmarshal(data, &wsConfig); err != nil {
+			return fmt.Errorf("failed to parse workspace config: %w", err)
+		}
+		parsed.Workspace = &wsConfig
+		parsed.ConfigKey = "workspace"
+	case KindSDK:
+		// Artifact config keys include version so plan/apply receipts cannot
+		// accidentally cross artifact releases with the same human-readable name.
+		var sdkConfig SDKConfig
+		if err := strictUnmarshal(data, &sdkConfig); err != nil {
+			return fmt.Errorf("failed to parse sdk config: %w", err)
+		}
+		parsed.SDK = &sdkConfig
+		parsed.ConfigKey = artifactConfigKey(KindSDK, sdkConfig.Name, sdkConfig.Version)
+	case KindMCP:
+		// MCP and SDK share the artifact shape but keep distinct key prefixes so
+		// Engine can route each desired state to its own executor without legacy targets.
+		var mcpConfig MCPConfig
+		if err := strictUnmarshal(data, &mcpConfig); err != nil {
+			return fmt.Errorf("failed to parse mcp config: %w", err)
+		}
+		parsed.MCP = &mcpConfig
+		parsed.ConfigKey = artifactConfigKey(KindMCP, mcpConfig.Name, mcpConfig.Version)
+	default:
+		return fmt.Errorf("unknown config kind: %q", kind)
+	}
+	return nil
+}
+
 // validateConfig performs basic semantic validation on the parsed config.
 func validateConfig(parsed *ParsedConfig) error {
 	switch parsed.Kind {
 	case KindSDK:
 		return validateSDKConfig(parsed.SDK)
+	case KindMCP:
+		return validateMCPConfig(parsed.MCP)
 	case KindWorkspace:
 		return validateWorkspaceConfig(parsed.Workspace)
 	}
@@ -185,11 +207,26 @@ func validateSDKConfig(cfg *SDKConfig) error {
 	if cfg.Name == "" {
 		return fmt.Errorf("sdk config requires a name")
 	}
-	if cfg.SDKVersion == "" {
-		return fmt.Errorf("sdk config requires an sdkVersion")
-	}
-	if err := validateSDKType(cfg.Language, cfg.Target); err != nil {
+	if err := validateArtifactConfig(cfg, KindSDK); err != nil {
 		return err
+	}
+	return nil
+}
+
+func validateMCPConfig(cfg *MCPConfig) error { return validateArtifactConfig(cfg, KindMCP) }
+
+func validateArtifactConfig(cfg *ArtifactConfig, kind ConfigKind) error {
+	if cfg.Name == "" {
+		return fmt.Errorf("%s config requires a name", kind)
+	}
+	if !artifactVersionPattern.MatchString(cfg.Version) {
+		return fmt.Errorf("%s config requires a SemVer-compatible version", kind)
+	}
+	if kind == KindSDK && !isSDKLanguage(cfg.Language) {
+		return fmt.Errorf("invalid language %q", cfg.Language)
+	}
+	if kind == KindMCP && strings.TrimSpace(cfg.Language) != "" {
+		return fmt.Errorf("mcp config must not set language")
 	}
 	for svcName, svc := range cfg.Services {
 		if err := validateSDKService(svcName, svc); err != nil {
@@ -199,24 +236,45 @@ func validateSDKConfig(cfg *SDKConfig) error {
 	return nil
 }
 
-func validateSDKType(language, target string) error {
-	if language != "typescript" && language != "go" && language != "python" {
-		return fmt.Errorf("invalid language %q", language)
-	}
-	if target != "sdk" && target != "mcp" {
-		return fmt.Errorf("invalid target %q", target)
-	}
-	return nil
+var artifactVersionPattern = regexp.MustCompile(`^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$`)
+
+func isSDKLanguage(language string) bool {
+	return language == "typescript" || language == "go" || language == "python"
+}
+
+func artifactConfigKey(kind ConfigKind, name, version string) string {
+	return fmt.Sprintf("%s:%s:%s", kind, name, version)
+}
+
+func strictUnmarshal(data []byte, target any) error {
+	decoder := yaml.NewDecoder(strings.NewReader(string(data)))
+	decoder.KnownFields(true)
+	return decoder.Decode(target)
 }
 
 func validateSDKService(name string, svc SDKService) error {
 	if len(svc.LegacyEndpoints) > 0 {
 		return fmt.Errorf("sdk service %q uses legacy endpoints; use operations instead", name)
 	}
-	if len(svc.Operations) == 0 {
+	if len(svc.Operations) == 0 && !svc.SelectAll {
 		return fmt.Errorf("sdk service %q requires at least one operation", name)
 	}
+	if svc.Auth != nil && strings.TrimSpace(svc.Auth.Type) == "" {
+		return fmt.Errorf("sdk service %q auth requires type", name)
+	}
+	if svc.Auth != nil && !isArtifactAuthType(svc.Auth.Type) {
+		return fmt.Errorf("sdk service %q auth type must be one of basic, bearer, api_key, oauth, oidc, or mtls", name)
+	}
 	return nil
+}
+
+func isArtifactAuthType(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "basic", "bearer", "api_key", "oauth", "oidc", "mtls":
+		return true
+	default:
+		return false
+	}
 }
 
 func validateWorkspaceConfig(cfg *WorkspaceConfig) error {

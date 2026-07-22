@@ -526,6 +526,7 @@ var workspaceServiceConnectBucket string
 var workspaceServiceConnectUserRef string
 var workspaceServiceConnectSDKID string
 var workspaceServiceConnectResourceInput []string
+var workspaceServiceConnectScopes []string
 
 // runWorkspaceServiceConnect starts auth from the workspace service boundary
 // so connected credentials attach to the same bucket/scope runtime will use.
@@ -555,7 +556,7 @@ func runWorkspaceServiceConnect(cmd *cobra.Command, serviceSlug string) error {
 	if err != nil {
 		return err
 	}
-	session, err := client.StartConnectSession(bucketID, serviceID, workspaceServiceConnectUserRef, workspaceServiceConnectSDKID, resourceInput)
+	session, err := client.StartConnectSession(bucketID, serviceID, workspaceServiceConnectUserRef, workspaceServiceConnectSDKID, resourceInput, workspaceServiceConnectScopes)
 	if err != nil {
 		return err
 	}
@@ -809,6 +810,7 @@ func init() {
 	workspaceServiceCmd.Flags().StringVar(&workspaceServiceConnectUserRef, "user-ref", "", "Stable user reference to attach to the connected provider account")
 	workspaceServiceCmd.Flags().StringVar(&workspaceServiceConnectSDKID, "sdk-id", "", "Optional SDK UUID for audit attribution")
 	workspaceServiceCmd.Flags().StringSliceVar(&workspaceServiceConnectResourceInput, "resource-input", nil, "Tenant input as key=value; repeat for multiple declared fields")
+	workspaceServiceCmd.Flags().StringArrayVar(&workspaceServiceConnectScopes, "scope", nil, "OAuth/OIDC scope to request; repeat to reduce provider consent")
 
 	workspaceServiceCmd.Flags().BoolVar(&workspaceServiceRemoveForce, "force", false, "Force removal when the generated plan action is applied")
 

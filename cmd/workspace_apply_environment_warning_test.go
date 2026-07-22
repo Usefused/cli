@@ -16,8 +16,8 @@ import (
 func TestWorkspaceApply_WarnsWhenEngineIsProduction(t *testing.T) {
 	dir := t.TempDir()
 	path := writeSprintConfig(t, dir, "workspace.yaml", `
+apiVersion: fused/v1
 kind: workspace
-version: 1
 services:
   okta:
     service_id: "00000000-0000-0000-0000-000000000001"
@@ -54,8 +54,8 @@ services:
 func TestWorkspaceApply_NoWarningWhenEngineIsNotProduction(t *testing.T) {
 	dir := t.TempDir()
 	path := writeSprintConfig(t, dir, "workspace.yaml", `
+apiVersion: fused/v1
 kind: workspace
-version: 1
 services:
   okta:
     service_id: "00000000-0000-0000-0000-000000000001"
@@ -93,8 +93,8 @@ services:
 func TestWorkspaceApply_HealthCheckFailureDoesNotBlockApply(t *testing.T) {
 	dir := t.TempDir()
 	path := writeSprintConfig(t, dir, "workspace.yaml", `
+apiVersion: fused/v1
 kind: workspace
-version: 1
 services:
   okta:
     service_id: "00000000-0000-0000-0000-000000000001"

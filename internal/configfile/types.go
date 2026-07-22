@@ -2,16 +2,19 @@ package configfile
 
 // ConfigKind defines the type of Fused config file.
 type ConfigKind string
+type ConfigAPIVersion string
 
 const (
-	KindWorkspace ConfigKind = "workspace"
-	KindSDK       ConfigKind = "sdk"
+	APIVersionV1  ConfigAPIVersion = "fused/v1"
+	KindWorkspace ConfigKind       = "workspace"
+	KindSDK       ConfigKind       = "sdk"
+	KindMCP       ConfigKind       = "mcp"
 )
 
 // BaseConfig represents the fields common to all Fused configs.
 type BaseConfig struct {
-	Kind    ConfigKind `yaml:"kind" json:"kind"`
-	Version int        `yaml:"version" json:"version"`
+	APIVersion ConfigAPIVersion `yaml:"apiVersion" json:"apiVersion"`
+	Kind       ConfigKind       `yaml:"kind" json:"kind"`
 }
 
 // WorkspaceConfig represents the desired state for a Fused workspace allowlist.
@@ -113,24 +116,45 @@ type WorkspaceDeprecationDirective struct {
 	Reason      string `yaml:"reason,omitempty" json:"reason,omitempty"`
 }
 
-// SDKConfig represents the desired state for a generated SDK.
-type SDKConfig struct {
+// ArtifactConfig carries the shared, versioned declaration for generated SDKs
+// and Engine-projected MCP servers. Keeping selection shape shared prevents
+// their plan results from drifting while their executors remain distinct.
+type ArtifactConfig struct {
 	BaseConfig `yaml:",inline"`
-	Name       string                `yaml:"name" json:"name"`
-	SDKVersion string                `yaml:"sdkVersion" json:"sdkVersion"`
-	Language   string                `yaml:"language" json:"language"`
-	Target     string                `yaml:"target" json:"target"`
-	Bucket     string                `yaml:"bucket,omitempty" json:"bucket,omitempty"`
-	Services   map[string]SDKService `yaml:"services" json:"services"`
+	Name       string                     `yaml:"name" json:"name"`
+	Version    string                     `yaml:"version" json:"version"`
+	Language   string                     `yaml:"language,omitempty" json:"language,omitempty"`
+	Bucket     string                     `yaml:"bucket,omitempty" json:"bucket,omitempty"`
+	Services   map[string]ArtifactService `yaml:"services" json:"services"`
 }
 
-// SDKService represents the requested version and operations for a specific service in an SDK.
-type SDKService struct {
-	Version         string   `yaml:"version" json:"version"`
-	Operations      []string `yaml:"operations" json:"operations"`
-	Webhooks        []string `yaml:"webhooks,omitempty" json:"webhooks,omitempty"`
-	LegacyEndpoints []string `yaml:"endpoints,omitempty" json:"-"`
+type SDKConfig = ArtifactConfig
+type MCPConfig = ArtifactConfig
+
+// ArtifactService represents the requested immutable provider version and
+// selected surface shared by SDK and MCP artifact declarations.
+type ArtifactService struct {
+	Version         string           `yaml:"version" json:"version"`
+	Operations      []string         `yaml:"operations" json:"operations"`
+	Webhooks        []string         `yaml:"webhooks,omitempty" json:"webhooks,omitempty"`
+	SelectAll       bool             `yaml:"select_all,omitempty" json:"select_all,omitempty"`
+	Auth            *ArtifactAuth    `yaml:"auth,omitempty" json:"auth,omitempty"`
+	Connect         *ArtifactConnect `yaml:"connect,omitempty" json:"connect,omitempty"`
+	LegacyEndpoints []string         `yaml:"endpoints,omitempty" json:"-"`
 }
+
+// ArtifactAuth selects a Registry-declared scheme; credential material stays
+// in the bucket or user connection and is never accepted in artifact config.
+type ArtifactAuth struct {
+	Type string `yaml:"type" json:"type"`
+	Name string `yaml:"name,omitempty" json:"name,omitempty"`
+}
+
+type ArtifactConnect struct {
+	Scopes []string `yaml:"scopes,omitempty" json:"scopes,omitempty"`
+}
+
+type SDKService = ArtifactService
 
 // ParsedConfig is a container for the parsed configuration.
 type ParsedConfig struct {
@@ -140,6 +164,7 @@ type ParsedConfig struct {
 	SourceHash string
 	Workspace  *WorkspaceConfig
 	SDK        *SDKConfig
+	MCP        *MCPConfig
 }
 
 // Run represents a set of parsed configs loaded for a CLI execution.

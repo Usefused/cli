@@ -31,6 +31,7 @@ type configKindFilter string
 const (
 	filterAll       configKindFilter = ""
 	filterSDK       configKindFilter = "sdk"
+	filterMCP       configKindFilter = "mcp"
 	filterWorkspace configKindFilter = "workspace"
 )
 
@@ -102,6 +103,13 @@ func planOneConfig(client *api.Client, cfg *configfile.ParsedConfig, engineURL s
 			receipt:       newPlanReceipt(resp.PlanID, cfg.ConfigKey, cfg.SourceHash, engineURL),
 			notifications: resp.Notifications,
 		}, nil
+	case configfile.KindMCP:
+		raw, _ := json.Marshal(cfg.MCP)
+		resp, err := client.PlanMCPConfig(cfg.SourceHash, cfg.ConfigKey, raw)
+		if err != nil {
+			return plannedConfig{}, fmt.Errorf("failed to plan MCP %s: %w", cfg.MCP.Name, err)
+		}
+		return plannedConfig{receipt: newPlanReceipt(resp.PlanID, cfg.ConfigKey, cfg.SourceHash, engineURL), notifications: resp.Notifications}, nil
 	default:
 		return plannedConfig{}, fmt.Errorf("unsupported config kind %q", cfg.Kind)
 	}
@@ -259,6 +267,7 @@ func fusedConfigShortcutCandidates(path string) []string {
 	return []string{
 		filepath.Join(".fused", name),
 		filepath.Join(".fused", "sdks", name),
+		filepath.Join(".fused", "mcps", name),
 	}
 }
 
@@ -320,6 +329,16 @@ func applyOneConfig(client *api.Client, cfg *configfile.ParsedConfig, receipt pl
 				return fmt.Errorf("failed to generate SDK %s: %w", cfg.SDK.Name, err)
 			}
 			return downloadSDKByID(client, resp.SDKID, cfg.SDK.Name, ".")
+		}
+	case configfile.KindMCP:
+		resp, err := client.ApplyMCPConfig(receipt.PlanID, receipt.SourceHash)
+		if err != nil {
+			return fmt.Errorf("failed to apply MCP %s: %w", cfg.MCP.Name, err)
+		}
+		fmt.Printf("Successfully applied MCP %s@%s\n", cfg.MCP.Name, cfg.MCP.Version)
+		fmt.Printf("  ID: %s\n  URL: %s\n", resp.MCPID, resp.MCPURL)
+		if resp.ExecutionToken != "" {
+			fmt.Printf("  Token (shown once): %s\n", resp.ExecutionToken)
 		}
 	}
 	return nil
