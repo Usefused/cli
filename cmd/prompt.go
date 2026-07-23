@@ -17,7 +17,7 @@ import (
 var description string
 
 var sdkName string
-var sdkVersion string
+var artifactVersion string
 var targetLanguage string
 var autoYes bool
 
@@ -31,7 +31,7 @@ var promptCmd = &cobra.Command{
 
 func init() {
 	promptCmd.Flags().StringVarP(&sdkName, "name", "n", "", "Name of the generated SDK (e.g., 'stripe-sdk')")
-	promptCmd.Flags().StringVarP(&sdkVersion, "version", "v", "1.0.0", "Version of the generated SDK")
+	promptCmd.Flags().StringVarP(&artifactVersion, "version", "v", "1.0.0", "Version of the generated SDK")
 	promptCmd.Flags().StringVarP(&targetLanguage, "language", "l", "typescript", "Target language for the SDK (e.g., 'typescript', 'python')")
 	promptCmd.Flags().BoolVarP(&autoYes, "yes", "y", false, "Skip interactive menu and automatically proceed")
 	promptCmd.Flags().StringVarP(&description, "description", "d", "", "Description of the SDK to create (e.g. 'Create a stripe and plunk sdk')")
@@ -114,10 +114,7 @@ func processServiceIntent(client *api.Client, svcIntent api.IntentService, wsCfg
 		return 0, false
 	}
 	vis := visMap[s.ID]
-	key := vis.Slug
-	if vis.Provider != "" {
-		key = fmt.Sprintf("@%s/%s", vis.Provider, vis.Slug)
-	}
+	key := serviceIntentConfigKey(vis)
 
 	svcAdded := false
 	var version string
@@ -158,6 +155,13 @@ func processServiceIntent(client *api.Client, svcIntent api.IntentService, wsCfg
 	return mergeNewEndpoints(cart, endpoints), svcAdded
 }
 
+func serviceIntentConfigKey(vis api.ServiceVisibility) string {
+	if vis.IsOwner {
+		return vis.Slug
+	}
+	return serviceConfigRef(vis.Slug, providerHandle(vis.Provider))
+}
+
 func mergeNewEndpoints(cart map[string]api.Integration, endpoints []api.Integration) int {
 	added := 0
 	for _, ep := range endpoints {
@@ -194,7 +198,7 @@ func runPrompt() {
 			Kind:       configfile.KindSDK,
 		},
 		Name:     sdkName,
-		Version:  sdkVersion,
+		Version:  artifactVersion,
 		Language: targetLanguage,
 		Services: make(map[string]configfile.ArtifactService),
 	}
@@ -410,5 +414,3 @@ func promptAndAddMore(client *api.Client, cart map[string]api.Integration, servi
 	}
 	searchAndAddEndpoints(client, newDesc, cart, services, wsServicesMap)
 }
-
-

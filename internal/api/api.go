@@ -187,12 +187,30 @@ type Service struct {
 	Name string `json:"name"`
 }
 
+// ServiceProviderIdentity keeps the Registry's public ownership projection
+// separate from its private account model. The CLI needs only the stable handle
+// to construct an unambiguous service reference.
+type ServiceProviderIdentity struct {
+	Handle string `json:"handle"`
+}
+
 type ServiceVisibility struct {
-	ServiceID string `json:"id"`
-	IsOwner   bool   `json:"is_owner"`
-	IsPublic  bool   `json:"is_public"`
-	Slug      string `json:"slug"`
-	Provider  string `json:"provider"`
+	ServiceID string                   `json:"id"`
+	IsOwner   bool                     `json:"is_owner"`
+	IsPublic  bool                     `json:"is_public"`
+	Slug      string                   `json:"slug"`
+	Provider  *ServiceProviderIdentity `json:"provider"`
+}
+
+// ConnectionProfileRevision is the immutable Registry result printed by the
+// provider publication command. It intentionally excludes the profile body.
+type ConnectionProfileRevision struct {
+	ProfileID        string `json:"profile_id"`
+	ServiceID        string `json:"service_id"`
+	ServiceVersionID string `json:"service_version_id"`
+	Revision         int    `json:"revision"`
+	ProfileHash      string `json:"profile_hash"`
+	Provenance       string `json:"provenance"`
 }
 
 type Integration struct {
@@ -448,7 +466,7 @@ func (c *Client) ServiceVisibilities(serviceIDs []string) (map[string]ServiceVis
 			servicesByIds(serviceIds: $serviceIds) {
 				id
 				slug
-				provider
+					provider { handle }
 				is_owner
 				is_public
 			}
@@ -499,8 +517,8 @@ type ServiceInfo struct {
 	// regardless of ownership (slugs are only unique per-account), so
 	// DisplaySlug is what callers should print back to a user, not Slug
 	// directly.
-	Provider string `json:"provider"`
-	IsOwner  bool   `json:"is_owner"`
+	Provider *ServiceProviderIdentity `json:"provider"`
+	IsOwner  bool                     `json:"is_owner"`
 }
 
 // DisplaySlug returns what a user should be shown/type back for this
@@ -511,10 +529,10 @@ type ServiceInfo struct {
 // -- the Registry's own resolveAccountScopedService already gates on that
 // before this struct is ever populated.
 func (s *ServiceInfo) DisplaySlug() string {
-	if s.IsOwner || s.Provider == "" {
+	if s.IsOwner || s.Provider == nil || s.Provider.Handle == "" {
 		return s.Slug
 	}
-	return "@" + s.Provider + "/" + s.Slug
+	return "@" + s.Provider.Handle + "/" + s.Slug
 }
 
 func (c *Client) GetServiceInfo(serviceSlug string) (*ServiceInfo, error) {
@@ -525,7 +543,7 @@ func (c *Client) GetServiceInfo(serviceSlug string) (*ServiceInfo, error) {
 				name
 				slug
 				base_url
-				provider
+					provider { handle }
 				is_owner
 				servers {
 					url
@@ -567,6 +585,25 @@ func (c *Client) ServiceVersions(serviceSlug string) ([]ServiceVersion, error) {
 	slug, provider := splitProviderQualifiedServiceRef(serviceSlug)
 	err := c.GraphQL(query, map[string]interface{}{"serviceId": slug, "provider": provider}, &resp)
 	return resp.ServiceVersions, err
+}
+
+// SetConnectionProfile appends an owner-authorized immutable provider profile
+// revision. Registry owns provenance, visibility, and stream identity.
+func (c *Client) SetConnectionProfile(serviceID, serviceVersionID, name string, profile map[string]interface{}) (*ConnectionProfileRevision, error) {
+	query := `mutation SetConnectionProfile($serviceId: String!, $serviceVersionId: String!, $name: String!, $config: JSON!) {
+		setConnectionProfile(service_id: $serviceId, service_version_id: $serviceVersionId, name: $name, config: $config) {
+			profile_id service_id service_version_id revision profile_hash provenance
+		}
+	}`
+	var response struct {
+		Profile *ConnectionProfileRevision `json:"setConnectionProfile"`
+	}
+	if err := c.GraphQL(query, map[string]interface{}{
+		"serviceId": serviceID, "serviceVersionId": serviceVersionID, "name": name, "config": profile,
+	}, &response); err != nil {
+		return nil, err
+	}
+	return response.Profile, nil
 }
 
 func splitProviderQualifiedServiceRef(ref string) (string, string) {
@@ -1268,7 +1305,7 @@ func (c *Client) ApplyMCPConfig(planID, sourceHash string) (*MCPConfigApplyRespo
 	return &out, nil
 }
 
-func (c *Client) ApplyWorkspaceConfig(planID, sourceHash string, connectMaterials map[string]ConnectMaterial, authMaterials map[string]AuthMaterial) (*ConfigApplyResponse, error) {
+func (c *Client) ApplyWorkspaceConfig(planID, sourceHash string, connectMaterials map[string]ConnectMaterial, authMaterials map[string]AuthMaterial, profileMaterials map[string]ConnectMaterial) (*ConfigApplyResponse, error) {
 	reqBody := map[string]interface{}{
 		"plan_id":     planID,
 		"source_hash": sourceHash,
@@ -1278,6 +1315,9 @@ func (c *Client) ApplyWorkspaceConfig(planID, sourceHash string, connectMaterial
 	}
 	if len(authMaterials) > 0 {
 		reqBody["auth_materials"] = authMaterials
+	}
+	if len(profileMaterials) > 0 {
+		reqBody["profile_materials"] = profileMaterials
 	}
 	body, err := json.Marshal(reqBody)
 	if err != nil {

@@ -38,10 +38,13 @@ func loadFusedDirectory() (*Run, error) {
 	if err := appendWorkspaceConfig(run, fusedDir); err != nil {
 		return nil, err
 	}
-	if err := appendSDKConfigs(run, filepath.Join(fusedDir, "sdks")); err != nil {
+	if err := appendArtifactConfigs(run, filepath.Join(fusedDir, "sdks"), KindSDK); err != nil {
 		return nil, err
 	}
-	return run, rejectDuplicateSDKNames(run.Configs)
+	if err := appendArtifactConfigs(run, filepath.Join(fusedDir, "mcps"), KindMCP); err != nil {
+		return nil, err
+	}
+	return run, rejectDuplicateArtifactIdentities(run.Configs)
 }
 
 func ensureFusedDirectory(fusedDir string) error {
@@ -74,16 +77,18 @@ func appendWorkspaceConfig(run *Run, fusedDir string) error {
 	return nil
 }
 
-func appendSDKConfigs(run *Run, sdksDir string) error {
-	if _, err := os.Stat(sdksDir); err != nil {
+// appendArtifactConfigs discovers one kind-specific directory without letting
+// a misplaced document silently run through a different command surface.
+func appendArtifactConfigs(run *Run, configDir string, expectedKind ConfigKind) error {
+	if _, err := os.Stat(configDir); err != nil {
 		return nil
 	}
-	return filepath.WalkDir(sdksDir, func(p string, d fs.DirEntry, err error) error {
-		return appendSDKConfig(run, p, d, err)
+	return filepath.WalkDir(configDir, func(p string, d fs.DirEntry, err error) error {
+		return appendArtifactConfig(run, p, d, err, expectedKind)
 	})
 }
 
-func appendSDKConfig(run *Run, p string, d fs.DirEntry, walkErr error) error {
+func appendArtifactConfig(run *Run, p string, d fs.DirEntry, walkErr error, expectedKind ConfigKind) error {
 	if walkErr != nil || d.IsDir() || !isYAMLFile(d.Name()) {
 		return walkErr
 	}
@@ -91,8 +96,8 @@ func appendSDKConfig(run *Run, p string, d fs.DirEntry, walkErr error) error {
 	if err != nil {
 		return err
 	}
-	if parsed.Kind != KindSDK {
-		return fmt.Errorf("expected sdk kind in %s, got %s", p, parsed.Kind)
+	if parsed.Kind != expectedKind {
+		return fmt.Errorf("expected %s kind in %s, got %s", expectedKind, p, parsed.Kind)
 	}
 	run.Configs = append(run.Configs, parsed)
 	return nil
@@ -102,15 +107,18 @@ func isYAMLFile(name string) bool {
 	return strings.HasSuffix(name, ".yaml") || strings.HasSuffix(name, ".yml")
 }
 
-func rejectDuplicateSDKNames(configs []*ParsedConfig) error {
-	seenNames := make(map[string]string)
+// rejectDuplicateArtifactIdentities allows independently versioned releases
+// while rejecting two files that declare the same immutable artifact identity.
+func rejectDuplicateArtifactIdentities(configs []*ParsedConfig) error {
+	seenKeys := make(map[string]string)
 	for _, cfg := range configs {
-		if cfg.Kind == KindSDK {
-			if existingPath, ok := seenNames[cfg.SDK.Name]; ok {
-				return fmt.Errorf("duplicate sdk name %q found in %s and %s", cfg.SDK.Name, existingPath, cfg.Path)
-			}
-			seenNames[cfg.SDK.Name] = cfg.Path
+		if cfg.Kind != KindSDK && cfg.Kind != KindMCP {
+			continue
 		}
+		if existingPath, ok := seenKeys[cfg.ConfigKey]; ok {
+			return fmt.Errorf("duplicate artifact identity %q found in %s and %s", cfg.ConfigKey, existingPath, cfg.Path)
+		}
+		seenKeys[cfg.ConfigKey] = cfg.Path
 	}
 	return nil
 }
@@ -237,7 +245,13 @@ func validateArtifactConfig(cfg *ArtifactConfig, kind ConfigKind) error {
 	if len(cfg.Services) == 0 {
 		return fmt.Errorf("%s config requires at least one service", kind)
 	}
-	for svcName, svc := range cfg.Services {
+	return validateArtifactServices(cfg.Services, kind)
+}
+
+// validateArtifactServices keeps per-service rules separate from artifact
+// identity rules because MCP and SDK share services but diverge on webhooks.
+func validateArtifactServices(services map[string]SDKService, kind ConfigKind) error {
+	for svcName, svc := range services {
 		if err := validateSDKService(svcName, svc); err != nil {
 			return err
 		}
@@ -299,6 +313,11 @@ func validateWorkspaceConfig(cfg *WorkspaceConfig) error {
 			return err
 		}
 	}
+	for bucketName, bucket := range cfg.Buckets {
+		if err := validateWorkspaceBucket(bucketName, bucket, cfg.Services); err != nil {
+			return err
+		}
+	}
 	for _, deprecation := range cfg.Deprecations {
 		if deprecation.ServiceID == "" || deprecation.EffectiveAt == "" {
 			return fmt.Errorf("workspace deprecations require service_id and effective_at")
@@ -308,16 +327,127 @@ func validateWorkspaceConfig(cfg *WorkspaceConfig) error {
 }
 
 func validateWorkspaceService(name string, svc WorkspaceService) error {
-	if svc.RuntimeConfig == nil {
-		return nil
-	}
-	if err := validateWorkspaceAuthIntent(name, svc.RuntimeConfig.Auth); err != nil {
+	if err := validateWorkspaceExecutionPolicy(name, "", svc.ExecutionPolicy); err != nil {
 		return err
 	}
-	if svc.RuntimeConfig.Connect == nil {
+	for _, versionPolicy := range svc.VersionPolicies {
+		if !containsString(svc.Versions, strings.TrimSpace(versionPolicy.Version)) {
+			return fmt.Errorf("workspace service %q version_policies version %s is not an enabled version", name, versionPolicy.Version)
+		}
+		if versionPolicy.ExecutionPolicy == nil {
+			return fmt.Errorf("workspace service %q version_policies version %s requires execution_policy", name, versionPolicy.Version)
+		}
+		if err := validateWorkspaceExecutionPolicy(name, versionPolicy.Version, versionPolicy.ExecutionPolicy); err != nil {
+			return err
+		}
+	}
+	if svc.RuntimeConfig == nil {
+		return validateWorkspaceConnectionProfiles(name, svc.ConnectionProfiles)
+	}
+	if svc.RuntimeConfig.Auth != nil || svc.RuntimeConfig.Connect != nil {
+		return fmt.Errorf("workspace service %q runtime_config.auth/connect moved to buckets.<bucket>.service_config.%s", name, name)
+	}
+	return validateWorkspaceConnectionProfiles(name, svc.ConnectionProfiles)
+}
+
+func validateWorkspaceExecutionPolicy(name, version string, policy *ExecutionPolicy) error {
+	if policy == nil {
 		return nil
 	}
-	connect := svc.RuntimeConfig.Connect
+	retry, err := workspaceExecutionPolicyRetry(policy)
+	if err != nil {
+		return workspaceExecutionPolicyValidationError(name, version, err.Error())
+	}
+	if policy.Reset {
+		if err := validateWorkspaceExecutionPolicyReset(policy, retry); err != nil {
+			return workspaceExecutionPolicyValidationError(name, version, err.Error())
+		}
+		return nil
+	}
+	if policy.RateLimit == nil && retry == nil {
+		return workspaceExecutionPolicyValidationError(name, version, "requires rate_limit or retry")
+	}
+	return nil
+}
+
+func workspaceExecutionPolicyRetry(policy *ExecutionPolicy) (*RetryConfig, error) {
+	if policy.Retry != nil && policy.RetryConfig != nil {
+		return nil, fmt.Errorf("retry and retry_config cannot both be set")
+	}
+	if policy.Retry != nil {
+		return policy.Retry, nil
+	}
+	return policy.RetryConfig, nil
+}
+
+func validateWorkspaceExecutionPolicyReset(policy *ExecutionPolicy, retry *RetryConfig) error {
+	if policy.Public != nil || policy.RateLimit != nil || retry != nil {
+		return fmt.Errorf("reset cannot include public, rate_limit, or retry")
+	}
+	return nil
+}
+
+func workspaceExecutionPolicyValidationError(name, version, message string) error {
+	if strings.TrimSpace(version) == "" {
+		return fmt.Errorf("workspace service %q execution_policy %s", name, message)
+	}
+	return fmt.Errorf("workspace service %q version_policies version %s execution_policy %s", name, version, message)
+}
+
+func containsString(values []string, target string) bool {
+	target = strings.TrimSpace(target)
+	for _, value := range values {
+		if strings.TrimSpace(value) == target {
+			return true
+		}
+	}
+	return false
+}
+
+// validateWorkspaceConnectionProfiles catches semantic contradictions the raw
+// CLI profile shape cannot express in types while leaving full schema/contract
+// validation to the Engine.
+func validateWorkspaceConnectionProfiles(name string, profiles []map[string]interface{}) error {
+	for _, profile := range profiles {
+		reset, _ := profile["reset"].(bool)
+		if !reset {
+			continue
+		}
+		profileID, _ := profile["profile_id"].(string)
+		if profile["profile"] != nil || strings.TrimSpace(profileID) != "" {
+			return fmt.Errorf("workspace service %q connection_profiles reset cannot include profile or profile_id", name)
+		}
+	}
+	return nil
+}
+
+// validateWorkspaceBucket keeps bucket material scoped to services declared in
+// the same file, preventing credentials from silently targeting an unapproved
+// service key.
+func validateWorkspaceBucket(bucketName string, bucket WorkspaceBucket, services map[string]WorkspaceService) error {
+	if strings.TrimSpace(bucketName) == "" {
+		return fmt.Errorf("workspace bucket name is required")
+	}
+	for serviceName, serviceConfig := range bucket.ServiceConfig {
+		if _, ok := services[serviceName]; !ok {
+			return fmt.Errorf("workspace bucket %q references unknown service %q", bucketName, serviceName)
+		}
+		if err := validateWorkspaceAuthIntent(serviceName, serviceConfig.Auth); err != nil {
+			return err
+		}
+		if err := validateWorkspaceConnectIntent(serviceName, serviceConfig.Connect); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateWorkspaceConnectIntent keeps OAuth app setup in bucket config while
+// still requiring redirect/client material before the Engine can start Connect.
+func validateWorkspaceConnectIntent(name string, connect *ConnectConfig) error {
+	if connect == nil {
+		return nil
+	}
 	if strings.TrimSpace(connect.AuthType) == "" {
 		return fmt.Errorf("workspace service %q connect requires auth_type", name)
 	}
@@ -327,23 +457,7 @@ func validateWorkspaceService(name string, svc WorkspaceService) error {
 	if strings.TrimSpace(connect.RedirectURI) == "" {
 		return fmt.Errorf("workspace service %q connect requires redirect_uri", name)
 	}
-	if err := validateWorkspaceConnectProfileMode(name, connect); err != nil {
-		return err
-	}
 	return validateWorkspaceConnectClientMaterial(name, connect)
-}
-
-// validateWorkspaceConnectProfileMode makes bucket profile deletion explicit
-// and prevents a detach declaration from carrying replacement data as well.
-func validateWorkspaceConnectProfileMode(name string, connect *ConnectConfig) error {
-	connect.ProfileMode = strings.ToLower(strings.TrimSpace(connect.ProfileMode))
-	if connect.ProfileMode != "" && connect.ProfileMode != "detach" {
-		return fmt.Errorf("workspace service %q connection profile_mode must be detach when set", name)
-	}
-	if connect.ProfileMode == "detach" && (connect.Profile != nil || strings.TrimSpace(connect.ProfileID) != "") {
-		return fmt.Errorf("workspace service %q connection profile detach cannot include profile or profile_id", name)
-	}
-	return nil
 }
 
 // validateWorkspaceAuthIntent keeps static auth material out of plan/state by
@@ -405,8 +519,30 @@ func (p *ParsedConfig) WorkspaceConnectMaterials() (map[string]ConnectMaterial, 
 		return nil, fmt.Errorf("parsed config is not a workspace")
 	}
 	materials := map[string]ConnectMaterial{}
+	for bucketName, bucket := range p.Workspace.Buckets {
+		for key, serviceConfig := range bucket.ServiceConfig {
+			material, ok, err := workspaceServiceConnectMaterial(key, serviceConfig)
+			if err != nil {
+				return nil, err
+			}
+			if ok {
+				materials[workspaceBucketMaterialKey(bucketName, key)] = material
+			}
+		}
+	}
+	return materials, nil
+}
+
+// WorkspaceProfileMaterials resolves only profile binding env refs. It is
+// separate from Connect material because connection profiles are service-level
+// routing policy, while OAuth client credentials are bucket-owned.
+func (p *ParsedConfig) WorkspaceProfileMaterials() (map[string]ConnectMaterial, error) {
+	if p.Workspace == nil {
+		return nil, fmt.Errorf("parsed config is not a workspace")
+	}
+	materials := map[string]ConnectMaterial{}
 	for key, svc := range p.Workspace.Services {
-		material, ok, err := workspaceServiceConnectMaterial(key, svc)
+		material, ok, err := workspaceServiceProfileMaterial(key, svc)
 		if err != nil {
 			return nil, err
 		}
@@ -424,23 +560,27 @@ func (p *ParsedConfig) WorkspaceAuthMaterials() (map[string]AuthMaterial, error)
 		return nil, fmt.Errorf("parsed config is not a workspace")
 	}
 	materials := map[string]AuthMaterial{}
-	for key, svc := range p.Workspace.Services {
-		material, ok, err := workspaceServiceAuthMaterial(key, svc)
-		if err != nil {
-			return nil, err
-		}
-		if ok {
-			materials[key] = material
+	for bucketName, bucket := range p.Workspace.Buckets {
+		for key, serviceConfig := range bucket.ServiceConfig {
+			material, ok, err := workspaceServiceAuthMaterial(key, serviceConfig)
+			if err != nil {
+				return nil, err
+			}
+			if ok {
+				materials[workspaceBucketMaterialKey(bucketName, key)] = material
+			}
 		}
 	}
 	return materials, nil
 }
 
-func workspaceServiceAuthMaterial(name string, svc WorkspaceService) (AuthMaterial, bool, error) {
-	if svc.RuntimeConfig == nil || svc.RuntimeConfig.Auth == nil {
+// workspaceServiceAuthMaterial resolves only bucket-scoped static auth so one
+// service's secrets cannot be accidentally reused by another bucket entry.
+func workspaceServiceAuthMaterial(name string, serviceConfig BucketServiceConfig) (AuthMaterial, bool, error) {
+	if serviceConfig.Auth == nil {
 		return AuthMaterial{}, false, nil
 	}
-	auth := *svc.RuntimeConfig.Auth
+	auth := *serviceConfig.Auth
 	if err := resolveAuthEnv(name, &auth); err != nil {
 		return AuthMaterial{}, false, err
 	}
@@ -479,19 +619,61 @@ func resolveAuthField(name, field string, value *string) error {
 	return nil
 }
 
-func workspaceServiceConnectMaterial(name string, svc WorkspaceService) (ConnectMaterial, bool, error) {
-	if svc.RuntimeConfig == nil || svc.RuntimeConfig.Connect == nil {
+// workspaceServiceConnectMaterial resolves OAuth client credentials at apply
+// time because client secrets are bucket-owned material, not config state.
+func workspaceServiceConnectMaterial(name string, serviceConfig BucketServiceConfig) (ConnectMaterial, bool, error) {
+	if serviceConfig.Connect == nil {
 		return ConnectMaterial{}, false, nil
 	}
-	connect := *svc.RuntimeConfig.Connect
+	connect := *serviceConfig.Connect
 	if err := resolveConnectEnv(name, &connect); err != nil {
 		return ConnectMaterial{}, false, err
 	}
-	bindingValues, err := workspaceProfileBindingValues(name, connect.Profile)
-	if err != nil {
-		return ConnectMaterial{}, false, err
+	return ConnectMaterial{ClientID: connect.ClientID, ClientSecret: connect.ClientSecret}, true, nil
+}
+
+// workspaceServiceProfileMaterial resolves dynamic binding refs separately so
+// service-level profile policy can be reviewed without exposing local values.
+func workspaceServiceProfileMaterial(name string, svc WorkspaceService) (ConnectMaterial, bool, error) {
+	for _, profile := range workspaceConnectionProfileMaps(svc) {
+		bindingValues, err := workspaceProfileBindingValues(name, profile)
+		if err != nil {
+			return ConnectMaterial{}, false, err
+		}
+		if len(bindingValues) > 0 {
+			return ConnectMaterial{BindingValues: bindingValues}, true, nil
+		}
 	}
-	return ConnectMaterial{ClientID: connect.ClientID, ClientSecret: connect.ClientSecret, BindingValues: bindingValues}, true, nil
+	return ConnectMaterial{}, false, nil
+}
+
+// workspaceConnectionProfileMaps reads inline profiles without re-marshalling
+// so unknown-but-valid profile fields survive CLI pass-through validation.
+func workspaceConnectionProfileMaps(svc WorkspaceService) []map[string]interface{} {
+	var out []map[string]interface{}
+	for _, item := range svc.ConnectionProfiles {
+		profile, _ := item["profile"].(map[string]interface{})
+		if profile != nil {
+			out = append(out, profile)
+		}
+	}
+	return out
+}
+
+// workspaceBucketMaterialKey prevents two buckets configuring the same service
+// from overwriting each other's apply-time credential material.
+func workspaceBucketMaterialKey(bucketName, serviceKey string) string {
+	return workspaceConnectBucketName(bucketName) + "\x00" + serviceKey
+}
+
+// workspaceConnectBucketName mirrors Engine's default bucket fallback so local
+// material keys line up with apply validation.
+func workspaceConnectBucketName(bucketName string) string {
+	name := strings.TrimSpace(bucketName)
+	if name == "" {
+		return "default"
+	}
+	return name
 }
 
 // workspaceProfileBindingValues resolves only declared binding references so

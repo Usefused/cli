@@ -304,20 +304,7 @@ func receiptForApply(cfg *configfile.ParsedConfig, opts applyOptions) (planRecei
 func applyOneConfig(client *api.Client, cfg *configfile.ParsedConfig, receipt planReceipt, download bool) error {
 	switch cfg.Kind {
 	case configfile.KindWorkspace:
-		connectMaterials, err := workspaceConnectMaterials(cfg)
-		if err != nil {
-			return err
-		}
-		authMaterials, err := workspaceAuthMaterials(cfg)
-		if err != nil {
-			return err
-		}
-		resp, err := client.ApplyWorkspaceConfig(receipt.PlanID, receipt.SourceHash, connectMaterials, authMaterials)
-		if err != nil {
-			return fmt.Errorf("failed to apply workspace %s: %w", cfg.ConfigKey, err)
-		}
-		fmt.Printf("Successfully applied workspace config\n")
-		printAppliedWebhooks(client.BaseURL, resp.Webhooks)
+		return applyWorkspaceConfig(client, cfg, receipt)
 	case configfile.KindSDK:
 		resp, err := client.ApplySDKConfig(receipt.PlanID, receipt.SourceHash)
 		if err != nil {
@@ -341,6 +328,30 @@ func applyOneConfig(client *api.Client, cfg *configfile.ParsedConfig, receipt pl
 			fmt.Printf("  Token (shown once): %s\n", resp.ExecutionToken)
 		}
 	}
+	return nil
+}
+
+// applyWorkspaceConfig sends resolved local material out-of-band from the
+// shareable YAML so plans stay reviewable without carrying secrets.
+func applyWorkspaceConfig(client *api.Client, cfg *configfile.ParsedConfig, receipt planReceipt) error {
+	connectMaterials, err := workspaceConnectMaterials(cfg)
+	if err != nil {
+		return err
+	}
+	authMaterials, err := workspaceAuthMaterials(cfg)
+	if err != nil {
+		return err
+	}
+	profileMaterials, err := workspaceProfileMaterials(cfg)
+	if err != nil {
+		return err
+	}
+	resp, err := client.ApplyWorkspaceConfig(receipt.PlanID, receipt.SourceHash, connectMaterials, authMaterials, profileMaterials)
+	if err != nil {
+		return fmt.Errorf("failed to apply workspace %s: %w", cfg.ConfigKey, err)
+	}
+	fmt.Printf("Successfully applied workspace config\n")
+	printAppliedWebhooks(client.BaseURL, resp.Webhooks)
 	return nil
 }
 
@@ -373,6 +384,20 @@ func workspaceConnectMaterials(cfg *configfile.ParsedConfig) (map[string]api.Con
 	out := make(map[string]api.ConnectMaterial, len(materials))
 	for key, material := range materials {
 		out[key] = api.ConnectMaterial{ClientID: material.ClientID, ClientSecret: material.ClientSecret, BindingValues: material.BindingValues}
+	}
+	return out, nil
+}
+
+// workspaceProfileMaterials carries dynamic binding values separately from
+// bucket OAuth client credentials because profiles are service-scoped policy.
+func workspaceProfileMaterials(cfg *configfile.ParsedConfig) (map[string]api.ConnectMaterial, error) {
+	materials, err := cfg.WorkspaceProfileMaterials()
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]api.ConnectMaterial, len(materials))
+	for key, material := range materials {
+		out[key] = api.ConnectMaterial{BindingValues: material.BindingValues}
 	}
 	return out, nil
 }

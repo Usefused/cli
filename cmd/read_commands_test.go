@@ -54,7 +54,7 @@ func TestServiceOperationsSearchUsesServerPagination(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case strings.Contains(body.Query, "GetServiceInfo"):
-			w.Write([]byte(`{"data":{"service":{"id":"svc-1","name":"GitHub","slug":"github","base_url":"https://api.github.test","provider":"","is_owner":true,"servers":[],"auth_configs":[]}}}`))
+			w.Write([]byte(`{"data":{"service":{"id":"svc-1","name":"GitHub","slug":"github","base_url":"https://api.github.test","provider":null,"is_owner":true,"servers":[],"auth_configs":[]}}}`))
 		case strings.Contains(body.Query, "searchEndpoints"):
 			sawSearchVars = body.Variables
 			w.Write([]byte(`{"data":{"searchEndpoints":[{"id":"ep-1","name":"issuesList","path":"/issues","method":"GET","description":"","service_id":"svc-1"}]}}`))

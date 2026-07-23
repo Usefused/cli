@@ -152,13 +152,15 @@ services:
   github:
     service_id: "00000000-0000-0000-0000-000000000001"
     versions: ["2026-07-01"]
-    runtime_config:
-      connect:
-        bucket: prod
-        auth_type: oauth
-        client_id_env: FUSED_TEST_CLIENT_ID
-        client_secret_env: FUSED_TEST_CLIENT_SECRET
-        redirect_uri: https://engine.example.com/connect/callback
+buckets:
+  prod:
+    service_config:
+      github:
+        connect:
+          auth_type: oauth
+          client_id_env: FUSED_TEST_CLIENT_ID
+          client_secret_env: FUSED_TEST_CLIENT_SECRET
+          redirect_uri: https://engine.example.com/connect/callback
 `)
 	_, err := configfile.ParseFile(path)
 	if err == nil || !strings.Contains(err.Error(), "not *_env fields") {
@@ -176,13 +178,15 @@ services:
   github:
     service_id: "00000000-0000-0000-0000-000000000001"
     versions: ["2026-07-01"]
-    runtime_config:
-      connect:
-        bucket: prod
-        auth_type: oauth
-        client_id: $FUSED_TEST_CLIENT_ID
-        client_secret: ${FUSED_TEST_CLIENT_SECRET}
-        redirect_uri: https://engine.example.com/connect/callback
+buckets:
+  prod:
+    service_config:
+      github:
+        connect:
+          auth_type: oauth
+          client_id: $FUSED_TEST_CLIENT_ID
+          client_secret: ${FUSED_TEST_CLIENT_SECRET}
+          redirect_uri: https://engine.example.com/connect/callback
 `)
 	parsed, err := configfile.ParseFile(path)
 	if err != nil {
@@ -192,7 +196,7 @@ services:
 	if err != nil {
 		t.Fatalf("WorkspaceConnectMaterials failed: %v", err)
 	}
-	material := materials["github"]
+	material := materials["prod\x00github"]
 	if material.ClientID != "resolved-client" || material.ClientSecret != "resolved-secret" {
 		t.Fatalf("expected dollar env refs resolved, got %#v", material)
 	}
@@ -211,13 +215,9 @@ services:
   shopify:
     service_id: "00000000-0000-0000-0000-000000000001"
     versions: ["2026-07-01"]
-    runtime_config:
-      connect:
-        bucket: prod
+    connection_profiles:
+      - version: "2026-07-01"
         auth_type: oauth
-        client_id: $FUSED_TEST_CLIENT_ID
-        client_secret: $FUSED_TEST_CLIENT_SECRET
-        redirect_uri: https://engine.example.com/connect/callback
         profile:
           auth_type: oauth
           resource_input:
@@ -230,12 +230,21 @@ services:
               location: header
               name: X-Shopify-API-Version
               mode: force
+buckets:
+  prod:
+    service_config:
+      shopify:
+        connect:
+          auth_type: oauth
+          client_id: $FUSED_TEST_CLIENT_ID
+          client_secret: $FUSED_TEST_CLIENT_SECRET
+          redirect_uri: https://engine.example.com/connect/callback
 `)
 	parsed, err := configfile.ParseFile(path)
 	if err != nil {
 		t.Fatalf("ParseFile failed: %v", err)
 	}
-	materials, err := parsed.WorkspaceConnectMaterials()
+	materials, err := parsed.WorkspaceProfileMaterials()
 	if err != nil {
 		t.Fatalf("WorkspaceConnectMaterials: %v", err)
 	}
@@ -255,14 +264,10 @@ services:
   jira:
     service_id: "00000000-0000-0000-0000-000000000001"
     versions: ["2026-07-01"]
-    runtime_config:
-      connect:
-        bucket: customers
+    connection_profiles:
+      - version: "2026-07-01"
         auth_type: oauth
-        client_id: $JIRA_CLIENT_ID
-        client_secret: $JIRA_CLIENT_SECRET
-        redirect_uri: https://engine.example.com/workspace/connect/callback
-        profile_mode: detach
+        reset: true
 `)
 	if _, err := configfile.ParseFile(valid); err != nil {
 		t.Fatalf("valid profile detach: %v", err)
@@ -274,15 +279,11 @@ services:
   jira:
     service_id: "00000000-0000-0000-0000-000000000001"
     versions: ["2026-07-01"]
-    runtime_config:
-      connect:
-        bucket: customers
+    connection_profiles:
+      - version: "2026-07-01"
         auth_type: oauth
-        client_id: $JIRA_CLIENT_ID
-        client_secret: $JIRA_CLIENT_SECRET
-        redirect_uri: https://engine.example.com/workspace/connect/callback
         profile_id: "00000000-0000-0000-0000-000000000002"
-        profile_mode: detach
+        reset: true
 `)
 	if _, err := configfile.ParseFile(conflict); err == nil {
 		t.Fatal("profile detach with profile_id was accepted")
@@ -297,13 +298,15 @@ services:
   github:
     service_id: "00000000-0000-0000-0000-000000000001"
     versions: ["2026-07-01"]
-    runtime_config:
-      connect:
-        bucket: prod
-        auth_type: oauth2
-        client_id: $FUSED_TEST_CLIENT_ID
-        client_secret: $FUSED_TEST_CLIENT_SECRET
-        redirect_uri: https://engine.example.com/connect/callback
+buckets:
+  prod:
+    service_config:
+      github:
+        connect:
+          auth_type: oauth2
+          client_id: $FUSED_TEST_CLIENT_ID
+          client_secret: $FUSED_TEST_CLIENT_SECRET
+          redirect_uri: https://engine.example.com/connect/callback
 `)
 	_, err := configfile.ParseFile(path)
 	if err == nil || !strings.Contains(err.Error(), "unsupported auth_type") {
@@ -320,13 +323,15 @@ services:
   github:
     service_id: "00000000-0000-0000-0000-000000000001"
     versions: ["2026-07-01"]
-    runtime_config:
-      connect:
-        bucket: prod
-        auth_type: `+authType+`
-        client_id: $FUSED_TEST_CLIENT_ID
-        client_secret: $FUSED_TEST_CLIENT_SECRET
-        redirect_uri: https://engine.example.com/connect/callback
+buckets:
+  prod:
+    service_config:
+      github:
+        connect:
+          auth_type: `+authType+`
+          client_id: $FUSED_TEST_CLIENT_ID
+          client_secret: $FUSED_TEST_CLIENT_SECRET
+          redirect_uri: https://engine.example.com/connect/callback
 `)
 		_, err := configfile.ParseFile(path)
 		if err == nil || !strings.Contains(err.Error(), "unsupported auth_type") {
@@ -343,13 +348,15 @@ services:
   github:
     service_id: "00000000-0000-0000-0000-000000000001"
     versions: ["2026-07-01"]
-    runtime_config:
-      connect:
-        bucket: prod
-        auth_type: oauth
-        client_id: public-client-id
-        client_secret: inline-secret
-        redirect_uri: https://engine.example.com/connect/callback
+buckets:
+  prod:
+    service_config:
+      github:
+        connect:
+          auth_type: oauth
+          client_id: public-client-id
+          client_secret: inline-secret
+          redirect_uri: https://engine.example.com/connect/callback
 `)
 	_, err := configfile.ParseFile(path)
 	if err == nil || !strings.Contains(err.Error(), "client_secret: $ENV") {
@@ -366,12 +373,15 @@ services:
   github:
     service_id: "00000000-0000-0000-0000-000000000001"
     versions: ["2026-07-01"]
-    runtime_config:
-      connect:
-        auth_type: oauth
-        client_id: $FUSED_TEST_MISSING_CLIENT_ID
-        client_secret: $FUSED_TEST_CLIENT_SECRET
-        redirect_uri: https://engine.example.com/connect/callback
+buckets:
+  default:
+    service_config:
+      github:
+        connect:
+          auth_type: oauth
+          client_id: $FUSED_TEST_MISSING_CLIENT_ID
+          client_secret: $FUSED_TEST_CLIENT_SECRET
+          redirect_uri: https://engine.example.com/connect/callback
 `)
 	parsed, err := configfile.ParseFile(path)
 	if err != nil {
@@ -426,7 +436,7 @@ services:
 	}
 }
 
-func TestLoadRun_RejectsDuplicateSDKNames(t *testing.T) {
+func TestLoadRun_RejectsDuplicateArtifactIdentities(t *testing.T) {
 	dir := t.TempDir()
 	writeSDK(t, dir, ".fused/sdks/one.yaml", "security")
 	writeSDK(t, dir, ".fused/sdks/two.yaml", "security")
@@ -441,8 +451,54 @@ func TestLoadRun_RejectsDuplicateSDKNames(t *testing.T) {
 	}
 
 	_, err = configfile.LoadRun("")
-	if err == nil || !strings.Contains(err.Error(), "duplicate sdk name") {
-		t.Fatalf("expected duplicate sdk name error, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "duplicate artifact identity") {
+		t.Fatalf("expected duplicate artifact identity error, got %v", err)
+	}
+}
+
+func TestLoadRun_DiscoversVersionedSDKAndMCPConfigs(t *testing.T) {
+	dir := t.TempDir()
+	writeSDK(t, dir, ".fused/sdks/security-v1.yaml", "security")
+	writeFile(t, dir, ".fused/sdks/security-v2.yaml", `
+apiVersion: fused/v1
+kind: sdk
+name: security
+version: "2.0.0"
+language: typescript
+services:
+  okta:
+    version: "2026-07-01"
+    operations: ["listLogEvents"]
+`)
+	writeFile(t, dir, ".fused/mcps/security.yaml", `
+apiVersion: fused/v1
+kind: mcp
+name: security
+version: "1.0.0"
+services:
+  okta:
+    version: "2026-07-01"
+    operations: ["listLogEvents"]
+`)
+
+	oldwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldwd) })
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	run, err := configfile.LoadRun("")
+	if err != nil {
+		t.Fatalf("LoadRun failed: %v", err)
+	}
+	if len(run.Configs) != 3 {
+		t.Fatalf("expected two SDK versions and one MCP config, got %d", len(run.Configs))
+	}
+	if run.Configs[2].ConfigKey != "mcp:security:1.0.0" {
+		t.Fatalf("expected discovered MCP config, got %#v", run.Configs[2])
 	}
 }
 

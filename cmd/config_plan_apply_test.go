@@ -107,13 +107,15 @@ services:
   github:
     service_id: "00000000-0000-0000-0000-000000000001"
     versions: ["2026-07-01"]
-    runtime_config:
-      connect:
-        bucket: prod
-        auth_type: oauth
-        client_id_env: FUSED_TEST_CLIENT_ID
-        client_secret_env: FUSED_TEST_CLIENT_SECRET
-        redirect_uri: https://engine.example.com/connect/callback
+buckets:
+  prod:
+    service_config:
+      github:
+        connect:
+          auth_type: oauth
+          client_id_env: FUSED_TEST_CLIENT_ID
+          client_secret_env: FUSED_TEST_CLIENT_SECRET
+          redirect_uri: https://engine.example.com/connect/callback
 `)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatalf("legacy *_env config must fail before posting to Engine")
@@ -137,13 +139,15 @@ services:
   github:
     service_id: "00000000-0000-0000-0000-000000000001"
     versions: ["2026-07-01"]
-    runtime_config:
-      connect:
-        bucket: prod
-        auth_type: oauth
-        client_id: $FUSED_TEST_CLIENT_ID
-        client_secret: $FUSED_TEST_CLIENT_SECRET
-        redirect_uri: https://engine.example.com/connect/callback
+buckets:
+  prod:
+    service_config:
+      github:
+        connect:
+          auth_type: oauth
+          client_id: $FUSED_TEST_CLIENT_ID
+          client_secret: $FUSED_TEST_CLIENT_SECRET
+          redirect_uri: https://engine.example.com/connect/callback
 `)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
@@ -151,8 +155,8 @@ services:
 			t.Fatalf("decode body: %v", err)
 		}
 		config := body["config"].(map[string]any)
-		service := config["services"].(map[string]any)["github"].(map[string]any)
-		connect := service["runtime_config"].(map[string]any)["connect"].(map[string]any)
+		bucket := config["buckets"].(map[string]any)["prod"].(map[string]any)
+		connect := bucket["service_config"].(map[string]any)["github"].(map[string]any)["connect"].(map[string]any)
 		if connect["client_id"] != "$FUSED_TEST_CLIENT_ID" || connect["client_secret"] != "$FUSED_TEST_CLIENT_SECRET" {
 			t.Fatalf("expected dollar refs in plan payload, got %#v", connect)
 		}
@@ -178,13 +182,15 @@ services:
   github:
     service_id: "00000000-0000-0000-0000-000000000001"
     versions: ["2026-07-01"]
-    runtime_config:
-      connect:
-        bucket: prod
-        auth_type: oauth
-        client_id: $FUSED_TEST_CLIENT_ID
-        client_secret: ${FUSED_TEST_CLIENT_SECRET}
-        redirect_uri: https://engine.example.com/connect/callback
+buckets:
+  prod:
+    service_config:
+      github:
+        connect:
+          auth_type: oauth
+          client_id: $FUSED_TEST_CLIENT_ID
+          client_secret: ${FUSED_TEST_CLIENT_SECRET}
+          redirect_uri: https://engine.example.com/connect/callback
 `)
 	parsed, err := configfile.ParseFile(path)
 	if err != nil {
@@ -200,7 +206,7 @@ services:
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatalf("decode body: %v", err)
 		}
-		materials := body["connect_materials"].(map[string]any)["github"].(map[string]any)
+		materials := body["connect_materials"].(map[string]any)["prod\x00github"].(map[string]any)
 		if materials["client_id"] != "resolved-client" || materials["client_secret"] != "resolved-secret" {
 			t.Fatalf("expected resolved connect materials during apply, got %#v", materials)
 		}
@@ -222,12 +228,14 @@ services:
   github:
     service_id: "00000000-0000-0000-0000-000000000001"
     versions: ["2026-07-01"]
-    runtime_config:
-      auth:
-        bucket: prod
-        auth_type: basic
-        username: $FUSED_BASIC_USER
-        password: ${FUSED_BASIC_PASS}
+buckets:
+  prod:
+    service_config:
+      github:
+        auth:
+          auth_type: basic
+          username: $FUSED_BASIC_USER
+          password: ${FUSED_BASIC_PASS}
 `)
 	parsed, err := configfile.ParseFile(path)
 	if err != nil {
@@ -243,7 +251,7 @@ services:
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatalf("decode body: %v", err)
 		}
-		materials := body["auth_materials"].(map[string]any)["github"].(map[string]any)
+		materials := body["auth_materials"].(map[string]any)["prod\x00github"].(map[string]any)
 		if materials["username"] != "alice" || materials["password"] != "s3cr3t" {
 			t.Fatalf("expected resolved auth materials during apply, got %#v", materials)
 		}
@@ -267,12 +275,14 @@ services:
   github:
     service_id: "00000000-0000-0000-0000-000000000001"
     versions: ["2026-07-01"]
-    runtime_config:
-      auth:
-        bucket: prod
-        auth_type: mtls
-        cert: $FUSED_CLIENT_CERT
-        key: ${FUSED_CLIENT_KEY}
+buckets:
+  prod:
+    service_config:
+      github:
+        auth:
+          auth_type: mtls
+          cert: $FUSED_CLIENT_CERT
+          key: ${FUSED_CLIENT_KEY}
 `)
 	parsed, err := configfile.ParseFile(path)
 	if err != nil {
@@ -288,7 +298,7 @@ services:
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatalf("decode body: %v", err)
 		}
-		materials := body["auth_materials"].(map[string]any)["github"].(map[string]any)
+		materials := body["auth_materials"].(map[string]any)["prod\x00github"].(map[string]any)
 		if materials["cert"] != "CERT-PEM" || materials["key"] != "KEY-PEM" {
 			t.Fatalf("expected resolved mTLS auth materials during apply, got %#v", materials)
 		}
@@ -308,12 +318,14 @@ services:
   github:
     service_id: "00000000-0000-0000-0000-000000000001"
     versions: ["2026-07-01"]
-    runtime_config:
-      auth:
-        bucket: prod
-        auth_type: basic
-        username: alice
-        password: s3cr3t
+buckets:
+  prod:
+    service_config:
+      github:
+        auth:
+          auth_type: basic
+          username: alice
+          password: s3cr3t
 `)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatalf("inline static auth material must fail before posting to Engine")

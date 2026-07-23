@@ -43,7 +43,7 @@ func TestServiceShow_PrintsBareSlugForOwnedService(t *testing.T) {
 // same-named service.
 func TestServiceShow_QualifiesSlugForNonOwnedService(t *testing.T) {
 	dir := t.TempDir()
-	server := newServiceInfoTestServer(t, `{"id":"svc-2","name":"Plunk","slug":"plunk","base_url":"https://api.useplunk.com","provider":"acme","is_owner":false,"servers":[],"auth_configs":[]}`)
+	server := newServiceInfoTestServer(t, `{"id":"svc-2","name":"Plunk","slug":"plunk","base_url":"https://api.useplunk.com","provider":{"handle":"acme"},"is_owner":false,"servers":[],"auth_configs":[]}`)
 	defer server.Close()
 
 	out := runCommandInDirOutput(t, dir, server.URL, []string{"service", "@acme/plunk", "show"})

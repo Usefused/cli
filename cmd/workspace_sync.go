@@ -137,51 +137,48 @@ func workspaceServiceWithLocalState(remote, local configfile.WorkspaceService) c
 	if local.RuntimeConfig != nil {
 		remote.RuntimeConfig = local.RuntimeConfig
 	}
+	if len(local.ConnectionProfiles) > 0 {
+		remote.ConnectionProfiles = local.ConnectionProfiles
+	}
 	return remote
 }
 
-// mergeWorkspaceConnectConfigsFromRemote replaces only the bucket connect
-// portion of runtime config, leaving other local runtime settings intact. The
-// Engine is authoritative for connect state because UI and CLI edits both
-// persist there before a fresh checkout can have any local state to preserve.
+// mergeWorkspaceConnectConfigsFromRemote mirrors exportable routing policy but
+// intentionally leaves bucket OAuth material out of YAML. The Engine never
+// returns ciphertext/plaintext client credentials, and inventing $ENV refs here
+// makes an unrelated service-policy apply depend on local secrets the user did
+// not intend to touch.
 func mergeWorkspaceConnectConfigsFromRemote(cfg *configfile.WorkspaceConfig, services []api.WorkspaceService, configs []api.WorkspaceConnectConfig) ([]string, error) {
-	configsByService, err := workspaceConnectConfigsByService(configs)
+	remoteServices := remoteWorkspaceServicesByID(services)
+	serviceKeys := workspaceServiceKeysByID(cfg.Services)
+	for _, remoteConfig := range configs {
+		if serviceKeys[remoteConfig.ServiceID] == "" {
+			return nil, fmt.Errorf("workspace sync received connect config for inactive service_id %s", remoteConfig.ServiceID)
+		}
+	}
+	// Sync is a read/export flow, not a secret rehydration flow. Strip any old
+	// bucket-owned Connect material refs so a later service-only apply does not
+	// require local OAuth app secrets for unrelated, unchanged services.
+	updated := stripWorkspaceBucketConnectConfigs(cfg)
+	profileUpdates, err := mergeWorkspaceConnectionProfilesFromRemote(cfg, remoteServices, serviceKeys, configs)
 	if err != nil {
 		return nil, err
 	}
-	remoteServices := remoteWorkspaceServicesByID(services)
-	updated := make([]string, 0)
-	for key, service := range cfg.Services {
-		remoteConfig, configured := configsByService[service.ServiceID]
-		nextRuntime, err := workspaceRuntimeWithRemoteConnect(key, service.RuntimeConfig, remoteServices[service.ServiceID], remoteConfig, configured)
-		if err != nil {
-			return nil, err
-		}
-		// Only report a service when its serialized runtime config changes; this
-		// keeps repeated sync executions quiet and audit counts meaningful.
-		if !reflect.DeepEqual(service.RuntimeConfig, nextRuntime) {
-			service.RuntimeConfig = nextRuntime
-			cfg.Services[key] = service
-			updated = append(updated, key)
-		}
-	}
+	updated = append(updated, profileUpdates...)
 	sort.Strings(updated)
-	return updated, nil
+	return uniqueStrings(updated), nil
 }
 
-// workspaceConnectConfigsByService enforces the one-connect-config shape the
-// current workspace YAML can represent instead of silently choosing a bucket.
-func workspaceConnectConfigsByService(configs []api.WorkspaceConnectConfig) (map[string]api.WorkspaceConnectConfig, error) {
-	byService := make(map[string]api.WorkspaceConnectConfig, len(configs))
-	for _, config := range configs {
-		// Multiple bucket configs for one service cannot fit in the singular
-		// runtime_config.connect field, so sync must fail without rewriting YAML.
-		if _, exists := byService[config.ServiceID]; exists {
-			return nil, fmt.Errorf("workspace sync cannot represent multiple connect buckets for service_id %s", config.ServiceID)
+// workspaceServiceKeysByID indexes the already-synced service map so remote
+// profile/config rows can be validated without scanning every service per row.
+func workspaceServiceKeysByID(services map[string]configfile.WorkspaceService) map[string]string {
+	byID := make(map[string]string, len(services))
+	for key, service := range services {
+		if service.ServiceID != "" {
+			byID[service.ServiceID] = key
 		}
-		byService[config.ServiceID] = config
 	}
-	return byService, nil
+	return byID
 }
 
 // remoteWorkspaceServicesByID indexes the already-batched GraphQL result so
@@ -194,200 +191,161 @@ func remoteWorkspaceServicesByID(services []api.WorkspaceService) map[string]api
 	return byID
 }
 
-// workspaceRuntimeWithRemoteConnect copies the runtime container before
-// changing its connect field so callers never mutate shared nested pointers.
-func workspaceRuntimeWithRemoteConnect(key string, current *configfile.RuntimeConfig, service api.WorkspaceService, remote api.WorkspaceConnectConfig, configured bool) (*configfile.RuntimeConfig, error) {
-	if !configured {
-		// A missing remote projection is not a deletion instruction. Preserving
-		// local intent keeps sync from erasing unapplied or locally-authored config.
-		return current, nil
-	}
-	if service.ServiceID == "" {
-		return nil, fmt.Errorf("workspace sync received connect config for inactive service_id %s", remote.ServiceID)
-	}
-	var next configfile.RuntimeConfig
-	// Preserve non-connect runtime intent because those fields are not part of
-	// this Engine GraphQL read model and therefore are not safe to overwrite.
-	if current != nil {
-		next = *current
-	}
-	connect, err := workspaceConnectFromRemote(key, service, remote, localConnectForSameIdentity(current, remote))
-	if err != nil {
-		return nil, err
-	}
-	next.Connect = connect
-	return &next, nil
-}
-
-// localConnectForSameIdentity returns local material references only when
-// they describe the same bucket/auth tuple; stale references must not migrate
-// to a different remote connection accidentally.
-func localConnectForSameIdentity(runtime *configfile.RuntimeConfig, remote api.WorkspaceConnectConfig) *configfile.ConnectConfig {
-	if runtime == nil || runtime.Connect == nil {
+func stripWorkspaceBucketConnectConfigs(cfg *configfile.WorkspaceConfig) []string {
+	if cfg.Buckets == nil {
 		return nil
 	}
-	local := runtime.Connect
-	if local.Bucket != remote.BucketName || local.AuthType != remote.AuthType {
-		return nil
-	}
-	return local
-}
-
-// workspaceConnectFromRemote projects masked GraphQL state into safe YAML.
-// Credential ciphertext never leaves Engine; sync writes env references that
-// operators resolve only during a later apply.
-func workspaceConnectFromRemote(key string, service api.WorkspaceService, remote api.WorkspaceConnectConfig, local *configfile.ConnectConfig) (*configfile.ConnectConfig, error) {
-	profile, err := uniformWorkspaceConnectProfile(service, remote)
-	if err != nil {
-		return nil, err
-	}
-	return &configfile.ConnectConfig{
-		Bucket: remote.BucketName, AuthType: remote.AuthType, Enabled: boolPtr(remote.Enabled),
-		ClientID:     connectMaterialEnvRef(key, "CLIENT_ID", remote.HasClientID, localClientID(local)),
-		ClientSecret: connectMaterialEnvRef(key, "CLIENT_SECRET", remote.HasClientSecret, localClientSecret(local)),
-		RedirectURI:  remote.RedirectURI, Profile: profile.Inline, ProfileID: profile.RegistryID,
-	}, nil
-}
-
-// localClientID safely reads an optional local connect config without adding
-// nil branches to the projection function.
-func localClientID(connect *configfile.ConnectConfig) string {
-	if connect == nil {
-		return ""
-	}
-	return connect.ClientID
-}
-
-// localClientSecret safely reads an optional local connect config without
-// exposing any Engine-side secret material.
-func localClientSecret(connect *configfile.ConnectConfig) string {
-	if connect == nil {
-		return ""
-	}
-	return connect.ClientSecret
-}
-
-// connectMaterialEnvRef preserves a user's existing env variable name when
-// possible and otherwise emits a deterministic placeholder for masked data.
-func connectMaterialEnvRef(serviceKey, suffix string, present bool, existing string) string {
-	if !present {
-		return ""
-	}
-	if configfile.IsEnvironmentReference(existing) {
-		return existing
-	}
-	return "$FUSED_" + workspaceEnvToken(serviceKey) + "_CONNECT_" + suffix
-}
-
-// workspaceEnvToken converts qualified service refs into portable uppercase
-// environment-variable segments without leaking display names into secrets.
-func workspaceEnvToken(serviceKey string) string {
-	var token strings.Builder
-	previousUnderscore := false
-	for _, char := range strings.ToUpper(serviceKey) {
-		valid := (char >= 'A' && char <= 'Z') || (char >= '0' && char <= '9')
-		if valid {
-			token.WriteRune(char)
-			previousUnderscore = false
+	updated := make([]string, 0)
+	for bucketName, bucket := range cfg.Buckets {
+		changed := stripBucketConnectConfigs(bucket.ServiceConfig, &updated)
+		if !changed {
 			continue
 		}
-		// Collapse punctuation runs so provider-qualified refs remain readable
-		// and stable across operating systems.
-		if token.Len() > 0 && !previousUnderscore {
-			token.WriteByte('_')
-			previousUnderscore = true
+		if len(bucket.ServiceConfig) == 0 {
+			delete(cfg.Buckets, bucketName)
+			continue
 		}
+		cfg.Buckets[bucketName] = bucket
 	}
-	value := strings.Trim(token.String(), "_")
-	if value == "" {
-		return "SERVICE"
-	}
-	return value
+	return uniqueStrings(updated)
 }
 
-type workspaceConnectProfileProjection struct {
-	Inline     map[string]interface{}
-	RegistryID string
+func stripBucketConnectConfigs(serviceConfigs map[string]configfile.BucketServiceConfig, updated *[]string) bool {
+	changed := false
+	for serviceKey, serviceConfig := range serviceConfigs {
+		if serviceConfig.Connect == nil {
+			continue
+		}
+		serviceConfig.Connect = nil
+		changed = true
+		*updated = append(*updated, serviceKey)
+		if serviceConfig.Auth == nil {
+			delete(serviceConfigs, serviceKey)
+			continue
+		}
+		serviceConfigs[serviceKey] = serviceConfig
+	}
+	return changed
 }
 
-type workspaceConnectProfileAccumulator struct {
-	inline      map[string]interface{}
-	registryID  string
-	identitySet bool
+// uniqueStrings preserves first-seen order while preventing duplicate profile
+// versions from causing noisy sync diffs.
+func uniqueStrings(values []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
 }
 
-// uniformWorkspaceConnectProfile returns one declarative profile selection
-// that every enabled version can safely share without losing Registry lineage.
-func uniformWorkspaceConnectProfile(service api.WorkspaceService, config api.WorkspaceConnectConfig) (workspaceConnectProfileProjection, error) {
-	if len(config.Profiles) == 0 {
-		return workspaceConnectProfileProjection{}, nil
-	}
-	if len(config.Profiles) != len(service.EnabledVersions) {
-		return workspaceConnectProfileProjection{}, fmt.Errorf("workspace sync cannot represent partial connection profile coverage for service_id %s", service.ServiceID)
-	}
-	enabled, err := workspaceEnabledVersionIDs(service)
+// mergeWorkspaceConnectionProfilesFromRemote writes service-level routing
+// policy once per service, even when several buckets return the same effective
+// profile snapshot for that service/auth tuple.
+func mergeWorkspaceConnectionProfilesFromRemote(cfg *configfile.WorkspaceConfig, services map[string]api.WorkspaceService, serviceKeys map[string]string, configs []api.WorkspaceConnectConfig) ([]string, error) {
+	grouped, err := workspaceConnectionProfilesByService(services, serviceKeys, configs)
 	if err != nil {
-		return workspaceConnectProfileProjection{}, err
+		return nil, err
 	}
-	var selected workspaceConnectProfileAccumulator
-	for _, profile := range config.Profiles {
-		if _, ok := enabled[profile.ServiceVersionID]; !ok {
-			return workspaceConnectProfileProjection{}, fmt.Errorf("workspace sync received a connection profile for an inactive version of service_id %s", service.ServiceID)
+	updated := make([]string, 0, len(grouped))
+	for serviceID, profiles := range grouped {
+		key := serviceKeys[serviceID]
+		service := cfg.Services[key]
+		if reflect.DeepEqual(service.ConnectionProfiles, profiles) {
+			continue
 		}
-		if err := selected.add(profile, service.ServiceID); err != nil {
-			return workspaceConnectProfileProjection{}, err
-		}
+		service.ConnectionProfiles = profiles
+		cfg.Services[key] = service
+		updated = append(updated, key)
 	}
-	return selected.projection(), nil
+	return updated, nil
 }
 
-// workspaceEnabledVersionIDs validates the resolved identities once before
-// profile coverage is compared, keeping the merge loop focused and bounded.
-func workspaceEnabledVersionIDs(service api.WorkspaceService) (map[string]struct{}, error) {
-	enabled := make(map[string]struct{}, len(service.EnabledVersions))
+// workspaceConnectionProfilesByService validates profile/version ownership in
+// one pass and de-duplicates rows repeated through multiple bucket configs.
+func workspaceConnectionProfilesByService(services map[string]api.WorkspaceService, serviceKeys map[string]string, configs []api.WorkspaceConnectConfig) (map[string][]map[string]interface{}, error) {
+	grouped := map[string][]map[string]interface{}{}
+	seen := map[string]bool{}
+	for _, config := range configs {
+		service := services[config.ServiceID]
+		versionNames, err := workspaceEnabledVersionNames(service)
+		if err != nil {
+			return nil, err
+		}
+		for _, profile := range config.Profiles {
+			key := config.ServiceID + "\x00" + profile.ServiceVersionID + "\x00" + profile.AuthType
+			if seen[key] {
+				continue
+			}
+			intent, err := workspaceConnectionProfileIntent(config.ServiceID, profile, versionNames)
+			if err != nil {
+				return nil, err
+			}
+			seen[key] = true
+			grouped[config.ServiceID] = append(grouped[config.ServiceID], intent)
+		}
+		if serviceKeys[config.ServiceID] == "" && len(config.Profiles) > 0 {
+			return nil, fmt.Errorf("workspace sync received a connection profile for inactive service_id %s", config.ServiceID)
+		}
+	}
+	return grouped, nil
+}
+
+// workspaceEnabledVersionNames requires resolved IDs because connection
+// profiles attach to immutable service versions, not mutable display names.
+func workspaceEnabledVersionNames(service api.WorkspaceService) (map[string]string, error) {
+	names := make(map[string]string, len(service.EnabledVersions))
 	for _, version := range service.EnabledVersions {
 		if version.ServiceVersionID == "" {
 			return nil, fmt.Errorf("workspace sync requires resolved version IDs to export connection profiles for service_id %s", service.ServiceID)
 		}
-		enabled[version.ServiceVersionID] = struct{}{}
+		names[version.ServiceVersionID] = version.Version
 	}
-	return enabled, nil
+	return names, nil
 }
 
-// add fails closed when one YAML profile selection would collapse divergent
-// behavior or Registry identities from separate enabled versions.
-func (a *workspaceConnectProfileAccumulator) add(profile api.WorkspaceConnectProfile, serviceID string) error {
-	if a.inline == nil {
-		a.inline = profile.Profile
-	} else if !reflect.DeepEqual(a.inline, profile.Profile) {
-		return fmt.Errorf("workspace sync cannot represent different connection profiles across versions for service_id %s", serviceID)
+// workspaceConnectionProfileIntent preserves Registry identity when present;
+// only workspace-local attachments need to carry inline profile JSON.
+func workspaceConnectionProfileIntent(serviceID string, profile api.WorkspaceConnectProfile, versionNames map[string]string) (map[string]interface{}, error) {
+	version := versionNames[profile.ServiceVersionID]
+	if version == "" {
+		return nil, fmt.Errorf("workspace sync received a connection profile for an inactive version of service_id %s", serviceID)
 	}
-	currentID := strings.TrimSpace(profile.RegistryProfileID)
-	if a.identitySet && currentID != a.registryID {
-		return fmt.Errorf("workspace sync cannot represent different connection profile identities across versions for service_id %s", serviceID)
+	intent := map[string]interface{}{"version": version, "auth_type": profile.AuthType}
+	if id := strings.TrimSpace(profile.RegistryProfileID); id != "" {
+		intent["profile_id"] = id
+		return intent, nil
 	}
-	a.registryID, a.identitySet = currentID, true
-	return nil
-}
-
-// projection preserves Registry identity when present; only workspace-local
-// attachments are exported as inline profile declarations.
-func (a workspaceConnectProfileAccumulator) projection() workspaceConnectProfileProjection {
-	if a.registryID != "" {
-		return workspaceConnectProfileProjection{RegistryID: a.registryID}
-	}
-	return workspaceConnectProfileProjection{Inline: a.inline}
+	intent["profile"] = profile.Profile
+	return intent, nil
 }
 
 // workspaceServiceConfigKey requires Registry slug identity so sync never
 // falls back to a mutable display name as a declarative resource key.
 func workspaceServiceConfigKey(svc api.WorkspaceService, visibility map[string]api.ServiceVisibility) (string, error) {
 	if vis, ok := visibility[svc.ServiceID]; ok {
-		if ref := serviceConfigRef(vis.Slug, vis.Provider); ref != "" {
+		provider := ""
+		// Registry returns provider identity for owned services too; only foreign
+		// slugs need qualification because ownership already scopes local names.
+		if !vis.IsOwner {
+			provider = providerHandle(vis.Provider)
+		}
+		if ref := serviceConfigRef(vis.Slug, provider); ref != "" {
 			return ref, nil
 		}
 	}
 	return "", fmt.Errorf("workspace sync missing service slug for service_id %s", svc.ServiceID)
+}
+
+func providerHandle(provider *api.ServiceProviderIdentity) string {
+	if provider == nil {
+		return ""
+	}
+	return provider.Handle
 }
 
 // serviceConfigRef qualifies foreign service slugs by provider while keeping
@@ -430,7 +388,8 @@ func workspaceServiceEqual(a, b configfile.WorkspaceService) bool {
 		sameStringSet(a.Versions, b.Versions) &&
 		sameResolvedVersions(a.ResolvedVersions, b.ResolvedVersions) &&
 		sameBoolPtr(a.Public, b.Public) &&
-		reflect.DeepEqual(a.RuntimeConfig, b.RuntimeConfig)
+		reflect.DeepEqual(a.RuntimeConfig, b.RuntimeConfig) &&
+		reflect.DeepEqual(a.ConnectionProfiles, b.ConnectionProfiles)
 }
 
 // boolPtr preserves an explicit false value through YAML omitempty handling.

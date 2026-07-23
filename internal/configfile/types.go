@@ -21,7 +21,20 @@ type BaseConfig struct {
 type WorkspaceConfig struct {
 	BaseConfig   `yaml:",inline"`
 	Services     map[string]WorkspaceService     `yaml:"services" json:"services"`
+	Buckets      map[string]WorkspaceBucket      `yaml:"buckets,omitempty" json:"buckets,omitempty"`
 	Deprecations []WorkspaceDeprecationDirective `yaml:"deprecations,omitempty" json:"deprecations,omitempty"`
+}
+
+// WorkspaceBucket owns runtime credential material keyed by service. Services
+// declare what is enabled; buckets declare which credentials a selected
+// artifact/runtime should use for those enabled services.
+type WorkspaceBucket struct {
+	ServiceConfig map[string]BucketServiceConfig `yaml:"service_config,omitempty" json:"service_config,omitempty"`
+}
+
+type BucketServiceConfig struct {
+	Auth    *AuthConfig    `yaml:"auth,omitempty" json:"auth,omitempty"`
+	Connect *ConnectConfig `yaml:"connect,omitempty" json:"connect,omitempty"`
 }
 
 // WorkspaceService represents service versions enabled for a workspace.
@@ -34,6 +47,36 @@ type WorkspaceService struct {
 	// lookup that could drift under a reused version label.
 	ResolvedVersions []WorkspaceResolvedVersion `yaml:"resolved_versions,omitempty" json:"resolved_versions,omitempty"`
 	RuntimeConfig    *RuntimeConfig             `yaml:"runtime_config,omitempty" json:"runtime_config,omitempty"`
+	ExecutionPolicy  *ExecutionPolicy           `yaml:"execution_policy,omitempty" json:"execution_policy,omitempty"`
+	VersionPolicies  []WorkspaceVersionPolicy   `yaml:"version_policies,omitempty" json:"version_policies,omitempty"`
+	// ConnectionProfiles is intentionally raw in the CLI: Engine owns full
+	// validation, while CLI only resolves local env refs before apply.
+	ConnectionProfiles []map[string]interface{} `yaml:"connection_profiles,omitempty" json:"connection_profiles,omitempty"`
+}
+
+type WorkspaceVersionPolicy struct {
+	Version         string           `yaml:"version" json:"version"`
+	ExecutionPolicy *ExecutionPolicy `yaml:"execution_policy,omitempty" json:"execution_policy,omitempty"`
+}
+
+type ExecutionPolicy struct {
+	Public      *bool            `yaml:"public,omitempty" json:"public,omitempty"`
+	RateLimit   *RateLimitConfig `yaml:"rate_limit,omitempty" json:"rate_limit,omitempty"`
+	Retry       *RetryConfig     `yaml:"retry,omitempty" json:"retry,omitempty"`
+	RetryConfig *RetryConfig     `yaml:"retry_config,omitempty" json:"retry_config,omitempty"`
+	Reset       bool             `yaml:"reset,omitempty" json:"reset,omitempty"`
+}
+
+type RateLimitConfig struct {
+	Strategy          string `yaml:"strategy" json:"strategy"`
+	RequestsPerSecond int    `yaml:"requests_per_second" json:"requests_per_second"`
+	RequestsPerMinute int    `yaml:"requests_per_minute" json:"requests_per_minute"`
+}
+
+type RetryConfig struct {
+	Strategy   string `yaml:"strategy" json:"strategy"`
+	MaxRetries int    `yaml:"max_retries" json:"max_retries"`
+	BackoffMs  int    `yaml:"backoff_ms" json:"backoff_ms"`
 }
 
 type WorkspaceResolvedVersion struct {
@@ -72,17 +115,13 @@ type AuthMaterial struct {
 }
 
 type ConnectConfig struct {
-	Bucket          string                 `yaml:"bucket,omitempty" json:"bucket,omitempty"`
-	AuthType        string                 `yaml:"auth_type" json:"auth_type"`
-	Enabled         *bool                  `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	ClientID        string                 `yaml:"client_id,omitempty" json:"client_id,omitempty"`
-	ClientIDEnv     string                 `yaml:"client_id_env,omitempty" json:"client_id_env,omitempty"`
-	ClientSecret    string                 `yaml:"client_secret,omitempty" json:"client_secret,omitempty"`
-	ClientSecretEnv string                 `yaml:"client_secret_env,omitempty" json:"client_secret_env,omitempty"`
-	RedirectURI     string                 `yaml:"redirect_uri" json:"redirect_uri"`
-	Profile         map[string]interface{} `yaml:"profile,omitempty" json:"profile,omitempty"`
-	ProfileID       string                 `yaml:"profile_id,omitempty" json:"profile_id,omitempty"`
-	ProfileMode     string                 `yaml:"profile_mode,omitempty" json:"profile_mode,omitempty"`
+	AuthType        string `yaml:"auth_type" json:"auth_type"`
+	Enabled         *bool  `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	ClientID        string `yaml:"client_id,omitempty" json:"client_id,omitempty"`
+	ClientIDEnv     string `yaml:"client_id_env,omitempty" json:"client_id_env,omitempty"`
+	ClientSecret    string `yaml:"client_secret,omitempty" json:"client_secret,omitempty"`
+	ClientSecretEnv string `yaml:"client_secret_env,omitempty" json:"client_secret_env,omitempty"`
+	RedirectURI     string `yaml:"redirect_uri" json:"redirect_uri"`
 }
 
 type ConnectMaterial struct {

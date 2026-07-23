@@ -47,15 +47,15 @@ var sdkSyncVersion bool
 // explicitly opts in with --sync-version. Pure and side-effect-free
 // (no file or network I/O) so it's directly testable, mirroring
 // mergeWorkspaceServicesFromRemote's structure (workspace_sync.go).
-func mergeSDKServicesFromRemote(cfg *configfile.SDKConfig, sdkVersion string, remote []sdkSyncRemoteService, syncVersion bool) (sdkSyncResult, error) {
+func mergeSDKServicesFromRemote(cfg *configfile.SDKConfig, artifactVersion string, remote []sdkSyncRemoteService, syncVersion bool) (sdkSyncResult, error) {
 	if cfg.Services == nil {
 		cfg.Services = map[string]configfile.SDKService{}
 	}
-	result := newSDKSyncResult(cfg.Version, sdkVersion, syncVersion)
+	result := newSDKSyncResult(cfg.Version, artifactVersion, syncVersion)
 	if syncVersion {
 		// The top-level version is part of the config identity, so default sync
 		// preserves it and only changes it after an explicit operator choice.
-		cfg.Version = sdkVersion
+		cfg.Version = artifactVersion
 	}
 	remoteByName, err := sdkSyncRemoteByName(remote)
 	if err != nil {
@@ -154,7 +154,7 @@ func resolveServiceVersionName(sel api.SDKSelectionDetail) (string, error) {
 // the most recently generated SDK by name, resolves each selected service's
 // persisted version tag, and enumerates each selection's operations
 // (select_all included) into concrete names.
-func fetchSDKSyncData(client *api.Client, sdkName string) (sdkVersion string, remote []sdkSyncRemoteService, err error) {
+func fetchSDKSyncData(client *api.Client, sdkName string) (artifactVersion string, remote []sdkSyncRemoteService, err error) {
 	sdk, err := client.GetSDKSelectionsByName(sdkName)
 	if err != nil {
 		return "", nil, fmt.Errorf("fetching sdk %q: %w", sdkName, err)
@@ -204,11 +204,11 @@ selects. The local artifact version is preserved unless --sync-version is set.`,
 		if err != nil {
 			return err
 		}
-		sdkVersion, remote, err := fetchSDKSyncData(client, args[0])
+		artifactVersion, remote, err := fetchSDKSyncData(client, args[0])
 		if err != nil {
 			return err
 		}
-		result, err := mergeSDKServicesFromRemote(cfg, sdkVersion, remote, sdkSyncVersion)
+		result, err := mergeSDKServicesFromRemote(cfg, artifactVersion, remote, sdkSyncVersion)
 		if err != nil {
 			return err
 		}

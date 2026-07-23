@@ -13,17 +13,17 @@ func TestServiceInfo_DisplaySlug(t *testing.T) {
 	}{
 		{
 			name: "owned service returns bare slug",
-			info: ServiceInfo{Slug: "stripe", IsOwner: true, Provider: "acme"},
+			info: ServiceInfo{Slug: "stripe", IsOwner: true, Provider: &ServiceProviderIdentity{Handle: "acme"}},
 			want: "stripe",
 		},
 		{
 			name: "non-owned service with provider returns qualified slug",
-			info: ServiceInfo{Slug: "plunk", IsOwner: false, Provider: "acme"},
+			info: ServiceInfo{Slug: "plunk", IsOwner: false, Provider: &ServiceProviderIdentity{Handle: "acme"}},
 			want: "@acme/plunk",
 		},
 		{
 			name: "non-owned service with no provider falls back to bare slug",
-			info: ServiceInfo{Slug: "plunk", IsOwner: false, Provider: ""},
+			info: ServiceInfo{Slug: "plunk", IsOwner: false},
 			want: "plunk",
 		},
 	}

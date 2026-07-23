@@ -95,7 +95,7 @@ func TestServiceVisibilitiesUsesSingleGraphQLBatch(t *testing.T) {
 		sawQuery = body.Query
 		sawIDs, _ = body.Variables["serviceIds"].([]interface{})
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"data":{"servicesByIds":[{"id":"svc-1","is_owner":true,"is_public":false},{"id":"svc-2","is_owner":false,"is_public":true}]}}`))
+		w.Write([]byte(`{"data":{"servicesByIds":[{"id":"svc-1","is_owner":true,"is_public":false},{"id":"svc-2","is_owner":false,"is_public":true,"provider":{"handle":"acme"}}]}}`))
 	}))
 	defer srv.Close()
 
@@ -104,7 +104,7 @@ func TestServiceVisibilitiesUsesSingleGraphQLBatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ServiceVisibilities: %v", err)
 	}
-	if !strings.Contains(sawQuery, "servicesByIds") || len(sawIDs) != 2 {
+	if !strings.Contains(sawQuery, "servicesByIds") || !strings.Contains(sawQuery, "provider { handle }") || len(sawIDs) != 2 {
 		t.Fatalf("expected one batched servicesByIds query, query=%q ids=%#v", sawQuery, sawIDs)
 	}
 	if !visibility["svc-1"].IsOwner || visibility["svc-1"].IsPublic {
@@ -112,6 +112,9 @@ func TestServiceVisibilitiesUsesSingleGraphQLBatch(t *testing.T) {
 	}
 	if visibility["svc-2"].IsOwner || !visibility["svc-2"].IsPublic {
 		t.Fatalf("unexpected svc-2 visibility: %#v", visibility["svc-2"])
+	}
+	if visibility["svc-2"].Provider == nil || visibility["svc-2"].Provider.Handle != "acme" {
+		t.Fatalf("unexpected svc-2 provider: %#v", visibility["svc-2"].Provider)
 	}
 }
 
