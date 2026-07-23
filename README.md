@@ -565,12 +565,11 @@ Fused now supports managing your SDKs and Workspace service whitelists via decla
 
 Create `.fused/sdks/my-sdk.yaml`:
 ```yaml
+apiVersion: fused/v1
 kind: "sdk"
-version: 1
 name: "my-sdk"
-sdkVersion: "1.0.0"
+version: "1.0.0"
 language: "typescript"
-target: "sdk"
 services:
   okta:
     version: "2026-07-09"
@@ -595,8 +594,8 @@ You can also manage the services activated for your entire workspace via config.
 
 Create `.fused/workspace.yaml`:
 ```yaml
+apiVersion: fused/v1
 kind: "workspace"
-version: 1
 services:
   stripe:
     versions:
