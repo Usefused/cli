@@ -73,16 +73,18 @@ The CLI resolves configuration in the following order (highest precedence first)
 
 ## Usage
 
-### Generate an SDK (`create`)
+### Generate an SDK (`sdk prompt`)
 
-The `create` command uses Fused intent AI to turn a business use case into a Business Capability SDK. Describe the workflow your team wants to ship, and Fused maps the right services and endpoints into a single, scoped SDK with the authentication, retries, tracing, and typed errors wired in.
+The `sdk prompt` command acts as your AI Copilot. It uses Fused intent AI to turn a business use case into a Business Capability SDK. Describe the workflow your team wants to ship, and Fused maps the right services and endpoints into a single, scoped SDK with the authentication, retries, tracing, and typed errors wired in. 
+
+If your query requires services you haven't added to your workspace yet, the Copilot will automatically discover the latest stable versions from the Global Registry and safely append them to your local `.fused/workspace.yaml`.
 
 ```bash
 # Generate a standard SDK around a business capability
-fused-cli create --name onboarding-sdk --version 1.0.0 -d "When a new employee joins, use Jira to create an onboarding ticket, use GitHub to provision repository access, and use Slack to send a welcome message"
+fused-cli sdk prompt --name onboarding-sdk --version 1.0.0 -d "When a new employee joins, use Jira to create an onboarding ticket, use GitHub to provision repository access, and use Slack to send a welcome message"
 ```
 
-Fused parses the use case, uses the services you name for each task, selects the relevant operations, and opens an interactive Cart UI where you can review, add, or refine the SDK before either downloading the generated `.zip` file to your current directory or deploying it directly as an MCP server.
+Fused parses the use case, finds the required services, and opens an interactive Cart UI where you can review, add, or refine the SDK before either downloading the generated `.zip` file to your current directory or deploying it directly as an MCP server.
 
 #### Targets and Languages
 You can specify the type of integration and its programming language:
@@ -92,14 +94,14 @@ You can specify the type of integration and its programming language:
 
 ```bash
 # Generate a Python MCP server non-interactively
-fused-cli create --name support-agent-mcp -t mcp -l python -y -d "Search Zendesk for tickets and use Linear to update corresponding issues"
+fused-cli sdk prompt --name support-agent-mcp -t mcp -l python -y -d "Search Zendesk for tickets and use Linear to update corresponding issues"
 ```
 
 #### Deploying MCP Servers
 If you are generating a TypeScript MCP server (`--type=mcp`), you can choose to deploy it directly to Fused-Run (a managed service) by passing the `--deploy` flag instead of downloading the source code. The CLI will output the active Fused-Run URL for your AI agents to connect to immediately via SSE. *(Note: Python MCP servers cannot be deployed and must be downloaded locally).*
 
 ```bash
-fused-cli create --name sales-mcp -t mcp --deploy -d "Read Salesforce leads and fetch Intercom conversations"
+fused-cli sdk prompt --name sales-mcp -t mcp --deploy -d "Read Salesforce leads and fetch Intercom conversations"
 ```
 
 ### Import an API Spec (`import`)
@@ -163,8 +165,8 @@ All commands support the following global flags:
 | `--file` | `-f` | Path to a Fused config file (disables `.fused/` discovery) | `""` |
 | `--readme` | | Print the full CLI README text and exit | `false` |
 
-#### `create`
-Generate a brand new SDK from natural language.
+#### `sdk prompt`
+Generate a brand new SDK using Fused intent AI. Automatically discovers and adds missing services to your workspace.
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
@@ -202,6 +204,8 @@ List Registry webhook definitions for a service.
 #### `secret <service-slug> set [value]`
 Set an authentication secret for a workspace service.
 If the service supports multiple authentication methods, use `--type` to specify the method, or use the `--interactive` flag to select from a menu.
+
+> **Recommended Pattern:** Store API keys, tokens, and service credentials directly using `fused-cli secret set <service-slug> [value] --bucket <bucket>`. This stores secrets securely in Fused's encrypted vault.
 
 > **Tip:** To see the available authentication methods (and their logical names for the `--type` flag) for a service, run `fused-cli service show <service-slug>`.
 
@@ -393,8 +397,28 @@ List all active tokens for an SDK.
 #### `sdk token <sdk-id> revoke <token-name>`
 Revoke an SDK token.
 
+#### `mcp plan`
+Preview changes that will be made to your Fused environment for MCP server configurations (`.fused/mcps/*.yaml`).
+
+| Argument | Short | Description | Default |
+|----------|-------|-------------|---------|
+| `--json` | | Print plan receipt JSON instead of writing default receipt | `false` |
+| `--receipt-out` | | Write the plan receipt to a specific path | `""` |
+
+#### `mcp apply`
+Apply a generated plan to deploy MCP server configurations to the Fused Engine runtime.
+
+| Argument | Short | Description | Default |
+|----------|-------|-------------|---------|
+| `--plan-id` | | Apply a specific remote plan ID for a single MCP config | `""` |
+| `--receipt` | | Read a specific plan receipt for a single MCP config | `""` |
+
+#### `mcp validate`
+Validates MCP configuration files (`kind: mcp`).
+
 #### `mcp list`
-List deployed MCP servers from the Engine GraphQL page used by the UI.
+List deployed MCP servers from the Engine.
+
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
@@ -582,7 +606,7 @@ services:
     versions:
       - "1.0.0"
 ```
-The service keys are Registry service slugs. Engine resolves those slugs to service IDs during workspace planning, so teams do not need to know UUIDs. If `versions` is omitted, the Engine resolves Registry's latest public service version during planning and records the exact service-version ID in the plan. To edit this file directly from the CLI, use `fused-cli workspace service add <slug> --version <version> -f .fused/workspace.yaml`. To inspect the remote state, use `fused-cli workspace service <slug> versions` and `fused-cli workspace service <slug> operations`.
+The service keys are Registry service slugs. Engine resolves those slugs to service IDs during workspace planning, so teams do not need to know UUIDs. If `versions` is omitted, the Engine resolves Registry's latest public service version during planning and records the exact service-version ID in the plan. Service authentication secrets and API keys are stored securely using `fused-cli secret set <service-slug>`. To edit this file directly from the CLI, use `fused-cli workspace service add <slug> --version <version> -f .fused/workspace.yaml`. To inspect the remote state, use `fused-cli workspace service <slug> versions` and `fused-cli workspace service <slug> operations`.
 
 ### Syncing Local Config From Remote State
 
