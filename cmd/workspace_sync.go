@@ -140,6 +140,12 @@ func workspaceServiceWithLocalState(remote, local configfile.WorkspaceService) c
 	if len(local.ConnectionProfiles) > 0 {
 		remote.ConnectionProfiles = local.ConnectionProfiles
 	}
+	if local.ExecutionPolicy != nil {
+		remote.ExecutionPolicy = local.ExecutionPolicy
+	}
+	if len(local.VersionPolicies) > 0 {
+		remote.VersionPolicies = local.VersionPolicies
+	}
 	return remote
 }
 
@@ -389,7 +395,9 @@ func workspaceServiceEqual(a, b configfile.WorkspaceService) bool {
 		sameResolvedVersions(a.ResolvedVersions, b.ResolvedVersions) &&
 		sameBoolPtr(a.Public, b.Public) &&
 		reflect.DeepEqual(a.RuntimeConfig, b.RuntimeConfig) &&
-		reflect.DeepEqual(a.ConnectionProfiles, b.ConnectionProfiles)
+		reflect.DeepEqual(a.ConnectionProfiles, b.ConnectionProfiles) &&
+		reflect.DeepEqual(a.ExecutionPolicy, b.ExecutionPolicy) &&
+		reflect.DeepEqual(a.VersionPolicies, b.VersionPolicies)
 }
 
 // boolPtr preserves an explicit false value through YAML omitempty handling.

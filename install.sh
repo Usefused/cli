@@ -76,6 +76,16 @@ rm -rf "$TMP_DIR"
 echo "=> Installation complete!"
 echo "=> Run 'fused-cli --help' to get started."
 
+# Best-effort hint only -- never write into another tool's config on the
+# user's behalf. We don't know which agent/app (if any) they use, so just
+# point at the explicit, opt-in command when Claude Code looks present.
+if command -v claude >/dev/null 2>&1; then
+    echo ""
+    echo "=> Detected Claude Code. Run 'fused-cli skill install' to add a skill"
+    echo "   that teaches it to configure Fused workspaces, connection/execution"
+    echo "   policies, and SDK/MCP configs."
+fi
+
 # Verify the install directory is on PATH
 if ! echo ":${PATH}:" | grep -q ":${INSTALL_DIR}:"; then
     echo ""

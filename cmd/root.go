@@ -18,6 +18,14 @@ var (
 	ConfigFile    string
 	showReadme    bool
 	ReadmeContent string
+
+	// EmbeddedSkillContent is the SKILL.md contents baked into the binary at
+	// build time (see main.go's go:embed). It is only an offline fallback --
+	// `fused-cli skill print`/`skill install` prefer fetching the version-
+	// tagged SKILL.md from GitHub at runtime (see skill.go) so a doc-only
+	// skill update doesn't require a new CLI release. This embedded copy is
+	// used when that fetch fails or Version == "dev".
+	EmbeddedSkillContent string
 )
 
 // RootCmd is exported for testing.

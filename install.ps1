@@ -77,3 +77,12 @@ if ($UserPath -notlike "*$InstallDir*") {
 Write-Host ""
 Write-Host "=> Installation complete!"
 Write-Host "=> Run 'fused-cli --help' to get started."
+
+# Best-effort hint only -- never write into another tool's config on the
+# user's behalf.
+if (Get-Command claude -ErrorAction SilentlyContinue) {
+    Write-Host ""
+    Write-Host "=> Detected Claude Code. Run 'fused-cli skill install' to add a skill"
+    Write-Host "   that teaches it to configure Fused workspaces, connection/execution"
+    Write-Host "   policies, and SDK/MCP configs."
+}
