@@ -79,10 +79,21 @@ Write-Host "=> Installation complete!"
 Write-Host "=> Run 'fused-cli --help' to get started."
 
 # Best-effort hint only -- never write into another tool's config on the
-# user's behalf.
-if (Get-Command claude -ErrorAction SilentlyContinue) {
-    Write-Host ""
-    Write-Host "=> Detected Claude Code. Run 'fused-cli skill install' to add a skill"
-    Write-Host "   that teaches it to configure Fused workspaces, connection/execution"
-    Write-Host "   policies, and SDK/MCP configs."
+# user's behalf. We don't know which agent/app (if any) they use, so just
+# point at the explicit, opt-in command for whichever ones look present.
+$AgentHints = @{
+    "claude"   = @{ For = "claude"; Name = "Claude Code" }
+    "codex"    = @{ For = "codex"; Name = "Codex" }
+    "cursor"   = @{ For = "cursor"; Name = "Cursor" }
+    "windsurf" = @{ For = "windsurf"; Name = "Windsurf" }
+    "agy"      = @{ For = "antigravity"; Name = "Antigravity" }
+}
+foreach ($bin in $AgentHints.Keys) {
+    if (Get-Command $bin -ErrorAction SilentlyContinue) {
+        $info = $AgentHints[$bin]
+        Write-Host ""
+        Write-Host "=> Detected $($info.Name). Run 'fused-cli skill install --for $($info.For)' to add"
+        Write-Host "   a skill that teaches it to configure Fused workspaces, connection/"
+        Write-Host "   execution policies, and SDK/MCP configs."
+    }
 }

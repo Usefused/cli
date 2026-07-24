@@ -234,6 +234,63 @@ func TestMergeWorkspaceConnectConfigsFromRemoteWritesProfilesWithoutBucketMateri
 	}
 }
 
+// TestMergeWorkspaceConnectConfigsFromRemoteWritesPublicForPublishedProfile
+// covers the connection-profile half of task 11: a profile the Engine has
+// recorded as published (is_public: true, set only after a successful,
+// owner-gated PublishConnectionProfile call) round-trips into
+// connection_profiles[*].public: true so a subsequent `fused apply` doesn't
+// silently drop the publish intent.
+func TestMergeWorkspaceConnectConfigsFromRemoteWritesPublicForPublishedProfile(t *testing.T) {
+	service := api.WorkspaceService{ServiceID: "svc-github", EnabledVersions: remoteVersionsWithIDs("1.1.4", "ver-github")}
+	profile := map[string]interface{}{"auth_type": "oauth"}
+	remote := []api.WorkspaceConnectConfig{{
+		BucketID: "bucket-1", BucketName: "customer-accounts", ServiceID: service.ServiceID, AuthType: "oauth",
+		Profiles: []api.WorkspaceConnectProfile{
+			{ServiceVersionID: "ver-github", AuthType: "oauth", Provenance: "provider", IsPublic: true, Profile: profile},
+		},
+	}}
+	cfg := &configfile.WorkspaceConfig{Services: map[string]configfile.WorkspaceService{"github-user": {ServiceID: service.ServiceID}}}
+
+	if _, err := mergeWorkspaceConnectConfigsFromRemote(cfg, []api.WorkspaceService{service}, remote); err != nil {
+		t.Fatalf("merge connect config: %v", err)
+	}
+
+	profiles := cfg.Services["github-user"].ConnectionProfiles
+	if len(profiles) != 1 {
+		t.Fatalf("expected one profile, got %#v", profiles)
+	}
+	if public, _ := profiles[0]["public"].(bool); !public {
+		t.Fatalf("expected public:true to round-trip, got %#v", profiles[0])
+	}
+}
+
+// TestMergeWorkspaceConnectConfigsFromRemoteOmitsPublicForUnpublishedProfile
+// ensures an ordinary (non-published) profile gets no public key at all,
+// rather than an explicit false, matching the omitempty YAML convention used
+// elsewhere in workspace.yaml.
+func TestMergeWorkspaceConnectConfigsFromRemoteOmitsPublicForUnpublishedProfile(t *testing.T) {
+	service := api.WorkspaceService{ServiceID: "svc-github", EnabledVersions: remoteVersionsWithIDs("1.1.4", "ver-github")}
+	remote := []api.WorkspaceConnectConfig{{
+		BucketID: "bucket-1", BucketName: "customer-accounts", ServiceID: service.ServiceID, AuthType: "oauth",
+		Profiles: []api.WorkspaceConnectProfile{
+			{ServiceVersionID: "ver-github", AuthType: "oauth", Provenance: "workspace", Profile: map[string]interface{}{"auth_type": "oauth"}},
+		},
+	}}
+	cfg := &configfile.WorkspaceConfig{Services: map[string]configfile.WorkspaceService{"github-user": {ServiceID: service.ServiceID}}}
+
+	if _, err := mergeWorkspaceConnectConfigsFromRemote(cfg, []api.WorkspaceService{service}, remote); err != nil {
+		t.Fatalf("merge connect config: %v", err)
+	}
+
+	profiles := cfg.Services["github-user"].ConnectionProfiles
+	if len(profiles) != 1 {
+		t.Fatalf("expected one profile, got %#v", profiles)
+	}
+	if _, ok := profiles[0]["public"]; ok {
+		t.Fatalf("expected no public key for an unpublished profile, got %#v", profiles[0])
+	}
+}
+
 // TestMergeWorkspaceConnectConfigsFromRemoteStripsLocalRefs verifies sync
 // removes old bucket OAuth placeholders while preserving unrelated runtime
 // settings that remain exportable.
@@ -550,6 +607,66 @@ func TestMergeWorkspaceServicesFromRemote_WritesPublicOnlyForOwnedServices(t *te
 	foreign := cfg.Services["@acme/billing"]
 	if foreign.Public != nil {
 		t.Fatalf("expected non-owned service public metadata to be omitted, got %#v", foreign.Public)
+	}
+}
+
+// TestMergeWorkspaceServicesFromRemote_WritesExecutionPolicyForOwnedServiceWithRegistryPolicy
+// covers the execution-policy sync-back half of task 11: a service with a
+// published Registry execution policy (rate_limit/retry) round-trips as
+// execution_policy.public: true, with the actual values preserved so a
+// subsequent `fused apply` is a no-op rather than wiping the Registry policy.
+func TestMergeWorkspaceServicesFromRemote_WritesExecutionPolicyForOwnedServiceWithRegistryPolicy(t *testing.T) {
+	cfg := &configfile.WorkspaceConfig{Services: map[string]configfile.WorkspaceService{}}
+	remote := []api.WorkspaceService{
+		{ServiceName: "stripe", ServiceID: "svc-owned", Version: "2026-01-01"},
+		{ServiceName: "@acme/billing", ServiceID: "svc-foreign", Version: "2026-02-01"},
+	}
+	visibility := map[string]api.ServiceVisibility{
+		"svc-owned": {
+			ServiceID: "svc-owned", Slug: "stripe", IsOwner: true, IsPublic: true,
+			RateLimit:   &api.ServiceRateLimit{Strategy: "fixed_window", RequestsPerSecond: 10, RequestsPerMinute: 300},
+			RetryConfig: &api.ServiceRetryConfig{Strategy: "exponential_backoff", MaxRetries: 3, BackoffMs: 500},
+		},
+		"svc-foreign": {
+			ServiceID: "svc-foreign", Slug: "billing", Provider: &api.ServiceProviderIdentity{Handle: "acme"}, IsOwner: false,
+			// A foreign service should never surface its owner's execution
+			// policy back into this workspace's config even if present.
+			RateLimit: &api.ServiceRateLimit{Strategy: "fixed_window", RequestsPerSecond: 5},
+		},
+	}
+
+	mustMergeWorkspaceServicesFromRemote(t, cfg, remote, visibility)
+
+	owned := cfg.Services["stripe"]
+	if owned.ExecutionPolicy == nil || owned.ExecutionPolicy.Public == nil || !*owned.ExecutionPolicy.Public {
+		t.Fatalf("expected owned service execution_policy.public=true, got %#v", owned.ExecutionPolicy)
+	}
+	if owned.ExecutionPolicy.RateLimit == nil || owned.ExecutionPolicy.RateLimit.RequestsPerSecond != 10 {
+		t.Fatalf("expected rate limit values to round-trip, got %#v", owned.ExecutionPolicy.RateLimit)
+	}
+	if owned.ExecutionPolicy.Retry == nil || owned.ExecutionPolicy.Retry.MaxRetries != 3 {
+		t.Fatalf("expected retry values to round-trip, got %#v", owned.ExecutionPolicy.Retry)
+	}
+	foreign := cfg.Services["@acme/billing"]
+	if foreign.ExecutionPolicy != nil {
+		t.Fatalf("expected non-owned service execution policy to be omitted, got %#v", foreign.ExecutionPolicy)
+	}
+}
+
+// TestMergeWorkspaceServicesFromRemote_OmitsExecutionPolicyWithNoRegistryPolicy
+// ensures an owned service with no published policy gets no execution_policy
+// block at all, rather than an empty public:true stub.
+func TestMergeWorkspaceServicesFromRemote_OmitsExecutionPolicyWithNoRegistryPolicy(t *testing.T) {
+	cfg := &configfile.WorkspaceConfig{Services: map[string]configfile.WorkspaceService{}}
+	remote := []api.WorkspaceService{{ServiceName: "stripe", ServiceID: "svc-owned", Version: "2026-01-01"}}
+	visibility := map[string]api.ServiceVisibility{
+		"svc-owned": {ServiceID: "svc-owned", Slug: "stripe", IsOwner: true},
+	}
+
+	mustMergeWorkspaceServicesFromRemote(t, cfg, remote, visibility)
+
+	if owned := cfg.Services["stripe"]; owned.ExecutionPolicy != nil {
+		t.Fatalf("expected no execution policy without a Registry-side policy, got %#v", owned.ExecutionPolicy)
 	}
 }
 

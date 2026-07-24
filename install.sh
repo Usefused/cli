@@ -78,13 +78,27 @@ echo "=> Run 'fused-cli --help' to get started."
 
 # Best-effort hint only -- never write into another tool's config on the
 # user's behalf. We don't know which agent/app (if any) they use, so just
-# point at the explicit, opt-in command when Claude Code looks present.
-if command -v claude >/dev/null 2>&1; then
-    echo ""
-    echo "=> Detected Claude Code. Run 'fused-cli skill install' to add a skill"
-    echo "   that teaches it to configure Fused workspaces, connection/execution"
-    echo "   policies, and SDK/MCP configs."
-fi
+# point at the explicit, opt-in command for whichever ones look present.
+# Each entry: binary:--for-value:display name
+AGENT_HINTS=(
+    "claude:claude:Claude Code"
+    "codex:codex:Codex"
+    "cursor:cursor:Cursor"
+    "windsurf:windsurf:Windsurf"
+    "agy:antigravity:Antigravity"
+)
+for hint in "${AGENT_HINTS[@]}"; do
+    bin="${hint%%:*}"
+    rest="${hint#*:}"
+    forval="${rest%%:*}"
+    name="${rest#*:}"
+    if command -v "$bin" >/dev/null 2>&1; then
+        echo ""
+        echo "=> Detected ${name}. Run 'fused-cli skill install --for ${forval}' to add"
+        echo "   a skill that teaches it to configure Fused workspaces, connection/"
+        echo "   execution policies, and SDK/MCP configs."
+    fi
+done
 
 # Verify the install directory is on PATH
 if ! echo ":${PATH}:" | grep -q ":${INSTALL_DIR}:"; then

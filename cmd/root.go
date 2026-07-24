@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"os"
 
 	"github.com/Usefused/cli/internal/api"
@@ -19,13 +20,14 @@ var (
 	showReadme    bool
 	ReadmeContent string
 
-	// EmbeddedSkillContent is the SKILL.md contents baked into the binary at
-	// build time (see main.go's go:embed). It is only an offline fallback --
-	// `fused-cli skill print`/`skill install` prefer fetching the version-
-	// tagged SKILL.md from GitHub at runtime (see skill.go) so a doc-only
-	// skill update doesn't require a new CLI release. This embedded copy is
-	// used when that fetch fails or Version == "dev".
-	EmbeddedSkillContent string
+	// EmbeddedSkillFS holds the whole skills/ tree (every fused-cli skill,
+	// every version folder) baked into the binary at build time (see main.go's
+	// go:embed). It is only an offline fallback -- `fused-cli skill print`/
+	// `skill install` prefer fetching this build's own version folder from
+	// GitHub's main branch at runtime (see skill.go) so a doc-only skill fix
+	// doesn't require a new CLI release. This embedded copy is used only when
+	// that fetch fails (any file, since resolveSkillFiles is all-or-nothing).
+	EmbeddedSkillFS fs.FS
 )
 
 // RootCmd is exported for testing.

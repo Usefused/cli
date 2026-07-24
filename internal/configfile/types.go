@@ -40,6 +40,10 @@ type BucketServiceConfig struct {
 // WorkspaceService represents service versions enabled for a workspace.
 type WorkspaceService struct {
 	ServiceID string   `yaml:"service_id,omitempty" json:"service_id,omitempty"`
+	// Public controls Registry-level service visibility via updateServicePublic.
+	// true  → service page is visible to all Registry consumers (owner only).
+	// false → service is private to this workspace's account.
+	// Omitted for third-party services (non-owners cannot set this field).
 	Public    *bool    `yaml:"public,omitempty" json:"public,omitempty"`
 	Versions  []string `yaml:"versions,omitempty" json:"versions,omitempty"`
 	// Engine apply needs immutable version IDs, not just display names; keeping
@@ -60,6 +64,10 @@ type WorkspaceVersionPolicy struct {
 }
 
 type ExecutionPolicy struct {
+	// Public, when true, publishes the rate_limit and retry settings to the
+	// Registry via UpdateServiceConfig so all SDK consumers inherit these
+	// provider-declared limits. Only valid for services owned by this account;
+	// non-owners will receive an error from the Engine during apply.
 	Public      *bool            `yaml:"public,omitempty" json:"public,omitempty"`
 	RateLimit   *RateLimitConfig `yaml:"rate_limit,omitempty" json:"rate_limit,omitempty"`
 	Retry       *RetryConfig     `yaml:"retry,omitempty" json:"retry,omitempty"`

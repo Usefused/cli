@@ -322,6 +322,13 @@ func workspaceConnectionProfileIntent(serviceID string, profile api.WorkspaceCon
 		return nil, fmt.Errorf("workspace sync received a connection profile for an inactive version of service_id %s", serviceID)
 	}
 	intent := map[string]interface{}{"version": version, "auth_type": profile.AuthType}
+	// is_public reflects a prior successful, owner-gated publish recorded by
+	// the Engine (MarkWorkspaceProfilePublished only runs after
+	// PublishConnectionProfile succeeds), so sync can round-trip it here
+	// without re-deriving or re-checking ownership itself.
+	if profile.IsPublic {
+		intent["public"] = true
+	}
 	if id := strings.TrimSpace(profile.RegistryProfileID); id != "" {
 		intent["profile_id"] = id
 		return intent, nil
@@ -382,8 +389,36 @@ func workspaceServiceFromRemote(svc api.WorkspaceService, visibility map[string]
 	}
 	if vis, ok := visibility[svc.ServiceID]; ok && vis.IsOwner {
 		newEntry.Public = boolPtr(vis.IsPublic)
+		newEntry.ExecutionPolicy = workspaceExecutionPolicyFromRemote(vis)
 	}
 	return newEntry
+}
+
+// workspaceExecutionPolicyFromRemote round-trips a previously published
+// execution policy (rate_limit/retry set on the Registry for an owned
+// service) back into workspace.yaml as execution_policy.public: true, so a
+// subsequent `fused apply` stays a no-op instead of silently dropping the
+// published policy on the next sync. Returns nil when the Registry has no
+// policy set for this service, leaving any local execution_policy untouched
+// via workspaceServiceWithLocalState.
+func workspaceExecutionPolicyFromRemote(vis api.ServiceVisibility) *configfile.ExecutionPolicy {
+	if vis.RateLimit == nil && vis.RetryConfig == nil {
+		return nil
+	}
+	policy := &configfile.ExecutionPolicy{Public: boolPtr(true)}
+	if vis.RateLimit != nil {
+		policy.RateLimit = &configfile.RateLimitConfig{
+			Strategy: vis.RateLimit.Strategy, RequestsPerSecond: vis.RateLimit.RequestsPerSecond,
+			RequestsPerMinute: vis.RateLimit.RequestsPerMinute,
+		}
+	}
+	if vis.RetryConfig != nil {
+		policy.Retry = &configfile.RetryConfig{
+			Strategy: vis.RetryConfig.Strategy, MaxRetries: vis.RetryConfig.MaxRetries,
+			BackoffMs: vis.RetryConfig.BackoffMs,
+		}
+	}
+	return policy
 }
 
 // workspaceServiceEqual compares the fields sync actually touches.

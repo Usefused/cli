@@ -200,6 +200,24 @@ type ServiceVisibility struct {
 	IsPublic  bool                     `json:"is_public"`
 	Slug      string                   `json:"slug"`
 	Provider  *ServiceProviderIdentity `json:"provider"`
+	// RateLimit/RetryConfig are the provider-declared execution policy already
+	// published to the Registry (via execution_policy.public: true), if any --
+	// independent of is_owner/is_public. Sync uses these together with
+	// IsOwner to round-trip execution_policy.public back into workspace.yaml.
+	RateLimit   *ServiceRateLimit   `json:"rate_limit"`
+	RetryConfig *ServiceRetryConfig `json:"retry_config"`
+}
+
+type ServiceRateLimit struct {
+	Strategy          string `json:"strategy"`
+	RequestsPerSecond int    `json:"requests_per_second"`
+	RequestsPerMinute int    `json:"requests_per_minute"`
+}
+
+type ServiceRetryConfig struct {
+	Strategy   string `json:"strategy"`
+	MaxRetries int    `json:"max_retries"`
+	BackoffMs  int    `json:"backoff_ms"`
 }
 
 // ConnectionProfileRevision is the immutable Registry result printed by the
@@ -253,11 +271,15 @@ type WorkspaceServiceVersion struct {
 // WorkspaceConnectProfile is the secret-free attachment snapshot returned by
 // Engine GraphQL for declarative workspace reconstruction.
 type WorkspaceConnectProfile struct {
-	ServiceVersionID  string                 `json:"service_version_id"`
-	AuthType          string                 `json:"auth_type"`
-	RegistryProfileID string                 `json:"registry_profile_id"`
-	Provenance        string                 `json:"provenance"`
-	Profile           map[string]interface{} `json:"profile"`
+	ServiceVersionID  string `json:"service_version_id"`
+	AuthType          string `json:"auth_type"`
+	RegistryProfileID string `json:"registry_profile_id"`
+	Provenance        string `json:"provenance"`
+	// IsPublic mirrors whether this profile was published to the Registry via
+	// connection_profiles[*].public: true, so sync can round-trip that intent
+	// back into workspace.yaml instead of dropping it on the next sync.
+	IsPublic bool                   `json:"is_public"`
+	Profile  map[string]interface{} `json:"profile"`
 }
 
 // WorkspaceConnectConfig is the bucket-scoped, masked connect state consumed
@@ -314,7 +336,7 @@ func (c *Client) ListWorkspaceConnectConfigs() ([]WorkspaceConnectConfig, error)
 				redirect_uri
 				has_client_id
 				has_client_secret
-				profiles { service_version_id auth_type registry_profile_id provenance profile }
+				profiles { service_version_id auth_type registry_profile_id provenance is_public profile }
 			}
 		}
 	`
@@ -469,6 +491,8 @@ func (c *Client) ServiceVisibilities(serviceIDs []string) (map[string]ServiceVis
 					provider { handle }
 				is_owner
 				is_public
+				rate_limit { strategy requests_per_second requests_per_minute }
+				retry_config { strategy max_retries backoff_ms }
 			}
 		}
 	`
