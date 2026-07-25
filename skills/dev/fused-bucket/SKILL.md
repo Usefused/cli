@@ -55,9 +55,9 @@ they're different scopes of the word "connection."
 fused-cli secret list --list-bucket <bucket>
 fused-cli secret <service-slug> set <value> [--bucket <name>] [--type <scheme>] [--expires-at <RFC3339>] [-i]
 fused-cli secret <service-slug> remove <key-name> [--remove-bucket <name>]
-fused-cli value <bucket-id> set
+fused-cli value <bucket-id> set <service-slug> <location> <key-name> <value>
 fused-cli value <bucket-id> list
-fused-cli value <bucket-id> remove
+fused-cli value <bucket-id> remove <service-slug> <key-name>
 ```
 
 `secret set` is an **upsert with no separate apply step** -- unlike

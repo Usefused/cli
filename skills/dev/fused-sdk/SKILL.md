@@ -22,6 +22,10 @@ services:
     webhooks: ["repo-a"]
     auth:    { type: "api_key" }              # see fused-config for the full auth_type reference
     connect: { scopes: ["read:users"] }       # OAuth/OIDC consent ceiling, see fused-config
+    injections:                               # optional dynamic variable injection
+      - location: header
+        name: X-Custom-Header
+        value: ${bucket.env.MY_VAR}           # Supports ${bucket.env.*}, ${bucket.values.*} (identical alias), and ${bucket.secrets.*}
 ```
 
 `auth.type` selects a Registry-declared scheme (`basic`, `bearer`,

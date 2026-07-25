@@ -23,6 +23,10 @@ services:
     webhooks: ["repo-a"]
     auth:    { type: "oauth" }                # see fused-config
     connect: { scopes: ["read:jira-work"] }   # see fused-config
+    injections:                               # optional dynamic variable injection
+      - location: body
+        name: from
+        value: ${bucket.env.FROM_EMAIL}       # Supports ${bucket.env.*}, ${bucket.values.*} (identical alias), and ${bucket.secrets.*}
 ```
 
 `select_all: true` is the alternative to listing `operations` explicitly --
