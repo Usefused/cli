@@ -25,14 +25,31 @@ services:
     connect: { scopes: ["read:jira-work"] }   # see fused-config
 ```
 
+`select_all: true` is the alternative to listing `operations` explicitly --
+exactly one of the two is required (see `fused-sdk`; the validation and
+sync-freezing behavior described there is the same struct shared with SDK).
+
 ## Commands
+
+This list may be behind the CLI's actual flags/subcommands -- run
+`fused-cli mcp <subcommand> --help` to confirm before relying on one (see
+`fused-cli` skill).
 
 ```shell
 fused-cli mcp plan
 fused-cli mcp apply
 fused-cli mcp validate
 fused-cli mcp list
+fused-cli mcp <name> remove
 ```
+
+`mcp apply` doesn't just validate config -- it stands up (or updates) a
+persistent, named Engine-hosted server with its own URL, which stays live
+until explicitly removed. `mcp list` shows each one's name, version, ID,
+whether it's active, when it was created, and that URL -- that URL is what
+you hand to an MCP client's SSE connection (see below). Removing one is
+immediate and not gated behind the same SDK-config blocker `fused-workspace`
+describes for removing a workspace service.
 
 ## Calling the running MCP
 

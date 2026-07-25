@@ -45,12 +45,20 @@ written except the plan record itself.`,
 		if len(args) == 1 {
 			specPath = args[0]
 		}
+		// isPublic is nil unless --public was explicitly passed, so the
+		// Registry can tell "not specified" apart from "explicitly false"
+		// and apply the right default depending on whether this targets a
+		// new service or a new version of one that already exists.
+		var isPublic *bool
+		if cmd.Flags().Changed("public") {
+			isPublic = &importPlanPublic
+		}
 		return runImportPlan(cmd, specPath, importSpecPlanOptions{
 			name:       importPlanName,
 			slug:       importPlanSlug,
 			url:        importPlanURL,
 			version:    importPlanVersion,
-			isPublic:   importPlanPublic,
+			isPublic:   isPublic,
 			category:   importPlanCategory,
 			receiptOut: importPlanReceiptOut,
 			jsonOut:    importPlanJSON,
@@ -89,7 +97,7 @@ func init() {
 	importPlanCmd.MarkFlagRequired("slug")
 	importPlanCmd.Flags().StringVar(&importPlanURL, "url", "", "Import from an online http(s) source")
 	importPlanCmd.Flags().StringVar(&importPlanVersion, "version", "", "Provider version when the source does not declare one")
-	importPlanCmd.Flags().BoolVar(&importPlanPublic, "public", false, "Mark a new service public (default: private)")
+	importPlanCmd.Flags().BoolVar(&importPlanPublic, "public", false, "Registry visibility: for a brand-new service, marks the service (and its first version) public -- default private if omitted. For a new version of an existing service, stages just that version's visibility -- default public (matching prior versions) if omitted, so existing automation that never passes this flag is unaffected.")
 	importPlanCmd.Flags().StringVar(&importPlanCategory, "category", "", "Category for a new service")
 	importPlanCmd.Flags().StringVar(&importPlanReceiptOut, "receipt-out", "", "Write the plan receipt to a specific path")
 	importPlanCmd.Flags().BoolVar(&importPlanJSON, "json", false, "Print the raw plan response as JSON instead of a summary")

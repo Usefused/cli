@@ -346,7 +346,11 @@ func applyWorkspaceConfig(client *api.Client, cfg *configfile.ParsedConfig, rece
 	if err != nil {
 		return err
 	}
-	resp, err := client.ApplyWorkspaceConfig(receipt.PlanID, receipt.SourceHash, connectMaterials, authMaterials, profileMaterials)
+	bucketSecretMaterials, err := cfg.WorkspaceBucketSecretMaterials()
+	if err != nil {
+		return err
+	}
+	resp, err := client.ApplyWorkspaceConfig(receipt.PlanID, receipt.SourceHash, connectMaterials, authMaterials, profileMaterials, bucketSecretMaterials)
 	if err != nil {
 		return fmt.Errorf("failed to apply workspace %s: %w", cfg.ConfigKey, err)
 	}

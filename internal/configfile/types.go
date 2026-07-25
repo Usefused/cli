@@ -30,6 +30,15 @@ type WorkspaceConfig struct {
 // artifact/runtime should use for those enabled services.
 type WorkspaceBucket struct {
 	ServiceConfig map[string]BucketServiceConfig `yaml:"service_config,omitempty" json:"service_config,omitempty"`
+	// Secrets are generic, bucket-scoped named secrets -- not tied to any one
+	// service, unlike ServiceConfig -- resolved at verification/dispatch time
+	// via an explicit bucket.<bucket-name>.secret.<key-name> reference rather
+	// than ambient SDK/artifact context (see
+	// plans/plan-service-config-restructure.md item 4). Motivated by webhook
+	// signing secrets needing to be shared across multiple SDKs/registrations,
+	// but deliberately general-purpose. Values require $ENV references, same
+	// discipline as Auth/Connect fields -- see validateWorkspaceBucketSecrets.
+	Secrets map[string]string `yaml:"secrets,omitempty" json:"secrets,omitempty"`
 }
 
 type BucketServiceConfig struct {
@@ -39,13 +48,13 @@ type BucketServiceConfig struct {
 
 // WorkspaceService represents service versions enabled for a workspace.
 type WorkspaceService struct {
-	ServiceID string   `yaml:"service_id,omitempty" json:"service_id,omitempty"`
+	ServiceID string `yaml:"service_id,omitempty" json:"service_id,omitempty"`
 	// Public controls Registry-level service visibility via updateServicePublic.
 	// true  → service page is visible to all Registry consumers (owner only).
 	// false → service is private to this workspace's account.
 	// Omitted for third-party services (non-owners cannot set this field).
-	Public    *bool    `yaml:"public,omitempty" json:"public,omitempty"`
-	Versions  []string `yaml:"versions,omitempty" json:"versions,omitempty"`
+	Public   *bool    `yaml:"public,omitempty" json:"public,omitempty"`
+	Versions []string `yaml:"versions,omitempty" json:"versions,omitempty"`
 	// Engine apply needs immutable version IDs, not just display names; keeping
 	// the resolved pair in config lets CLI/CI re-apply without a fresh registry
 	// lookup that could drift under a reused version label.
@@ -59,20 +68,66 @@ type WorkspaceService struct {
 }
 
 type WorkspaceVersionPolicy struct {
-	Version         string           `yaml:"version" json:"version"`
+	Version string `yaml:"version" json:"version"`
+	// Public controls Registry-level visibility for just this version via
+	// UpdateServiceVersionPublicStatus (owner only). Distinct from
+	// ExecutionPolicy.Public, which controls whether this version's
+	// rate_limit/retry are published, not whether the version itself is
+	// visible. Omitted means "leave this version's visibility unchanged".
+	Public          *bool            `yaml:"public,omitempty" json:"public,omitempty"`
 	ExecutionPolicy *ExecutionPolicy `yaml:"execution_policy,omitempty" json:"execution_policy,omitempty"`
 }
 
 type ExecutionPolicy struct {
-	// Public, when true, publishes the rate_limit and retry settings to the
-	// Registry via UpdateServiceConfig so all SDK consumers inherit these
-	// provider-declared limits. Only valid for services owned by this account;
-	// non-owners will receive an error from the Engine during apply.
+	// Public, when true, publishes the rate_limit, retry, and pagination
+	// settings to the Registry via UpdateServiceConfig so all SDK consumers
+	// inherit these provider-declared limits. Only valid for services owned by
+	// this account; non-owners will receive an error from the Engine during
+	// apply.
 	Public      *bool            `yaml:"public,omitempty" json:"public,omitempty"`
 	RateLimit   *RateLimitConfig `yaml:"rate_limit,omitempty" json:"rate_limit,omitempty"`
 	Retry       *RetryConfig     `yaml:"retry,omitempty" json:"retry,omitempty"`
 	RetryConfig *RetryConfig     `yaml:"retry_config,omitempty" json:"retry_config,omitempty"`
-	Reset       bool             `yaml:"reset,omitempty" json:"reset,omitempty"`
+	// Pagination moved under execution_policy from the now-deleted
+	// runtime_config.pagination (see plans/plan-service-config-restructure.md
+	// item 1) -- one value per service/version, sharing this same Public flag
+	// rather than having its own.
+	Pagination *PaginationConfig `yaml:"pagination,omitempty" json:"pagination,omitempty"`
+	// EventExtractionPath and IncomingWebhookConfig are the provider's own
+	// outbound webhook verification recipe
+	// (plans/plan-service-config-restructure.md item 3) -- how *this service*
+	// signs the webhooks it sends, not this workspace's own webhook
+	// registrations (those stay under runtime_config.webhooks,
+	// workspace-private). The json/yaml key matches the Registry's own
+	// incoming_webhook_config field name (not a "webhook_config" alias) so
+	// this struct round-trips unchanged through the Engine, which reuses it
+	// verbatim as the Registry's request body. Safe to publish under this
+	// same Public flag because IncomingWebhookConfig never carries a secret,
+	// only the verification mechanism.
+	EventExtractionPath   *string        `yaml:"event_extraction_path,omitempty" json:"event_extraction_path,omitempty"`
+	IncomingWebhookConfig *WebhookVerify `yaml:"incoming_webhook_config,omitempty" json:"incoming_webhook_config,omitempty"`
+	Reset                 bool           `yaml:"reset,omitempty" json:"reset,omitempty"`
+}
+
+// WebhookVerify is the provider-declared verification recipe: auth mechanism
+// and where to find the signature. It intentionally has no secret field --
+// see ExecutionPolicy.IncomingWebhookConfig's doc comment.
+type WebhookVerify struct {
+	AuthType            string   `yaml:"auth_type,omitempty" json:"auth_type,omitempty"`
+	AuthLocation        string   `yaml:"auth_location,omitempty" json:"auth_location,omitempty"`
+	AuthKeyName         string   `yaml:"auth_key_name,omitempty" json:"auth_key_name,omitempty"`
+	SignatureHeader     string   `yaml:"signature_header,omitempty" json:"signature_header,omitempty"`
+	VerificationHeaders []string `yaml:"verification_headers,omitempty" json:"verification_headers,omitempty"`
+}
+
+// PaginationConfig mirrors models.PaginationConfig on the Registry -- shape
+// must match the real dispatch type (Type/RequestParam/ResponsePath), not the
+// old dead workspace-config shape (Type/CursorField/NextPageField) that this
+// replaces.
+type PaginationConfig struct {
+	Type         string `yaml:"type" json:"type"`
+	RequestParam string `yaml:"request_param" json:"request_param"`
+	ResponsePath string `yaml:"response_path" json:"response_path"`
 }
 
 type RateLimitConfig struct {
@@ -92,14 +147,16 @@ type WorkspaceResolvedVersion struct {
 	ServiceVersionID string `yaml:"service_version_id" json:"service_version_id"`
 }
 
+// RuntimeConfig is now just webhook registrations -- base_url,
+// default_headers, auth, connect, pagination, and pagination_overrides were
+// all removed (see plans/plan-service-config-restructure.md): auth/connect
+// already required buckets.<bucket>.service_config.<service> instead, and
+// base_url/default_headers/pagination/pagination_overrides were confirmed
+// dead -- parsed but never consumed by any apply/dispatch path. Webhooks
+// stays here as the one still-functional field until its bucket-secret-
+// reference replacement (plan items 2-4) lands.
 type RuntimeConfig struct {
-	BaseURL             string                       `yaml:"base_url,omitempty" json:"base_url,omitempty"`
-	DefaultHeaders      map[string]string            `yaml:"default_headers,omitempty" json:"default_headers,omitempty"`
-	Auth                *AuthConfig                  `yaml:"auth,omitempty" json:"auth,omitempty"`
-	Connect             *ConnectConfig               `yaml:"connect,omitempty" json:"connect,omitempty"`
-	Webhooks            map[string]WebhookConfig     `yaml:"webhooks,omitempty" json:"webhooks,omitempty"`
-	Pagination          *PaginationConfig            `yaml:"pagination,omitempty" json:"pagination,omitempty"`
-	PaginationOverrides map[string]*PaginationConfig `yaml:"pagination_overrides,omitempty" json:"pagination_overrides,omitempty"`
+	Webhooks map[string]WebhookConfig `yaml:"webhooks,omitempty" json:"webhooks,omitempty"`
 }
 
 type AuthConfig struct {
@@ -144,14 +201,15 @@ type ConnectMaterial struct {
 // can register as many independent URLs for the same service as they want
 // (however they've configured things on the provider's own dashboard), each
 // getting its own generated slug and signing secret.
+//
+// Secret replaces the old literal SigningSecret field
+// (plans/plan-service-config-restructure.md item 4): it is a
+// "bucket.<name>.secret.<key>" reference into a bucket's generic named-secret
+// declaration (WorkspaceBucket.Secrets), never a value that lands in this
+// file. The bucket name may be omitted for the shorthand
+// "bucket.secret.<key>" form, which resolves against the "default" bucket.
 type WebhookConfig struct {
-	SigningSecret string `yaml:"signing_secret,omitempty" json:"signing_secret,omitempty"`
-}
-
-type PaginationConfig struct {
-	Type          string `yaml:"type" json:"type"`
-	CursorField   string `yaml:"cursor_field,omitempty" json:"cursor_field,omitempty"`
-	NextPageField string `yaml:"next_page_field,omitempty" json:"next_page_field,omitempty"`
+	Secret string `yaml:"secret,omitempty" json:"secret,omitempty"`
 }
 
 // WorkspaceDeprecationDirective keeps deprecation as explicit config intent,

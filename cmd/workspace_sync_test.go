@@ -47,7 +47,7 @@ func mustMergeWorkspaceServicesFromRemote(t *testing.T, cfg *configfile.Workspac
 	if visibility == nil {
 		visibility = workspaceSyncVisibility(remote...)
 	}
-	result, err := mergeWorkspaceServicesFromRemote(cfg, remote, visibility)
+	result, err := mergeWorkspaceServicesFromRemote(cfg, remote, visibility, nil)
 	if err != nil {
 		t.Fatalf("mergeWorkspaceServicesFromRemote: %v", err)
 	}
@@ -150,7 +150,7 @@ func TestMergeWorkspaceServicesFromRemote_RemoteWinsOnConflict(t *testing.T) {
 }
 
 func TestMergeWorkspaceServicesFromRemote_PreservesRuntimeConfig(t *testing.T) {
-	runtimeConfig := &configfile.RuntimeConfig{BaseURL: "https://proxy.example.com"}
+	runtimeConfig := &configfile.RuntimeConfig{Webhooks: map[string]configfile.WebhookConfig{"repo-a": {Secret: "bucket.secret.repo_a_webhook"}}}
 	cfg := &configfile.WorkspaceConfig{Services: map[string]configfile.WorkspaceService{
 		"github-user": {ServiceID: "svc-github", Versions: []string{"1.1.3"}, RuntimeConfig: runtimeConfig},
 	}}
@@ -167,13 +167,13 @@ func TestMergeWorkspaceServicesFromRemote_PreservesRuntimeConfig(t *testing.T) {
 		t.Fatalf("expected github-user to be updated, got %+v", result)
 	}
 	got := cfg.Services["github-user"]
-	if got.RuntimeConfig == nil || got.RuntimeConfig.BaseURL != "https://proxy.example.com" {
+	if got.RuntimeConfig == nil || got.RuntimeConfig.Webhooks["repo-a"].Secret != "bucket.secret.repo_a_webhook" {
 		t.Fatalf("workspace sync dropped runtime_config: %+v", got)
 	}
 }
 
 func TestMergeWorkspaceServicesFromRemote_PreservesRuntimeConfigAcrossSlugKeyChange(t *testing.T) {
-	runtimeConfig := &configfile.RuntimeConfig{BaseURL: "https://proxy.example.com"}
+	runtimeConfig := &configfile.RuntimeConfig{Webhooks: map[string]configfile.WebhookConfig{"repo-a": {Secret: "bucket.secret.repo_a_webhook"}}}
 	cfg := &configfile.WorkspaceConfig{Services: map[string]configfile.WorkspaceService{
 		"GitHub REST API": {ServiceID: "svc-github", Versions: []string{"1.1.4"}, RuntimeConfig: runtimeConfig},
 	}}
@@ -193,7 +193,7 @@ func TestMergeWorkspaceServicesFromRemote_PreservesRuntimeConfigAcrossSlugKeyCha
 		t.Fatalf("expected key migration, got %+v", result)
 	}
 	got := cfg.Services["github-user"]
-	if got.RuntimeConfig == nil || got.RuntimeConfig.BaseURL != "https://proxy.example.com" {
+	if got.RuntimeConfig == nil || got.RuntimeConfig.Webhooks["repo-a"].Secret != "bucket.secret.repo_a_webhook" {
 		t.Fatalf("workspace sync dropped runtime_config during key migration: %+v", got)
 	}
 }
@@ -299,7 +299,7 @@ func TestMergeWorkspaceConnectConfigsFromRemoteStripsLocalRefs(t *testing.T) {
 	cfg := &configfile.WorkspaceConfig{Services: map[string]configfile.WorkspaceService{
 		"github-user": {
 			ServiceID:     service.ServiceID,
-			RuntimeConfig: &configfile.RuntimeConfig{BaseURL: "https://proxy.example.com"},
+			RuntimeConfig: &configfile.RuntimeConfig{Webhooks: map[string]configfile.WebhookConfig{"repo-a": {Secret: "bucket.secret.repo_a_webhook"}}},
 		},
 	}, Buckets: map[string]configfile.WorkspaceBucket{"customer-accounts": {ServiceConfig: map[string]configfile.BucketServiceConfig{"github-user": {Connect: &configfile.ConnectConfig{AuthType: "oauth", ClientID: "$GITHUB_ID", ClientSecret: "$GITHUB_SECRET"}}}}}}
 	remote := []api.WorkspaceConnectConfig{{
@@ -313,7 +313,7 @@ func TestMergeWorkspaceConnectConfigsFromRemoteStripsLocalRefs(t *testing.T) {
 		t.Fatalf("merge connect config: %v", err)
 	}
 	runtime := cfg.Services["github-user"].RuntimeConfig
-	if runtime.BaseURL != "https://proxy.example.com" || len(cfg.Buckets) != 0 {
+	if runtime.Webhooks["repo-a"].Secret != "bucket.secret.repo_a_webhook" || len(cfg.Buckets) != 0 {
 		t.Fatalf("expected runtime to survive and bucket refs to be stripped: runtime=%+v buckets=%+v", runtime, cfg.Buckets)
 	}
 }
@@ -653,6 +653,32 @@ func TestMergeWorkspaceServicesFromRemote_WritesExecutionPolicyForOwnedServiceWi
 	}
 }
 
+// TestMergeWorkspaceServicesFromRemote_WritesPaginationForOwnedService covers
+// plans/plan-service-config-restructure.md item 1: pagination round-trips
+// through execution_policy the same way rate_limit/retry already do,
+// including when it's the *only* published field (no rate_limit/retry set).
+func TestMergeWorkspaceServicesFromRemote_WritesPaginationForOwnedService(t *testing.T) {
+	cfg := &configfile.WorkspaceConfig{Services: map[string]configfile.WorkspaceService{}}
+	remote := []api.WorkspaceService{{ServiceName: "stripe", ServiceID: "svc-owned", Version: "2026-01-01"}}
+	visibility := map[string]api.ServiceVisibility{
+		"svc-owned": {
+			ServiceID: "svc-owned", Slug: "stripe", IsOwner: true, IsPublic: true,
+			Pagination: &api.ServicePagination{Type: "cursor", RequestParam: "after", ResponsePath: "page.next"},
+		},
+	}
+
+	mustMergeWorkspaceServicesFromRemote(t, cfg, remote, visibility)
+
+	owned := cfg.Services["stripe"]
+	if owned.ExecutionPolicy == nil || owned.ExecutionPolicy.Public == nil || !*owned.ExecutionPolicy.Public {
+		t.Fatalf("expected owned service execution_policy.public=true, got %#v", owned.ExecutionPolicy)
+	}
+	if owned.ExecutionPolicy.Pagination == nil || owned.ExecutionPolicy.Pagination.Type != "cursor" ||
+		owned.ExecutionPolicy.Pagination.RequestParam != "after" || owned.ExecutionPolicy.Pagination.ResponsePath != "page.next" {
+		t.Fatalf("expected pagination values to round-trip, got %#v", owned.ExecutionPolicy.Pagination)
+	}
+}
+
 // TestMergeWorkspaceServicesFromRemote_OmitsExecutionPolicyWithNoRegistryPolicy
 // ensures an owned service with no published policy gets no execution_policy
 // block at all, rather than an empty public:true stub.
@@ -670,11 +696,67 @@ func TestMergeWorkspaceServicesFromRemote_OmitsExecutionPolicyWithNoRegistryPoli
 	}
 }
 
+// TestMergeWorkspaceServicesFromRemote_WritesVersionPoliciesForOwnedService
+// covers task 17's sync-back half: a version made private, or one with a
+// published per-version execution policy, round-trips into
+// version_policies[*] for an owned service only -- while a version that's
+// still at the Registry default (public, no policy) gets no entry at all,
+// mirroring TestMergeWorkspaceServicesFromRemote_OmitsExecutionPolicyWithNoRegistryPolicy's
+// "don't write boilerplate" rule.
+func TestMergeWorkspaceServicesFromRemote_WritesVersionPoliciesForOwnedService(t *testing.T) {
+	cfg := &configfile.WorkspaceConfig{Services: map[string]configfile.WorkspaceService{}}
+	remote := []api.WorkspaceService{
+		{ServiceName: "stripe", ServiceID: "svc-owned", Version: "2026-01-01"},
+		{ServiceName: "@acme/billing", ServiceID: "svc-foreign", Version: "2026-02-01"},
+	}
+	visibility := map[string]api.ServiceVisibility{
+		"svc-owned":   {ServiceID: "svc-owned", Slug: "stripe", IsOwner: true, IsPublic: true},
+		"svc-foreign": {ServiceID: "svc-foreign", Slug: "billing", Provider: &api.ServiceProviderIdentity{Handle: "acme"}, IsOwner: false, IsPublic: true},
+	}
+	versionsByServiceID := map[string][]api.ServiceVersion{
+		"svc-owned": {
+			{Name: "2026-01-01", IsPublic: true},
+			{Name: "2025-12-01", IsPublic: false},
+			{Name: "2025-11-01", IsPublic: true, RateLimit: &api.ServiceRateLimit{Strategy: "fixed_window", RequestsPerSecond: 5, RequestsPerMinute: 200}},
+		},
+		// A foreign service's version data should never surface into this
+		// workspace's config even if the fetch somehow returned it.
+		"svc-foreign": {{Name: "2026-02-01", IsPublic: false}},
+	}
+
+	if _, err := mergeWorkspaceServicesFromRemote(cfg, remote, visibility, versionsByServiceID); err != nil {
+		t.Fatalf("mergeWorkspaceServicesFromRemote: %v", err)
+	}
+
+	owned := cfg.Services["stripe"]
+	if len(owned.VersionPolicies) != 2 {
+		t.Fatalf("expected 2 version_policies entries (default-public version omitted), got %#v", owned.VersionPolicies)
+	}
+	byVersion := map[string]configfile.WorkspaceVersionPolicy{}
+	for _, vp := range owned.VersionPolicies {
+		byVersion[vp.Version] = vp
+	}
+	if vp, ok := byVersion["2025-12-01"]; !ok || vp.Public == nil || *vp.Public {
+		t.Fatalf("expected 2025-12-01 public=false to round-trip, got %#v", byVersion["2025-12-01"])
+	}
+	if vp, ok := byVersion["2025-11-01"]; !ok || vp.ExecutionPolicy == nil || vp.ExecutionPolicy.RateLimit == nil || vp.ExecutionPolicy.RateLimit.RequestsPerSecond != 5 {
+		t.Fatalf("expected 2025-11-01 execution policy to round-trip, got %#v", byVersion["2025-11-01"])
+	}
+	if _, ok := byVersion["2026-01-01"]; ok {
+		t.Fatalf("expected default-public version with no policy to be omitted, got %#v", byVersion["2026-01-01"])
+	}
+
+	foreign := cfg.Services["@acme/billing"]
+	if len(foreign.VersionPolicies) != 0 {
+		t.Fatalf("expected non-owned service version_policies to be omitted, got %#v", foreign.VersionPolicies)
+	}
+}
+
 func TestMergeWorkspaceServicesFromRemote_RejectsMissingSlugRef(t *testing.T) {
 	cfg := &configfile.WorkspaceConfig{Services: map[string]configfile.WorkspaceService{}}
 	remote := []api.WorkspaceService{{ServiceName: "GitHub REST API", ServiceID: "svc-github"}}
 
-	_, err := mergeWorkspaceServicesFromRemote(cfg, remote, map[string]api.ServiceVisibility{})
+	_, err := mergeWorkspaceServicesFromRemote(cfg, remote, map[string]api.ServiceVisibility{}, nil)
 
 	if err == nil || !strings.Contains(err.Error(), "missing service slug") {
 		t.Fatalf("expected missing slug error, got %v", err)

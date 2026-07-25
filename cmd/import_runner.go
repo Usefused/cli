@@ -25,7 +25,9 @@ type importSpecPlanOptions struct {
 	slug       string
 	url        string
 	version    string
-	isPublic   bool
+	// isPublic is nil when --public was not passed at all, distinct from an
+	// explicit --public=false -- see import.go's flag registration.
+	isPublic   *bool
 	category   string
 	receiptOut string
 	jsonOut    bool

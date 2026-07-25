@@ -341,13 +341,50 @@ func validateWorkspaceService(name string, svc WorkspaceService) error {
 			return err
 		}
 	}
-	if svc.RuntimeConfig == nil {
-		return validateWorkspaceConnectionProfiles(name, svc.ConnectionProfiles)
-	}
-	if svc.RuntimeConfig.Auth != nil || svc.RuntimeConfig.Connect != nil {
-		return fmt.Errorf("workspace service %q runtime_config.auth/connect moved to buckets.<bucket>.service_config.%s", name, name)
+	if err := validateWorkspaceRuntimeConfig(name, svc.RuntimeConfig); err != nil {
+		return err
 	}
 	return validateWorkspaceConnectionProfiles(name, svc.ConnectionProfiles)
+}
+
+// validateWorkspaceRuntimeConfig enforces the bucket.<name>.secret.<key>
+// grammar (plans/plan-service-config-restructure.md item 4) on every webhook
+// registration's Secret field at parse time -- catching a typo'd reference
+// here is cheaper than discovering it only once Engine apply rejects it.
+// This is a deliberately minimal, self-contained check duplicating (not
+// importing) the Engine's internal/shared/secretref grammar: the CLI and
+// backend are separate Go modules, and this reference form is a closed,
+// two-shape grammar simple enough that keeping a small mirror here is less
+// risk than a cross-module dependency for one regex-sized rule. Engine apply
+// remains the authority -- it also confirms the referenced bucket exists.
+func validateWorkspaceRuntimeConfig(name string, cfg *RuntimeConfig) error {
+	if cfg == nil {
+		return nil
+	}
+	for label, webhook := range cfg.Webhooks {
+		if strings.TrimSpace(webhook.Secret) == "" {
+			continue
+		}
+		if !isBucketSecretRef(webhook.Secret) {
+			return fmt.Errorf(`workspace service %q webhook %q secret must be "bucket.<name>.secret.<key>" or "bucket.secret.<key>"`, name, label)
+		}
+	}
+	return nil
+}
+
+// isBucketSecretRef matches exactly the two forms internal/shared/secretref
+// accepts on the Engine: an explicit "bucket.<name>.secret.<key>" or the
+// default-bucket shorthand "bucket.secret.<key>".
+func isBucketSecretRef(value string) bool {
+	parts := strings.Split(value, ".")
+	switch {
+	case len(parts) == 4 && parts[0] == "bucket" && parts[2] == "secret":
+		return parts[1] != "" && parts[3] != ""
+	case len(parts) == 3 && parts[0] == "bucket" && parts[1] == "secret":
+		return parts[2] != ""
+	default:
+		return false
+	}
 }
 
 func validateWorkspaceExecutionPolicy(name, version string, policy *ExecutionPolicy) error {
@@ -437,6 +474,22 @@ func validateWorkspaceBucket(bucketName string, bucket WorkspaceBucket, services
 		}
 		if err := validateWorkspaceConnectIntent(serviceName, serviceConfig.Connect); err != nil {
 			return err
+		}
+	}
+	return validateWorkspaceBucketSecrets(bucketName, bucket.Secrets)
+}
+
+// validateWorkspaceBucketSecrets enforces the same $ENV-only discipline as
+// Auth/Connect fields on the newer, generic bucket.<name>.secrets.<key>
+// declarative field -- static values are secret material and must never be
+// committed to workspace.yaml.
+func validateWorkspaceBucketSecrets(bucketName string, secrets map[string]string) error {
+	for key, value := range secrets {
+		if strings.TrimSpace(key) == "" {
+			return fmt.Errorf("workspace bucket %q has a secret with an empty key name", bucketName)
+		}
+		if strings.TrimSpace(value) == "" || !isEnvRef(value) {
+			return fmt.Errorf("workspace bucket %q secret %q requires a $ENV reference", bucketName, key)
 		}
 	}
 	return nil
@@ -569,6 +622,28 @@ func (p *ParsedConfig) WorkspaceAuthMaterials() (map[string]AuthMaterial, error)
 			if ok {
 				materials[workspaceBucketMaterialKey(bucketName, key)] = material
 			}
+		}
+	}
+	return materials, nil
+}
+
+// WorkspaceBucketSecretMaterials resolves buckets.<name>.secrets.<key> $ENV
+// refs only during apply, mirroring WorkspaceAuthMaterials -- generic bucket
+// secrets (plans/plan-service-config-restructure.md item 4) get the same
+// out-of-band resolution treatment as bucket-owned Auth/Connect material, so
+// plan/state files never carry a resolved secret value.
+func (p *ParsedConfig) WorkspaceBucketSecretMaterials() (map[string]string, error) {
+	if p.Workspace == nil {
+		return nil, fmt.Errorf("parsed config is not a workspace")
+	}
+	materials := map[string]string{}
+	for bucketName, bucket := range p.Workspace.Buckets {
+		for key, ref := range bucket.Secrets {
+			value, err := resolveMaybeEnv(ref)
+			if err != nil {
+				return nil, fmt.Errorf("workspace bucket %q secret %q: %w", workspaceConnectBucketName(bucketName), key, err)
+			}
+			materials[workspaceBucketMaterialKey(bucketName, key)] = value
 		}
 	}
 	return materials, nil

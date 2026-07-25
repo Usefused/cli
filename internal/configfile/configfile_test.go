@@ -202,6 +202,154 @@ buckets:
 	}
 }
 
+// TestWorkspaceBucketSecrets_RejectsLiteralValue pins
+// plans/plan-service-config-restructure.md item 4's core safety property:
+// buckets.<name>.secrets.<key> must be a $ENV reference, never a literal, the
+// same discipline already enforced for Auth/Connect fields.
+func TestWorkspaceBucketSecrets_RejectsLiteralValue(t *testing.T) {
+	path := writeFile(t, t.TempDir(), "workspace.yaml", `
+apiVersion: fused/v1
+kind: workspace
+services:
+  github:
+    service_id: "00000000-0000-0000-0000-000000000001"
+    versions: ["2026-07-01"]
+buckets:
+  prod:
+    secrets:
+      webhook_signing: not-an-env-ref
+`)
+	_, err := configfile.ParseFile(path)
+	if err == nil || !strings.Contains(err.Error(), "requires a $ENV reference") {
+		t.Fatalf("expected literal bucket secret rejection, got %v", err)
+	}
+}
+
+// TestWorkspaceBucketSecretMaterials_ResolvesDollarEnvRefs mirrors
+// TestWorkspaceConnectMaterials_ResolvesDollarEnvRefs for the new generic
+// bucket secrets field -- plan/state keeps the $ENV ref, apply resolves it
+// out-of-band, keyed the same "<bucket>\x00<key>" way as auth/connect
+// material.
+func TestWorkspaceBucketSecretMaterials_ResolvesDollarEnvRefs(t *testing.T) {
+	t.Setenv("FUSED_TEST_WEBHOOK_SECRET", "resolved-webhook-secret")
+	path := writeFile(t, t.TempDir(), "workspace.yaml", `
+apiVersion: fused/v1
+kind: workspace
+services:
+  github:
+    service_id: "00000000-0000-0000-0000-000000000001"
+    versions: ["2026-07-01"]
+buckets:
+  prod:
+    secrets:
+      webhook_signing: $FUSED_TEST_WEBHOOK_SECRET
+`)
+	parsed, err := configfile.ParseFile(path)
+	if err != nil {
+		t.Fatalf("ParseFile failed: %v", err)
+	}
+	materials, err := parsed.WorkspaceBucketSecretMaterials()
+	if err != nil {
+		t.Fatalf("WorkspaceBucketSecretMaterials failed: %v", err)
+	}
+	if got := materials["prod\x00webhook_signing"]; got != "resolved-webhook-secret" {
+		t.Fatalf("expected resolved secret value, got %q", got)
+	}
+}
+
+// TestWorkspaceBucketSecretMaterials_MissingEnvVarErrors ensures apply fails
+// loudly (not with a silently empty secret) when the referenced environment
+// variable is not set locally.
+func TestWorkspaceBucketSecretMaterials_MissingEnvVarErrors(t *testing.T) {
+	path := writeFile(t, t.TempDir(), "workspace.yaml", `
+apiVersion: fused/v1
+kind: workspace
+services:
+  github:
+    service_id: "00000000-0000-0000-0000-000000000001"
+    versions: ["2026-07-01"]
+buckets:
+  prod:
+    secrets:
+      webhook_signing: $FUSED_TEST_UNSET_WEBHOOK_SECRET
+`)
+	parsed, err := configfile.ParseFile(path)
+	if err != nil {
+		t.Fatalf("ParseFile failed: %v", err)
+	}
+	if _, err := parsed.WorkspaceBucketSecretMaterials(); err == nil {
+		t.Fatal("expected an error for an unset environment variable")
+	}
+}
+
+// ─── runtime_config.webhooks[*].secret: bucket.<name>.secret.<key> grammar ─
+
+// TestWorkspaceWebhookSecret_AcceptsExplicitBucketForm proves the full
+// "bucket.<name>.secret.<key>" reference parses without error -- this is a
+// syntax check only; Engine apply is the authority on whether the bucket
+// actually exists.
+func TestWorkspaceWebhookSecret_AcceptsExplicitBucketForm(t *testing.T) {
+	path := writeFile(t, t.TempDir(), "workspace.yaml", `
+apiVersion: fused/v1
+kind: workspace
+services:
+  github:
+    service_id: "00000000-0000-0000-0000-000000000001"
+    versions: ["2026-07-01"]
+    runtime_config:
+      webhooks:
+        repo-a:
+          secret: "bucket.prod.secret.webhook_signing"
+`)
+	if _, err := configfile.ParseFile(path); err != nil {
+		t.Fatalf("expected explicit bucket.<name>.secret.<key> to parse, got %v", err)
+	}
+}
+
+// TestWorkspaceWebhookSecret_AcceptsDefaultBucketShorthand proves the
+// bucket-name-omitted shorthand "bucket.secret.<key>" also parses.
+func TestWorkspaceWebhookSecret_AcceptsDefaultBucketShorthand(t *testing.T) {
+	path := writeFile(t, t.TempDir(), "workspace.yaml", `
+apiVersion: fused/v1
+kind: workspace
+services:
+  github:
+    service_id: "00000000-0000-0000-0000-000000000001"
+    versions: ["2026-07-01"]
+    runtime_config:
+      webhooks:
+        repo-a:
+          secret: "bucket.secret.webhook_signing"
+`)
+	if _, err := configfile.ParseFile(path); err != nil {
+		t.Fatalf("expected default-bucket shorthand to parse, got %v", err)
+	}
+}
+
+// TestWorkspaceWebhookSecret_RejectsLiteralValue proves a literal (or any
+// other malformed) value fails validation at parse time instead of only
+// being discovered once Engine apply rejects the reference -- mirrors
+// TestWorkspaceBucketSecrets_RejectsLiteralValue's discipline for the
+// declaration side of this mechanism.
+func TestWorkspaceWebhookSecret_RejectsLiteralValue(t *testing.T) {
+	path := writeFile(t, t.TempDir(), "workspace.yaml", `
+apiVersion: fused/v1
+kind: workspace
+services:
+  github:
+    service_id: "00000000-0000-0000-0000-000000000001"
+    versions: ["2026-07-01"]
+    runtime_config:
+      webhooks:
+        repo-a:
+          secret: "whsec_literal_value"
+`)
+	_, err := configfile.ParseFile(path)
+	if err == nil || !strings.Contains(err.Error(), `"bucket.<name>.secret.<key>"`) {
+		t.Fatalf("expected a malformed secret reference to be rejected, got %v", err)
+	}
+}
+
 // TestWorkspaceConnectMaterialsResolvesProfileBindingEnvOutOfBand proves plan
 // data keeps the env reference while apply receives the local resolved value.
 func TestWorkspaceConnectMaterialsResolvesProfileBindingEnvOutOfBand(t *testing.T) {

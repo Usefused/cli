@@ -102,7 +102,7 @@ services:
     runtime_config:
       webhooks:
         repo-a:
-          signing_secret: "whsec_a"
+          secret: "bucket.secret.whsec_a"
 `)
 	parsed, err := configfile.ParseFile(path)
 	if err != nil {

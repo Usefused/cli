@@ -30,7 +30,7 @@ type workspaceSyncResult struct {
 // Engine's data winning on any conflict, and any local entry whose service
 // is no longer enabled remotely is removed, not just flagged. Pure and
 // side-effect-free (no file or network I/O) so it's directly testable.
-func mergeWorkspaceServicesFromRemote(cfg *configfile.WorkspaceConfig, remote []api.WorkspaceService, visibility map[string]api.ServiceVisibility) (workspaceSyncResult, error) {
+func mergeWorkspaceServicesFromRemote(cfg *configfile.WorkspaceConfig, remote []api.WorkspaceService, visibility map[string]api.ServiceVisibility, versionsByServiceID map[string][]api.ServiceVersion) (workspaceSyncResult, error) {
 	if cfg.Services == nil {
 		cfg.Services = map[string]configfile.WorkspaceService{}
 	}
@@ -52,7 +52,7 @@ func mergeWorkspaceServicesFromRemote(cfg *configfile.WorkspaceConfig, remote []
 
 	// Add/update from remote -- remote always wins over whatever was there.
 	for _, svc := range remote {
-		key, changed, err := mergeRemoteWorkspaceService(cfg.Services, svc, visibility, localByServiceID)
+		key, changed, err := mergeRemoteWorkspaceService(cfg.Services, svc, visibility, versionsByServiceID, localByServiceID)
 		if err != nil {
 			return result, err
 		}
@@ -107,12 +107,12 @@ func workspaceServicesByID(services map[string]configfile.WorkspaceService) map[
 
 // mergeRemoteWorkspaceService updates Engine-owned identity and version fields
 // while carrying local runtime intent forward until its dedicated sync runs.
-func mergeRemoteWorkspaceService(services map[string]configfile.WorkspaceService, svc api.WorkspaceService, visibility map[string]api.ServiceVisibility, localByServiceID map[string]configfile.WorkspaceService) (string, workspaceSyncChange, error) {
+func mergeRemoteWorkspaceService(services map[string]configfile.WorkspaceService, svc api.WorkspaceService, visibility map[string]api.ServiceVisibility, versionsByServiceID map[string][]api.ServiceVersion, localByServiceID map[string]configfile.WorkspaceService) (string, workspaceSyncChange, error) {
 	key, err := workspaceServiceConfigKey(svc, visibility)
 	if err != nil {
 		return "", workspaceSyncUnchanged, err
 	}
-	newEntry := workspaceServiceFromRemote(svc, visibility)
+	newEntry := workspaceServiceFromRemote(svc, visibility, versionsByServiceID)
 	// Runtime config is local deployment intent, not Engine inventory. Sync
 	// refreshes the Engine-owned identity/version fields while keeping
 	// bucket/connect/webhook settings that a later apply must not erase.
@@ -377,7 +377,7 @@ func serviceConfigRef(slug, provider string) string {
 
 // workspaceServiceFromRemote projects only fields owned by Engine and
 // Registry, leaving runtime config reconciliation to its separate concern.
-func workspaceServiceFromRemote(svc api.WorkspaceService, visibility map[string]api.ServiceVisibility) configfile.WorkspaceService {
+func workspaceServiceFromRemote(svc api.WorkspaceService, visibility map[string]api.ServiceVisibility, versionsByServiceID map[string][]api.ServiceVersion) configfile.WorkspaceService {
 	versions := workspaceServiceVersionNames(svc)
 	if svc.Version != "" && !containsString(versions, svc.Version) {
 		versions = append(append([]string{}, versions...), svc.Version)
@@ -390,35 +390,118 @@ func workspaceServiceFromRemote(svc api.WorkspaceService, visibility map[string]
 	if vis, ok := visibility[svc.ServiceID]; ok && vis.IsOwner {
 		newEntry.Public = boolPtr(vis.IsPublic)
 		newEntry.ExecutionPolicy = workspaceExecutionPolicyFromRemote(vis)
+		newEntry.VersionPolicies = workspaceVersionPoliciesFromRemote(versionsByServiceID[svc.ServiceID])
 	}
 	return newEntry
 }
 
-// workspaceExecutionPolicyFromRemote round-trips a previously published
-// execution policy (rate_limit/retry set on the Registry for an owned
-// service) back into workspace.yaml as execution_policy.public: true, so a
-// subsequent `fused apply` stays a no-op instead of silently dropping the
-// published policy on the next sync. Returns nil when the Registry has no
-// policy set for this service, leaving any local execution_policy untouched
-// via workspaceServiceWithLocalState.
-func workspaceExecutionPolicyFromRemote(vis api.ServiceVisibility) *configfile.ExecutionPolicy {
-	if vis.RateLimit == nil && vis.RetryConfig == nil {
+// workspaceVersionPoliciesFromRemote is workspaceExecutionPolicyFromRemote's
+// per-version sibling. Unlike the service-level Public field (always written
+// for an owned service, true or false), a version's public status defaults to
+// true on the Registry, so an entry is only emitted when a version deviates
+// from that default (is_public=false) or has a published execution policy to
+// round-trip -- otherwise every sync would grow workspace.yaml with one
+// version_policies entry per enabled version even when nothing was ever set.
+func workspaceVersionPoliciesFromRemote(versions []api.ServiceVersion) []configfile.WorkspaceVersionPolicy {
+	var out []configfile.WorkspaceVersionPolicy
+	for _, v := range versions {
+		policy := configfile.WorkspaceVersionPolicy{Version: v.Name}
+		hasEntry := false
+		if !v.IsPublic {
+			policy.Public = boolPtr(false)
+			hasEntry = true
+		}
+		if ep := workspaceVersionExecutionPolicyFromRemote(v); ep != nil {
+			policy.ExecutionPolicy = ep
+			hasEntry = true
+		}
+		if hasEntry {
+			out = append(out, policy)
+		}
+	}
+	return out
+}
+
+// mapExecRateLimit/mapExecRetry/mapExecPagination/mapExecWebhookConfig do the
+// api.* -> configfile.* field mapping shared by workspaceExecutionPolicyFromRemote
+// and workspaceVersionExecutionPolicyFromRemote below -- both Registry types
+// (ServiceVisibility, ServiceVersion) carry identically-shaped execution
+// policy fields, so this keeps the two round-trip functions from duplicating
+// the same field-by-field copy four times over.
+func mapExecRateLimit(rl *api.ServiceRateLimit) *configfile.RateLimitConfig {
+	if rl == nil {
 		return nil
 	}
-	policy := &configfile.ExecutionPolicy{Public: boolPtr(true)}
-	if vis.RateLimit != nil {
-		policy.RateLimit = &configfile.RateLimitConfig{
-			Strategy: vis.RateLimit.Strategy, RequestsPerSecond: vis.RateLimit.RequestsPerSecond,
-			RequestsPerMinute: vis.RateLimit.RequestsPerMinute,
-		}
+	return &configfile.RateLimitConfig{
+		Strategy: rl.Strategy, RequestsPerSecond: rl.RequestsPerSecond, RequestsPerMinute: rl.RequestsPerMinute,
 	}
-	if vis.RetryConfig != nil {
-		policy.Retry = &configfile.RetryConfig{
-			Strategy: vis.RetryConfig.Strategy, MaxRetries: vis.RetryConfig.MaxRetries,
-			BackoffMs: vis.RetryConfig.BackoffMs,
-		}
+}
+
+func mapExecRetry(rc *api.ServiceRetryConfig) *configfile.RetryConfig {
+	if rc == nil {
+		return nil
 	}
-	return policy
+	return &configfile.RetryConfig{Strategy: rc.Strategy, MaxRetries: rc.MaxRetries, BackoffMs: rc.BackoffMs}
+}
+
+func mapExecPagination(p *api.ServicePagination) *configfile.PaginationConfig {
+	if p == nil {
+		return nil
+	}
+	return &configfile.PaginationConfig{Type: p.Type, RequestParam: p.RequestParam, ResponsePath: p.ResponsePath}
+}
+
+// mapExecWebhookConfig round-trips the provider's own webhook verification
+// recipe (plans/plan-service-config-restructure.md item 3) -- never a
+// secret, only the auth mechanism, so it's safe to carry back into
+// workspace.yaml the same way rate_limit/retry/pagination already are.
+func mapExecWebhookConfig(w *api.ServiceIncomingWebhookConfig) *configfile.WebhookVerify {
+	if w == nil {
+		return nil
+	}
+	return &configfile.WebhookVerify{
+		AuthType: w.AuthType, AuthLocation: w.AuthLocation, AuthKeyName: w.AuthKeyName,
+		SignatureHeader: w.SignatureHeader, VerificationHeaders: w.VerificationHeaders,
+	}
+}
+
+// workspaceVersionExecutionPolicyFromRemote mirrors
+// workspaceExecutionPolicyFromRemote, scoped to one version's already-published
+// rate_limit/retry/pagination/webhook_config instead of the service-wide
+// defaults.
+func workspaceVersionExecutionPolicyFromRemote(v api.ServiceVersion) *configfile.ExecutionPolicy {
+	if v.RateLimit == nil && v.RetryConfig == nil && v.Pagination == nil && v.IncomingWebhookConfig == nil {
+		return nil
+	}
+	return &configfile.ExecutionPolicy{
+		Public:                boolPtr(true),
+		RateLimit:             mapExecRateLimit(v.RateLimit),
+		Retry:                 mapExecRetry(v.RetryConfig),
+		Pagination:            mapExecPagination(v.Pagination),
+		EventExtractionPath:   v.EventExtractionPath,
+		IncomingWebhookConfig: mapExecWebhookConfig(v.IncomingWebhookConfig),
+	}
+}
+
+// workspaceExecutionPolicyFromRemote round-trips a previously published
+// execution policy (rate_limit/retry/pagination/webhook_config set on the
+// Registry for an owned service) back into workspace.yaml as
+// execution_policy.public: true, so a subsequent `fused apply` stays a no-op
+// instead of silently dropping the published policy on the next sync.
+// Returns nil when the Registry has no policy set for this service, leaving
+// any local execution_policy untouched via workspaceServiceWithLocalState.
+func workspaceExecutionPolicyFromRemote(vis api.ServiceVisibility) *configfile.ExecutionPolicy {
+	if vis.RateLimit == nil && vis.RetryConfig == nil && vis.Pagination == nil && vis.IncomingWebhookConfig == nil {
+		return nil
+	}
+	return &configfile.ExecutionPolicy{
+		Public:                boolPtr(true),
+		RateLimit:             mapExecRateLimit(vis.RateLimit),
+		Retry:                 mapExecRetry(vis.RetryConfig),
+		Pagination:            mapExecPagination(vis.Pagination),
+		EventExtractionPath:   vis.EventExtractionPath,
+		IncomingWebhookConfig: mapExecWebhookConfig(vis.IncomingWebhookConfig),
+	}
 }
 
 // workspaceServiceEqual compares the fields sync actually touches.
@@ -557,7 +640,11 @@ func PerformWorkspaceSync(ctx context.Context, client *api.Client, configPath st
 	if err != nil {
 		return nil, err
 	}
-	result, err := mergeWorkspaceServicesFromRemote(cfg, remote, visibility)
+	versionsByServiceID, err := fetchOwnedServiceVersions(client, remote, visibility)
+	if err != nil {
+		return nil, err
+	}
+	result, err := mergeWorkspaceServicesFromRemote(cfg, remote, visibility, versionsByServiceID)
 	if err != nil {
 		return nil, err
 	}
@@ -605,6 +692,31 @@ func recordWorkspaceSyncWrite(ctx context.Context, result workspaceSyncResult, c
 	if changed {
 		span.AddEvent("workspace_config_written")
 	}
+}
+
+// fetchOwnedServiceVersions batches one ServiceVersions call per owned
+// service so workspaceServiceFromRemote can round-trip version_policies.
+// Only owned services are fetched: version_policies (like the service-level
+// Public/ExecutionPolicy fields it sits beside) can only ever be set for
+// services this workspace owns, so there's nothing to round-trip for a
+// service enabled from another provider.
+func fetchOwnedServiceVersions(client *api.Client, remote []api.WorkspaceService, visibility map[string]api.ServiceVisibility) (map[string][]api.ServiceVersion, error) {
+	out := map[string][]api.ServiceVersion{}
+	for _, svc := range remote {
+		if _, done := out[svc.ServiceID]; done {
+			continue
+		}
+		vis, ok := visibility[svc.ServiceID]
+		if !ok || !vis.IsOwner || strings.TrimSpace(vis.Slug) == "" {
+			continue
+		}
+		versions, err := client.ServiceVersions(vis.Slug)
+		if err != nil {
+			return nil, err
+		}
+		out[svc.ServiceID] = versions
+	}
+	return out, nil
 }
 
 // serviceIDsFromWorkspaceServices builds one Registry GraphQL batch input so

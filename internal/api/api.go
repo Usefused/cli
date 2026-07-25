@@ -200,12 +200,16 @@ type ServiceVisibility struct {
 	IsPublic  bool                     `json:"is_public"`
 	Slug      string                   `json:"slug"`
 	Provider  *ServiceProviderIdentity `json:"provider"`
-	// RateLimit/RetryConfig are the provider-declared execution policy already
-	// published to the Registry (via execution_policy.public: true), if any --
-	// independent of is_owner/is_public. Sync uses these together with
-	// IsOwner to round-trip execution_policy.public back into workspace.yaml.
-	RateLimit   *ServiceRateLimit   `json:"rate_limit"`
-	RetryConfig *ServiceRetryConfig `json:"retry_config"`
+	// RateLimit/RetryConfig/Pagination/EventExtractionPath/IncomingWebhookConfig
+	// are the provider-declared execution policy already published to the
+	// Registry (via execution_policy.public: true), if any -- independent of
+	// is_owner/is_public. Sync uses these together with IsOwner to round-trip
+	// execution_policy.public back into workspace.yaml.
+	RateLimit             *ServiceRateLimit             `json:"rate_limit"`
+	RetryConfig           *ServiceRetryConfig           `json:"retry_config"`
+	Pagination            *ServicePagination            `json:"pagination"`
+	EventExtractionPath   *string                       `json:"event_extraction_path"`
+	IncomingWebhookConfig *ServiceIncomingWebhookConfig `json:"incoming_webhook_config"`
 }
 
 type ServiceRateLimit struct {
@@ -218,6 +222,25 @@ type ServiceRetryConfig struct {
 	Strategy   string `json:"strategy"`
 	MaxRetries int    `json:"max_retries"`
 	BackoffMs  int    `json:"backoff_ms"`
+}
+
+type ServicePagination struct {
+	Type         string `json:"type"`
+	RequestParam string `json:"request_param"`
+	ResponsePath string `json:"response_path"`
+}
+
+// ServiceIncomingWebhookConfig is the provider's webhook verification recipe
+// -- auth mechanism + where to find the signature. It deliberately has no
+// secret field: the Registry never publishes signing secrets (see
+// plans/plan-service-config-restructure.md item 3), only the non-secret
+// shape of how to verify a delivery.
+type ServiceIncomingWebhookConfig struct {
+	AuthType            string   `json:"auth_type"`
+	AuthLocation        string   `json:"auth_location"`
+	AuthKeyName         string   `json:"auth_key_name"`
+	SignatureHeader     string   `json:"signature_header"`
+	VerificationHeaders []string `json:"verification_headers"`
 }
 
 // ConnectionProfileRevision is the immutable Registry result printed by the
@@ -493,6 +516,9 @@ func (c *Client) ServiceVisibilities(serviceIDs []string) (map[string]ServiceVis
 				is_public
 				rate_limit { strategy requests_per_second requests_per_minute }
 				retry_config { strategy max_retries backoff_ms }
+				pagination { type request_param response_path }
+				event_extraction_path
+				incoming_webhook_config { auth_type auth_location auth_key_name signature_header verification_headers }
 			}
 		}
 	`
@@ -514,6 +540,16 @@ type ServiceVersion struct {
 	Name      string `json:"name"`
 	Status    string `json:"status"`
 	CreatedAt string `json:"created_at"`
+	// IsPublic/RateLimit/RetryConfig mirror ServiceVisibility's identically
+	// named fields, but scoped to this one version rather than the service as
+	// a whole. Sync uses these to round-trip version_policies[*].public and
+	// version_policies[*].execution_policy back into workspace.yaml.
+	IsPublic              bool                          `json:"is_public"`
+	RateLimit             *ServiceRateLimit             `json:"rate_limit"`
+	RetryConfig           *ServiceRetryConfig           `json:"retry_config"`
+	Pagination            *ServicePagination            `json:"pagination"`
+	EventExtractionPath   *string                       `json:"event_extraction_path"`
+	IncomingWebhookConfig *ServiceIncomingWebhookConfig `json:"incoming_webhook_config"`
 }
 
 type ServiceServer struct {
@@ -600,6 +636,12 @@ func (c *Client) ServiceVersions(serviceSlug string) ([]ServiceVersion, error) {
 				name
 				status
 				created_at
+				is_public
+				rate_limit { strategy requests_per_second requests_per_minute }
+				retry_config { strategy max_retries backoff_ms }
+				pagination { type request_param response_path }
+				event_extraction_path
+				incoming_webhook_config { auth_type auth_location auth_key_name signature_header verification_headers }
 			}
 		}
 	`
@@ -1329,7 +1371,7 @@ func (c *Client) ApplyMCPConfig(planID, sourceHash string) (*MCPConfigApplyRespo
 	return &out, nil
 }
 
-func (c *Client) ApplyWorkspaceConfig(planID, sourceHash string, connectMaterials map[string]ConnectMaterial, authMaterials map[string]AuthMaterial, profileMaterials map[string]ConnectMaterial) (*ConfigApplyResponse, error) {
+func (c *Client) ApplyWorkspaceConfig(planID, sourceHash string, connectMaterials map[string]ConnectMaterial, authMaterials map[string]AuthMaterial, profileMaterials map[string]ConnectMaterial, bucketSecretMaterials map[string]string) (*ConfigApplyResponse, error) {
 	reqBody := map[string]interface{}{
 		"plan_id":     planID,
 		"source_hash": sourceHash,
@@ -1342,6 +1384,9 @@ func (c *Client) ApplyWorkspaceConfig(planID, sourceHash string, connectMaterial
 	}
 	if len(profileMaterials) > 0 {
 		reqBody["profile_materials"] = profileMaterials
+	}
+	if len(bucketSecretMaterials) > 0 {
+		reqBody["bucket_secret_materials"] = bucketSecretMaterials
 	}
 	body, err := json.Marshal(reqBody)
 	if err != nil {
@@ -1431,9 +1476,13 @@ type SpecImportPlanRequest struct {
 	Version       string `json:"version,omitempty"`
 	SourceURL     string `json:"source_url,omitempty"`
 	SourceContent string `json:"source_content,omitempty"`
-	IsPublic      bool   `json:"is_public,omitempty"`
-	TargetType    string `json:"target_type,omitempty"`
-	Category      string `json:"category,omitempty"`
+	// IsPublic is omitted from the request entirely when --public was not
+	// passed, so the Registry can default it differently depending on
+	// whether this targets a new service or a new version of an existing
+	// one -- see resolveImportPlanIsPublic on the Registry side.
+	IsPublic   *bool  `json:"is_public,omitempty"`
+	TargetType string `json:"target_type,omitempty"`
+	Category   string `json:"category,omitempty"`
 }
 
 type SpecImportDiff struct {

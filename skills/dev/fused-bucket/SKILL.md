@@ -10,6 +10,12 @@ artifact points at. It owns runtime credential material keyed by service --
 services declare what's *enabled*, buckets declare what credentials a
 selected artifact/runtime *uses*.
 
+A workspace commonly has more than one bucket for the same service -- e.g.
+a `staging` bucket and a `production` bucket each holding a different
+Stripe API key, or a per-customer bucket in a multi-tenant setup. Every
+secret/value/connect command below takes an explicit bucket (by name or
+ID), so nothing is implicitly workspace-wide.
+
 ```yaml
 buckets:
   <bucket-name>:
@@ -19,37 +25,71 @@ buckets:
         connect: {...}    # see fused-config for the connect shape
 ```
 
+Every command list below may be behind the CLI's actual flags/subcommands --
+run `fused-cli <command> --help` (e.g. `fused-cli bucket --help`, `fused-cli
+secret --help`, `fused-cli connection resources --help`) to confirm before
+relying on one (see `fused-cli` skill).
+
 ## Bucket commands
 
 ```shell
-fused-cli bucket list
+fused-cli bucket list                    # NAME, ID, secret count, value count
 fused-cli bucket <name> create
-fused-cli bucket <name> show
-fused-cli bucket <name> services
-fused-cli bucket <name> secrets
-fused-cli bucket <name> values
-fused-cli bucket <name> connections
-fused-cli bucket <name> sdks
+fused-cli bucket <name> show             # + created_at
+fused-cli bucket <name> services         # per-service breakdown: secrets/values/connect-configs/connected-user counts
+fused-cli bucket <name> secrets          # metadata only -- service, key name, credential type, expiry; never the value itself
+fused-cli bucket <name> values           # service, key name, location
+fused-cli bucket <name> connections [--service <slug>] [--user <ref>]  # this bucket's end-user OAuth connections: user ref, auth type, refresh state, last failure
+fused-cli bucket <name> sdks             # which SDK/MCP artifacts (and whether they're active) point at this bucket
 ```
+
+Don't confuse `bucket <name> connections` (every end user who has connected
+to *any* service through this bucket, and whether their token is
+healthy/refreshing/failing) with `connection resources` below (for *one*
+already-connected user, which provider tenants their token can reach) --
+they're different scopes of the word "connection."
 
 ## Static secrets and values
 
 ```shell
-fused-cli secret list
-fused-cli secret <service-slug> set
-fused-cli secret <service-slug> remove
+fused-cli secret list --list-bucket <bucket>
+fused-cli secret <service-slug> set <value> [--bucket <name>] [--type <scheme>] [--expires-at <RFC3339>] [-i]
+fused-cli secret <service-slug> remove <key-name> [--remove-bucket <name>]
 fused-cli value <bucket-id> set
 fused-cli value <bucket-id> list
 fused-cli value <bucket-id> remove
 ```
 
-`secret` stores the credential material a service's `auth` config
-references (token, api_key, username/password, cert/key). `value` stores
-arbitrary bucket-scoped values, including literal binding values a
-connection profile references (see `fused-config`). Prefer these over local
-`_env`/`$VAR` handoffs for anything committed to source control -- a bucket
-secret is resolved server-side by the Engine, not read off the machine
-running `apply`.
+`secret set` is an **upsert with no separate apply step** -- unlike
+workspace/SDK/MCP config, writing a secret takes effect for the *next*
+request immediately, there's nothing to `plan`/`apply` afterward. That also
+means re-running `set` with a new value is how you rotate a credential;
+there's no versioning or grace period, the old value is simply gone.
+
+If a service declares more than one auth scheme (e.g. both `api_key` and
+`oauth` as alternatives), a bare `set` only auto-picks the scheme when
+there's exactly one -- otherwise pass `--type <scheme-name>` or use `-i` to
+pick interactively. `basic` and `mtls` schemes always require `-i`
+regardless of how many schemes exist, because they need two distinct
+values (username+password, or cert+key) that don't fit in one positional
+argument -- they're written as two separate secret keys (`<name>_username`/
+`<name>_password`, or `<name>_cert`/`<name>_key`), and a client cert/key
+pair is validated (matching pair, not expired) before it's ever stored.
+
+`--expires-at` is optional and purely advisory metadata (`secret list` and
+`bucket <name> secrets` flag an expired one) -- nothing auto-rotates or
+blocks requests when a secret passes its expiry.
+
+`value` stores arbitrary bucket-scoped values, including literal binding
+values a connection profile references (see `fused-config`).
+
+Prefer bucket secrets/values over local `_env`/`$VAR` handoffs for anything
+committed to source control -- a bucket secret is resolved server-side by
+the Engine, not read off the machine running `apply`. This covers `auth`
+static credentials and binding literals; it does not cover OAuth `connect`
+app registration (`client_id`/`client_secret`), which has no bucket-secret
+path today and genuinely needs `client_id_env`/`client_secret_env` (see
+`fused-config`).
 
 ## Starting an OAuth/OIDC connection
 

@@ -11,16 +11,37 @@ document (see `reference/openapi-postman.md`).
 Three related but distinct things, all under a service's `runtime_config`
 (or a bucket's `service_config.<slug>`):
 
-- `auth` (`AuthConfig`) — `auth_type` plus one of `username`/`password`,
-  `token`, `api_key`, or `cert`/`key`. Credential values themselves belong in
-  a bucket secret (see `fused-bucket`), not inline here.
-- `connect` (`ConnectConfig`) — OAuth/OIDC app registration: `client_id`/
-  `client_secret` (or a bucket secret), `redirect_uri`. Start an actual user
-  session with `fused-cli workspace service <slug> connect --user-ref <ref>`
-  (see `fused-bucket`).
+- `auth` (`AuthConfig`) — a static credential the Engine attaches to every
+  call for this service. Which fields it needs depends on `auth_type`:
+
+  | `auth_type` | required fields |
+  |---|---|
+  | `basic` | `username`, `password` |
+  | `api_key` | `api_key` |
+  | `mtls` | `cert`, `key` |
+  | `bearer` | `token` |
+  | `oauth` / `oidc` | `token` — a *pre-obtained* static token, not the interactive flow below |
+
+  Credential values themselves belong in a bucket secret (see
+  `fused-bucket`), not inline here.
+- `connect` (`ConnectConfig`) — the interactive per-user OAuth/OIDC flow:
+  app registration (`client_id`/`client_secret`) plus `redirect_uri`. Only
+  `auth_type: oauth` or `oidc` are valid here — `basic`/`api_key`/`bearer`/
+  `mtls` credentials don't have a browser consent step, so they only ever go
+  through `auth` above. Unlike `auth`, there's no bucket-secret path for
+  `client_id`/`client_secret` today — `client_id_env`/`client_secret_env`
+  (or a bare `$VAR` value) resolved from a local environment variable at
+  apply time is the only way to keep these out of a committed file. Start an
+  actual user session with `fused-cli workspace service <slug> connect
+  --user-ref <ref>` (see `fused-bucket`).
 - `profile` — the fuller `resource_discovery`/`resource_input`/`metadata`/
   `bindings` rule set below, for OAuth/OIDC services where one token can
   reach several sites/shops/portals/accounts.
+
+This same `basic | api_key | mtls | bearer | oauth | oidc` vocabulary is also
+what `auth.type` in an SDK/MCP artifact config accepts (see `fused-sdk` /
+`fused-mcp`) — it's one shared type list across every layer, not a
+per-context set.
 
 ## Canonical profile shape
 
@@ -57,8 +78,14 @@ URL. The portable JSONPath subset is `$.field`, `$.nested.field`,
 `$[*].field`, `$[*].nested.field`. `resource_input` (fields +
 `base_url_template`) is the alternative for services with no discovery
 endpoint — the caller supplies the routing value (e.g. a Zendesk subdomain)
-instead. Omitted `auto_run`/`lifecycle` normalize to `after_oauth_callback`/
-`authoritative`.
+instead.
+
+`auto_run` and `lifecycle` are effectively fixed-value fields today —
+`after_oauth_callback` and `authoritative` are the *only* values currently
+accepted (anything else, including omitting them, either normalizes to
+those or is rejected outright). Don't invent other values for these; they
+read as extensibility points for a future discovery mode, not a menu of
+options that already exist.
 
 ## Dynamic value injection
 
