@@ -21,6 +21,7 @@ execution_policy:
     type: "cursor"                 # cursor | offset | page_number | next_url
     request_param: "cursor"
     response_path: "metadata.next_cursor"
+  base_url: "https://api.example.com/v2"
   event_extraction_path: "body.eventType"
   incoming_webhook_config:
     auth_type: "hmac_sha256"
@@ -32,6 +33,21 @@ execution_policy:
 both are set, `retry` wins -- it's the one the Registry publish path
 actually reads, so keeping the same precedence locally means the value that
 publishes is also the value that takes effect.
+
+`base_url` overrides a wrong or missing spec-derived base URL for this
+service (or, under `version_policies`, this one version) -- it *is*
+workspace-settable via `execution_policy`, both locally and, with
+`public: true`, as a value every other consumer of the service inherits
+too. This is a plain string, not published/local in some restricted sense:
+the same two-tier behavior (local effect always, publish only with
+`public: true` and only for the owning account) applies to it exactly like
+`rate_limit`/`retry`/`pagination` below. It's a separate value from
+whatever the original OpenAPI/Postman/AsyncAPI spec declared as the
+server URL -- that spec-derived value stays intact and inspectable on its
+own; this is purely the override layered on top when the spec was wrong or
+silent. There's no equivalent field for `default_headers` -- that one is
+still a plain `runtime_config` field, workspace-local only, never
+published (see `fused-workspace`).
 
 `event_extraction_path` and `incoming_webhook_config` describe *this
 service's own* outbound webhook signing/verification recipe (how the
@@ -50,14 +66,19 @@ works: declare it, it's enforced for this workspace's own dispatch and proxy
 traffic (SDK calls and the HTTP execution path both read it), and -- for
 `event_extraction_path`/`incoming_webhook_config` specifically -- real
 inbound webhook verification at this workspace's own registered slugs too.
-`rate_limit`/`retry`/`pagination` are resolved per request at dispatch time;
-the two webhook fields are resolved once per `apply` (a local override still
-wins over the Registry-sourced value there, just captured at apply time
-instead of read per inbound request, since ingress denormalizes this onto
-the registration once rather than re-resolving it on every delivery).
+`rate_limit`/`retry`/`pagination`/`base_url` are resolved per request at
+dispatch time; the two webhook fields are resolved once per `apply` (a local
+override still wins over the Registry-sourced value there, just captured at
+apply time instead of read per inbound request, since ingress denormalizes
+this onto the registration once rather than re-resolving it on every
+delivery). A connection-resource-forced dynamic binding
+(`${resource.base_url}`, see `connection-profiles.md`) still wins over a
+`base_url` override at dispatch time -- it's the more specific, per-connection
+value; `execution_policy.base_url` is the static fallback underneath it, not
+a way to override a live connection's routing.
 
 `public: true` is a *separate*, additional action: it also publishes
-`rate_limit`/`retry`/`pagination`/`event_extraction_path`/
+`rate_limit`/`retry`/`pagination`/`base_url`/`event_extraction_path`/
 `incoming_webhook_config` to the Registry via `UpdateServiceConfig`, so every
 other SDK/MCP consumer of the service inherits these same provider-declared
 values -- not just this workspace. **Only the owning account can set

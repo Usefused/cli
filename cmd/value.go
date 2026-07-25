@@ -51,8 +51,8 @@ func runValueAction(cmd *cobra.Command, args []string) error {
 	switch action {
 	case "set":
 		serviceSlug := args[2]
-		keyName := args[3]
-		location := args[4]
+		location := args[3]
+		keyName := args[4]
 		value := args[5]
 		return runValueSet(cmd, bucketID, serviceSlug, keyName, location, value)
 	case "list":

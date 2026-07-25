@@ -470,7 +470,7 @@ func mapExecWebhookConfig(w *api.ServiceIncomingWebhookConfig) *configfile.Webho
 // rate_limit/retry/pagination/webhook_config instead of the service-wide
 // defaults.
 func workspaceVersionExecutionPolicyFromRemote(v api.ServiceVersion) *configfile.ExecutionPolicy {
-	if v.RateLimit == nil && v.RetryConfig == nil && v.Pagination == nil && v.IncomingWebhookConfig == nil {
+	if v.RateLimit == nil && v.RetryConfig == nil && v.Pagination == nil && v.IncomingWebhookConfig == nil && v.BaseURLOverride == nil {
 		return nil
 	}
 	return &configfile.ExecutionPolicy{
@@ -478,6 +478,7 @@ func workspaceVersionExecutionPolicyFromRemote(v api.ServiceVersion) *configfile
 		RateLimit:             mapExecRateLimit(v.RateLimit),
 		Retry:                 mapExecRetry(v.RetryConfig),
 		Pagination:            mapExecPagination(v.Pagination),
+		BaseURL:               v.BaseURLOverride,
 		EventExtractionPath:   v.EventExtractionPath,
 		IncomingWebhookConfig: mapExecWebhookConfig(v.IncomingWebhookConfig),
 	}
@@ -491,7 +492,7 @@ func workspaceVersionExecutionPolicyFromRemote(v api.ServiceVersion) *configfile
 // Returns nil when the Registry has no policy set for this service, leaving
 // any local execution_policy untouched via workspaceServiceWithLocalState.
 func workspaceExecutionPolicyFromRemote(vis api.ServiceVisibility) *configfile.ExecutionPolicy {
-	if vis.RateLimit == nil && vis.RetryConfig == nil && vis.Pagination == nil && vis.IncomingWebhookConfig == nil {
+	if vis.RateLimit == nil && vis.RetryConfig == nil && vis.Pagination == nil && vis.IncomingWebhookConfig == nil && vis.BaseURLOverride == nil {
 		return nil
 	}
 	return &configfile.ExecutionPolicy{
@@ -499,6 +500,7 @@ func workspaceExecutionPolicyFromRemote(vis api.ServiceVisibility) *configfile.E
 		RateLimit:             mapExecRateLimit(vis.RateLimit),
 		Retry:                 mapExecRetry(vis.RetryConfig),
 		Pagination:            mapExecPagination(vis.Pagination),
+		BaseURL:               vis.BaseURLOverride,
 		EventExtractionPath:   vis.EventExtractionPath,
 		IncomingWebhookConfig: mapExecWebhookConfig(vis.IncomingWebhookConfig),
 	}

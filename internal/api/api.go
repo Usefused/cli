@@ -205,9 +205,14 @@ type ServiceVisibility struct {
 	// Registry (via execution_policy.public: true), if any -- independent of
 	// is_owner/is_public. Sync uses these together with IsOwner to round-trip
 	// execution_policy.public back into workspace.yaml.
-	RateLimit             *ServiceRateLimit             `json:"rate_limit"`
-	RetryConfig           *ServiceRetryConfig           `json:"retry_config"`
-	Pagination            *ServicePagination            `json:"pagination"`
+	RateLimit   *ServiceRateLimit   `json:"rate_limit"`
+	RetryConfig *ServiceRetryConfig `json:"retry_config"`
+	Pagination  *ServicePagination  `json:"pagination"`
+	// BaseURLOverride is nil unless this service's execution_policy has
+	// published a base_url override -- distinct from the general "base_url"
+	// GraphQL field (not fetched here) which merges override-if-set-else-spec-derived
+	// and can't tell sync whether the value came from execution_policy.
+	BaseURLOverride       *string                       `json:"base_url_override"`
 	EventExtractionPath   *string                       `json:"event_extraction_path"`
 	IncomingWebhookConfig *ServiceIncomingWebhookConfig `json:"incoming_webhook_config"`
 }
@@ -317,6 +322,14 @@ type WorkspaceConnectConfig struct {
 	HasClientID     bool                      `json:"has_client_id"`
 	HasClientSecret bool                      `json:"has_client_secret"`
 	Profiles        []WorkspaceConnectProfile `json:"profiles"`
+	Injections      []InjectionConfig         `json:"injections,omitempty"`
+}
+
+type InjectionConfig struct {
+	Value    string `json:"value"`
+	Location string `json:"location"`
+	Name     string `json:"name"`
+	Mode     string `json:"mode,omitempty"`
 }
 
 func (c *Client) ListWorkspaceServices(names ...string) ([]WorkspaceService, error) {
@@ -519,6 +532,7 @@ func (c *Client) ServiceVisibilities(serviceIDs []string) (map[string]ServiceVis
 				pagination { type request_param response_path }
 				event_extraction_path
 				incoming_webhook_config { auth_type auth_location auth_key_name signature_header verification_headers }
+				base_url_override
 			}
 		}
 	`
@@ -544,10 +558,13 @@ type ServiceVersion struct {
 	// named fields, but scoped to this one version rather than the service as
 	// a whole. Sync uses these to round-trip version_policies[*].public and
 	// version_policies[*].execution_policy back into workspace.yaml.
-	IsPublic              bool                          `json:"is_public"`
-	RateLimit             *ServiceRateLimit             `json:"rate_limit"`
-	RetryConfig           *ServiceRetryConfig           `json:"retry_config"`
-	Pagination            *ServicePagination            `json:"pagination"`
+	IsPublic    bool                `json:"is_public"`
+	RateLimit   *ServiceRateLimit   `json:"rate_limit"`
+	RetryConfig *ServiceRetryConfig `json:"retry_config"`
+	Pagination  *ServicePagination  `json:"pagination"`
+	// BaseURLOverride mirrors ServiceVisibility.BaseURLOverride, scoped to
+	// this version.
+	BaseURLOverride       *string                       `json:"base_url_override"`
 	EventExtractionPath   *string                       `json:"event_extraction_path"`
 	IncomingWebhookConfig *ServiceIncomingWebhookConfig `json:"incoming_webhook_config"`
 }
@@ -642,6 +659,7 @@ func (c *Client) ServiceVersions(serviceSlug string) ([]ServiceVersion, error) {
 				pagination { type request_param response_path }
 				event_extraction_path
 				incoming_webhook_config { auth_type auth_location auth_key_name signature_header verification_headers }
+				base_url_override
 			}
 		}
 	`

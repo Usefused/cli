@@ -17,7 +17,7 @@ services:
   <service-slug>:
     versions: ["v1"]
     public: false                 # Registry visibility of the service page itself -- owner-only, see below
-    execution_policy: {...}      # rate limits, retries, pagination, webhook verification -- see fused-config skill
+    execution_policy: {...}      # rate limits, retries, pagination, base_url override, webhook verification -- see fused-config skill
     runtime_config:
       webhooks: {...}
     connection_profiles: [...]   # raw, Engine-validated -- see fused-config skill
@@ -31,21 +31,25 @@ deprecations:
 
 `runtime_config` only has one field now: `webhooks` (this workspace's own
 inbound webhook registrations). Everything else that used to live here has
-moved out: `base_url`/`default_headers` are Registry/import-derived and no
-longer workspace-settable at all; `auth`/`connect` moved to
-`buckets.<bucket>.service_config.<slug>` (see `fused-bucket`) -- setting
-either directly under a service's `runtime_config` is rejected by
-validation; and `pagination`/`pagination_overrides` moved under
-`execution_policy.pagination` (one value per service/version, no more
-per-operation overrides map -- see `fused-config`'s
-`reference/execution-policies.md`).
+moved out: `auth`/`connect` moved to `buckets.<bucket>.service_config.<slug>`
+(see `fused-bucket`) -- setting either directly under a service's
+`runtime_config` is rejected by validation; `pagination`/`pagination_overrides`
+moved under `execution_policy.pagination` (one value per service/version, no
+more per-operation overrides map); and `base_url` moved under
+`execution_policy.base_url` -- an owner override for a wrong or missing
+spec-derived base URL, workspace-settable and, with `execution_policy.public:
+true`, publishable to every other consumer too (see `fused-config`'s
+`reference/execution-policies.md` for both). `default_headers` is the one
+field from the old `runtime_config` that genuinely has **no** owner-editable
+path today -- it's still Registry/import-derived only, not settable via
+`execution_policy` or anywhere else in workspace.yaml.
 
 `public` is Registry visibility of the service page itself (via
 `updateServicePublic`) -- `true` makes it visible to every Registry
 consumer, `false` keeps it private to this account. Only the owning account
 can set it; it's omitted entirely for a third-party service you don't own.
 Don't confuse this with `execution_policy.public`, a different owner-only
-toggle that publishes rate limit/retry/pagination/webhook-verification
+toggle that publishes rate limit/retry/pagination/base_url/webhook-verification
 settings to the Registry instead -- and unlike this `public`,
 `execution_policy` itself always has a real *local* effect in this
 workspace regardless of whether `execution_policy.public` is set (see

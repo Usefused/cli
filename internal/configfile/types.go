@@ -42,8 +42,9 @@ type WorkspaceBucket struct {
 }
 
 type BucketServiceConfig struct {
-	Auth    *AuthConfig    `yaml:"auth,omitempty" json:"auth,omitempty"`
-	Connect *ConnectConfig `yaml:"connect,omitempty" json:"connect,omitempty"`
+	Auth       *AuthConfig       `yaml:"auth,omitempty" json:"auth,omitempty"`
+	Connect    *ConnectConfig    `yaml:"connect,omitempty" json:"connect,omitempty"`
+	Injections []InjectionConfig `yaml:"injections,omitempty" json:"injections,omitempty"`
 }
 
 // WorkspaceService represents service versions enabled for a workspace.
@@ -93,6 +94,13 @@ type ExecutionPolicy struct {
 	// item 1) -- one value per service/version, sharing this same Public flag
 	// rather than having its own.
 	Pagination *PaginationConfig `yaml:"pagination,omitempty" json:"pagination,omitempty"`
+	// BaseURL overrides a wrong or missing spec-derived base_url for this
+	// service (or, under version_policies, this one version). Takes effect
+	// locally in this workspace on every apply regardless of Public; Public
+	// additionally publishes it to the Registry so every other consumer's
+	// effective base_url inherits it too, same two-tier behavior as
+	// RateLimit/Retry/Pagination above.
+	BaseURL *string `yaml:"base_url,omitempty" json:"base_url,omitempty"`
 	// EventExtractionPath and IncomingWebhookConfig are the provider's own
 	// outbound webhook verification recipe
 	// (plans/plan-service-config-restructure.md item 3) -- how *this service*
@@ -239,12 +247,23 @@ type MCPConfig = ArtifactConfig
 // ArtifactService represents the requested immutable provider version and
 // selected surface shared by SDK and MCP artifact declarations.
 type ArtifactService struct {
-	Version    string           `yaml:"version" json:"version"`
-	Operations []string         `yaml:"operations" json:"operations"`
-	Webhooks   []string         `yaml:"webhooks,omitempty" json:"webhooks,omitempty"`
-	SelectAll  bool             `yaml:"select_all,omitempty" json:"select_all,omitempty"`
-	Auth       *ArtifactAuth    `yaml:"auth,omitempty" json:"auth,omitempty"`
-	Connect    *ArtifactConnect `yaml:"connect,omitempty" json:"connect,omitempty"`
+	Version    string            `yaml:"version" json:"version"`
+	Operations []string          `yaml:"operations" json:"operations"`
+	Webhooks   []string          `yaml:"webhooks,omitempty" json:"webhooks,omitempty"`
+	SelectAll  bool              `yaml:"select_all,omitempty" json:"select_all,omitempty"`
+	Auth       *ArtifactAuth     `yaml:"auth,omitempty" json:"auth,omitempty"`
+	Connect    *ArtifactConnect  `yaml:"connect,omitempty" json:"connect,omitempty"`
+	Injections []InjectionConfig `yaml:"injections,omitempty" json:"injections,omitempty"`
+}
+
+// InjectionConfig injects a value into a specific location of a request at
+// runtime. The Value field supports dynamic interpolation via ${...} tags
+// (e.g., ${bucket.env.FROM_EMAIL}, ${bucket.secrets.API_KEY}).
+type InjectionConfig struct {
+	Value    string `yaml:"value" json:"value"`
+	Location string `yaml:"location" json:"location"`
+	Name     string `yaml:"name" json:"name"`
+	Mode     string `yaml:"mode,omitempty" json:"mode,omitempty"`
 }
 
 // ArtifactAuth selects a Registry-declared scheme; credential material stays

@@ -83,6 +83,12 @@ func mergeSDKServicesFromRemote(cfg *configfile.SDKConfig, artifactVersion strin
 			Operations: operations,
 		}
 		existing, existed := cfg.Services[key]
+		if existed {
+			// Sync must not wipe out locally-authored credential bindings
+			newEntry.Auth = existing.Auth
+			newEntry.Connect = existing.Connect
+			newEntry.Injections = existing.Injections
+		}
 		cfg.Services[key] = newEntry
 		switch {
 		case !existed:
