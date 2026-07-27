@@ -29,6 +29,11 @@ Read only the file(s) relevant to the task at hand.
 For the service allowlist, SDK/MCP selection, or bucket/secret commands
 themselves, read `fused-workspace`, `fused-sdk`, `fused-mcp`, or
 `fused-bucket` -- this skill only covers the config that nests inside them.
+For what happens to every *other* workspace (a separate Engine deployment --
+Engine is single-workspace-per-deployment, so "other workspace" always means
+"someone else's Engine," never a second workspace inside this one) when you
+publish one of these with `public: true` (or publish a connection profile
+baseline), read `fused-notifications`.
 
 ## Where credentials belong
 

@@ -84,7 +84,7 @@ services:
 			}
 			_, _ = w.Write([]byte(`{"plan_id":"plan-mcp","config_key":"mcp:github-agent:1.0.0","source_hash":"` + sourceHash + `","summary":{}}`))
 		case "/mcp-config/apply":
-			_, _ = w.Write([]byte(`{"status":"applied","plan_id":"plan-mcp","config_key":"mcp:github-agent:1.0.0","mcp_id":"runtime-1","mcp_url":"https://engine.example/mcp/runtime-1/sse","execution_token":"shown-once"}`))
+			_, _ = w.Write([]byte(`{"status":"applied","plan_id":"plan-mcp","config_key":"mcp:github-agent:1.0.0","artifact_id":"runtime-1","mcp_url":"https://engine.example/mcp/runtime-1/sse","execution_token":"shown-once"}`))
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
@@ -476,6 +476,58 @@ services:
 	}
 	if !strings.Contains(out, "registry_notifications_unavailable") {
 		t.Fatalf("expected notification warning, got %q", out)
+	}
+}
+
+// TestWorkspacePlanPrintsNotificationsFromPlanResponse is
+// TestSDKPlanPrintsNotificationsFromPlanResponse's workspace counterpart --
+// kind: workspace was previously the one plan response with no
+// "notifications" key at all (see plans/plan-service-changelog.md's
+// "## Phase 4"); ConfigPlanResponse now decodes it and planOneConfig's
+// KindWorkspace case wires it through exactly like KindSDK/KindMCP already
+// do, so printNotificationInbox needs no changes of its own to pick it up.
+func TestWorkspacePlanPrintsNotificationsFromPlanResponse(t *testing.T) {
+	dir := t.TempDir()
+	path := writeSprintConfig(t, dir, "workspace.yaml", `
+apiVersion: fused/v1
+kind: workspace
+services:
+  okta:
+    service_id: "00000000-0000-0000-0000-000000000001"
+    versions: ["2026-07-01"]
+`)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/workspace/config/plan" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{
+			"plan_id":"plan-workspace",
+			"config_key":"workspace",
+			"source_hash":"hash",
+			"base_generation":0,
+			"summary":{},
+			"notifications":{
+				"items":[{
+					"id":"engine:note-1",
+					"source":"engine",
+					"type":"registry_version_deprecated",
+					"severity":"non-breaking",
+					"status":"pending",
+					"service_id":"00000000-0000-0000-0000-000000000001",
+					"message":"Version 2026-07-01 was deprecated"
+				}],
+				"warnings":[]
+			}
+		}`))
+	}))
+	defer server.Close()
+
+	out := runCommandInDirOutput(t, dir, server.URL, []string{"workspace", "plan", "-f", path})
+	if !strings.Contains(out, "Workspace notifications for workspace") {
+		t.Fatalf("expected notification heading, got %q", out)
+	}
+	if !strings.Contains(out, "Version 2026-07-01 was deprecated") {
+		t.Fatalf("expected the registry_version_deprecated notification, got %q", out)
 	}
 }
 

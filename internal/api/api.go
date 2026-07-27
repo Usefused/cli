@@ -482,10 +482,10 @@ func (c *Client) RediscoverConnectionResources(connectionID string) ([]Connectio
 
 // StartConnectSession calls the Engine's bucket-scoped connect route so CLI
 // onboarding and scope reduction use the same policy as generated SDKs.
-func (c *Client) StartConnectSession(bucketID, serviceID, endUserRef, createdBySDKID string, resourceInput map[string]string, scopes []string) (*ConnectSessionStartResponse, error) {
+func (c *Client) StartConnectSession(bucketID, serviceID, endUserRef, createdByArtifactID string, resourceInput map[string]string, scopes []string) (*ConnectSessionStartResponse, error) {
 	query := `
-		mutation StartConnectSession($bucketId: String!, $serviceId: String!, $endUserRef: String!, $createdBySdkId: String, $resourceInput: EngineJSON, $scopes: [String!]) {
-			startConnectSession(bucket_id: $bucketId, service_id: $serviceId, end_user_ref: $endUserRef, created_by_sdk_id: $createdBySdkId, resource_input: $resourceInput, scopes: $scopes) {
+		mutation StartConnectSession($bucketId: String!, $serviceId: String!, $endUserRef: String!, $createdByArtifactId: String, $resourceInput: EngineJSON, $scopes: [String!]) {
+			startConnectSession(bucket_id: $bucketId, service_id: $serviceId, end_user_ref: $endUserRef, created_by_artifact_id: $createdByArtifactId, resource_input: $resourceInput, scopes: $scopes) {
 				authorize_url
 				expires_at
 			}
@@ -496,8 +496,8 @@ func (c *Client) StartConnectSession(bucketID, serviceID, endUserRef, createdByS
 		"serviceId":  serviceID,
 		"endUserRef": endUserRef,
 	}
-	if strings.TrimSpace(createdBySDKID) != "" {
-		vars["createdBySdkId"] = createdBySDKID
+	if strings.TrimSpace(createdByArtifactID) != "" {
+		vars["createdByArtifactId"] = createdByArtifactID
 	}
 	if len(resourceInput) > 0 {
 		vars["resourceInput"] = resourceInput
@@ -991,7 +991,7 @@ type GetSDKResponse struct {
 	SDK SDKDetails `json:"sdk"`
 }
 
-func (c *Client) GetSDK(sdkID string) (*SDKDetails, error) {
+func (c *Client) GetSDK(artifactID string) (*SDKDetails, error) {
 	query := `
 		query GetSDK($id: String!) {
 			sdk(id: $id) {
@@ -1000,7 +1000,7 @@ func (c *Client) GetSDK(sdkID string) (*SDKDetails, error) {
 		}
 	`
 	var resp GetSDKResponse
-	err := c.GraphQL(query, map[string]interface{}{"id": sdkID}, &resp)
+	err := c.GraphQL(query, map[string]interface{}{"id": artifactID}, &resp)
 	if err != nil {
 		return nil, err
 	}
@@ -1141,10 +1141,10 @@ func (c *Client) GetSDKSelectionsByNameVersion(name string, version string) (*SD
 // SDK -- whether select_all or an explicit endpoint/webhook ID list -- into
 // the operation names `sdk sync` writes to sdk.yaml. select_all has no local
 // yaml representation, so it must always be enumerated explicitly.
-func (c *Client) GetSDKSelectionResourceNames(sdkID, serviceID string) ([]string, error) {
+func (c *Client) GetSDKSelectionResourceNames(artifactID, serviceID string) ([]string, error) {
 	query := `
-		query GetSDKSelectionResourceNames($sdkId: String!, $serviceId: String!) {
-			sdkSelectionResources(sdkId: $sdkId, serviceId: $serviceId) {
+		query GetSDKSelectionResourceNames($artifactId: String!, $serviceId: String!) {
+			sdkSelectionResources(artifactId: $artifactId, serviceId: $serviceId) {
 				name
 			}
 		}
@@ -1154,7 +1154,7 @@ func (c *Client) GetSDKSelectionResourceNames(sdkID, serviceID string) ([]string
 			Name string `json:"name"`
 		} `json:"sdkSelectionResources"`
 	}
-	if err := c.GraphQL(query, map[string]interface{}{"sdkId": sdkID, "serviceId": serviceID}, &resp); err != nil {
+	if err := c.GraphQL(query, map[string]interface{}{"artifactId": artifactID, "serviceId": serviceID}, &resp); err != nil {
 		return nil, err
 	}
 	names := make([]string, 0, len(resp.Resources))
@@ -1164,8 +1164,8 @@ func (c *Client) GetSDKSelectionResourceNames(sdkID, serviceID string) ([]string
 	return names, nil
 }
 
-func (c *Client) DownloadSDK(sdkID string) ([]byte, error) {
-	req, err := http.NewRequest("GET", c.BaseURL+"/sdks/"+sdkID+"/download", nil)
+func (c *Client) DownloadSDK(artifactID string) ([]byte, error) {
+	req, err := http.NewRequest("GET", c.BaseURL+"/sdks/"+artifactID+"/download", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1220,6 +1220,12 @@ type ConfigPlanResponse struct {
 	ConfigKey  string                 `json:"config_key"`
 	SourceHash string                 `json:"source_hash"`
 	Summary    map[string]interface{} `json:"summary"`
+	// Notifications was previously absent from this struct -- kind: workspace
+	// was the one plan response missing it entirely, unlike SDKConfigPlanResponse
+	// (sdk/mcp) above. WorkspaceConfigPlanHandler now returns the same
+	// "notifications" key, filtered to the services/versions this workspace
+	// config declares (see plans/plan-service-changelog.md's "## Phase 4").
+	Notifications NotificationInbox `json:"notifications"`
 }
 
 type ConfigApplyResponse struct {
@@ -1355,7 +1361,7 @@ func (c *Client) PlanWorkspaceConfig(sourceHash, configKey string, config json.R
 type SDKConfigApplyResponse struct {
 	Status string `json:"status"`
 	PlanID string `json:"plan_id"`
-	SDKID  string `json:"sdk_id"`
+	ArtifactID  string `json:"artifact_id"`
 	JobID  string `json:"job_id"`
 }
 
@@ -1363,7 +1369,7 @@ type MCPConfigApplyResponse struct {
 	Status         string `json:"status"`
 	PlanID         string `json:"plan_id"`
 	ConfigKey      string `json:"config_key"`
-	MCPID          string `json:"mcp_id"`
+	MCPID          string `json:"artifact_id"`
 	MCPURL         string `json:"mcp_url"`
 	ExecutionToken string `json:"execution_token"`
 }
@@ -1750,8 +1756,8 @@ func (c *Client) DownloadGeneratedSDK(configKey string) ([]byte, error) {
 	return io.ReadAll(resp.Body)
 }
 
-func (c *Client) DeactivateSDK(sdkID string) error {
-	req, err := http.NewRequest(http.MethodPost, c.BaseURL+"/sdk-config/"+sdkID+"/deactivate", nil)
+func (c *Client) DeactivateSDK(artifactID string) error {
+	req, err := http.NewRequest(http.MethodPost, c.BaseURL+"/sdk-config/"+artifactID+"/deactivate", nil)
 	if err != nil {
 		return err
 	}

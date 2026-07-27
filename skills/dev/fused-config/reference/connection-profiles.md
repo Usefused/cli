@@ -152,4 +152,7 @@ fields from a file is non-destructive; detaching is always explicit via
 
 Registry-level baseline publish: `fused-cli connection-profile set
 <service-ref> --version <v> --auth-type <type> --file <path>` (owner/curator
-only — see `fused-bucket`).
+only — see `fused-bucket`). Every other workspace (a separate Engine
+deployment) still on the `baseline` layer for that service/version/auth_type
+gets a `registry_connection_profile_changed` notification the next time
+Engine's background poller checks — see `fused-notifications`.

@@ -93,7 +93,10 @@ func planOneConfig(client *api.Client, cfg *configfile.ParsedConfig, engineURL s
 		if err != nil {
 			return plannedConfig{}, fmt.Errorf("failed to plan workspace %s: %w", cfg.ConfigKey, err)
 		}
-		return plannedConfig{receipt: newPlanReceipt(resp.PlanID, cfg.ConfigKey, cfg.SourceHash, engineURL)}, nil
+		return plannedConfig{
+			receipt:       newPlanReceipt(resp.PlanID, cfg.ConfigKey, cfg.SourceHash, engineURL),
+			notifications: resp.Notifications,
+		}, nil
 	case configfile.KindSDK:
 		raw, _ := json.Marshal(cfg.SDK)
 		resp, err := client.PlanSDKConfig(cfg.SourceHash, cfg.ConfigKey, raw)
@@ -321,12 +324,12 @@ func applyOneConfig(client *api.Client, cfg *configfile.ParsedConfig, receipt pl
 		if err != nil {
 			return fmt.Errorf("failed to apply SDK %s: %w", cfg.SDK.Name, err)
 		}
-		fmt.Printf("Successfully applied SDK %s (SDK ID: %s)\n", cfg.SDK.Name, resp.SDKID)
+		fmt.Printf("Successfully applied SDK %s (Artifact ID: %s)\n", cfg.SDK.Name, resp.ArtifactID)
 		if download {
 			if err := waitForSDKGeneration(client, resp.JobID); err != nil {
 				return fmt.Errorf("failed to generate SDK %s: %w", cfg.SDK.Name, err)
 			}
-			return downloadSDKByID(client, resp.SDKID, cfg.SDK.Name, ".")
+			return downloadSDKByID(client, resp.ArtifactID, cfg.SDK.Name, ".")
 		}
 	case configfile.KindMCP:
 		resp, err := client.ApplyMCPConfig(receipt.PlanID, receipt.SourceHash)
@@ -503,11 +506,11 @@ func handleSDKGenerationStreamError(ch chan error, err error, ok bool) (chan err
 	return ch, err
 }
 
-func downloadSDKByID(client *api.Client, sdkID, sdkName, outDir string) error {
-	if strings.TrimSpace(sdkID) == "" {
+func downloadSDKByID(client *api.Client, artifactID, sdkName, outDir string) error {
+	if strings.TrimSpace(artifactID) == "" {
 		return fmt.Errorf("sdk ID is required for download")
 	}
-	data, err := client.DownloadSDK(sdkID)
+	data, err := client.DownloadSDK(artifactID)
 	if err != nil {
 		return fmt.Errorf("failed to download sdk:%s: %w", sdkName, err)
 	}

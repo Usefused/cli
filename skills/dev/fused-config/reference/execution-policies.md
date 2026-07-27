@@ -90,6 +90,12 @@ visibility of the service page itself, set via `updateServicePublic` -- see
 `fused-workspace`) even though both are named `public` and both only work
 for the owning account.
 
+Every other workspace (a separate Engine deployment) that inherits this
+published value (has no local override at that service/version) gets a
+`registry_execution_policy_changed` notification the next time Engine's
+background poller checks -- see `fused-notifications` for what that means
+and where it shows up.
+
 So a non-owner (or an owner who just hasn't published yet) declaring
 `execution_policy` without `public` is not a no-op -- it's the normal case
 for "enforce this locally, don't affect anyone else."

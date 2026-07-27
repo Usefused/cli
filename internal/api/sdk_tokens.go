@@ -12,7 +12,7 @@ import (
 
 type SDKTokenGenerateResponse struct {
 	ID        string    `json:"id"`
-	SDKID     string    `json:"sdk_id"`
+	ArtifactID     string    `json:"artifact_id"`
 	Name      string    `json:"name"`
 	Token     string    `json:"token,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
@@ -20,7 +20,7 @@ type SDKTokenGenerateResponse struct {
 
 type SDKTokenResponse struct {
 	ID         string     `json:"id"`
-	SDKID      string     `json:"sdk_id"`
+	ArtifactID      string     `json:"artifact_id"`
 	Name       string     `json:"name"`
 	CreatedAt  time.Time  `json:"created_at"`
 	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
@@ -29,7 +29,7 @@ type SDKTokenResponse struct {
 func (t *SDKTokenResponse) UnmarshalJSON(data []byte) error {
 	type rawSDKTokenResponse struct {
 		ID         string `json:"id"`
-		SDKID      string `json:"sdk_id"`
+		ArtifactID      string `json:"artifact_id"`
 		Name       string `json:"name"`
 		CreatedAt  string `json:"created_at"`
 		LastUsedAt string `json:"last_used_at"`
@@ -48,7 +48,7 @@ func (t *SDKTokenResponse) UnmarshalJSON(data []byte) error {
 	}
 	*t = SDKTokenResponse{
 		ID:         raw.ID,
-		SDKID:      raw.SDKID,
+		ArtifactID:      raw.ArtifactID,
 		Name:       raw.Name,
 		CreatedAt:  createdAt,
 		LastUsedAt: lastUsedAt,
@@ -56,7 +56,7 @@ func (t *SDKTokenResponse) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func (c *Client) GenerateSDKToken(sdkID, name string) (*SDKTokenGenerateResponse, error) {
+func (c *Client) GenerateSDKToken(artifactID, name string) (*SDKTokenGenerateResponse, error) {
 	reqBody := map[string]interface{}{
 		"name": name,
 	}
@@ -70,7 +70,7 @@ func (c *Client) GenerateSDKToken(sdkID, name string) (*SDKTokenGenerateResponse
 		return nil, err
 	}
 	q := u.Query()
-	q.Set("sdk_id", sdkID)
+	q.Set("artifact_id", artifactID)
 	u.RawQuery = q.Encode()
 
 	req, err := http.NewRequest("POST", u.String(), bytes.NewBuffer(body))
@@ -100,10 +100,10 @@ func (c *Client) GenerateSDKToken(sdkID, name string) (*SDKTokenGenerateResponse
 	return &out, nil
 }
 
-func (c *Client) ListSDKTokens(sdkID string) ([]SDKTokenResponse, error) {
+func (c *Client) ListSDKTokens(artifactID string) ([]SDKTokenResponse, error) {
 	query := `
-		query SDKTokens($sdkId: String!) {
-			sdkTokens(sdk_id: $sdkId) { id sdk_id name created_at last_used_at }
+		query SDKTokens($artifactId: String!) {
+			sdkTokens(artifact_id: $artifactId) { id artifact_id name created_at last_used_at }
 		}
 	`
 	var resp struct {
@@ -111,17 +111,17 @@ func (c *Client) ListSDKTokens(sdkID string) ([]SDKTokenResponse, error) {
 	}
 	// Why: token listing is read-only metadata, while token generation and
 	// revocation stay on REST because they mutate credential state.
-	err := c.EngineGraphQL(query, map[string]interface{}{"sdkId": sdkID}, &resp)
+	err := c.EngineGraphQL(query, map[string]interface{}{"artifactId": artifactID}, &resp)
 	return resp.Tokens, err
 }
 
-func (c *Client) RevokeSDKToken(sdkID, name string) error {
+func (c *Client) RevokeSDKToken(artifactID, name string) error {
 	u, err := url.Parse(c.BaseURL + "/workspace/sdk-tokens")
 	if err != nil {
 		return err
 	}
 	q := u.Query()
-	q.Set("sdk_id", sdkID)
+	q.Set("artifact_id", artifactID)
 	q.Set("name", name)
 	u.RawQuery = q.Encode()
 

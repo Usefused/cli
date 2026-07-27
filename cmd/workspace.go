@@ -556,7 +556,7 @@ func runWorkspaceServiceWebhooks(cmd *cobra.Command, serviceSlug string) error {
 
 var workspaceServiceConnectBucket string
 var workspaceServiceConnectUserRef string
-var workspaceServiceConnectSDKID string
+var workspaceServiceConnectArtifactID string
 var workspaceServiceConnectResourceInput []string
 var workspaceServiceConnectScopes []string
 
@@ -588,7 +588,7 @@ func runWorkspaceServiceConnect(cmd *cobra.Command, serviceSlug string) error {
 	if err != nil {
 		return err
 	}
-	session, err := client.StartConnectSession(bucketID, serviceID, workspaceServiceConnectUserRef, workspaceServiceConnectSDKID, resourceInput, workspaceServiceConnectScopes)
+	session, err := client.StartConnectSession(bucketID, serviceID, workspaceServiceConnectUserRef, workspaceServiceConnectArtifactID, resourceInput, workspaceServiceConnectScopes)
 	if err != nil {
 		return err
 	}
@@ -848,7 +848,7 @@ func init() {
 
 	workspaceServiceCmd.Flags().StringVar(&workspaceServiceConnectBucket, "bucket", "default", "Workspace credential bucket name or ID")
 	workspaceServiceCmd.Flags().StringVar(&workspaceServiceConnectUserRef, "user-ref", "", "Stable user reference to attach to the connected provider account")
-	workspaceServiceCmd.Flags().StringVar(&workspaceServiceConnectSDKID, "sdk-id", "", "Optional SDK UUID for audit attribution")
+	workspaceServiceCmd.Flags().StringVar(&workspaceServiceConnectArtifactID, "sdk-id", "", "Optional SDK UUID for audit attribution")
 	workspaceServiceCmd.Flags().StringSliceVar(&workspaceServiceConnectResourceInput, "resource-input", nil, "Tenant input as key=value; repeat for multiple declared fields")
 	workspaceServiceCmd.Flags().StringArrayVar(&workspaceServiceConnectScopes, "scope", nil, "OAuth/OIDC scope to request; repeat to reduce provider consent")
 

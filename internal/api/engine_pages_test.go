@@ -142,7 +142,7 @@ func TestWorkspaceWebhooksAndSDKTokensUseEngineGraphQL(t *testing.T) {
 		case strings.Contains(body.Query, "workspaceWebhooks"):
 			w.Write([]byte(`{"data":{"workspaceWebhooks":[{"label":"repo","slug":"slugaaaaaaaaaaaaaaaaa","created_at":"2026-07-21T00:00:00Z"}]}}`))
 		case strings.Contains(body.Query, "sdkTokens"):
-			w.Write([]byte(`{"data":{"sdkTokens":[{"id":"tok-1","sdk_id":"sdk-1","name":"default","created_at":"2026-07-21T00:00:00Z","last_used_at":""}]}}`))
+			w.Write([]byte(`{"data":{"sdkTokens":[{"id":"tok-1","artifact_id":"sdk-1","name":"default","created_at":"2026-07-21T00:00:00Z","last_used_at":""}]}}`))
 		default:
 			t.Fatalf("unexpected query: %s", body.Query)
 		}

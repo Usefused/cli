@@ -71,7 +71,7 @@ type AuthConnectionResponse struct {
 	LastFailureTraceID string   `json:"last_failure_trace_id"`
 	CreatedAt          string   `json:"created_at"`
 	UpdatedAt          string   `json:"updated_at"`
-	CreatedBySDKID     string   `json:"created_by_sdk_id"`
+	CreatedByArtifactID     string   `json:"created_by_artifact_id"`
 }
 
 type AuthConnectionPageResponse struct {
@@ -171,7 +171,7 @@ func (c *Client) ListAuthConnectionPage(bucketID string, serviceID string, endUs
 		query AuthConnectionPage($bucketId: String!, $serviceId: String, $endUserRef: String, $limit: Int!, $offset: Int!) {
 			authConnectionPage(bucket_id: $bucketId, service_id: $serviceId, end_user_ref: $endUserRef, limit: $limit, offset: $offset) {
 				total
-				items { id bucket_id service_id end_user_ref auth_type token_type scopes expires_at last_used_at refresh_state last_failure_code last_failure_at last_failure_trace_id created_at updated_at created_by_sdk_id }
+				items { id bucket_id service_id end_user_ref auth_type token_type scopes expires_at last_used_at refresh_state last_failure_code last_failure_at last_failure_trace_id created_at updated_at created_by_artifact_id }
 			}
 		}
 	`
@@ -217,16 +217,16 @@ func (c *Client) ListBucketSDKPage(bucketID string, opts PageOptions) (*BucketSD
 	return &resp.Page, err
 }
 
-func (c *Client) ListSDKBuckets(sdkID string) ([]BucketResponse, error) {
+func (c *Client) ListSDKBuckets(artifactID string) ([]BucketResponse, error) {
 	query := `
-		query SDKBuckets($sdkId: String!) {
-			sdkBuckets(sdk_id: $sdkId) { id workspace_id name is_default created_at updated_at }
+		query SDKBuckets($artifactId: String!) {
+			sdkBuckets(artifact_id: $artifactId) { id workspace_id name is_default created_at updated_at }
 		}
 	`
 	var resp struct {
 		Buckets []BucketResponse `json:"sdkBuckets"`
 	}
-	err := c.EngineGraphQL(query, map[string]interface{}{"sdkId": sdkID}, &resp)
+	err := c.EngineGraphQL(query, map[string]interface{}{"artifactId": artifactID}, &resp)
 	return resp.Buckets, err
 }
 

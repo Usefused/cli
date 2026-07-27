@@ -77,6 +77,13 @@ There's no automatic date-triggered cutover from `effective_at` alone --
 treat it as the value you'll pass to the eventual `remove --force` once
 you've actually confirmed nothing still needs the service.
 
+Overriding the blocker with `--force`/`--version-force` also writes a
+`workspace_service_removed`/`workspace_version_removed` notification -- a
+record that you made that decision, not a new warning. See
+`fused-notifications` for what that (and the separate, proactive
+`registry_*` notifications a service you depend on can trigger just by
+being changed upstream) actually means and where you see it.
+
 ## Commands
 
 This list may be behind the CLI's actual flags/subcommands -- run

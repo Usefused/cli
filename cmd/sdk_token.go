@@ -50,29 +50,29 @@ func runSDKTokenAction(cmd *cobra.Command, args []string) error {
 		return cmd.Help()
 	}
 
-	sdkID := args[0]
+	artifactID := args[0]
 	action := args[1]
 
 	switch action {
 	case "generate":
 		name := args[2]
-		return runSDKTokenGenerate(cmd, sdkID, name)
+		return runSDKTokenGenerate(cmd, artifactID, name)
 	case "list":
-		return runSDKTokenList(cmd, sdkID)
+		return runSDKTokenList(cmd, artifactID)
 	case "revoke":
 		name := args[2]
-		return runSDKTokenRevoke(cmd, sdkID, name)
+		return runSDKTokenRevoke(cmd, artifactID, name)
 	default:
 		return fmt.Errorf("unknown action %s", action)
 	}
 }
 
-func runSDKTokenGenerate(cmd *cobra.Command, sdkID, name string) error {
+func runSDKTokenGenerate(cmd *cobra.Command, artifactID, name string) error {
 	client, err := getAPIClient()
 	if err != nil {
 		return err
 	}
-	res, err := client.GenerateSDKToken(sdkID, name)
+	res, err := client.GenerateSDKToken(artifactID, name)
 	if err != nil {
 		return err
 	}
@@ -81,12 +81,12 @@ func runSDKTokenGenerate(cmd *cobra.Command, sdkID, name string) error {
 	return nil
 }
 
-func runSDKTokenList(cmd *cobra.Command, sdkID string) error {
+func runSDKTokenList(cmd *cobra.Command, artifactID string) error {
 	client, err := getAPIClient()
 	if err != nil {
 		return err
 	}
-	tokens, err := client.ListSDKTokens(sdkID)
+	tokens, err := client.ListSDKTokens(artifactID)
 	if err != nil {
 		return err
 	}
@@ -96,12 +96,12 @@ func runSDKTokenList(cmd *cobra.Command, sdkID string) error {
 	return nil
 }
 
-func runSDKTokenRevoke(cmd *cobra.Command, sdkID, name string) error {
+func runSDKTokenRevoke(cmd *cobra.Command, artifactID, name string) error {
 	client, err := getAPIClient()
 	if err != nil {
 		return err
 	}
-	err = client.RevokeSDKToken(sdkID, name)
+	err = client.RevokeSDKToken(artifactID, name)
 	if err != nil {
 		return err
 	}
