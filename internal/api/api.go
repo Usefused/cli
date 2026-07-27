@@ -391,6 +391,10 @@ type WorkspaceWebhook struct {
 	Label     string `json:"label"`
 	Slug      string `json:"slug"`
 	CreatedAt string `json:"created_at"`
+	// Signature is "set" or "none" -- the server never returns the secret_ref
+	// itself here, only whether one is configured (see webhookSignatureStatus,
+	// backend/internal/engine/api/connect_graphql.go).
+	Signature string `json:"signature"`
 }
 
 // ListWorkspaceWebhooks looks up every webhook registration for one workspace
@@ -399,7 +403,7 @@ type WorkspaceWebhook struct {
 func (c *Client) ListWorkspaceWebhooks(serviceID string) ([]WorkspaceWebhook, error) {
 	query := `
 		query WorkspaceWebhooks($serviceId: String!) {
-			workspaceWebhooks(service_id: $serviceId) { label slug created_at }
+			workspaceWebhooks(service_id: $serviceId) { label slug created_at signature }
 		}
 	`
 	var resp struct {
@@ -610,6 +614,40 @@ func (s *ServiceInfo) DisplaySlug() string {
 		return s.Slug
 	}
 	return "@" + s.Provider.Handle + "/" + s.Slug
+}
+
+func (c *Client) GetServiceLatestVersion(serviceSlug string) (string, error) {
+	query := `
+		query GetServiceLatestVersion($id: String!, $provider: String) {
+			service(id: $id, provider: $provider) {
+				service_versions(limit: 1) {
+					name
+				}
+			}
+		}
+	`
+	var resp struct {
+		Service *struct {
+			ServiceVersions []struct {
+				Name string `json:"name"`
+			} `json:"service_versions"`
+		} `json:"service"`
+	}
+	slug, provider := splitProviderQualifiedServiceRef(serviceSlug)
+	vars := map[string]interface{}{
+		"id":       slug,
+		"provider": provider,
+	}
+	if err := c.GraphQL(query, vars, &resp); err != nil {
+		return "", err
+	}
+	if resp.Service == nil {
+		return "", fmt.Errorf("service not found: %s", serviceSlug)
+	}
+	if len(resp.Service.ServiceVersions) == 0 {
+		return "", fmt.Errorf("no versions found for service %s", serviceSlug)
+	}
+	return resp.Service.ServiceVersions[0].Name, nil
 }
 
 func (c *Client) GetServiceInfo(serviceSlug string) (*ServiceInfo, error) {
@@ -1226,6 +1264,16 @@ func (c *Client) PlanMCPConfig(sourceHash, configKey string, config json.RawMess
 	return c.planArtifactConfig("mcp", sourceHash, configKey, config)
 }
 
+// PlanWebhookConfig plans a kind: webhook artifact through the same shared
+// route pattern SDK/MCP use ("/webhook-config/plan"). The response has no
+// notifications field (only workspace/SDK/MCP applies can affect other
+// artifacts) -- SDKConfigPlanResponse.Notifications just decodes to its zero
+// value, same as reusing this helper already does for any response shape
+// that omits a field the shared struct declares.
+func (c *Client) PlanWebhookConfig(sourceHash, configKey string, config json.RawMessage) (*SDKConfigPlanResponse, error) {
+	return c.planArtifactConfig("webhook", sourceHash, configKey, config)
+}
+
 // planArtifactConfig keeps SDK and MCP command behavior identical while the
 // Engine routes each kind to its distinct executor.
 func (c *Client) planArtifactConfig(kind, sourceHash, configKey string, config json.RawMessage) (*SDKConfigPlanResponse, error) {
@@ -1320,6 +1368,23 @@ type MCPConfigApplyResponse struct {
 	ExecutionToken string `json:"execution_token"`
 }
 
+// WebhookConfigApplyResponse mirrors webhookConfigApplyResponse
+// (backend/internal/engine/api/webhook_config_handlers.go) -- kind: webhook
+// produces no runtime/package/token, just the set of registrations it
+// reconciled.
+type WebhookConfigApplyResponse struct {
+	Status        string                      `json:"status"`
+	PlanID        string                      `json:"plan_id"`
+	ConfigKey     string                      `json:"config_key"`
+	Name          string                      `json:"name"`
+	Registrations []WebhookConfigRegistration `json:"registrations"`
+}
+
+type WebhookConfigRegistration struct {
+	Service string `json:"service"`
+	Slug    string `json:"slug"`
+}
+
 func (c *Client) ApplySDKConfig(planID, sourceHash string) (*SDKConfigApplyResponse, error) {
 	reqBody := map[string]interface{}{
 		"plan_id":     planID,
@@ -1383,6 +1448,39 @@ func (c *Client) ApplyMCPConfig(planID, sourceHash string) (*MCPConfigApplyRespo
 		return nil, fmt.Errorf("apply mcp config failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(respBody))
 	}
 	var out MCPConfigApplyResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ApplyWebhookConfig reconciles a kind: webhook artifact's registrations.
+// Unlike SDK/MCP there is no generated package or token -- the response is
+// just the set of (service, slug) rows the Engine just wrote.
+func (c *Client) ApplyWebhookConfig(planID, sourceHash string) (*WebhookConfigApplyResponse, error) {
+	reqBody := map[string]interface{}{"plan_id": planID, "source_hash": sourceHash}
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequest("POST", c.BaseURL+"/webhook-config/apply", bytes.NewBuffer(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if c.APIKey != "" {
+		req.Header.Set("x-api-key", c.APIKey)
+	}
+	resp, err := c.doRequest(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("apply webhook config failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(respBody))
+	}
+	var out WebhookConfigApplyResponse
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return nil, err
 	}

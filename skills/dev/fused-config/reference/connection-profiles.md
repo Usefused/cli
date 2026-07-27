@@ -8,8 +8,8 @@ document (see `reference/openapi-postman.md`).
 
 ## Auth vs. connect vs. profile
 
-Three related but distinct things, all under a service's `runtime_config`
-(or a bucket's `service_config.<slug>`):
+Three related but distinct things, all under a bucket's
+`service_config.<slug>` (see `fused-bucket`):
 
 - `auth` (`AuthConfig`) — a static credential the Engine attaches to every
   call for this service. Which fields it needs depends on `auth_type`:
@@ -28,12 +28,16 @@ Three related but distinct things, all under a service's `runtime_config`
   app registration (`client_id`/`client_secret`) plus `redirect_uri`. Only
   `auth_type: oauth` or `oidc` are valid here — `basic`/`api_key`/`bearer`/
   `mtls` credentials don't have a browser consent step, so they only ever go
-  through `auth` above. Unlike `auth`, there's no bucket-secret path for
-  `client_id`/`client_secret` today — `client_id_env`/`client_secret_env`
-  (or a bare `$VAR` value) resolved from a local environment variable at
-  apply time is the only way to keep these out of a committed file. Start an
-  actual user session with `fused-cli workspace service <slug> connect
-  --user-ref <ref>` (see `fused-bucket`).
+  through `auth` above. `client_secret` must be `${bucket.secret.<key>}` —
+  set the value once as a bucket secret (`fused-cli secret <service-slug>
+  set` -- see `fused-bucket`) and reference it here; Engine resolves it
+  server-side at apply time against this connect config's own bucket, the
+  same as `auth` credentials, so nothing needs to be re-supplied on every
+  apply. The named-bucket form (`${bucket.<name>.secret.<key>}`) is rejected
+  here -- a connect config already belongs to one specific bucket, so naming
+  a different one would only ever mean reading a secret out of the wrong
+  bucket. Start an actual user session with `fused-cli workspace service
+  <slug> connect --user-ref <ref>` (see `fused-bucket`).
 - `profile` — the fuller `resource_discovery`/`resource_input`/`metadata`/
   `bindings` rule set below, for OAuth/OIDC services where one token can
   reach several sites/shops/portals/accounts.
@@ -98,8 +102,11 @@ value: "2026-01"                            # literal
 value: "${resource.provider_resource_id}"   # the selected resource's Fused ID
 value: "${resource.base_url}"               # its routing URL
 value: "${resource.metadata.portal_id}"     # a declared metadata key
-value: $SHOPIFY_API_VERSION                 # local env handoff -- works, but prefer a bucket value/secret (see fused-bucket) for anything committed to source control
 ```
+
+For a literal sourced dynamically rather than hardcoded, set it as a bucket
+value (`fused-cli value ... set` -- see `fused-bucket`) instead of writing it
+inline here.
 
 `prefix-${resource.base_url}` is rejected — build URLs with
 `base_url_template` instead. `location` is one of `base_url`, `header`,

@@ -1,6 +1,6 @@
 ---
 name: fused-workspace
-description: "Use when the user wants to configure a Fused workspace's service allowlist using fused-cli -- enabling/disabling services or versions, editing runtime_config (webhooks -- this workspace's own inbound webhook registrations, the only field left here), or scheduling a deprecation. Trigger on 'workspace config', 'enable a service', 'fused-cli workspace', 'deprecate a service version', or 'kind: workspace' files. For rate limits/retries/pagination/outbound-webhook-verification (execution_policy) or auth/connect/dynamic-binding config, read fused-config instead; for bucket credentials read fused-bucket."
+description: "Use when the user wants to configure a Fused workspace's service allowlist using fused-cli -- enabling/disabling services or versions, listing a service's existing webhook registrations (read-only), or scheduling a deprecation. Trigger on 'workspace config', 'enable a service', 'fused-cli workspace', 'deprecate a service version', or 'kind: workspace' files. For registering a new inbound webhook read fused-webhook instead; for rate limits/retries/pagination/outbound-webhook-verification (execution_policy) or auth/connect/dynamic-binding config, read fused-config instead; for bucket credentials read fused-bucket."
 ---
 
 # Workspace config
@@ -18,8 +18,6 @@ services:
     versions: ["v1"]
     public: false                 # Registry visibility of the service page itself -- owner-only, see below
     execution_policy: {...}      # rate limits, retries, pagination, base_url override, webhook verification -- see fused-config skill
-    runtime_config:
-      webhooks: {...}
     connection_profiles: [...]   # raw, Engine-validated -- see fused-config skill
 buckets:
   <bucket-name>: {...}           # see fused-bucket skill
@@ -29,20 +27,25 @@ deprecations:
     reason: "..."
 ```
 
-`runtime_config` only has one field now: `webhooks` (this workspace's own
-inbound webhook registrations). Everything else that used to live here has
-moved out: `auth`/`connect` moved to `buckets.<bucket>.service_config.<slug>`
-(see `fused-bucket`) -- setting either directly under a service's
-`runtime_config` is rejected by validation; `pagination`/`pagination_overrides`
-moved under `execution_policy.pagination` (one value per service/version, no
-more per-operation overrides map); and `base_url` moved under
-`execution_policy.base_url` -- an owner override for a wrong or missing
-spec-derived base URL, workspace-settable and, with `execution_policy.public:
-true`, publishable to every other consumer too (see `fused-config`'s
-`reference/execution-policies.md` for both). `default_headers` is the one
-field from the old `runtime_config` that genuinely has **no** owner-editable
-path today -- it's still Registry/import-derived only, not settable via
-`execution_policy` or anywhere else in workspace.yaml.
+There is no `runtime_config` field on a workspace service anymore -- it was
+removed with no backward compatibility once `kind: webhook` shipped (a
+`workspace.yaml` still containing `runtime_config: {...}` now fails to parse
+outright with a "field not found" error; that's the intended hard rejection,
+not a bug). Everything that used to live there moved out: webhook
+registration is now its own `kind: webhook` config file, spanning one or more
+services and attached to whichever SDK/MCP artifact should receive delivery
+(see `fused-webhook`); `auth`/`connect` moved to
+`buckets.<bucket>.service_config.<slug>` (see `fused-bucket`);
+`pagination`/`pagination_overrides` moved under `execution_policy.pagination`
+(one value per service/version, no more per-operation overrides map); and
+`base_url` moved under `execution_policy.base_url` -- an owner override for a
+wrong or missing spec-derived base URL, workspace-settable and, with
+`execution_policy.public: true`, publishable to every other consumer too
+(see `fused-config`'s `reference/execution-policies.md` for both).
+`default_headers` is the one field from the old `runtime_config` that
+genuinely has **no** owner-editable path today -- it's still
+Registry/import-derived only, not settable via `execution_policy` or
+anywhere else in workspace.yaml.
 
 `public` is Registry visibility of the service page itself (via
 `updateServicePublic`) -- `true` makes it visible to every Registry
@@ -86,11 +89,11 @@ fused-cli workspace apply
 fused-cli workspace services list
 fused-cli workspace service <slug> versions
 fused-cli workspace service <slug> operations
-fused-cli workspace service <slug> webhooks
+fused-cli workspace service <slug> webhooks   # read-only: lists this service's kind: webhook registrations, see fused-webhook
 fused-cli workspace service <slug> add --version <v>
 fused-cli workspace service <slug> remove [--force]
 fused-cli workspace service <slug> deprecate --effective-at <date> --reason "..."
-fused-cli workspace service <slug> version add <v>
+fused-cli workspace service <slug> version add <v|latest>
 fused-cli workspace service <slug> version remove <v> [--version-force]
 fused-cli workspace service <slug> version deprecate <v>
 fused-cli workspace service <slug> connect --bucket <name> --user-ref <ref> [--scope ...]
@@ -124,12 +127,15 @@ it's a full mirror, not a merge of additions only:
   (e.g. it was written under an old display name, or the slug changed),
   sync recognizes it's the same `service_id` and **rekeys** the block to the
   current slug -- reported as one `Added` + one `Removed` in the sync
-  summary, not data loss. Nested config (`runtime_config`, etc.) carries
-  over to the new key intact.
-- `runtime_config.webhooks` you've hand-written is preserved across a sync,
-  including across that key-rename case above -- sync only touches the
-  fields it owns (`versions`, `public`, `execution_policy`, connection
-  profile attachment), not your own overrides.
+  summary, not data loss. Nested config (`execution_policy`,
+  `connection_profiles`, etc.) carries over to the new key intact.
+- Sync only touches the fields it owns (`versions`, `public`,
+  `execution_policy`, connection profile attachment) -- any other local
+  block you've hand-written under a service carries over untouched,
+  including across that key-rename case above. Webhook registrations live in
+  their own `kind: webhook` files entirely outside this sync (see
+  `fused-webhook`), so there's nothing webhook-related for `workspace sync`
+  to preserve or touch in the first place.
 - `public` is written only for services you own (`true` or `false`,
   whichever the Registry reports); it's omitted entirely for a third-party
   service, matching that it can't be set for one either (see above).

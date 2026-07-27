@@ -12,6 +12,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 
 	cliapi "github.com/Usefused/cli/internal/api"
 	"github.com/Usefused/cli/internal/configfile"
@@ -312,6 +314,33 @@ func runWorkspaceServiceDeprecate(cmd *cobra.Command, serviceSlug string) error 
 }
 
 func runWorkspaceServiceVersionAdd(cmd *cobra.Command, serviceSlug, version string) error {
+	ctx := cmd.Context()
+	span := trace.SpanFromContext(ctx)
+
+	if version == "latest" {
+		// Why: Resolving "latest" eagerly before writing to the workspace config ensures 
+		// that the workspace remains deterministic. If we stored "latest" in the YAML directly, 
+		// the same workspace configuration would drift silently as new registry versions are published.
+		client, err := getAPIClient()
+		if err != nil {
+			return err
+		}
+		
+		latestVersion, err := client.GetServiceLatestVersion(serviceSlug)
+		if err != nil {
+			return err
+		}
+		
+		fmt.Printf("Resolved 'latest' to version %s for service %s\n", latestVersion, serviceSlug)
+		
+		span.AddEvent("cli.workspace.service.version.add.latest_resolved", trace.WithAttributes(
+			attribute.String("service", serviceSlug),
+			attribute.String("resolved_version", latestVersion),
+		))
+		
+		version = latestVersion
+	}
+
 	if err := addWorkspaceVersion(ConfigFile, serviceSlug, version); err != nil {
 		return err
 	}
@@ -513,10 +542,13 @@ func runWorkspaceServiceWebhooks(cmd *cobra.Command, serviceSlug string) error {
 		return nil
 	}
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 8, 2, ' ', 0)
-	fmt.Fprintln(w, "LABEL\tURL\tCREATED_AT")
+	// SIGNATURE is "set"/"none" only -- never the secret value -- so a user
+	// can tell at a glance whether a registration verifies its provider's
+	// signature without a second lookup.
+	fmt.Fprintln(w, "LABEL\tURL\tSIGNATURE\tCREATED_AT")
 	for _, wh := range webhooks {
 		url := appliedWebhookURL(client.BaseURL, cliapi.AppliedWebhookConfig{ServiceKey: serviceSlug, Label: wh.Label, Slug: wh.Slug})
-		fmt.Fprintf(w, "%s\t%s\t%s\n", wh.Label, url, wh.CreatedAt)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", wh.Label, url, wh.Signature, wh.CreatedAt)
 	}
 	w.Flush()
 	return nil

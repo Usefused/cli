@@ -1,6 +1,6 @@
 ---
 name: fused-mcp
-description: "Use when the user wants to generate or manage an MCP server from a Fused workspace using fused-cli -- selecting services/operations/webhooks for the MCP tool surface, or running mcp plan/apply/validate/list. Trigger on 'MCP server', 'fused-cli mcp', 'kind: mcp' files. For SDK package generation read fused-sdk instead; for the auth_type/connect scope shape itself read fused-config."
+description: "Use when the user wants to generate or manage an MCP server from a Fused workspace using fused-cli -- selecting services/operations for the MCP tool surface, or running mcp plan/apply/validate/list. Trigger on 'MCP server', 'fused-cli mcp', 'kind: mcp' files. Note: an MCP service cannot select webhooks at all (Engine rejects it) -- for webhook registration/delivery read fused-webhook instead. For SDK package generation read fused-sdk instead; for the auth_type/connect scope shape itself read fused-config."
 ---
 
 # MCP artifact config
@@ -20,7 +20,6 @@ services:
   <service-slug>:
     version: "v1"
     operations: ["getIssue", "createIssue"]   # or select_all: true
-    webhooks: ["repo-a"]
     auth:    { type: "oauth" }                # see fused-config
     connect: { scopes: ["read:jira-work"] }   # see fused-config
     injections:                               # optional dynamic variable injection
@@ -29,9 +28,18 @@ services:
         value: ${bucket.env.FROM_EMAIL}       # Supports ${bucket.env.*}, ${bucket.values.*} (identical alias), and ${bucket.secrets.*}
 ```
 
+`injections[].value` tags always resolve against *this artifact's own* `bucket:` -- there's no way to name a different bucket here, unlike `kind: webhook`'s `${bucket.<name>.secret.<key>}` (see `fused-webhook`). A value can also merge a tag with surrounding text (e.g. `"Bearer ${bucket.secrets.API_KEY}"`), which a webhook's secret field cannot. Writing a webhook-style named-bucket reference here (e.g. `${bucket.prod.secrets.API_KEY}`) is rejected at dispatch time with an explicit error naming the unsupported reference, rather than one of the three ambient forms above.
+
 `select_all: true` is the alternative to listing `operations` explicitly --
 exactly one of the two is required (see `fused-sdk`; the validation and
 sync-freezing behavior described there is the same struct shared with SDK).
+A service's `webhooks`/`webhooks_select_all` are rejected outright on an MCP
+config (both CLI-side and Engine-side) -- this predates `webhook_attachment`
+and hasn't been revisited since (see the doc comment on
+`validateArtifactServices` in `cli/internal/configfile/parser.go` if you need
+to check whether that's changed). Setting top-level `webhook_attachment`
+alone, with no service selecting webhooks, is accepted but has no effect.
+Treat webhook delivery as an SDK-only surface today (see `fused-webhook`).
 
 ## Commands
 

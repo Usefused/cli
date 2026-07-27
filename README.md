@@ -285,8 +285,8 @@ List SDK or MCP scopes linked to a bucket.
 #### `bucket <name> remove`
 Remove a workspace bucket.
 
-#### `value <bucket-id> set <service-slug> <key-name> <location> <value>`
-Set a non-secret configuration value in a bucket.
+#### `value <bucket-id> set <service-slug> <location> <key-name> <value>`
+Set a non-secret configuration value in a bucket. Location can be `env`, `body`, `query`, `header`, or `path`.
 
 #### `value <bucket-id> list`
 List all non-secret values stored in a bucket.

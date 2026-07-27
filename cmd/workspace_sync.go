@@ -134,9 +134,6 @@ func mergeRemoteWorkspaceService(services map[string]configfile.WorkspaceService
 // workspaceServiceWithLocalState preserves runtime configuration because the
 // service inventory GraphQL projection does not own those fields.
 func workspaceServiceWithLocalState(remote, local configfile.WorkspaceService) configfile.WorkspaceService {
-	if local.RuntimeConfig != nil {
-		remote.RuntimeConfig = local.RuntimeConfig
-	}
 	if len(local.ConnectionProfiles) > 0 {
 		remote.ConnectionProfiles = local.ConnectionProfiles
 	}
@@ -514,7 +511,6 @@ func workspaceServiceEqual(a, b configfile.WorkspaceService) bool {
 		sameStringSet(a.Versions, b.Versions) &&
 		sameResolvedVersions(a.ResolvedVersions, b.ResolvedVersions) &&
 		sameBoolPtr(a.Public, b.Public) &&
-		reflect.DeepEqual(a.RuntimeConfig, b.RuntimeConfig) &&
 		reflect.DeepEqual(a.ConnectionProfiles, b.ConnectionProfiles) &&
 		reflect.DeepEqual(a.ExecutionPolicy, b.ExecutionPolicy) &&
 		reflect.DeepEqual(a.VersionPolicies, b.VersionPolicies)

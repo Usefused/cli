@@ -33,6 +33,7 @@ const (
 	filterSDK       configKindFilter = "sdk"
 	filterMCP       configKindFilter = "mcp"
 	filterWorkspace configKindFilter = "workspace"
+	filterWebhook   configKindFilter = "webhook"
 )
 
 var (
@@ -110,6 +111,15 @@ func planOneConfig(client *api.Client, cfg *configfile.ParsedConfig, engineURL s
 			return plannedConfig{}, fmt.Errorf("failed to plan MCP %s: %w", cfg.MCP.Name, err)
 		}
 		return plannedConfig{receipt: newPlanReceipt(resp.PlanID, cfg.ConfigKey, cfg.SourceHash, engineURL), notifications: resp.Notifications}, nil
+	case configfile.KindWebhook:
+		raw, _ := json.Marshal(cfg.Webhook)
+		resp, err := client.PlanWebhookConfig(cfg.SourceHash, cfg.ConfigKey, raw)
+		if err != nil {
+			return plannedConfig{}, fmt.Errorf("failed to plan webhook %s: %w", cfg.Webhook.Name, err)
+		}
+		// No notifications field -- kind: webhook never touches another
+		// artifact's state, unlike workspace/SDK/MCP applies.
+		return plannedConfig{receipt: newPlanReceipt(resp.PlanID, cfg.ConfigKey, cfg.SourceHash, engineURL)}, nil
 	default:
 		return plannedConfig{}, fmt.Errorf("unsupported config kind %q", cfg.Kind)
 	}
@@ -268,6 +278,7 @@ func fusedConfigShortcutCandidates(path string) []string {
 		filepath.Join(".fused", name),
 		filepath.Join(".fused", "sdks", name),
 		filepath.Join(".fused", "mcps", name),
+		filepath.Join(".fused", "webhooks", name),
 	}
 }
 
@@ -327,8 +338,27 @@ func applyOneConfig(client *api.Client, cfg *configfile.ParsedConfig, receipt pl
 		if resp.ExecutionToken != "" {
 			fmt.Printf("  Token (shown once): %s\n", resp.ExecutionToken)
 		}
+	case configfile.KindWebhook:
+		resp, err := client.ApplyWebhookConfig(receipt.PlanID, receipt.SourceHash)
+		if err != nil {
+			return fmt.Errorf("failed to apply webhook %s: %w", cfg.Webhook.Name, err)
+		}
+		fmt.Printf("Successfully applied webhook %s\n", resp.Name)
+		printAppliedWebhookRegistrations(client.BaseURL, resp.Name, resp.Registrations)
 	}
 	return nil
+}
+
+// printAppliedWebhookRegistrations mirrors printAppliedWebhooks' URL
+// reconstruction, but reads from kind: webhook's own apply response
+// (WebhookConfigRegistration) instead of workspace apply's
+// AppliedWebhookConfig -- the two shapes both carry service+slug, but come
+// from different endpoints and will keep diverging (this one has no per-call
+// Label since the whole artifact is one label -- resp.Name).
+func printAppliedWebhookRegistrations(baseURL, label string, registrations []api.WebhookConfigRegistration) {
+	for _, reg := range registrations {
+		fmt.Printf("  webhook %q service %q -> %s\n", label, reg.Service, strings.TrimRight(baseURL, "/")+"/webhook/"+reg.Slug+"-"+reg.Service)
+	}
 }
 
 // applyWorkspaceConfig sends resolved local material out-of-band from the

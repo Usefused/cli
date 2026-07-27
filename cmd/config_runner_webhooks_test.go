@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	"github.com/Usefused/cli/internal/api"
-	"github.com/Usefused/cli/internal/configfile"
 )
 
 // captureStdout redirects os.Stdout for the duration of fn and returns
@@ -88,49 +87,13 @@ func TestPrintAppliedWebhooks_NoOutputWhenNoWebhooks(t *testing.T) {
 	}
 }
 
-// ─── workspace apply end-to-end: response webhooks reach the terminal ─────
-
-func TestWorkspaceApplyPrintsWebhookURLs(t *testing.T) {
-	dir := t.TempDir()
-	path := writeSprintConfig(t, dir, "workspace.yaml", `
-apiVersion: fused/v1
-kind: workspace
-services:
-  github:
-    service_id: "00000000-0000-0000-0000-000000000001"
-    versions: ["2026-07-01"]
-    runtime_config:
-      webhooks:
-        repo-a:
-          secret: "bucket.secret.whsec_a"
-`)
-	parsed, err := configfile.ParseFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	writeReceipt(t, dir, planReceipt{ConfigKey: "workspace", PlanID: "plan-workspace", SourceHash: parsed.SourceHash})
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/health" {
-			w.Write([]byte(`{"status":"ok","plane":"engine","environment":"staging"}`))
-			return
-		}
-		if r.URL.Path != "/workspace/config/apply" {
-			t.Fatalf("unexpected path %s", r.URL.Path)
-		}
-		_, _ = w.Write([]byte(`{"status":"applied","plan_id":"plan-workspace","webhooks":[{"service_key":"github","label":"repo-a","slug":"abc123"}]}`))
-	}))
-	defer server.Close()
-
-	out := runCommandInDirOutput(t, dir, server.URL, []string{"workspace", "apply", "-f", path})
-	wantLine := server.URL + "/webhook/abc123-github"
-	if !strings.Contains(out, wantLine) {
-		t.Fatalf("expected apply output to include webhook URL %q, got:\n%s", wantLine, out)
-	}
-	if !strings.Contains(out, `"repo-a"`) {
-		t.Fatalf("expected apply output to include the webhook label, got:\n%s", out)
-	}
-}
+// TestWorkspaceApplyPrintsWebhookURLs was removed along with
+// runtime_config.webhooks (no backward compatibility -- see
+// plans/plan-webhook-kind.md): `workspace apply` no longer creates or
+// reports webhook registrations at all, that's kind: webhook's job now.
+// appliedWebhookURL/printAppliedWebhooks themselves stay (still exercised
+// by the pure unit tests above, and reused by the new `fused-cli webhook
+// apply` command).
 
 // ─── Task 8: `workspace service <slug> webhooks` visibility command ───────
 

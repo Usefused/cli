@@ -1,6 +1,6 @@
 ---
 name: fused-sdk
-description: "Use when the user wants to generate or manage a typed SDK package from a Fused workspace using fused-cli -- selecting services/operations/webhooks, scoping auth or OAuth consent for the SDK, or running sdk plan/apply/validate/download/sync/token. Trigger on 'generate an SDK', 'fused-cli sdk', 'kind: sdk' files, or SDK language/version questions. For MCP server generation read fused-mcp instead; for the auth_type/connect scope shape itself read fused-config."
+description: "Use when the user wants to generate or manage a typed SDK package from a Fused workspace using fused-cli -- selecting services/operations, receiving webhook events via webhook_attachment, scoping auth or OAuth consent for the SDK, or running sdk plan/apply/validate/download/sync/token. Trigger on 'generate an SDK', 'fused-cli sdk', 'kind: sdk' files, or SDK language/version questions. For MCP server generation read fused-mcp instead; for registering the webhook itself (kind: webhook) read fused-webhook; for the auth_type/connect scope shape itself read fused-config."
 ---
 
 # SDK artifact config
@@ -15,11 +15,12 @@ name: my-sdk
 version: "1.0.0"
 language: typescript
 bucket: default
+webhook_attachment: my-webhooks             # optional -- names a kind: webhook artifact, see fused-webhook
 services:
   <service-slug>:
     version: "v1"
     operations: ["listUsers", "createUser"]   # or select_all: true
-    webhooks: ["repo-a"]
+    webhooks: ["user.created"]                # event names, requires webhook_attachment -- or webhooks_select_all: true
     auth:    { type: "api_key" }              # see fused-config for the full auth_type reference
     connect: { scopes: ["read:users"] }       # OAuth/OIDC consent ceiling, see fused-config
     injections:                               # optional dynamic variable injection
@@ -27,6 +28,14 @@ services:
         name: X-Custom-Header
         value: ${bucket.env.MY_VAR}           # Supports ${bucket.env.*}, ${bucket.values.*} (identical alias), and ${bucket.secrets.*}
 ```
+
+`injections[].value` tags always resolve against *this artifact's own* `bucket:` -- there's no way to name a different bucket here, unlike `kind: webhook`'s `${bucket.<name>.secret.<key>}` (see `fused-webhook`). A value can also merge a tag with surrounding text (e.g. `"Bearer ${bucket.secrets.API_KEY}"`), which a webhook's secret field cannot. Writing a webhook-style named-bucket reference here (e.g. `${bucket.prod.secrets.API_KEY}`) is rejected at dispatch time with an explicit error naming the unsupported reference, rather than one of the three ambient forms above.
+
+`webhooks`/`webhooks_select_all` only make sense once a `kind: webhook`
+artifact exists and is named via top-level `webhook_attachment` -- this
+registers *which events* this SDK receives, not the webhook registration
+itself (that's `fused-webhook`). Setting either without `webhook_attachment`
+is rejected at plan time.
 
 `auth.type` selects a Registry-declared scheme (`basic`, `bearer`,
 `api_key`, `oauth`, `oidc`, `mtls` -- the same list `fused-config` documents

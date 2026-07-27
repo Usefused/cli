@@ -34,15 +34,12 @@ themselves, read `fused-workspace`, `fused-sdk`, `fused-mcp`, or
 
 Never put a real credential value inline in a config file being committed to
 source control. For a static `auth` credential (token/api_key/basic/mtls),
-prefer a bucket secret (`fused-cli secret <service-slug> set` -- see
-`fused-bucket`) over a local `_env`/`$VAR` handoff: a bucket secret is
-resolved by the Engine itself, so it works the same whether `apply` runs
-from a laptop or CI. Binding literal values have the same bucket-secret
-alternative via `fused-cli value`. `client_id_env`/`client_secret_env` and
-bare `$VAR` still work for those and are resolved locally at apply time, but
-treat them as a fallback, not the default recommendation.
+use a bucket secret (`fused-cli secret <service-slug> set` -- see
+`fused-bucket`): it's resolved by the Engine itself, so it works the same
+whether `apply` runs from a laptop or CI. Binding literal values have the
+same bucket-secret path via `fused-cli value`.
 
-One real exception: OAuth `connect` app registration (`client_id`/
-`client_secret`) has no bucket-secret path today -- `client_id_env`/
-`client_secret_env` genuinely is the only way to keep those two fields out
-of a committed file (see `reference/connection-profiles.md`).
+OAuth `connect` app registration's `client_secret` uses this same
+bucket-secret path -- `${bucket.secret.<key>}` -- resolved by the Engine at
+apply time against this connect config's own bucket, same as `auth` (see
+`reference/connection-profiles.md`).

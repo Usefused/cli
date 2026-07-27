@@ -44,6 +44,9 @@ func loadFusedDirectory() (*Run, error) {
 	if err := appendArtifactConfigs(run, filepath.Join(fusedDir, "mcps"), KindMCP); err != nil {
 		return nil, err
 	}
+	if err := appendArtifactConfigs(run, filepath.Join(fusedDir, "webhooks"), KindWebhook); err != nil {
+		return nil, err
+	}
 	return run, rejectDuplicateArtifactIdentities(run.Configs)
 }
 
@@ -112,7 +115,7 @@ func isYAMLFile(name string) bool {
 func rejectDuplicateArtifactIdentities(configs []*ParsedConfig) error {
 	seenKeys := make(map[string]string)
 	for _, cfg := range configs {
-		if cfg.Kind != KindSDK && cfg.Kind != KindMCP {
+		if cfg.Kind != KindSDK && cfg.Kind != KindMCP && cfg.Kind != KindWebhook {
 			continue
 		}
 		if existingPath, ok := seenKeys[cfg.ConfigKey]; ok {
@@ -194,6 +197,16 @@ func parseTypedConfig(data []byte, kind ConfigKind, parsed *ParsedConfig) error 
 		}
 		parsed.MCP = &mcpConfig
 		parsed.ConfigKey = artifactConfigKey(KindMCP, mcpConfig.Name, mcpConfig.Version)
+	case KindWebhook:
+		// kind: webhook has no version -- unlike SDK/MCP it's not an
+		// immutable release, it's a continuously-reconciled registration
+		// bundle (like kind: workspace), so its config key is just its name.
+		var webhookConfig WebhookArtifactConfig
+		if err := strictUnmarshal(data, &webhookConfig); err != nil {
+			return fmt.Errorf("failed to parse webhook config: %w", err)
+		}
+		parsed.Webhook = &webhookConfig
+		parsed.ConfigKey = fmt.Sprintf("webhook:%s", webhookConfig.Name)
 	default:
 		return fmt.Errorf("unknown config kind: %q", kind)
 	}
@@ -209,6 +222,30 @@ func validateConfig(parsed *ParsedConfig) error {
 		return validateMCPConfig(parsed.MCP)
 	case KindWorkspace:
 		return validateWorkspaceConfig(parsed.Workspace)
+	case KindWebhook:
+		return validateWebhookConfig(parsed.Webhook)
+	}
+	return nil
+}
+
+// validateWebhookConfig applies the same secret-ref grammar check
+// validateWorkspaceRuntimeConfig already uses for the (now deprecated)
+// RuntimeConfig.Webhooks path -- kind: webhook's Secret field is the exact
+// same "${bucket.<name>.secret.<key>}" reference, just relocated.
+func validateWebhookConfig(cfg *WebhookArtifactConfig) error {
+	if strings.TrimSpace(cfg.Name) == "" {
+		return fmt.Errorf("webhook config requires a name")
+	}
+	if len(cfg.Services) == 0 {
+		return fmt.Errorf("webhook config %q requires at least one service", cfg.Name)
+	}
+	for svcName, svc := range cfg.Services {
+		if strings.TrimSpace(svc.Secret) == "" {
+			continue
+		}
+		if !isBucketSecretRef(svc.Secret) {
+			return fmt.Errorf(`webhook config %q service %q secret must be "${bucket.<name>.secret.<key>}" or "${bucket.secret.<key>}"`, cfg.Name, svcName)
+		}
 	}
 	return nil
 }
@@ -245,18 +282,29 @@ func validateArtifactConfig(cfg *ArtifactConfig, kind ConfigKind) error {
 	if len(cfg.Services) == 0 {
 		return fmt.Errorf("%s config requires at least one service", kind)
 	}
-	return validateArtifactServices(cfg.Services, kind)
+	return validateArtifactServices(cfg.Services, kind, cfg.WebhookAttachment)
 }
 
 // validateArtifactServices keeps per-service rules separate from artifact
 // identity rules because MCP and SDK share services but diverge on webhooks.
-func validateArtifactServices(services map[string]SDKService, kind ConfigKind) error {
+//
+// The existing "mcp service cannot select webhooks" restriction predates
+// webhook_attachment/kind: webhook and its rationale isn't recorded here --
+// preserved as-is rather than assumed lifted, since MCP's generated surface
+// (Engine-hosted tools, not callback-based typed SDK methods) may not have
+// an equivalent place to deliver webhook events at all. Confirm with the
+// original author's intent before allowing kind: mcp to set
+// webhook_attachment or per-service Webhooks/WebhooksSelectAll.
+func validateArtifactServices(services map[string]SDKService, kind ConfigKind, webhookAttachment string) error {
 	for svcName, svc := range services {
 		if err := validateSDKService(svcName, svc); err != nil {
 			return err
 		}
-		if kind == KindMCP && len(svc.Webhooks) > 0 {
+		if kind == KindMCP && (len(svc.Webhooks) > 0 || svc.WebhooksSelectAll) {
 			return fmt.Errorf("mcp service %q cannot select webhooks", svcName)
+		}
+		if (len(svc.Webhooks) > 0 || svc.WebhooksSelectAll) && strings.TrimSpace(webhookAttachment) == "" {
+			return fmt.Errorf("%s service %q selects webhook events but the artifact has no webhook_attachment", kind, svcName)
 		}
 	}
 	return nil
@@ -341,50 +389,77 @@ func validateWorkspaceService(name string, svc WorkspaceService) error {
 			return err
 		}
 	}
-	if err := validateWorkspaceRuntimeConfig(name, svc.RuntimeConfig); err != nil {
-		return err
-	}
 	return validateWorkspaceConnectionProfiles(name, svc.ConnectionProfiles)
 }
 
-// validateWorkspaceRuntimeConfig enforces the bucket.<name>.secret.<key>
-// grammar (plans/plan-service-config-restructure.md item 4) on every webhook
-// registration's Secret field at parse time -- catching a typo'd reference
-// here is cheaper than discovering it only once Engine apply rejects it.
-// This is a deliberately minimal, self-contained check duplicating (not
-// importing) the Engine's internal/shared/secretref grammar: the CLI and
-// backend are separate Go modules, and this reference form is a closed,
-// two-shape grammar simple enough that keeping a small mirror here is less
-// risk than a cross-module dependency for one regex-sized rule. Engine apply
-// remains the authority -- it also confirms the referenced bucket exists.
-func validateWorkspaceRuntimeConfig(name string, cfg *RuntimeConfig) error {
-	if cfg == nil {
-		return nil
+// isBucketSecretRef matches exactly the forms internal/shared/secretref
+// accepts on the Engine: an explicit "${bucket.<name>.secret.<key>}" or the
+// default-bucket shorthand "${bucket.secret.<key>}" (the CLI never needs to
+// author the "env" counterpart here -- a webhook secret ref is always meant
+// to be a secret -- but syntax validation still accepts it so a config that
+// is merely the wrong kind fails at apply time with Engine's clearer error
+// instead of a generic CLI parse rejection). This module can't import Engine
+// internals directly (separate Go module), so it's kept in sync by hand --
+// see secretref.Parse/SingleTag for the source of truth.
+func isBucketSecretRef(value string) bool {
+	inner, ok := bucketRefTagContents(value)
+	if !ok {
+		return false
 	}
-	for label, webhook := range cfg.Webhooks {
-		if strings.TrimSpace(webhook.Secret) == "" {
-			continue
-		}
-		if !isBucketSecretRef(webhook.Secret) {
-			return fmt.Errorf(`workspace service %q webhook %q secret must be "bucket.<name>.secret.<key>" or "bucket.secret.<key>"`, name, label)
-		}
-	}
-	return nil
+	return isBucketRefPath(inner)
 }
 
-// isBucketSecretRef matches exactly the two forms internal/shared/secretref
-// accepts on the Engine: an explicit "bucket.<name>.secret.<key>" or the
-// default-bucket shorthand "bucket.secret.<key>".
-func isBucketSecretRef(value string) bool {
-	parts := strings.Split(value, ".")
+// bucketRefTagContents accepts value only when it is exactly one ${...} tag,
+// matching secretref.SingleTag's whole-value-only rule.
+func bucketRefTagContents(value string) (string, bool) {
+	if !strings.HasPrefix(value, "${") || !strings.HasSuffix(value, "}") {
+		return "", false
+	}
+	inner := value[2 : len(value)-1]
+	return inner, inner != ""
+}
+
+// isBucketRefPath classifies the already-extracted tag contents.
+func isBucketRefPath(path string) bool {
+	parts := strings.Split(path, ".")
 	switch {
-	case len(parts) == 4 && parts[0] == "bucket" && parts[2] == "secret":
+	case len(parts) == 4 && parts[0] == "bucket" && isBucketRefKindWord(parts[2]):
 		return parts[1] != "" && parts[3] != ""
-	case len(parts) == 3 && parts[0] == "bucket" && parts[1] == "secret":
+	case len(parts) == 3 && parts[0] == "bucket" && isBucketRefKindWord(parts[1]):
 		return parts[2] != ""
 	default:
 		return false
 	}
+}
+
+// isBucketRefKindWord accepts the same two kind words secretref.Kind does.
+func isBucketRefKindWord(word string) bool {
+	return word == "env" || word == "secret"
+}
+
+// isAmbientBucketSecretRef requires the shorthand secret form specifically
+// -- used for connect.client_secret, which (unlike kind: webhook) always
+// belongs to one already-known bucket, so it resolves directly against that
+// bucket rather than naming one; the named form is rejected by
+// looksLikeBucketTag's caller instead of silently accepted here. Mirrors
+// Engine's ambientWorkspaceBucketSecretKey.
+func isAmbientBucketSecretRef(value string) bool {
+	inner, ok := bucketRefTagContents(value)
+	if !ok {
+		return false
+	}
+	parts := strings.Split(inner, ".")
+	return len(parts) == 3 && parts[0] == "bucket" && parts[1] == "secret" && parts[2] != ""
+}
+
+// looksLikeBucketTag reports whether value is shaped like any ${bucket...}
+// reference at all (named or shorthand), used to give a clear rejection
+// message for the named form instead of the generic "must use $ENV or
+// ${bucket.secret.<key>}" error. Mirrors Engine's
+// looksLikeWorkspaceConnectBucketTag.
+func looksLikeBucketTag(value string) bool {
+	inner, ok := bucketRefTagContents(value)
+	return ok && strings.HasPrefix(inner, "bucket.")
 }
 
 func validateWorkspaceExecutionPolicy(name, version string, policy *ExecutionPolicy) error {
@@ -555,13 +630,29 @@ func validateWorkspaceConnectClientMaterial(name string, connect *ConnectConfig)
 	if strings.TrimSpace(connect.ClientID) == "" {
 		return fmt.Errorf("workspace service %q connect requires client_id", name)
 	}
-	if clientSecret := strings.TrimSpace(connect.ClientSecret); clientSecret != "" && !isEnvRef(clientSecret) {
-		return fmt.Errorf("workspace service %q connect must use client_secret: $ENV, not inline client_secret", name)
+	return validateWorkspaceConnectClientSecret(name, connect.ClientSecret)
+}
+
+// validateWorkspaceConnectClientSecret accepts $ENV (resolved locally at
+// apply time, unchanged) or the ambient bucket-secret shorthand
+// (${bucket.secret.<key>}, resolved server-side by Engine -- see
+// resolveMaybeEnv's passthrough for any value that isn't an $ENV shape, and
+// Engine's identical ambientWorkspaceBucketSecretKey). The named-bucket form
+// kind: webhook accepts is rejected here: a connect config already belongs
+// to one specific bucket, so naming a different one would only ever mean
+// reading a secret out of the wrong bucket.
+func validateWorkspaceConnectClientSecret(name, clientSecret string) error {
+	value := strings.TrimSpace(clientSecret)
+	if value == "" {
+		return fmt.Errorf("workspace service %q connect requires client_secret: $ENV or ${bucket.secret.<key>}", name)
 	}
-	if strings.TrimSpace(connect.ClientSecret) == "" {
-		return fmt.Errorf("workspace service %q connect requires client_secret: $ENV", name)
+	if isEnvRef(value) || isAmbientBucketSecretRef(value) {
+		return nil
 	}
-	return nil
+	if looksLikeBucketTag(value) {
+		return fmt.Errorf("workspace service %q connect client_secret must reference this config's own bucket via ${bucket.secret.<key>} -- a named bucket like ${bucket.<name>.secret.<key>} is valid only in a kind: webhook secret", name)
+	}
+	return fmt.Errorf("workspace service %q connect must use client_secret: $ENV or ${bucket.secret.<key>}, not an inline value", name)
 }
 
 // WorkspaceConnectMaterials returns apply-time OAuth/OIDC material keyed by the

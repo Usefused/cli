@@ -30,6 +30,24 @@ run `fused-cli <command> --help` (e.g. `fused-cli bucket --help`, `fused-cli
 secret --help`, `fused-cli connection resources --help`) to confirm before
 relying on one (see `fused-cli` skill).
 
+## `${bucket...}` reference syntax across contexts
+
+The same `${bucket...}` tag shape is used in four places with different
+rules -- easy to conflate since they look alike:
+
+| Context | Form | Bucket name | Can merge with surrounding text? |
+|---|---|---|---|
+| SDK/MCP `injections[].value` (`fused-sdk`/`fused-mcp`) | `${bucket.env\|values\|secrets.<key>}` | Always the artifact's own `bucket:` -- cannot name another | Yes (e.g. `"Bearer ${bucket.secrets.KEY}"`) |
+| `kind: webhook` `services.<slug>.secret` (`fused-webhook`) | `${bucket.<name>.env\|secret.<key>}` or `${bucket.env\|secret.<key>}` (default bucket) | Explicit (or defaults to `default`) -- webhook verification has no artifact/dispatch context to fall back on | No -- must be the entire field value |
+| `connect.client_secret`/`client_id` (`fused-config`) | `${bucket.secret.<key>}` only | Always the connect config's own bucket -- naming another is rejected, unlike `kind: webhook` | No -- must be the entire field value |
+| Connection profile `${resource.*}` (`fused-config`) | `${resource.provider_resource_id\|base_url\|metadata.<key>}` | N/A -- not a bucket reference at all, resolves against the selected connection's resource | No -- must be the entire field value |
+
+Using the wrong form in the wrong place is rejected with an explicit error
+naming the unsupported reference -- e.g. a webhook-style named-bucket
+reference (`${bucket.<name>.secrets.<key>}`) inside an SDK/MCP injection
+value at dispatch time, or the same named form inside `connect.client_secret`
+at apply time.
+
 ## Bucket commands
 
 ```shell
@@ -86,10 +104,9 @@ values a connection profile references (see `fused-config`).
 Prefer bucket secrets/values over local `_env`/`$VAR` handoffs for anything
 committed to source control -- a bucket secret is resolved server-side by
 the Engine, not read off the machine running `apply`. This covers `auth`
-static credentials and binding literals; it does not cover OAuth `connect`
-app registration (`client_id`/`client_secret`), which has no bucket-secret
-path today and genuinely needs `client_id_env`/`client_secret_env` (see
-`fused-config`).
+static credentials, binding literals, and OAuth `connect` app registration's
+`client_secret` (`${bucket.secret.<key>}`, resolved against the connect
+config's own bucket -- see `fused-config`).
 
 ## Starting an OAuth/OIDC connection
 

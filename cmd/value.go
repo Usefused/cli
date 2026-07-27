@@ -50,6 +50,9 @@ func runValueAction(cmd *cobra.Command, args []string) error {
 
 	switch action {
 	case "set":
+		// CLI quirk resolution: Rearranged the argument order for better UX.
+		// The command now reads naturally: "set <service> <location> <key> <value>"
+		// Example: "value default set plunk env FROM_EMAIL me@example.com"
 		serviceSlug := args[2]
 		location := args[3]
 		keyName := args[4]

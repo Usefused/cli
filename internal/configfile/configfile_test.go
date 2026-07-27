@@ -202,6 +202,72 @@ buckets:
 	}
 }
 
+// TestWorkspaceConnectMaterials_PassesThroughBucketSecretRef proves a
+// client_secret written as the ambient ${bucket.secret.<key>} shorthand
+// parses/validates without a local env var present, and passes through
+// unresolved -- Engine, not the CLI, resolves this form server-side at
+// apply time against the connect config's own already-known bucket.
+func TestWorkspaceConnectMaterials_PassesThroughBucketSecretRef(t *testing.T) {
+	path := writeFile(t, t.TempDir(), "workspace.yaml", `
+apiVersion: fused/v1
+kind: workspace
+services:
+  github:
+    service_id: "00000000-0000-0000-0000-000000000001"
+    versions: ["2026-07-01"]
+buckets:
+  prod:
+    service_config:
+      github:
+        connect:
+          auth_type: oauth
+          client_id: some-client-id
+          client_secret: "${bucket.secret.GITHUB_SECRET}"
+          redirect_uri: https://engine.example.com/connect/callback
+`)
+	parsed, err := configfile.ParseFile(path)
+	if err != nil {
+		t.Fatalf("ParseFile failed: %v", err)
+	}
+	materials, err := parsed.WorkspaceConnectMaterials()
+	if err != nil {
+		t.Fatalf("WorkspaceConnectMaterials failed: %v", err)
+	}
+	material := materials["prod\x00github"]
+	if material.ClientSecret != "${bucket.secret.GITHUB_SECRET}" {
+		t.Fatalf("expected the bucket secret reference to pass through unresolved, got %#v", material)
+	}
+}
+
+// TestWorkspaceConnectMaterials_RejectsNamedBucketSecretRef proves the
+// named-bucket form kind: webhook accepts is rejected for connect -- a
+// connect config already belongs to one specific bucket, so naming a
+// different one would only ever mean reading a secret out of the wrong
+// bucket.
+func TestWorkspaceConnectMaterials_RejectsNamedBucketSecretRef(t *testing.T) {
+	path := writeFile(t, t.TempDir(), "workspace.yaml", `
+apiVersion: fused/v1
+kind: workspace
+services:
+  github:
+    service_id: "00000000-0000-0000-0000-000000000001"
+    versions: ["2026-07-01"]
+buckets:
+  prod:
+    service_config:
+      github:
+        connect:
+          auth_type: oauth
+          client_id: some-client-id
+          client_secret: "${bucket.prod.secret.GITHUB_SECRET}"
+          redirect_uri: https://engine.example.com/connect/callback
+`)
+	_, err := configfile.ParseFile(path)
+	if err == nil {
+		t.Fatal("expected the named-bucket form to be rejected for connect client_secret")
+	}
+}
+
 // TestWorkspaceBucketSecrets_RejectsLiteralValue pins
 // plans/plan-service-config-restructure.md item 4's core safety property:
 // buckets.<name>.secrets.<key> must be a $ENV reference, never a literal, the
@@ -282,70 +348,61 @@ buckets:
 	}
 }
 
-// ─── runtime_config.webhooks[*].secret: bucket.<name>.secret.<key> grammar ─
+// ─── kind: webhook services[*].secret: ${bucket.<name>.secret.<key>} grammar ──
+// (migrated from the removed runtime_config.webhooks -- see
+// plans/plan-webhook-kind.md; no backward compatibility, so these now
+// exercise kind: webhook's identical secret-ref grammar instead.)
 
-// TestWorkspaceWebhookSecret_AcceptsExplicitBucketForm proves the full
-// "bucket.<name>.secret.<key>" reference parses without error -- this is a
+// TestWebhookSecret_AcceptsExplicitBucketForm proves the full
+// "${bucket.<name>.secret.<key>}" reference parses without error -- this is a
 // syntax check only; Engine apply is the authority on whether the bucket
 // actually exists.
-func TestWorkspaceWebhookSecret_AcceptsExplicitBucketForm(t *testing.T) {
-	path := writeFile(t, t.TempDir(), "workspace.yaml", `
+func TestWebhookSecret_AcceptsExplicitBucketForm(t *testing.T) {
+	path := writeFile(t, t.TempDir(), "webhook.yaml", `
 apiVersion: fused/v1
-kind: workspace
+kind: webhook
+name: repo-a
 services:
   github:
-    service_id: "00000000-0000-0000-0000-000000000001"
-    versions: ["2026-07-01"]
-    runtime_config:
-      webhooks:
-        repo-a:
-          secret: "bucket.prod.secret.webhook_signing"
+    secret: "${bucket.prod.secret.webhook_signing}"
 `)
 	if _, err := configfile.ParseFile(path); err != nil {
-		t.Fatalf("expected explicit bucket.<name>.secret.<key> to parse, got %v", err)
+		t.Fatalf("expected explicit ${bucket.<name>.secret.<key>} to parse, got %v", err)
 	}
 }
 
-// TestWorkspaceWebhookSecret_AcceptsDefaultBucketShorthand proves the
-// bucket-name-omitted shorthand "bucket.secret.<key>" also parses.
-func TestWorkspaceWebhookSecret_AcceptsDefaultBucketShorthand(t *testing.T) {
-	path := writeFile(t, t.TempDir(), "workspace.yaml", `
+// TestWebhookSecret_AcceptsDefaultBucketShorthand proves the
+// bucket-name-omitted shorthand "${bucket.secret.<key>}" also parses.
+func TestWebhookSecret_AcceptsDefaultBucketShorthand(t *testing.T) {
+	path := writeFile(t, t.TempDir(), "webhook.yaml", `
 apiVersion: fused/v1
-kind: workspace
+kind: webhook
+name: repo-a
 services:
   github:
-    service_id: "00000000-0000-0000-0000-000000000001"
-    versions: ["2026-07-01"]
-    runtime_config:
-      webhooks:
-        repo-a:
-          secret: "bucket.secret.webhook_signing"
+    secret: "${bucket.secret.webhook_signing}"
 `)
 	if _, err := configfile.ParseFile(path); err != nil {
 		t.Fatalf("expected default-bucket shorthand to parse, got %v", err)
 	}
 }
 
-// TestWorkspaceWebhookSecret_RejectsLiteralValue proves a literal (or any
-// other malformed) value fails validation at parse time instead of only
-// being discovered once Engine apply rejects the reference -- mirrors
+// TestWebhookSecret_RejectsLiteralValue proves a literal (or any other
+// malformed) value fails validation at parse time instead of only being
+// discovered once Engine apply rejects the reference -- mirrors
 // TestWorkspaceBucketSecrets_RejectsLiteralValue's discipline for the
 // declaration side of this mechanism.
-func TestWorkspaceWebhookSecret_RejectsLiteralValue(t *testing.T) {
-	path := writeFile(t, t.TempDir(), "workspace.yaml", `
+func TestWebhookSecret_RejectsLiteralValue(t *testing.T) {
+	path := writeFile(t, t.TempDir(), "webhook.yaml", `
 apiVersion: fused/v1
-kind: workspace
+kind: webhook
+name: repo-a
 services:
   github:
-    service_id: "00000000-0000-0000-0000-000000000001"
-    versions: ["2026-07-01"]
-    runtime_config:
-      webhooks:
-        repo-a:
-          secret: "whsec_literal_value"
+    secret: "whsec_literal_value"
 `)
 	_, err := configfile.ParseFile(path)
-	if err == nil || !strings.Contains(err.Error(), `"bucket.<name>.secret.<key>"`) {
+	if err == nil || !strings.Contains(err.Error(), `"${bucket.<name>.secret.<key>}"`) {
 		t.Fatalf("expected a malformed secret reference to be rejected, got %v", err)
 	}
 }

@@ -149,54 +149,11 @@ func TestMergeWorkspaceServicesFromRemote_RemoteWinsOnConflict(t *testing.T) {
 	}
 }
 
-func TestMergeWorkspaceServicesFromRemote_PreservesRuntimeConfig(t *testing.T) {
-	runtimeConfig := &configfile.RuntimeConfig{Webhooks: map[string]configfile.WebhookConfig{"repo-a": {Secret: "bucket.secret.repo_a_webhook"}}}
-	cfg := &configfile.WorkspaceConfig{Services: map[string]configfile.WorkspaceService{
-		"github-user": {ServiceID: "svc-github", Versions: []string{"1.1.3"}, RuntimeConfig: runtimeConfig},
-	}}
-	remote := []api.WorkspaceService{{
-		ServiceName:     "github-user",
-		ServiceID:       "svc-github",
-		Version:         "1.1.4",
-		EnabledVersions: remoteVersionsWithIDs("1.1.4", "ver-github"),
-	}}
-
-	result := mustMergeWorkspaceServicesFromRemote(t, cfg, remote, nil)
-
-	if !reflect.DeepEqual(result.Updated, []string{"github-user"}) {
-		t.Fatalf("expected github-user to be updated, got %+v", result)
-	}
-	got := cfg.Services["github-user"]
-	if got.RuntimeConfig == nil || got.RuntimeConfig.Webhooks["repo-a"].Secret != "bucket.secret.repo_a_webhook" {
-		t.Fatalf("workspace sync dropped runtime_config: %+v", got)
-	}
-}
-
-func TestMergeWorkspaceServicesFromRemote_PreservesRuntimeConfigAcrossSlugKeyChange(t *testing.T) {
-	runtimeConfig := &configfile.RuntimeConfig{Webhooks: map[string]configfile.WebhookConfig{"repo-a": {Secret: "bucket.secret.repo_a_webhook"}}}
-	cfg := &configfile.WorkspaceConfig{Services: map[string]configfile.WorkspaceService{
-		"GitHub REST API": {ServiceID: "svc-github", Versions: []string{"1.1.4"}, RuntimeConfig: runtimeConfig},
-	}}
-	remote := []api.WorkspaceService{{
-		ServiceName:     "GitHub REST API",
-		ServiceID:       "svc-github",
-		Version:         "1.1.4",
-		EnabledVersions: remoteVersionsWithIDs("1.1.4", "ver-github"),
-	}}
-	visibility := map[string]api.ServiceVisibility{
-		"svc-github": {ServiceID: "svc-github", Slug: "github-user", IsOwner: true},
-	}
-
-	result := mustMergeWorkspaceServicesFromRemote(t, cfg, remote, visibility)
-
-	if !reflect.DeepEqual(result.Added, []string{"github-user"}) || !reflect.DeepEqual(result.Removed, []string{"GitHub REST API"}) {
-		t.Fatalf("expected key migration, got %+v", result)
-	}
-	got := cfg.Services["github-user"]
-	if got.RuntimeConfig == nil || got.RuntimeConfig.Webhooks["repo-a"].Secret != "bucket.secret.repo_a_webhook" {
-		t.Fatalf("workspace sync dropped runtime_config during key migration: %+v", got)
-	}
-}
+// TestMergeWorkspaceServicesFromRemote_PreservesRuntimeConfig and
+// TestMergeWorkspaceServicesFromRemote_PreservesRuntimeConfigAcrossSlugKeyChange
+// were removed along with RuntimeConfig/runtime_config.webhooks (no backward
+// compatibility -- see plans/plan-webhook-kind.md): there is nothing left to
+// preserve across a sync once the field no longer exists.
 
 // TestMergeWorkspaceConnectConfigsFromRemoteWritesProfilesWithoutBucketMaterial
 // proves sync exports routing policy without inventing $ENV placeholders for
@@ -298,8 +255,8 @@ func TestMergeWorkspaceConnectConfigsFromRemoteStripsLocalRefs(t *testing.T) {
 	service := api.WorkspaceService{ServiceID: "svc-github", EnabledVersions: remoteVersionsWithIDs("1.1.4", "ver-github")}
 	cfg := &configfile.WorkspaceConfig{Services: map[string]configfile.WorkspaceService{
 		"github-user": {
-			ServiceID:     service.ServiceID,
-			RuntimeConfig: &configfile.RuntimeConfig{Webhooks: map[string]configfile.WebhookConfig{"repo-a": {Secret: "bucket.secret.repo_a_webhook"}}},
+			ServiceID: service.ServiceID,
+			Versions:  []string{"1.1.4"},
 		},
 	}, Buckets: map[string]configfile.WorkspaceBucket{"customer-accounts": {ServiceConfig: map[string]configfile.BucketServiceConfig{"github-user": {Connect: &configfile.ConnectConfig{AuthType: "oauth", ClientID: "$GITHUB_ID", ClientSecret: "$GITHUB_SECRET"}}}}}}
 	remote := []api.WorkspaceConnectConfig{{
@@ -312,9 +269,9 @@ func TestMergeWorkspaceConnectConfigsFromRemoteStripsLocalRefs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("merge connect config: %v", err)
 	}
-	runtime := cfg.Services["github-user"].RuntimeConfig
-	if runtime.Webhooks["repo-a"].Secret != "bucket.secret.repo_a_webhook" || len(cfg.Buckets) != 0 {
-		t.Fatalf("expected runtime to survive and bucket refs to be stripped: runtime=%+v buckets=%+v", runtime, cfg.Buckets)
+	got := cfg.Services["github-user"]
+	if !sameStringSet(got.Versions, []string{"1.1.4"}) || len(cfg.Buckets) != 0 {
+		t.Fatalf("expected unrelated fields to survive and bucket refs to be stripped: got=%+v buckets=%+v", got, cfg.Buckets)
 	}
 }
 

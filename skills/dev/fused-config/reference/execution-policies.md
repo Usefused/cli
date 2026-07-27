@@ -45,17 +45,19 @@ the same two-tier behavior (local effect always, publish only with
 whatever the original OpenAPI/Postman/AsyncAPI spec declared as the
 server URL -- that spec-derived value stays intact and inspectable on its
 own; this is purely the override layered on top when the spec was wrong or
-silent. There's no equivalent field for `default_headers` -- that one is
-still a plain `runtime_config` field, workspace-local only, never
-published (see `fused-workspace`).
+silent. There's no equivalent field for `default_headers` -- it has no
+owner-editable path in workspace.yaml at all today, under `execution_policy`
+or anywhere else; it's still Registry/import-derived only (see
+`fused-workspace`).
 
 `event_extraction_path` and `incoming_webhook_config` describe *this
 service's own* outbound webhook signing/verification recipe (how the
 provider signs events it sends) -- not this workspace's own webhook
-*registrations*, which stay under `runtime_config.webhooks` and are never
-published. `incoming_webhook_config` never carries a secret, only the
-verification mechanism (`auth_type`, `auth_location`, `auth_key_name`,
-`signature_header`, `verification_headers`).
+*registrations*, which are their own `kind: webhook` config files (see
+`fused-webhook`) and are never published. `incoming_webhook_config` never
+carries a secret, only the verification mechanism (`auth_type`,
+`auth_location`, `auth_key_name`, `signature_header`,
+`verification_headers`).
 
 ## Local effect vs. publishing to the Registry -- two independent things
 
