@@ -1,0 +1,16 @@
+apiVersion: fused/v1
+kind: mcp
+name: plunk-mcp
+version: "1.0.3"
+bucket: default
+services:
+  plunk:
+    version: "1.0.0" # Assuming 1.0.0 for now, can be updated once imported
+    select_all: true
+    injections:
+      - location: body
+        name: from
+        value: ${bucket.env.FROM_EMAIL}
+      - location: body
+        name: to
+        value: ${bucket.env.TO_EMAIL}
