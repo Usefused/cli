@@ -51,7 +51,41 @@ echo "=> Installing version ${TARGET_VERSION}"
 # Construct the download URL based on GoReleaser naming convention
 # Example: fused-cli_Darwin_arm64.tar.gz
 TAR_NAME="${BINARY}_${OS}_${ARCH}.tar.gz"
-DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${TARGET_VERSION}/${TAR_NAME}"
+RELEASE_BASE_URL="https://github.com/${REPO}/releases/download/${TARGET_VERSION}"
+DOWNLOAD_URL="${RELEASE_BASE_URL}/${TAR_NAME}"
+CHECKSUMS_URL="${RELEASE_BASE_URL}/checksums.txt"
+
+# This script is most commonly run piped from curl (curl ... | bash), which
+# means it downloads and executes a remote release with root (via sudo) and
+# no code review in between. Require an explicit, informed confirmation
+# before it touches the filesystem -- skippable for automation/CI via
+# -y/--yes or ASSUME_YES=1 (e.g. `curl ... | ASSUME_YES=1 bash`).
+ASSUME_YES="${ASSUME_YES:-0}"
+for arg in "$@"; do
+    case "$arg" in
+        -y|--yes) ASSUME_YES=1 ;;
+    esac
+done
+
+if [ "$ASSUME_YES" -ne 1 ]; then
+    echo ""
+    echo "About to download and install:"
+    echo "  ${DOWNLOAD_URL}"
+    echo "  -> ${INSTALL_DIR}/${BINARY} (requires sudo)"
+    if [ -r /dev/tty ]; then
+        printf "Proceed? [y/N] "
+        read -r REPLY < /dev/tty
+        case "$REPLY" in
+            y|Y|yes|YES) ;;
+            *) echo "Aborted."; exit 1 ;;
+        esac
+    else
+        echo "Error: no terminal available to confirm interactively."
+        echo "Re-run with -y/--yes, or ASSUME_YES=1, to skip this prompt:"
+        echo "  curl -sSL https://raw.githubusercontent.com/${REPO}/main/install.sh | ASSUME_YES=1 bash"
+        exit 1
+    fi
+fi
 
 # Create a temporary directory
 TMP_DIR=$(mktemp -d)
@@ -59,6 +93,19 @@ cd "$TMP_DIR"
 
 echo "=> Downloading ${DOWNLOAD_URL}..."
 curl -sL -o "${TAR_NAME}" "${DOWNLOAD_URL}"
+
+# Verify the archive against the release's published checksums before
+# extracting/running anything from it. Best-effort: older releases without a
+# checksums.txt just skip verification rather than blocking the install.
+if curl -sL -o "checksums.txt" "${CHECKSUMS_URL}" && [ -s "checksums.txt" ]; then
+    echo "=> Verifying checksum..."
+    if ! sha256sum --ignore-missing --check checksums.txt 2>/dev/null; then
+        echo "Error: checksum verification failed for ${TAR_NAME}. Aborting install."
+        exit 1
+    fi
+else
+    echo "=> No checksums.txt found for ${TARGET_VERSION}; skipping checksum verification."
+fi
 
 # Extract the archive
 echo "=> Extracting archive..."

@@ -14,10 +14,24 @@ Use it as the config-as-code and operations CLI for the Fused integration layer.
 curl -sSL https://raw.githubusercontent.com/Usefused/cli/main/install.sh | bash
 ```
 
+Because this pipes a remote script straight into `bash`, we recommend inspecting it first:
+
+```bash
+curl -sSL -o install.sh https://raw.githubusercontent.com/Usefused/cli/main/install.sh
+less install.sh   # review before you run it
+bash install.sh
+```
+
+Either way, the script prompts for confirmation before it downloads or installs anything (it uses `sudo` to write to `/usr/local/bin`). For non-interactive installs (CI, Dockerfiles), skip the prompt with `-y`/`--yes` or `ASSUME_YES=1`:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/Usefused/cli/main/install.sh | ASSUME_YES=1 bash
+```
+
 Install a specific version:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/Usefused/cli/main/install.sh | VERSION=v1.0.0 bash
+curl -sSL https://raw.githubusercontent.com/Usefused/cli/main/install.sh | VERSION=v1.0.0 ASSUME_YES=1 bash
 ```
 
 The binary is installed to `/usr/local/bin`. If that directory is not already on your `PATH`, the script will print the exact line to add to your shell profile.

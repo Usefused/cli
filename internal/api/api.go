@@ -393,7 +393,7 @@ type WorkspaceWebhook struct {
 	CreatedAt string `json:"created_at"`
 	// Signature is "set" or "none" -- the server never returns the secret_ref
 	// itself here, only whether one is configured (see webhookSignatureStatus,
-	// backend/internal/engine/api/connect_graphql.go).
+	// engine-release/internal/engine/api/connect_graphql.go).
 	Signature string `json:"signature"`
 }
 
@@ -1359,10 +1359,10 @@ func (c *Client) PlanWorkspaceConfig(sourceHash, configKey string, config json.R
 }
 
 type SDKConfigApplyResponse struct {
-	Status string `json:"status"`
-	PlanID string `json:"plan_id"`
-	ArtifactID  string `json:"artifact_id"`
-	JobID  string `json:"job_id"`
+	Status     string `json:"status"`
+	PlanID     string `json:"plan_id"`
+	ArtifactID string `json:"artifact_id"`
+	JobID      string `json:"job_id"`
 }
 
 type MCPConfigApplyResponse struct {
@@ -1375,7 +1375,7 @@ type MCPConfigApplyResponse struct {
 }
 
 // WebhookConfigApplyResponse mirrors webhookConfigApplyResponse
-// (backend/internal/engine/api/webhook_config_handlers.go) -- kind: webhook
+// (engine-release/internal/engine/api/webhook_config_handlers.go) -- kind: webhook
 // produces no runtime/package/token, just the set of registrations it
 // reconciled.
 type WebhookConfigApplyResponse struct {
