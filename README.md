@@ -1,6 +1,9 @@
 # Fused CLI
 
-The `fused-cli` is the official command-line interface for [Fused](https://usefused.com). It serves as your command center for the Fused integration layer, allowing you to register API services, orchestrate secure credential routing, and instantly generate type-safe SDKs or MCP servers interfaces for your integrations. Ready for production.
+The `fused-cli` is the official command-line interface for [Fused](https://usefused.com). It manages a Fused Engine from your terminal: connect the CLI to an Engine, import API services into the Registry, apply workspace configuration, manage buckets and secrets, configure webhooks, and operate SDK or MCP artifacts when you need them.
+
+Use it as the config-as-code and operations CLI for the Fused integration layer. SDK and MCP generation are supported workflows, not the whole product.
+
 ## Installation
 
 ### Option 1: One-Line Install Script (Recommended)
@@ -79,9 +82,25 @@ The CLI resolves configuration in the following order (highest precedence first)
 
 ## Usage
 
-### Generate an SDK (`sdk prompt`)
+### Common Workflows
 
-The `sdk prompt` command acts as your AI Copilot. It uses Fused intent AI to turn a business use case into a Business Capability SDK. Describe the workflow your team wants to ship, and Fused maps the right services and endpoints into a single, scoped SDK with the authentication, retries, tracing, and typed errors wired in. 
+```bash
+# Import a provider API into the Registry
+fused-cli import plan ./openapi.json --name "Internal Billing API" --slug billing-api
+fused-cli import apply
+
+# Review and apply workspace config from .fused/
+fused-cli workspace plan
+fused-cli workspace apply
+
+# Manage credentials and bucket-scoped values
+fused-cli bucket list
+fused-cli secret github set "$GITHUB_TOKEN"
+```
+
+### Generate an SDK or MCP Artifact (`sdk prompt`)
+
+The `sdk prompt` command uses Fused intent AI to turn a business use case into a Business Capability SDK or MCP artifact. Describe the workflow your team wants to ship, and Fused maps the right services and endpoints into a single, scoped runtime surface with authentication, retries, tracing, and typed errors wired in.
 
 If your query requires services you haven't added to your workspace yet, the Copilot will automatically discover the latest stable versions from the Global Registry and safely append them to your local `.fused/workspace.yaml`.
 
