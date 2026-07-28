@@ -34,10 +34,11 @@ var (
 var RootCmd = &cobra.Command{
 	Use:     "fused-cli",
 	Version: Version,
-	Short:   "A unified integration layer for your APIs — powered by Fused.",
-	Long: `Fused CLI is your command center for the Fused integration layer.
-Register and manage API services, orchestrate secure credential routing,
-and instantly generate type-safe SDKs or MCP servers interfaces for your integrations. Ready for production.`,
+	Short:   "Manage Fused Engine, Registry, workspace, and runtime configuration.",
+	Long: `Fused CLI is the config-as-code and operations CLI for the Fused
+integration layer. Use it to connect to a Fused Engine, import API services,
+apply workspace configuration, manage buckets and secrets, configure webhooks,
+and operate SDK or MCP artifacts when you need them.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		if showReadme {
 			fmt.Print(ReadmeContent)

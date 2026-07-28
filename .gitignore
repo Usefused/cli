@@ -1,4 +1,5 @@
 fused-cli
+.fused/
 .DS_Store
 github-mini-mcp-py/**
 github-mini-mcp-py2/venv/lib/python3.9/site-packages/anyio/abc/__init__.py
