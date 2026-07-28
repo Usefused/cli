@@ -1,0 +1,325 @@
+package configfile
+
+// ConfigKind defines the type of Fused config file.
+type ConfigKind string
+type ConfigAPIVersion string
+
+const (
+	APIVersionV1  ConfigAPIVersion = "fused/v1"
+	KindWorkspace ConfigKind       = "workspace"
+	KindSDK       ConfigKind       = "sdk"
+	KindMCP       ConfigKind       = "mcp"
+	KindWebhook   ConfigKind       = "webhook"
+)
+
+// BaseConfig represents the fields common to all Fused configs.
+type BaseConfig struct {
+	APIVersion ConfigAPIVersion `yaml:"apiVersion" json:"apiVersion"`
+	Kind       ConfigKind       `yaml:"kind" json:"kind"`
+}
+
+// WorkspaceConfig represents the desired state for a Fused workspace allowlist.
+type WorkspaceConfig struct {
+	BaseConfig   `yaml:",inline"`
+	Services     map[string]WorkspaceService     `yaml:"services" json:"services"`
+	Buckets      map[string]WorkspaceBucket      `yaml:"buckets,omitempty" json:"buckets,omitempty"`
+	Deprecations []WorkspaceDeprecationDirective `yaml:"deprecations,omitempty" json:"deprecations,omitempty"`
+}
+
+// WorkspaceBucket owns runtime credential material keyed by service. Services
+// declare what is enabled; buckets declare which credentials a selected
+// artifact/runtime should use for those enabled services.
+type WorkspaceBucket struct {
+	ServiceConfig map[string]BucketServiceConfig `yaml:"service_config,omitempty" json:"service_config,omitempty"`
+	// Secrets are generic, bucket-scoped named secrets -- not tied to any one
+	// service, unlike ServiceConfig -- resolved at verification/dispatch time
+	// via an explicit bucket.<bucket-name>.secret.<key-name> reference rather
+	// than ambient SDK/artifact context (see
+	// plans/plan-service-config-restructure.md item 4). Motivated by webhook
+	// signing secrets needing to be shared across multiple SDKs/registrations,
+	// but deliberately general-purpose. Values require $ENV references, same
+	// discipline as Auth/Connect fields -- see validateWorkspaceBucketSecrets.
+	Secrets map[string]string `yaml:"secrets,omitempty" json:"secrets,omitempty"`
+}
+
+type BucketServiceConfig struct {
+	Auth       *AuthConfig       `yaml:"auth,omitempty" json:"auth,omitempty"`
+	Connect    *ConnectConfig    `yaml:"connect,omitempty" json:"connect,omitempty"`
+	Injections []InjectionConfig `yaml:"injections,omitempty" json:"injections,omitempty"`
+}
+
+// WorkspaceService represents service versions enabled for a workspace.
+type WorkspaceService struct {
+	ServiceID string `yaml:"service_id,omitempty" json:"service_id,omitempty"`
+	// Public controls Registry-level service visibility via updateServicePublic.
+	// true  → service page is visible to all Registry consumers (owner only).
+	// false → service is private to this workspace's account.
+	// Omitted for third-party services (non-owners cannot set this field).
+	Public   *bool    `yaml:"public,omitempty" json:"public,omitempty"`
+	Versions []string `yaml:"versions,omitempty" json:"versions,omitempty"`
+	// Engine apply needs immutable version IDs, not just display names; keeping
+	// the resolved pair in config lets CLI/CI re-apply without a fresh registry
+	// lookup that could drift under a reused version label.
+	ResolvedVersions []WorkspaceResolvedVersion `yaml:"resolved_versions,omitempty" json:"resolved_versions,omitempty"`
+	// RuntimeConfig/runtime_config.webhooks (the workspace's own webhook
+	// registrations) was removed with no backward compatibility once
+	// kind: webhook shipped -- see plans/plan-webhook-kind.md. Registration
+	// now lives entirely in kind: webhook config files.
+	ExecutionPolicy *ExecutionPolicy `yaml:"execution_policy,omitempty" json:"execution_policy,omitempty"`
+	VersionPolicies  []WorkspaceVersionPolicy   `yaml:"version_policies,omitempty" json:"version_policies,omitempty"`
+	// ConnectionProfiles is intentionally raw in the CLI: Engine owns full
+	// validation, while CLI only resolves local env refs before apply.
+	ConnectionProfiles []map[string]interface{} `yaml:"connection_profiles,omitempty" json:"connection_profiles,omitempty"`
+}
+
+type WorkspaceVersionPolicy struct {
+	Version string `yaml:"version" json:"version"`
+	// Public controls Registry-level visibility for just this version via
+	// UpdateServiceVersionPublicStatus (owner only). Distinct from
+	// ExecutionPolicy.Public, which controls whether this version's
+	// rate_limit/retry are published, not whether the version itself is
+	// visible. Omitted means "leave this version's visibility unchanged".
+	Public          *bool            `yaml:"public,omitempty" json:"public,omitempty"`
+	ExecutionPolicy *ExecutionPolicy `yaml:"execution_policy,omitempty" json:"execution_policy,omitempty"`
+}
+
+type ExecutionPolicy struct {
+	// Public, when true, publishes the rate_limit, retry, and pagination
+	// settings to the Registry via UpdateServiceConfig so all SDK consumers
+	// inherit these provider-declared limits. Only valid for services owned by
+	// this account; non-owners will receive an error from the Engine during
+	// apply.
+	Public      *bool            `yaml:"public,omitempty" json:"public,omitempty"`
+	RateLimit   *RateLimitConfig `yaml:"rate_limit,omitempty" json:"rate_limit,omitempty"`
+	Retry       *RetryConfig     `yaml:"retry,omitempty" json:"retry,omitempty"`
+	RetryConfig *RetryConfig     `yaml:"retry_config,omitempty" json:"retry_config,omitempty"`
+	// Pagination moved under execution_policy from the now-deleted
+	// runtime_config.pagination (see plans/plan-service-config-restructure.md
+	// item 1) -- one value per service/version, sharing this same Public flag
+	// rather than having its own.
+	Pagination *PaginationConfig `yaml:"pagination,omitempty" json:"pagination,omitempty"`
+	// BaseURL overrides a wrong or missing spec-derived base_url for this
+	// service (or, under version_policies, this one version). Takes effect
+	// locally in this workspace on every apply regardless of Public; Public
+	// additionally publishes it to the Registry so every other consumer's
+	// effective base_url inherits it too, same two-tier behavior as
+	// RateLimit/Retry/Pagination above.
+	BaseURL *string `yaml:"base_url,omitempty" json:"base_url,omitempty"`
+	// EventExtractionPath and IncomingWebhookConfig are the provider's own
+	// outbound webhook verification recipe
+	// (plans/plan-service-config-restructure.md item 3) -- how *this service*
+	// signs the webhooks it sends, not this workspace's own webhook
+	// registrations (those stay under runtime_config.webhooks,
+	// workspace-private). The json/yaml key matches the Registry's own
+	// incoming_webhook_config field name (not a "webhook_config" alias) so
+	// this struct round-trips unchanged through the Engine, which reuses it
+	// verbatim as the Registry's request body. Safe to publish under this
+	// same Public flag because IncomingWebhookConfig never carries a secret,
+	// only the verification mechanism.
+	EventExtractionPath   *string        `yaml:"event_extraction_path,omitempty" json:"event_extraction_path,omitempty"`
+	IncomingWebhookConfig *WebhookVerify `yaml:"incoming_webhook_config,omitempty" json:"incoming_webhook_config,omitempty"`
+	Reset                 bool           `yaml:"reset,omitempty" json:"reset,omitempty"`
+}
+
+// WebhookVerify is the provider-declared verification recipe: auth mechanism
+// and where to find the signature. It intentionally has no secret field --
+// see ExecutionPolicy.IncomingWebhookConfig's doc comment.
+type WebhookVerify struct {
+	AuthType            string   `yaml:"auth_type,omitempty" json:"auth_type,omitempty"`
+	AuthLocation        string   `yaml:"auth_location,omitempty" json:"auth_location,omitempty"`
+	AuthKeyName         string   `yaml:"auth_key_name,omitempty" json:"auth_key_name,omitempty"`
+	SignatureHeader     string   `yaml:"signature_header,omitempty" json:"signature_header,omitempty"`
+	VerificationHeaders []string `yaml:"verification_headers,omitempty" json:"verification_headers,omitempty"`
+}
+
+// PaginationConfig mirrors models.PaginationConfig on the Registry -- shape
+// must match the real dispatch type (Type/RequestParam/ResponsePath), not the
+// old dead workspace-config shape (Type/CursorField/NextPageField) that this
+// replaces.
+type PaginationConfig struct {
+	Type         string `yaml:"type" json:"type"`
+	RequestParam string `yaml:"request_param" json:"request_param"`
+	ResponsePath string `yaml:"response_path" json:"response_path"`
+}
+
+type RateLimitConfig struct {
+	Strategy          string `yaml:"strategy" json:"strategy"`
+	RequestsPerSecond int    `yaml:"requests_per_second" json:"requests_per_second"`
+	RequestsPerMinute int    `yaml:"requests_per_minute" json:"requests_per_minute"`
+}
+
+type RetryConfig struct {
+	Strategy   string `yaml:"strategy" json:"strategy"`
+	MaxRetries int    `yaml:"max_retries" json:"max_retries"`
+	BackoffMs  int    `yaml:"backoff_ms" json:"backoff_ms"`
+}
+
+type WorkspaceResolvedVersion struct {
+	Version          string `yaml:"version" json:"version"`
+	ServiceVersionID string `yaml:"service_version_id" json:"service_version_id"`
+}
+
+// RuntimeConfig (workspace-level runtime_config.webhooks) was removed
+// outright with no backward compatibility once kind: webhook shipped -- see
+// plans/plan-webhook-kind.md and WorkspaceService's doc comment.
+type AuthConfig struct {
+	Bucket   string `yaml:"bucket,omitempty" json:"bucket,omitempty"`
+	AuthType string `yaml:"auth_type" json:"auth_type"`
+	Username string `yaml:"username,omitempty" json:"username,omitempty"`
+	Password string `yaml:"password,omitempty" json:"password,omitempty"`
+	Token    string `yaml:"token,omitempty" json:"token,omitempty"`
+	APIKey   string `yaml:"api_key,omitempty" json:"api_key,omitempty"`
+	Cert     string `yaml:"cert,omitempty" json:"cert,omitempty"`
+	Key      string `yaml:"key,omitempty" json:"key,omitempty"`
+}
+
+type AuthMaterial struct {
+	Username string
+	Password string
+	Token    string
+	APIKey   string
+	Cert     string
+	Key      string
+}
+
+type ConnectConfig struct {
+	AuthType        string `yaml:"auth_type" json:"auth_type"`
+	Enabled         *bool  `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	ClientID        string `yaml:"client_id,omitempty" json:"client_id,omitempty"`
+	ClientIDEnv     string `yaml:"client_id_env,omitempty" json:"client_id_env,omitempty"`
+	ClientSecret    string `yaml:"client_secret,omitempty" json:"client_secret,omitempty"`
+	ClientSecretEnv string `yaml:"client_secret_env,omitempty" json:"client_secret_env,omitempty"`
+	RedirectURI     string `yaml:"redirect_uri" json:"redirect_uri"`
+}
+
+type ConnectMaterial struct {
+	ClientID      string
+	ClientSecret  string
+	BindingValues map[string]string
+}
+
+// WebhookArtifactConfig is kind: webhook -- a named, team-owned bundle of
+// webhook ingress registrations that can span multiple services, with its
+// own independent plan/apply lifecycle (see plans/plan-webhook-kind.md).
+// Name is the registration identity: the (service, Name) pair is what
+// fused_workspace_webhooks is keyed on now, replacing the old free-form
+// per-service label RuntimeConfig.Webhooks used. Name must be globally
+// unique per (service) across every kind: webhook artifact in the account
+// -- a second artifact trying to claim a (service, Name) pair another
+// artifact already owns is a plan-time conflict, not a silent overwrite.
+type WebhookArtifactConfig struct {
+	BaseConfig `yaml:",inline"`
+	Name       string                            `yaml:"name" json:"name"`
+	Services   map[string]WebhookArtifactService `yaml:"services" json:"services"`
+}
+
+// WebhookArtifactService is one service's registration within a kind:
+// webhook artifact -- just the signing secret reference, since the
+// artifact's own Name (not a per-service label) is the registration's
+// identity now.
+type WebhookArtifactService struct {
+	Secret string `yaml:"secret,omitempty" json:"secret,omitempty"`
+}
+
+// WorkspaceDeprecationDirective keeps deprecation as explicit config intent,
+// rather than an apply-time decision hidden behind a removal flag.
+type WorkspaceDeprecationDirective struct {
+	ServiceID   string `yaml:"service_id" json:"service_id"`
+	Version     string `yaml:"version,omitempty" json:"version,omitempty"`
+	EffectiveAt string `yaml:"effective_at" json:"effective_at"`
+	Reason      string `yaml:"reason,omitempty" json:"reason,omitempty"`
+}
+
+// ArtifactConfig carries the shared, versioned declaration for generated SDKs
+// and Engine-projected MCP servers. Keeping selection shape shared prevents
+// their plan results from drifting while their executors remain distinct.
+type ArtifactConfig struct {
+	BaseConfig `yaml:",inline"`
+	Name       string                     `yaml:"name" json:"name"`
+	Version    string                     `yaml:"version" json:"version"`
+	Language   string                     `yaml:"language,omitempty" json:"language,omitempty"`
+	Bucket     string                     `yaml:"bucket,omitempty" json:"bucket,omitempty"`
+	// WebhookAttachment names one kind: webhook artifact (its own top-level
+	// `name:`) this SDK/MCP wants webhook delivery from. Deliberately a
+	// single scalar, not a list, and hoisted here at the artifact's top
+	// level rather than nested per-service -- one webhook artifact can
+	// itself span multiple services (see WebhookArtifactConfig), so pinning
+	// the attachment here once covers every service below that the attached
+	// artifact also registers, instead of repeating the same name under
+	// each service. Only one attachment is supported per SDK/MCP artifact
+	// until multiple bucket attachments exist (plans/deferred-work.md).
+	// Per-service ArtifactService.Webhooks/WebhooksSelectAll then scope
+	// which events, from this one attached artifact, actually get
+	// delivered/generated for each service.
+	WebhookAttachment string                     `yaml:"webhook_attachment,omitempty" json:"webhook_attachment,omitempty"`
+	Services          map[string]ArtifactService `yaml:"services" json:"services"`
+}
+
+type SDKConfig = ArtifactConfig
+type MCPConfig = ArtifactConfig
+
+// ArtifactService represents the requested immutable provider version and
+// selected surface shared by SDK and MCP artifact declarations.
+//
+// Webhooks/WebhooksSelectAll are the delivery/codegen surface for whatever
+// kind: webhook artifact this service's owning ArtifactConfig attaches via
+// WebhookAttachment (see ArtifactConfig.WebhookAttachment's doc comment) --
+// they select *which events* to receive/generate typed methods for, never
+// which webhook artifact. An empty/omitted Webhooks list means no events at
+// all (explicit opt-in), mirroring how Operations requires SelectAll rather
+// than an implicit "all" default; WebhooksSelectAll is the equivalent
+// explicit "give me every event" escape hatch for Webhooks, kept as its own
+// field rather than overloading SelectAll since Operations/Webhooks are
+// independent selections.
+type ArtifactService struct {
+	Version           string            `yaml:"version" json:"version"`
+	Operations        []string          `yaml:"operations" json:"operations"`
+	Webhooks          []string          `yaml:"webhooks,omitempty" json:"webhooks,omitempty"`
+	WebhooksSelectAll bool              `yaml:"webhooks_select_all,omitempty" json:"webhooks_select_all,omitempty"`
+	SelectAll         bool              `yaml:"select_all,omitempty" json:"select_all,omitempty"`
+	Auth              *ArtifactAuth     `yaml:"auth,omitempty" json:"auth,omitempty"`
+	Connect           *ArtifactConnect  `yaml:"connect,omitempty" json:"connect,omitempty"`
+	Injections        []InjectionConfig `yaml:"injections,omitempty" json:"injections,omitempty"`
+}
+
+// InjectionConfig injects a value into a specific location of a request at
+// runtime. The Value field supports dynamic interpolation via ${...} tags
+// (e.g., ${bucket.env.FROM_EMAIL}, ${bucket.secrets.API_KEY}).
+type InjectionConfig struct {
+	Value    string `yaml:"value" json:"value"`
+	Location string `yaml:"location" json:"location"`
+	Name     string `yaml:"name" json:"name"`
+	Mode     string `yaml:"mode,omitempty" json:"mode,omitempty"`
+}
+
+// ArtifactAuth selects a Registry-declared scheme; credential material stays
+// in the bucket or user connection and is never accepted in artifact config.
+type ArtifactAuth struct {
+	Type string `yaml:"type" json:"type"`
+	Name string `yaml:"name,omitempty" json:"name,omitempty"`
+}
+
+// ArtifactConnect narrows OAuth/OIDC consent without carrying tokens or
+// provider application secrets in source control.
+type ArtifactConnect struct {
+	Scopes []string `yaml:"scopes,omitempty" json:"scopes,omitempty"`
+}
+
+type SDKService = ArtifactService
+
+// ParsedConfig is a container for the parsed configuration.
+type ParsedConfig struct {
+	Kind       ConfigKind
+	Path       string
+	ConfigKey  string
+	SourceHash string
+	Workspace  *WorkspaceConfig
+	SDK        *SDKConfig
+	MCP        *MCPConfig
+	Webhook    *WebhookArtifactConfig
+}
+
+// Run represents a set of parsed configs loaded for a CLI execution.
+type Run struct {
+	Configs []*ParsedConfig
+}
