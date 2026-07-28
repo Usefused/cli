@@ -104,9 +104,9 @@ If you are generating a TypeScript MCP server (`--type=mcp`), you can choose to 
 fused-cli sdk prompt --name sales-mcp -t mcp --deploy -d "Read Salesforce leads and fetch Intercom conversations"
 ```
 
-### Import an API Spec (`import`)
+### Import a Provider API (`import`)
 
-The `import` command registers (or updates) a service in the Registry directly from a supported API specification -- no conversational import agent, no endpoint-picking prompt, always the whole spec. This is the non-interactive path for teams adding their own internal service to Fused, e.g. from a CI step.
+Use `import plan` / `import apply` when the source is already a supported API specification. This is the non-interactive path for teams adding their own internal service to Fused, e.g. from a CI step: no conversational import agent, no endpoint-picking prompt, always the whole spec.
 
 The Registry auto-detects the source format; no `--format` flag is required. Supported formats are:
 
@@ -128,9 +128,23 @@ fused-cli import plan ./schema.graphql --name "Graph API" --slug graph-api --ver
 
 # Apply: commit the most recently planned import.
 fused-cli import apply
+
+# Human-readable docs URL. The agent discovers endpoints, and the CLI selects
+# every discovered endpoint by default.
+fused-cli import docs --url https://docs.example.com/api --name "Docs API" --slug docs-api --version 1.0
+
+# Optional review/partial import modes.
+fused-cli import docs --url https://docs.example.com/api --name "Docs API" --slug docs-api --version 1.0 --review
+fused-cli import docs --url https://docs.example.com/api --name "Docs API" --slug docs-api --version 1.0 --select GET:/users
 ```
 
 The optional positional argument is a local file path. Use `--url` for an online source. Registry first tries `GET`; if the response is not a recognized specification, it sends a standard GraphQL introspection query to the same URL. Successful introspection also uses that URL as the service's GraphQL base URL.
+
+Use `import docs` for normal HTML documentation pages rather than spec URLs.
+Docs imports use the same agent-backed extraction flow as the web UI. They
+select all discovered endpoints unless `--review` or one or more
+`--select METHOD:/path` filters are provided. A partial docs import does not
+imply that omitted endpoints were deleted.
 
 `--slug` is required and is resolved within the caller's Registry account. An existing match updates that service; an unknown slug creates a service with that slug. The provider-declared version is authoritative: importing the same version creates a new internal revision, while importing a different version creates that provider version. Fused never asks for a publish strategy and never invents a provider version. If a generated SDK or workspace uses the version being corrected, the plan reports that usage without blocking apply.
 
@@ -535,6 +549,22 @@ Commit the exact source reviewed by `import plan`. Service, provider version, co
 | `--plan-id` | | Apply a specific remote plan ID (requires `--source-hash`) | `""` |
 | `--source-hash` | | Source hash to pair with `--plan-id` | `""` |
 | `--receipt` | | Read a specific plan receipt (default: most recent local receipt) | `""` |
+
+#### `import docs`
+Extract endpoints from a human-readable API documentation URL using the same agent-backed flow as the web UI. Every discovered endpoint is selected by default.
+
+Usage: `fused-cli import docs --url <http(s)-docs-url> --name <service-name> --slug <service-slug> --version <provider-version>`
+
+| Argument | Short | Description | Default |
+|----------|-------|-------------|---------|
+| `--name` | | Service name (required) | `""` |
+| `--slug` | | Account-scoped service slug to create (required) | `""` |
+| `--url` | | Human-readable API documentation URL (required) | `""` |
+| `--version` | | Provider version for the extracted contract (required) | `""` |
+| `--review` | | Review discovered endpoints before extraction; all are selected by default | `false` |
+| `--select` | | Endpoint to import as `METHOD:/path`; repeat for multiple endpoints | `[]` |
+| `--timeout` | | Maximum time to wait for discovery and extraction | `20m0s` |
+| `--no-workspace-add` | | Skip adding the extracted service to the current workspace | `false` |
 
 #### Global `plan` / `apply` / `validate`
 The CLI also supports top-level `plan`, `apply`, and `validate` commands to process all configurations (both SDKs and workspaces).
