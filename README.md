@@ -50,19 +50,25 @@ Head over to the [Releases](https://github.com/Usefused/cli/releases) page and d
 
 ## Configuration
 
-The `fused-cli` requires an **API Key** and an **Engine URL** to connect to the Fused data plane. You can set these up once using the `config` command.
+The `fused-cli` requires an **API Key** and an **Engine URL** to connect to the Fused data plane. If you do not have an Engine running yet, install or run one from the [Fused Engine releases](https://github.com/Usefused/engine/releases).
 
 ```bash
-# Set your API Key (from the Fused Dashboard)
-fused-cli config set api-key "sk_test_..."
-
 # Set the URL for your Fused Engine
 fused-cli config set engine-url "http://localhost:8081"
+
+# Set the key the Engine should use to authenticate CLI requests
+fused-cli config set api-key "<provided-by-fused>"
 ```
 
 To view your current configuration, run:
 ```bash
 fused-cli config list
+```
+
+To confirm the CLI is talking to the Engine, run:
+
+```bash
+fused-cli workspace services list
 ```
 
 ### Resolution Order
