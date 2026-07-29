@@ -9,7 +9,6 @@ type PageOptions struct {
 
 type BucketSummaryResponse struct {
 	ID          string `json:"id"`
-	WorkspaceID string `json:"workspace_id"`
 	Name        string `json:"name"`
 	IsDefault   bool   `json:"is_default"`
 	SecretCount int    `json:"secret_count"`
@@ -108,7 +107,7 @@ func (c *Client) ListBucketSummariesPage(opts PageOptions) (*BucketSummaryPageRe
 		query BucketSummaryPage($limit: Int!, $offset: Int!) {
 			bucketSummaryPage(limit: $limit, offset: $offset) {
 				total
-				items { id workspace_id name is_default secret_count value_count created_at updated_at }
+				items { id name is_default secret_count value_count created_at updated_at }
 			}
 		}
 	`
@@ -123,7 +122,7 @@ func (c *Client) GetBucketSummary(bucketID string) (*BucketSummaryResponse, erro
 	query := `
 		query BucketSummary($bucketId: String!) {
 			bucketSummary(bucket_id: $bucketId) {
-				id workspace_id name is_default secret_count value_count created_at updated_at
+				id name is_default secret_count value_count created_at updated_at
 			}
 		}
 	`
