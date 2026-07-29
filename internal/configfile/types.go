@@ -65,8 +65,8 @@ type WorkspaceService struct {
 	// registrations) was removed with no backward compatibility once
 	// kind: webhook shipped -- see plans/plan-webhook-kind.md. Registration
 	// now lives entirely in kind: webhook config files.
-	ExecutionPolicy *ExecutionPolicy `yaml:"execution_policy,omitempty" json:"execution_policy,omitempty"`
-	VersionPolicies  []WorkspaceVersionPolicy   `yaml:"version_policies,omitempty" json:"version_policies,omitempty"`
+	ExecutionPolicy *ExecutionPolicy         `yaml:"execution_policy,omitempty" json:"execution_policy,omitempty"`
+	VersionPolicies []WorkspaceVersionPolicy `yaml:"version_policies,omitempty" json:"version_policies,omitempty"`
 	// ConnectionProfiles is intentionally raw in the CLI: Engine owns full
 	// validation, while CLI only resolves local env refs before apply.
 	ConnectionProfiles []map[string]interface{} `yaml:"connection_profiles,omitempty" json:"connection_profiles,omitempty"`
@@ -85,10 +85,9 @@ type WorkspaceVersionPolicy struct {
 
 type ExecutionPolicy struct {
 	// Public, when true, publishes the rate_limit, retry, and pagination
-	// settings to the Registry via UpdateServiceConfig so all SDK consumers
-	// inherit these provider-declared limits. Only valid for services owned by
-	// this account; non-owners will receive an error from the Engine during
-	// apply.
+	// settings through the Registry publish API so downstream consumers inherit
+	// these provider-declared limits. Only valid for services owned by this
+	// account; non-owners will receive an error from the Engine during apply.
 	Public      *bool            `yaml:"public,omitempty" json:"public,omitempty"`
 	RateLimit   *RateLimitConfig `yaml:"rate_limit,omitempty" json:"rate_limit,omitempty"`
 	Retry       *RetryConfig     `yaml:"retry,omitempty" json:"retry,omitempty"`
@@ -101,21 +100,20 @@ type ExecutionPolicy struct {
 	// BaseURL overrides a wrong or missing spec-derived base_url for this
 	// service (or, under version_policies, this one version). Takes effect
 	// locally in this workspace on every apply regardless of Public; Public
-	// additionally publishes it to the Registry so every other consumer's
-	// effective base_url inherits it too, same two-tier behavior as
-	// RateLimit/Retry/Pagination above.
+	// additionally publishes it to the provider contract so every other
+	// consumer's effective base_url inherits it too.
 	BaseURL *string `yaml:"base_url,omitempty" json:"base_url,omitempty"`
 	// EventExtractionPath and IncomingWebhookConfig are the provider's own
 	// outbound webhook verification recipe
 	// (plans/plan-service-config-restructure.md item 3) -- how *this service*
 	// signs the webhooks it sends, not this workspace's own webhook
 	// registrations (those stay under runtime_config.webhooks,
-	// workspace-private). The json/yaml key matches the Registry's own
-	// incoming_webhook_config field name (not a "webhook_config" alias) so
-	// this struct round-trips unchanged through the Engine, which reuses it
-	// verbatim as the Registry's request body. Safe to publish under this
-	// same Public flag because IncomingWebhookConfig never carries a secret,
-	// only the verification mechanism.
+	// workspace-private). The json/yaml key keeps the established
+	// incoming_webhook_config wire name (not a "webhook_config" alias) so this
+	// struct round-trips unchanged through the Engine and Registry publish API.
+	// Safe to publish under this same Public flag because
+	// IncomingWebhookConfig never carries a secret, only the verification
+	// mechanism.
 	EventExtractionPath   *string        `yaml:"event_extraction_path,omitempty" json:"event_extraction_path,omitempty"`
 	IncomingWebhookConfig *WebhookVerify `yaml:"incoming_webhook_config,omitempty" json:"incoming_webhook_config,omitempty"`
 	Reset                 bool           `yaml:"reset,omitempty" json:"reset,omitempty"`
@@ -235,10 +233,10 @@ type WorkspaceDeprecationDirective struct {
 // their plan results from drifting while their executors remain distinct.
 type ArtifactConfig struct {
 	BaseConfig `yaml:",inline"`
-	Name       string                     `yaml:"name" json:"name"`
-	Version    string                     `yaml:"version" json:"version"`
-	Language   string                     `yaml:"language,omitempty" json:"language,omitempty"`
-	Bucket     string                     `yaml:"bucket,omitempty" json:"bucket,omitempty"`
+	Name       string `yaml:"name" json:"name"`
+	Version    string `yaml:"version" json:"version"`
+	Language   string `yaml:"language,omitempty" json:"language,omitempty"`
+	Bucket     string `yaml:"bucket,omitempty" json:"bucket,omitempty"`
 	// WebhookAttachment names one kind: webhook artifact (its own top-level
 	// `name:`) this SDK/MCP wants webhook delivery from. Deliberately a
 	// single scalar, not a list, and hoisted here at the artifact's top
