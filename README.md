@@ -257,6 +257,7 @@ List Registry webhook definitions for a service.
 #### `secret <service-slug> set [value]`
 Set an authentication secret for a workspace service.
 If the service supports multiple authentication methods, use `--type` to specify the method, or use the `--interactive` flag to select from a menu.
+For `basic` or `mtls` authentication, you can pass credentials interactively via `--interactive`, or supply them inline as a semicolon-separated string (e.g. `username=x;password=y` or `cert=...;key=...`).
 
 > **Recommended Pattern:** Store API keys, tokens, and service credentials directly using `fused-cli secret set <service-slug> [value] --bucket <bucket>`. This stores secrets securely in Fused's encrypted vault.
 

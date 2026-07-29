@@ -87,10 +87,11 @@ there's no versioning or grace period, the old value is simply gone.
 If a service declares more than one auth scheme (e.g. both `api_key` and
 `oauth` as alternatives), a bare `set` only auto-picks the scheme when
 there's exactly one -- otherwise pass `--type <scheme-name>` or use `-i` to
-pick interactively. `basic` and `mtls` schemes always require `-i`
-regardless of how many schemes exist, because they need two distinct
-values (username+password, or cert+key) that don't fit in one positional
-argument -- they're written as two separate secret keys (`<name>_username`/
+pick interactively. `basic` and `mtls` schemes inherently require two distinct
+values (username+password, or cert+key). You can either pass them inline
+as a single value (e.g. `'username=x;password=y'` or `'cert=...;key=...'`)
+or omit the value and use `-i` to provide them via interactive prompts.
+They are always stored as two separate secret keys (`<name>_username`/
 `<name>_password`, or `<name>_cert`/`<name>_key`), and a client cert/key
 pair is validated (matching pair, not expired) before it's ever stored.
 

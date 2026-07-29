@@ -206,24 +206,39 @@ func promptSecretAuthSelect(info *api.ServiceInfo) (*api.AuthConfig, error) {
 	return &info.AuthConfigs[selected], nil
 }
 
-// handleBasicSecretSet stores username and password separately so the Engine
-// can validate incomplete basic credentials instead of guessing from one blob.
 func handleBasicSecretSet(client *api.Client, serviceID, bucketID string, auth *api.AuthConfig, value string, expiresAt *time.Time) error {
-	// Passing a single string value for basic auth is ambiguous (is it username:password or just a token?). We enforce interactive mode to explicitly capture both fields.
-	if value != "" && !secretSetInteractive {
-		return fmt.Errorf("basic auth requires two values (username and password). Please use interactive mode (-i)")
-	}
 	var username, password string
-	err := huh.NewInput().Title("Username:").Value(&username).Run()
-	if err != nil {
-		return err
+
+	if value != "" {
+		parts := strings.Split(value, ";")
+		for _, part := range parts {
+			kv := strings.SplitN(part, "=", 2)
+			if len(kv) == 2 {
+				k := strings.ToLower(strings.TrimSpace(kv[0]))
+				v := strings.TrimSpace(kv[1])
+				if k == "username" {
+					username = v
+				} else if k == "password" {
+					password = v
+				}
+			}
+		}
+		if username == "" || password == "" {
+			return fmt.Errorf("basic auth requires both username and password. Provide format 'username=...;password=...' or use interactive mode (-i)")
+		}
+	} else {
+		err := huh.NewInput().Title("Username:").Value(&username).Run()
+		if err != nil {
+			return err
+		}
+		err = huh.NewInput().Title("Password:").EchoMode(huh.EchoModePassword).Value(&password).Run()
+		if err != nil {
+			return err
+		}
 	}
-	err = huh.NewInput().Title("Password:").EchoMode(huh.EchoModePassword).Value(&password).Run()
-	if err != nil {
-		return err
-	}
+
 	name := secretAuthCredentialName(auth)
-	err = client.UpsertSecrets(bucketID, []api.SecretUpsertRequest{
+	err := client.UpsertSecrets(bucketID, []api.SecretUpsertRequest{
 		{ServiceID: serviceID, KeyName: name + "_username", CredentialType: "basic", Value: username, ExpiresAt: expiresAt},
 		{ServiceID: serviceID, KeyName: name + "_password", CredentialType: "basic", Value: password, ExpiresAt: expiresAt},
 	})
@@ -234,21 +249,37 @@ func handleBasicSecretSet(client *api.Client, serviceID, bucketID string, auth *
 	return nil
 }
 
-// handleMTLSSecretSet stores cert/key as an explicit pair because mTLS cannot
-// be safely applied when only one half of the transport credential exists.
 func handleMTLSSecretSet(client *api.Client, serviceID, bucketID string, auth *api.AuthConfig, value string, expiresAt *time.Time) error {
-	if value != "" && !secretSetInteractive {
-		return fmt.Errorf("mTLS auth requires certificate and key values. Please use interactive mode (-i)")
-	}
 	var cert, key string
-	err := huh.NewText().Title("Client certificate PEM:").Value(&cert).Run()
-	if err != nil {
-		return err
+
+	if value != "" {
+		parts := strings.Split(value, ";")
+		for _, part := range parts {
+			kv := strings.SplitN(part, "=", 2)
+			if len(kv) == 2 {
+				k := strings.ToLower(strings.TrimSpace(kv[0]))
+				v := strings.TrimSpace(kv[1])
+				if k == "cert" {
+					cert = v
+				} else if k == "key" {
+					key = v
+				}
+			}
+		}
+		if cert == "" || key == "" {
+			return fmt.Errorf("mTLS auth requires both cert and key. Provide format 'cert=...;key=...' or use interactive mode (-i)")
+		}
+	} else {
+		err := huh.NewText().Title("Client certificate PEM:").Value(&cert).Run()
+		if err != nil {
+			return err
+		}
+		err = huh.NewText().Title("Client private key PEM:").Value(&key).Run()
+		if err != nil {
+			return err
+		}
 	}
-	err = huh.NewText().Title("Client private key PEM:").Value(&key).Run()
-	if err != nil {
-		return err
-	}
+
 	if err := validateMTLSSecretPair(cert, key); err != nil {
 		return err
 	}

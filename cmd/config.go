@@ -27,6 +27,15 @@ var configSetCmd = &cobra.Command{
 			os.Exit(1)
 		}
 		fmt.Printf("✅ Config %q set successfully.\n", key)
+
+		if key == "api-key" && os.Getenv("FUSED_API_KEY") != "" {
+			fmt.Println("\n⚠️  Warning: FUSED_API_KEY is currently set in your environment.")
+			fmt.Println("   The environment variable will override this configured value until it is unset.")
+		}
+		if key == "engine-url" && os.Getenv("FUSED_ENGINE_URL") != "" {
+			fmt.Println("\n⚠️  Warning: FUSED_ENGINE_URL is currently set in your environment.")
+			fmt.Println("   The environment variable will override this configured value until it is unset.")
+		}
 	},
 }
 
@@ -61,6 +70,9 @@ var configListCmd = &cobra.Command{
 		}
 
 		fmt.Println("engine-url =", cfg.EngineURL)
+		if os.Getenv("FUSED_ENGINE_URL") != "" {
+			fmt.Println("             (⚠️  overridden by FUSED_ENGINE_URL environment variable)")
+		}
 
 		// Mask the API key if present.
 		keyVal := cfg.APIKey
@@ -68,6 +80,9 @@ var configListCmd = &cobra.Command{
 			keyVal = keyVal[:4] + "..."
 		}
 		fmt.Println("api-key =", keyVal)
+		if os.Getenv("FUSED_API_KEY") != "" {
+			fmt.Println("             (⚠️  overridden by FUSED_API_KEY environment variable)")
+		}
 	},
 }
 
