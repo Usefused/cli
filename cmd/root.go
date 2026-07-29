@@ -119,5 +119,9 @@ func getAPIClient() (*api.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return api.NewClient(url, GetAPIKey()), nil
+	apiKey := GetAPIKey()
+	if apiKey == "" {
+		return nil, fmt.Errorf("api-key is not configured.\n\nRun:\n  fused-cli config set api-key <key>\n\nOr set FUSED_API_KEY environment variable.")
+	}
+	return api.NewClient(url, apiKey), nil
 }
