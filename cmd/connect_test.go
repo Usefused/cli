@@ -209,10 +209,10 @@ func connectTargetServer(t *testing.T, connectConfigHandler http.HandlerFunc) *h
 			}
 		case r.URL.Path == "/engine/graphql":
 			body := decodeTestGraphQLBody(t, r)
-			if !strings.Contains(body.Query, "buckets") {
+			if !strings.Contains(body.Query, "bucketSummaryPage") {
 				t.Fatalf("unexpected engine graphql query: %s", body.Query)
 			}
-			_, _ = w.Write([]byte(`{"data":{"buckets":[{"id":"bucket-1","name":"customer-accounts","is_default":false,"created_at":"2026-07-21T00:00:00Z"}]}}`))
+			_, _ = w.Write([]byte(`{"data":{"bucketSummaryPage":{"total":1,"items":[{"id":"bucket-1","name":"customer-accounts","is_default":false,"secret_count":0,"value_count":0,"created_at":"2026-07-21T00:00:00Z","updated_at":"2026-07-21T00:00:00Z"}]}}}`))
 		case strings.HasSuffix(r.URL.Path, "/connect-config"):
 			connectConfigHandler(w, r)
 		default:

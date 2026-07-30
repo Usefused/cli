@@ -24,6 +24,19 @@ buckets:
         auth: {...}       # see fused-config for the auth_type shape
 ```
 
+That `buckets:` block is real -- workspace.yaml can declaratively set
+`service_config.<slug>.auth` and generic `secrets.<key>` ($ENV-only, no
+literals) for a bucket, and `plan`/`apply` does read and apply it. What it
+cannot do is **create the bucket itself**: apply resolves each
+`buckets.<name>` key against an existing bucket by name, and if no bucket
+with that name exists yet, apply fails outright with "bucket not found" --
+it never creates one implicitly. **The only way to create a bucket is
+`fused-cli bucket <name> create`** below (or the interactive y/N "create it?"
+prompt `secret set`/`value set`/`connect set` show when given an unresolved
+bucket name -- not something `workspace apply` does). Always create the
+bucket first if it might not exist yet, before declaring `buckets.<name>...`
+in workspace.yaml or running any `--bucket <name>` command against it.
+
 A service's OAuth/OIDC app registration (`connect`) is never a workspace.yaml
 field -- it's set only via `fused-cli connect <slug> set` below, an immediate
 admin action against its own endpoint, not something `plan`/`apply` sees or

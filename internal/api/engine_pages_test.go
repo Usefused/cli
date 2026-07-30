@@ -96,8 +96,8 @@ func TestLegacyBucketReadHelpersUseEngineGraphQL(t *testing.T) {
 		queries = append(queries, body.Query)
 		w.Header().Set("Content-Type", "application/json")
 		switch {
-		case strings.Contains(body.Query, "buckets"):
-			w.Write([]byte(`{"data":{"buckets":[{"id":"bucket-1","name":"prod","is_default":true,"created_at":"2026-07-21T00:00:00Z"}]}}`))
+		case strings.Contains(body.Query, "bucketSummaryPage"):
+			w.Write([]byte(`{"data":{"bucketSummaryPage":{"total":1,"items":[{"id":"bucket-1","name":"prod","is_default":true,"secret_count":0,"value_count":0,"created_at":"2026-07-21T00:00:00Z","updated_at":"2026-07-21T00:00:00Z"}]}}}`))
 		case strings.Contains(body.Query, "bucketValues"):
 			w.Write([]byte(`{"data":{"bucketValues":[{"id":"value-1","service_id":"svc-1","key_name":"region","location":"env","value":"eu"}]}}`))
 		case strings.Contains(body.Query, "secretMetas"):
