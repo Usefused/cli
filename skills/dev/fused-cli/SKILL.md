@@ -197,6 +197,15 @@ imperative command, since two ways to declare the same registration (one
 requiring every field on every apply, one supporting partial updates) was
 duplicated decision-making with no upside.
 
+```shell
+fused-cli connect jira get --bucket customer-accounts
+```
+
+Checks what's actually registered (`auth_type`/`enabled`/`redirect_uri` plus
+`has_client_id`/`has_client_secret` -- never the decrypted values) -- useful
+since neither `workspace.yaml` nor `workspace sync` reflect this at all, not
+even read-only.
+
 The `profile` block is omitted above because Registry has exactly one public
 match for this version/auth_type -- see `fused-config` for when you'd need to
 add one explicitly.
