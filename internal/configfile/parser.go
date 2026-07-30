@@ -437,31 +437,6 @@ func isBucketRefKindWord(word string) bool {
 	return word == "env" || word == "secret"
 }
 
-// isAmbientBucketSecretRef requires the shorthand secret form specifically
-// -- used for connect.client_secret, which (unlike kind: webhook) always
-// belongs to one already-known bucket, so it resolves directly against that
-// bucket rather than naming one; the named form is rejected by
-// looksLikeBucketTag's caller instead of silently accepted here. Mirrors
-// Engine's ambientWorkspaceBucketSecretKey.
-func isAmbientBucketSecretRef(value string) bool {
-	inner, ok := bucketRefTagContents(value)
-	if !ok {
-		return false
-	}
-	parts := strings.Split(inner, ".")
-	return len(parts) == 3 && parts[0] == "bucket" && parts[1] == "secret" && parts[2] != ""
-}
-
-// looksLikeBucketTag reports whether value is shaped like any ${bucket...}
-// reference at all (named or shorthand), used to give a clear rejection
-// message for the named form instead of the generic "must use $ENV or
-// ${bucket.secret.<key>}" error. Mirrors Engine's
-// looksLikeWorkspaceConnectBucketTag.
-func looksLikeBucketTag(value string) bool {
-	inner, ok := bucketRefTagContents(value)
-	return ok && strings.HasPrefix(inner, "bucket.")
-}
-
 func validateWorkspaceExecutionPolicy(name, version string, policy *ExecutionPolicy) error {
 	if policy == nil {
 		return nil
@@ -476,8 +451,18 @@ func validateWorkspaceExecutionPolicy(name, version string, policy *ExecutionPol
 		}
 		return nil
 	}
-	if policy.RateLimit == nil && retry == nil {
-		return workspaceExecutionPolicyValidationError(name, version, "requires rate_limit or retry")
+	// rate_limit/retry are no longer individually mandatory -- base_url,
+	// pagination, event_extraction_path, and incoming_webhook_config are all
+	// legitimate to set on their own (workspaceExecutionPolicyFromRemote/
+	// workspaceVersionExecutionPolicyFromRemote in cmd/workspace_sync.go
+	// already round-trip pagination-only or base_url-only policies from the
+	// Registry, so requiring rate_limit/retry here rejected the CLI's own
+	// sync output). Still reject a genuinely empty block -- one with none of
+	// the configurable fields set -- since that's never a meaningful policy.
+	if policy.RateLimit == nil && retry == nil && policy.Pagination == nil &&
+		policy.BaseURL == nil && policy.EventExtractionPath == nil && policy.IncomingWebhookConfig == nil {
+		return workspaceExecutionPolicyValidationError(name, version,
+			"requires at least one of rate_limit, retry, pagination, base_url, event_extraction_path, or incoming_webhook_config")
 	}
 	return nil
 }
@@ -547,9 +532,6 @@ func validateWorkspaceBucket(bucketName string, bucket WorkspaceBucket, services
 		if err := validateWorkspaceAuthIntent(serviceName, serviceConfig.Auth); err != nil {
 			return err
 		}
-		if err := validateWorkspaceConnectIntent(serviceName, serviceConfig.Connect); err != nil {
-			return err
-		}
 	}
 	return validateWorkspaceBucketSecrets(bucketName, bucket.Secrets)
 }
@@ -568,24 +550,6 @@ func validateWorkspaceBucketSecrets(bucketName string, secrets map[string]string
 		}
 	}
 	return nil
-}
-
-// validateWorkspaceConnectIntent keeps OAuth app setup in bucket config while
-// still requiring redirect/client material before the Engine can start Connect.
-func validateWorkspaceConnectIntent(name string, connect *ConnectConfig) error {
-	if connect == nil {
-		return nil
-	}
-	if strings.TrimSpace(connect.AuthType) == "" {
-		return fmt.Errorf("workspace service %q connect requires auth_type", name)
-	}
-	if !isSupportedConnectAuthType(connect.AuthType) {
-		return fmt.Errorf("workspace service %q connect has unsupported auth_type", name)
-	}
-	if strings.TrimSpace(connect.RedirectURI) == "" {
-		return fmt.Errorf("workspace service %q connect requires redirect_uri", name)
-	}
-	return validateWorkspaceConnectClientMaterial(name, connect)
 }
 
 // validateWorkspaceAuthIntent keeps static auth material out of plan/state by
@@ -621,65 +585,12 @@ func validateAuthEnvRefs(name, authType string, values ...string) error {
 	return nil
 }
 
-// validateWorkspaceConnectClientMaterial is isolated because this is the
-// branch that decides whether config contains a safe env pointer or a secret.
-func validateWorkspaceConnectClientMaterial(name string, connect *ConnectConfig) error {
-	if strings.TrimSpace(connect.ClientIDEnv) != "" || strings.TrimSpace(connect.ClientSecretEnv) != "" {
-		return fmt.Errorf("workspace service %q connect must use client_id/client_secret with $ENV references, not *_env fields", name)
-	}
-	if strings.TrimSpace(connect.ClientID) == "" {
-		return fmt.Errorf("workspace service %q connect requires client_id", name)
-	}
-	return validateWorkspaceConnectClientSecret(name, connect.ClientSecret)
-}
-
-// validateWorkspaceConnectClientSecret accepts $ENV (resolved locally at
-// apply time, unchanged) or the ambient bucket-secret shorthand
-// (${bucket.secret.<key>}, resolved server-side by Engine -- see
-// resolveMaybeEnv's passthrough for any value that isn't an $ENV shape, and
-// Engine's identical ambientWorkspaceBucketSecretKey). The named-bucket form
-// kind: webhook accepts is rejected here: a connect config already belongs
-// to one specific bucket, so naming a different one would only ever mean
-// reading a secret out of the wrong bucket.
-func validateWorkspaceConnectClientSecret(name, clientSecret string) error {
-	value := strings.TrimSpace(clientSecret)
-	if value == "" {
-		return fmt.Errorf("workspace service %q connect requires client_secret: $ENV or ${bucket.secret.<key>}", name)
-	}
-	if isEnvRef(value) || isAmbientBucketSecretRef(value) {
-		return nil
-	}
-	if looksLikeBucketTag(value) {
-		return fmt.Errorf("workspace service %q connect client_secret must reference this config's own bucket via ${bucket.secret.<key>} -- a named bucket like ${bucket.<name>.secret.<key>} is valid only in a kind: webhook secret", name)
-	}
-	return fmt.Errorf("workspace service %q connect must use client_secret: $ENV or ${bucket.secret.<key>}, not an inline value", name)
-}
-
-// WorkspaceConnectMaterials returns apply-time OAuth/OIDC material keyed by the
-// workspace service map key. Plan/state store env refs from the file; only apply
-// sends resolved secrets so Engine can encrypt them into the bucket.
-func (p *ParsedConfig) WorkspaceConnectMaterials() (map[string]ConnectMaterial, error) {
-	if p.Workspace == nil {
-		return nil, fmt.Errorf("parsed config is not a workspace")
-	}
-	materials := map[string]ConnectMaterial{}
-	for bucketName, bucket := range p.Workspace.Buckets {
-		for key, serviceConfig := range bucket.ServiceConfig {
-			material, ok, err := workspaceServiceConnectMaterial(key, serviceConfig)
-			if err != nil {
-				return nil, err
-			}
-			if ok {
-				materials[workspaceBucketMaterialKey(bucketName, key)] = material
-			}
-		}
-	}
-	return materials, nil
-}
-
-// WorkspaceProfileMaterials resolves only profile binding env refs. It is
-// separate from Connect material because connection profiles are service-level
-// routing policy, while OAuth client credentials are bucket-owned.
+// WorkspaceProfileMaterials resolves only profile binding env refs -- a
+// connection profile is service-level routing policy (keyed by service, not
+// by bucket), which is why it uses its own resolution pass rather than
+// riding along with anything bucket-scoped. Reuses ConnectMaterial purely
+// for its BindingValues field; ClientID/ClientSecret are never populated
+// here (see ConnectMaterial's doc comment).
 func (p *ParsedConfig) WorkspaceProfileMaterials() (map[string]ConnectMaterial, error) {
 	if p.Workspace == nil {
 		return nil, fmt.Errorf("parsed config is not a workspace")
@@ -785,19 +696,6 @@ func resolveAuthField(name, field string, value *string) error {
 	return nil
 }
 
-// workspaceServiceConnectMaterial resolves OAuth client credentials at apply
-// time because client secrets are bucket-owned material, not config state.
-func workspaceServiceConnectMaterial(name string, serviceConfig BucketServiceConfig) (ConnectMaterial, bool, error) {
-	if serviceConfig.Connect == nil {
-		return ConnectMaterial{}, false, nil
-	}
-	connect := *serviceConfig.Connect
-	if err := resolveConnectEnv(name, &connect); err != nil {
-		return ConnectMaterial{}, false, err
-	}
-	return ConnectMaterial{ClientID: connect.ClientID, ClientSecret: connect.ClientSecret}, true, nil
-}
-
 // workspaceServiceProfileMaterial resolves dynamic binding refs separately so
 // service-level profile policy can be reviewed without exposing local values.
 func workspaceServiceProfileMaterial(name string, svc WorkspaceService) (ConnectMaterial, bool, error) {
@@ -862,22 +760,6 @@ func workspaceProfileBindingValues(serviceName string, profile map[string]interf
 	return values, nil
 }
 
-func resolveConnectEnv(name string, connect *ConnectConfig) error {
-	clientID, err := resolveMaybeEnv(connect.ClientID)
-	if err != nil {
-		return fmt.Errorf("workspace service %q connect client_id: %w", name, err)
-	}
-	clientSecret, err := resolveMaybeEnv(connect.ClientSecret)
-	if err != nil {
-		return fmt.Errorf("workspace service %q connect client_secret: %w", name, err)
-	}
-	connect.ClientID = clientID
-	connect.ClientSecret = clientSecret
-	connect.ClientIDEnv = ""
-	connect.ClientSecretEnv = ""
-	return nil
-}
-
 func resolveMaybeEnv(value string) (string, error) {
 	if value = strings.TrimSpace(value); value != "" {
 		envRef := envRefName(value)
@@ -901,17 +783,6 @@ func canonicalStaticAuthType(authType string) string {
 		return normalized
 	default:
 		return normalized
-	}
-}
-
-// isSupportedConnectAuthType limits connect config to browser/user flows; API
-// key, bearer, and basic credentials belong in bucket secrets instead.
-func isSupportedConnectAuthType(authType string) bool {
-	switch canonicalStaticAuthType(authType) {
-	case "oauth", "oidc":
-		return true
-	default:
-		return false
 	}
 }
 

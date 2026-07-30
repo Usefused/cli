@@ -1,6 +1,6 @@
 ---
 name: fused-bucket
-description: "Use when the user wants to manage Fused bucket credentials using fused-cli -- storing static secrets or values, starting an OAuth/OIDC connect session for a user, or listing/selecting a connected user's provider resources. Trigger on 'bucket', 'secret', 'fused-cli secret', 'fused-cli value', 'OAuth connect', 'connection resources', or 'connected resource'. For the auth_type/connect config field shapes themselves, or how a resource's fields get bound into a request, read fused-config."
+description: "Use when the user wants to manage Fused bucket credentials using fused-cli -- storing static secrets or values, registering a service's OAuth/OIDC app (client_id/client_secret/redirect_uri), starting an OAuth/OIDC connect session for a user, or listing/selecting a connected user's provider resources. Trigger on 'bucket', 'secret', 'fused-cli secret', 'fused-cli value', 'fused-cli connect', 'OAuth connect', 'register OAuth app', 'connection resources', or 'connected resource'. For the auth_type/connect config field shapes themselves, or how a resource's fields get bound into a request, read fused-config."
 ---
 
 # Buckets, secrets, and connections
@@ -22,8 +22,12 @@ buckets:
     service_config:
       <service-slug>:
         auth: {...}       # see fused-config for the auth_type shape
-        connect: {...}    # see fused-config for the connect shape
 ```
+
+A service's OAuth/OIDC app registration (`connect`) is never a workspace.yaml
+field -- it's set only via `fused-cli connect <slug> set` below, an immediate
+admin action against its own endpoint, not something `plan`/`apply` sees or
+touches.
 
 Every command list below may be behind the CLI's actual flags/subcommands --
 run `fused-cli <command> --help` (e.g. `fused-cli bucket --help`, `fused-cli
@@ -32,21 +36,24 @@ relying on one (see `fused-cli` skill).
 
 ## `${bucket...}` reference syntax across contexts
 
-The same `${bucket...}` tag shape is used in four places with different
+The same `${bucket...}` tag shape is used in three places with different
 rules -- easy to conflate since they look alike:
 
 | Context | Form | Bucket name | Can merge with surrounding text? |
 |---|---|---|---|
 | SDK/MCP `injections[].value` (`fused-sdk`/`fused-mcp`) | `${bucket.env\|values\|secrets.<key>}` | Always the artifact's own `bucket:` -- cannot name another | Yes (e.g. `"Bearer ${bucket.secrets.KEY}"`) |
 | `kind: webhook` `services.<slug>.secret` (`fused-webhook`) | `${bucket.<name>.env\|secret.<key>}` or `${bucket.env\|secret.<key>}` (default bucket) | Explicit (or defaults to `default`) -- webhook verification has no artifact/dispatch context to fall back on | No -- must be the entire field value |
-| `connect.client_secret`/`client_id` (`fused-config`) | `${bucket.secret.<key>}` only | Always the connect config's own bucket -- naming another is rejected, unlike `kind: webhook` | No -- must be the entire field value |
 | Connection profile `${resource.*}` (`fused-config`) | `${resource.provider_resource_id\|base_url\|metadata.<key>}` | N/A -- not a bucket reference at all, resolves against the selected connection's resource | No -- must be the entire field value |
+
+`fused-cli connect <slug> set` (below) takes `client_id`/`client_secret`/
+`redirect_uri` as literal values only -- it's an immediate admin action, not
+a declarative field, so there is no `${bucket...}`/`$ENV` reference form for
+it to resolve.
 
 Using the wrong form in the wrong place is rejected with an explicit error
 naming the unsupported reference -- e.g. a webhook-style named-bucket
 reference (`${bucket.<name>.secrets.<key>}`) inside an SDK/MCP injection
-value at dispatch time, or the same named form inside `connect.client_secret`
-at apply time.
+value at dispatch time.
 
 ## Bucket commands
 
@@ -105,9 +112,37 @@ values a connection profile references (see `fused-config`).
 Prefer bucket secrets/values over local `_env`/`$VAR` handoffs for anything
 committed to source control -- a bucket secret is resolved server-side by
 the Engine, not read off the machine running `apply`. This covers `auth`
-static credentials, binding literals, and OAuth `connect` app registration's
-`client_secret` (`${bucket.secret.<key>}`, resolved against the connect
-config's own bucket -- see `fused-config`).
+static credentials and binding literals. It does *not* cover `connect`'s
+`client_id`/`client_secret` -- those have their own dedicated command below,
+not `secret set` (a static `auth` credential and a `connect` app registration
+used to be reachable through the same `secret set` command and the same
+derived key, which meant the two could silently overwrite each other if both
+were ever configured for the same service+bucket; `connect set` writes to
+its own storage instead).
+
+## Registering a service's OAuth/OIDC app (connect)
+
+```shell
+fused-cli connect <service-slug> set 'client_id=...;client_secret=...;redirect_uri=https://...' --bucket <name> [--type oauth|oidc]
+fused-cli connect <service-slug> set --bucket <name> -i
+```
+
+This registers (or rotates) the app credentials a service's interactive
+OAuth/OIDC flow uses -- distinct from any one end user connecting, see the
+next section for that. Like `secret set`/`value set`, this is an **immediate
+admin action**: no workspace.yaml block, no plan/apply, takes effect on save.
+`--type` disambiguates only when a service declares both `oauth` and `oidc`;
+otherwise the sole supported scheme is picked automatically.
+
+Every field is required the first time (there is nothing to fall back to),
+but afterward **omitting a field leaves it unchanged** -- rotating just
+`redirect_uri` does not require resupplying `client_id`/`client_secret`. A
+key present but blank (`'client_secret='`, or an empty interactive answer) is
+different from a key never mentioned: the former is rejected as an attempt
+to blank out a credential, the latter means "leave as-is." This works even
+though the admin API never returns decrypted values back to a caller --
+Engine merges an omitted field in from the existing encrypted row itself, not
+from anything the CLI resent.
 
 ## Starting an OAuth/OIDC connection
 

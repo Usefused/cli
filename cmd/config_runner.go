@@ -367,10 +367,6 @@ func printAppliedWebhookRegistrations(baseURL, label string, registrations []api
 // applyWorkspaceConfig sends resolved local material out-of-band from the
 // shareable YAML so plans stay reviewable without carrying secrets.
 func applyWorkspaceConfig(client *api.Client, cfg *configfile.ParsedConfig, receipt planReceipt) error {
-	connectMaterials, err := workspaceConnectMaterials(cfg)
-	if err != nil {
-		return err
-	}
 	authMaterials, err := workspaceAuthMaterials(cfg)
 	if err != nil {
 		return err
@@ -383,7 +379,7 @@ func applyWorkspaceConfig(client *api.Client, cfg *configfile.ParsedConfig, rece
 	if err != nil {
 		return err
 	}
-	resp, err := client.ApplyWorkspaceConfig(receipt.PlanID, receipt.SourceHash, connectMaterials, authMaterials, profileMaterials, bucketSecretMaterials)
+	resp, err := client.ApplyWorkspaceConfig(receipt.PlanID, receipt.SourceHash, authMaterials, profileMaterials, bucketSecretMaterials)
 	if err != nil {
 		return fmt.Errorf("failed to apply workspace %s: %w", cfg.ConfigKey, err)
 	}
@@ -409,18 +405,6 @@ func workspaceAuthMaterials(cfg *configfile.ParsedConfig) (map[string]api.AuthMa
 			Cert:     material.Cert,
 			Key:      material.Key,
 		}
-	}
-	return out, nil
-}
-
-func workspaceConnectMaterials(cfg *configfile.ParsedConfig) (map[string]api.ConnectMaterial, error) {
-	materials, err := cfg.WorkspaceConnectMaterials()
-	if err != nil {
-		return nil, err
-	}
-	out := make(map[string]api.ConnectMaterial, len(materials))
-	for key, material := range materials {
-		out[key] = api.ConnectMaterial{ClientID: material.ClientID, ClientSecret: material.ClientSecret, BindingValues: material.BindingValues}
 	}
 	return out, nil
 }

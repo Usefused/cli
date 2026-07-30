@@ -144,134 +144,10 @@ services:
 	}
 }
 
-func TestWorkspaceConnectMaterials_RejectsLegacyConnectEnvFields(t *testing.T) {
-	path := writeFile(t, t.TempDir(), "workspace.yaml", `
-apiVersion: fused/v1
-kind: workspace
-services:
-  github:
-    service_id: "00000000-0000-0000-0000-000000000001"
-    versions: ["2026-07-01"]
-buckets:
-  prod:
-    service_config:
-      github:
-        connect:
-          auth_type: oauth
-          client_id_env: FUSED_TEST_CLIENT_ID
-          client_secret_env: FUSED_TEST_CLIENT_SECRET
-          redirect_uri: https://engine.example.com/connect/callback
-`)
-	_, err := configfile.ParseFile(path)
-	if err == nil || !strings.Contains(err.Error(), "not *_env fields") {
-		t.Fatalf("expected legacy *_env rejection, got %v", err)
-	}
-}
-
-func TestWorkspaceConnectMaterials_ResolvesDollarEnvRefs(t *testing.T) {
-	t.Setenv("FUSED_TEST_CLIENT_ID", "resolved-client")
-	t.Setenv("FUSED_TEST_CLIENT_SECRET", "resolved-secret")
-	path := writeFile(t, t.TempDir(), "workspace.yaml", `
-apiVersion: fused/v1
-kind: workspace
-services:
-  github:
-    service_id: "00000000-0000-0000-0000-000000000001"
-    versions: ["2026-07-01"]
-buckets:
-  prod:
-    service_config:
-      github:
-        connect:
-          auth_type: oauth
-          client_id: $FUSED_TEST_CLIENT_ID
-          client_secret: ${FUSED_TEST_CLIENT_SECRET}
-          redirect_uri: https://engine.example.com/connect/callback
-`)
-	parsed, err := configfile.ParseFile(path)
-	if err != nil {
-		t.Fatalf("ParseFile failed: %v", err)
-	}
-	materials, err := parsed.WorkspaceConnectMaterials()
-	if err != nil {
-		t.Fatalf("WorkspaceConnectMaterials failed: %v", err)
-	}
-	material := materials["prod\x00github"]
-	if material.ClientID != "resolved-client" || material.ClientSecret != "resolved-secret" {
-		t.Fatalf("expected dollar env refs resolved, got %#v", material)
-	}
-}
-
-// TestWorkspaceConnectMaterials_PassesThroughBucketSecretRef proves a
-// client_secret written as the ambient ${bucket.secret.<key>} shorthand
-// parses/validates without a local env var present, and passes through
-// unresolved -- Engine, not the CLI, resolves this form server-side at
-// apply time against the connect config's own already-known bucket.
-func TestWorkspaceConnectMaterials_PassesThroughBucketSecretRef(t *testing.T) {
-	path := writeFile(t, t.TempDir(), "workspace.yaml", `
-apiVersion: fused/v1
-kind: workspace
-services:
-  github:
-    service_id: "00000000-0000-0000-0000-000000000001"
-    versions: ["2026-07-01"]
-buckets:
-  prod:
-    service_config:
-      github:
-        connect:
-          auth_type: oauth
-          client_id: some-client-id
-          client_secret: "${bucket.secret.GITHUB_SECRET}"
-          redirect_uri: https://engine.example.com/connect/callback
-`)
-	parsed, err := configfile.ParseFile(path)
-	if err != nil {
-		t.Fatalf("ParseFile failed: %v", err)
-	}
-	materials, err := parsed.WorkspaceConnectMaterials()
-	if err != nil {
-		t.Fatalf("WorkspaceConnectMaterials failed: %v", err)
-	}
-	material := materials["prod\x00github"]
-	if material.ClientSecret != "${bucket.secret.GITHUB_SECRET}" {
-		t.Fatalf("expected the bucket secret reference to pass through unresolved, got %#v", material)
-	}
-}
-
-// TestWorkspaceConnectMaterials_RejectsNamedBucketSecretRef proves the
-// named-bucket form kind: webhook accepts is rejected for connect -- a
-// connect config already belongs to one specific bucket, so naming a
-// different one would only ever mean reading a secret out of the wrong
-// bucket.
-func TestWorkspaceConnectMaterials_RejectsNamedBucketSecretRef(t *testing.T) {
-	path := writeFile(t, t.TempDir(), "workspace.yaml", `
-apiVersion: fused/v1
-kind: workspace
-services:
-  github:
-    service_id: "00000000-0000-0000-0000-000000000001"
-    versions: ["2026-07-01"]
-buckets:
-  prod:
-    service_config:
-      github:
-        connect:
-          auth_type: oauth
-          client_id: some-client-id
-          client_secret: "${bucket.prod.secret.GITHUB_SECRET}"
-          redirect_uri: https://engine.example.com/connect/callback
-`)
-	_, err := configfile.ParseFile(path)
-	if err == nil {
-		t.Fatal("expected the named-bucket form to be rejected for connect client_secret")
-	}
-}
-
 // TestWorkspaceBucketSecrets_RejectsLiteralValue pins
 // plans/plan-service-config-restructure.md item 4's core safety property:
 // buckets.<name>.secrets.<key> must be a $ENV reference, never a literal, the
-// same discipline already enforced for Auth/Connect fields.
+// same discipline already enforced for Auth fields.
 func TestWorkspaceBucketSecrets_RejectsLiteralValue(t *testing.T) {
 	path := writeFile(t, t.TempDir(), "workspace.yaml", `
 apiVersion: fused/v1
@@ -292,10 +168,9 @@ buckets:
 }
 
 // TestWorkspaceBucketSecretMaterials_ResolvesDollarEnvRefs mirrors
-// TestWorkspaceConnectMaterials_ResolvesDollarEnvRefs for the new generic
-// bucket secrets field -- plan/state keeps the $ENV ref, apply resolves it
-// out-of-band, keyed the same "<bucket>\x00<key>" way as auth/connect
-// material.
+// TestWorkspaceAuthMaterials-style resolution for the generic bucket secrets
+// field -- plan/state keeps the $ENV ref, apply resolves it out-of-band,
+// keyed the same "<bucket>\x00<key>" way as auth material.
 func TestWorkspaceBucketSecretMaterials_ResolvesDollarEnvRefs(t *testing.T) {
 	t.Setenv("FUSED_TEST_WEBHOOK_SECRET", "resolved-webhook-secret")
 	path := writeFile(t, t.TempDir(), "workspace.yaml", `
@@ -407,11 +282,9 @@ services:
 	}
 }
 
-// TestWorkspaceConnectMaterialsResolvesProfileBindingEnvOutOfBand proves plan
+// TestWorkspaceProfileMaterialsResolvesBindingEnvOutOfBand proves plan
 // data keeps the env reference while apply receives the local resolved value.
-func TestWorkspaceConnectMaterialsResolvesProfileBindingEnvOutOfBand(t *testing.T) {
-	t.Setenv("FUSED_TEST_CLIENT_ID", "resolved-client")
-	t.Setenv("FUSED_TEST_CLIENT_SECRET", "resolved-secret")
+func TestWorkspaceProfileMaterialsResolvesBindingEnvOutOfBand(t *testing.T) {
 	t.Setenv("SHOPIFY_API_VERSION", "2026-07")
 	path := writeFile(t, t.TempDir(), "workspace.yaml", `
 apiVersion: fused/v1
@@ -435,15 +308,6 @@ services:
               location: header
               name: X-Shopify-API-Version
               mode: force
-buckets:
-  prod:
-    service_config:
-      shopify:
-        connect:
-          auth_type: oauth
-          client_id: $FUSED_TEST_CLIENT_ID
-          client_secret: $FUSED_TEST_CLIENT_SECRET
-          redirect_uri: https://engine.example.com/connect/callback
 `)
 	parsed, err := configfile.ParseFile(path)
 	if err != nil {
@@ -451,7 +315,7 @@ buckets:
 	}
 	materials, err := parsed.WorkspaceProfileMaterials()
 	if err != nil {
-		t.Fatalf("WorkspaceConnectMaterials: %v", err)
+		t.Fatalf("WorkspaceProfileMaterials: %v", err)
 	}
 	if materials["shopify"].BindingValues["SHOPIFY_API_VERSION"] != "2026-07" {
 		t.Fatalf("profile binding env was not handed off: %#v", materials["shopify"])
@@ -495,108 +359,6 @@ services:
 	}
 }
 
-func TestWorkspaceConnectMaterials_RejectsOAuth2AuthType(t *testing.T) {
-	path := writeFile(t, t.TempDir(), "workspace.yaml", `
-apiVersion: fused/v1
-kind: workspace
-services:
-  github:
-    service_id: "00000000-0000-0000-0000-000000000001"
-    versions: ["2026-07-01"]
-buckets:
-  prod:
-    service_config:
-      github:
-        connect:
-          auth_type: oauth2
-          client_id: $FUSED_TEST_CLIENT_ID
-          client_secret: $FUSED_TEST_CLIENT_SECRET
-          redirect_uri: https://engine.example.com/connect/callback
-`)
-	_, err := configfile.ParseFile(path)
-	if err == nil || !strings.Contains(err.Error(), "unsupported auth_type") {
-		t.Fatalf("expected oauth2 auth_type rejection, got %v", err)
-	}
-}
-
-func TestWorkspaceConnectMaterials_RejectsImportedAuthTypeAliases(t *testing.T) {
-	for _, authType := range []string{"openidconnect", "open_id_connect"} {
-		path := writeFile(t, t.TempDir(), "workspace.yaml", `
-apiVersion: fused/v1
-kind: workspace
-services:
-  github:
-    service_id: "00000000-0000-0000-0000-000000000001"
-    versions: ["2026-07-01"]
-buckets:
-  prod:
-    service_config:
-      github:
-        connect:
-          auth_type: `+authType+`
-          client_id: $FUSED_TEST_CLIENT_ID
-          client_secret: $FUSED_TEST_CLIENT_SECRET
-          redirect_uri: https://engine.example.com/connect/callback
-`)
-		_, err := configfile.ParseFile(path)
-		if err == nil || !strings.Contains(err.Error(), "unsupported auth_type") {
-			t.Fatalf("expected auth_type %q rejection, got %v", authType, err)
-		}
-	}
-}
-
-func TestWorkspaceConnectMaterials_RejectsInlineClientSecret(t *testing.T) {
-	path := writeFile(t, t.TempDir(), "workspace.yaml", `
-apiVersion: fused/v1
-kind: workspace
-services:
-  github:
-    service_id: "00000000-0000-0000-0000-000000000001"
-    versions: ["2026-07-01"]
-buckets:
-  prod:
-    service_config:
-      github:
-        connect:
-          auth_type: oauth
-          client_id: public-client-id
-          client_secret: inline-secret
-          redirect_uri: https://engine.example.com/connect/callback
-`)
-	_, err := configfile.ParseFile(path)
-	if err == nil || !strings.Contains(err.Error(), "client_secret: $ENV") {
-		t.Fatalf("expected inline client_secret rejection, got %v", err)
-	}
-}
-
-func TestWorkspaceConnectMaterials_RejectsMissingConnectEnvRef(t *testing.T) {
-	t.Setenv("FUSED_TEST_CLIENT_SECRET", "resolved-secret")
-	path := writeFile(t, t.TempDir(), "workspace.yaml", `
-apiVersion: fused/v1
-kind: workspace
-services:
-  github:
-    service_id: "00000000-0000-0000-0000-000000000001"
-    versions: ["2026-07-01"]
-buckets:
-  default:
-    service_config:
-      github:
-        connect:
-          auth_type: oauth
-          client_id: $FUSED_TEST_MISSING_CLIENT_ID
-          client_secret: $FUSED_TEST_CLIENT_SECRET
-          redirect_uri: https://engine.example.com/connect/callback
-`)
-	parsed, err := configfile.ParseFile(path)
-	if err != nil {
-		t.Fatalf("ParseFile failed: %v", err)
-	}
-	_, err = parsed.WorkspaceConnectMaterials()
-	if err == nil || !strings.Contains(err.Error(), "FUSED_TEST_MISSING_CLIENT_ID is not set") {
-		t.Fatalf("expected missing env error, got %v", err)
-	}
-}
 
 func TestLoadRun_DiscoversFusedFolderInOrder(t *testing.T) {
 	dir := t.TempDir()

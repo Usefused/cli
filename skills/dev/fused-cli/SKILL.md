@@ -162,12 +162,7 @@ passed.
 
 ## End-to-end: wiring up an OAuth service from zero
 
-Enable the service, then register its OAuth app under the bucket that will
-hold the resulting user tokens -- `auth`/`connect` live under
-`buckets.<bucket>.service_config.<slug>`, not under the service itself (see
-`fused-bucket`). The `profile` block is omitted here because Registry has
-exactly one public match for this version/auth_type -- see `fused-config`
-for when you'd need to add one explicitly:
+Enable the service first:
 
 ```yaml
 # .fused/workspace.yaml
@@ -176,23 +171,35 @@ kind: workspace
 services:
   jira:
     versions: ["2026-07-01"]
-buckets:
-  customer-accounts:
-    service_config:
-      jira:
-        connect:
-          auth_type: oauth
-          client_id_env: JIRA_CLIENT_ID
-          client_secret_env: JIRA_CLIENT_SECRET
-          redirect_uri: https://engine.example.com/workspace/connect/callback
 ```
 
 ```shell
-export JIRA_CLIENT_ID=...
-export JIRA_CLIENT_SECRET=...
 fused-cli workspace plan
 fused-cli workspace apply
 ```
+
+Then register the OAuth app under the bucket that will hold the resulting
+user tokens -- `auth`/`connect` live under `buckets.<bucket>.service_config.
+<slug>`, not under the service itself (see `fused-bucket`). Registering the
+app is a separate, immediate admin action, not a workspace.yaml field:
+
+```shell
+fused-cli connect jira set \
+  'client_id=...;client_secret=...;redirect_uri=https://engine.example.com/workspace/connect/callback' \
+  --bucket customer-accounts
+```
+
+(Omit the value and add `-i` to be prompted per field instead, or see
+`fused-bucket` for how to rotate just one field later without resupplying
+the others.) This is the only way to register the app -- there is no
+workspace.yaml `connect:` field; it was removed in favor of this single
+imperative command, since two ways to declare the same registration (one
+requiring every field on every apply, one supporting partial updates) was
+duplicated decision-making with no upside.
+
+The `profile` block is omitted above because Registry has exactly one public
+match for this version/auth_type -- see `fused-config` for when you'd need to
+add one explicitly.
 
 Start one user's OAuth session (see `fused-bucket`):
 
@@ -256,7 +263,7 @@ change.
 | `fused-sdk` | Generating a typed SDK package from selected operations/webhooks |
 | `fused-mcp` | Generating an Engine-hosted MCP server from selected operations (MCP cannot select webhooks) |
 | `fused-webhook` | Registering inbound webhook ingress (`kind: webhook`) and attaching it to an SDK/MCP artifact via `webhook_attachment` so that artifact actually receives delivery |
-| `fused-bucket` | Credential containers: secrets, static values, starting an OAuth connect session, managing a connected user's resources |
+| `fused-bucket` | Credential containers: secrets, static values, registering a service's OAuth/OIDC app, starting an OAuth connect session, managing a connected user's resources |
 | `fused-config` | Cross-cutting config owned by no single concept above: execution policy (rate limits/retries/pagination/outbound webhook verification, local-workspace-effect vs. Registry-publish), connection profiles (auth + dynamic request routing), and the OpenAPI/Postman `x-fused-connect` equivalent |
 | `fused-notifications` | Reading, not authoring: what a `plan`/`apply` notification block means, `registry_*` vs. `workspace_*` types, severity, and how/where one gets marked read or dismissed (UI only, not `fused-cli`) |
 

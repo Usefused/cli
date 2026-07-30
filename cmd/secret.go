@@ -210,19 +210,8 @@ func handleBasicSecretSet(client *api.Client, serviceID, bucketID string, auth *
 	var username, password string
 
 	if value != "" {
-		parts := strings.Split(value, ";")
-		for _, part := range parts {
-			kv := strings.SplitN(part, "=", 2)
-			if len(kv) == 2 {
-				k := strings.ToLower(strings.TrimSpace(kv[0]))
-				v := strings.TrimSpace(kv[1])
-				if k == "username" {
-					username = v
-				} else if k == "password" {
-					password = v
-				}
-			}
-		}
+		pairs := parseInlineKeyValuePairs(value)
+		username, password = pairs["username"], pairs["password"]
 		if username == "" || password == "" {
 			return fmt.Errorf("basic auth requires both username and password. Provide format 'username=...;password=...' or use interactive mode (-i)")
 		}
@@ -253,19 +242,8 @@ func handleMTLSSecretSet(client *api.Client, serviceID, bucketID string, auth *a
 	var cert, key string
 
 	if value != "" {
-		parts := strings.Split(value, ";")
-		for _, part := range parts {
-			kv := strings.SplitN(part, "=", 2)
-			if len(kv) == 2 {
-				k := strings.ToLower(strings.TrimSpace(kv[0]))
-				v := strings.TrimSpace(kv[1])
-				if k == "cert" {
-					cert = v
-				} else if k == "key" {
-					key = v
-				}
-			}
-		}
+		pairs := parseInlineKeyValuePairs(value)
+		cert, key = pairs["cert"], pairs["key"]
 		if cert == "" || key == "" {
 			return fmt.Errorf("mTLS auth requires both cert and key. Provide format 'cert=...;key=...' or use interactive mode (-i)")
 		}
