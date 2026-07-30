@@ -248,51 +248,6 @@ func TestMergeWorkspaceConnectConfigsFromRemoteOmitsPublicForUnpublishedProfile(
 	}
 }
 
-// TestMergeWorkspaceConnectConfigsFromRemoteStripsLocalRefs verifies sync
-// removes old bucket OAuth placeholders while preserving unrelated runtime
-// settings that remain exportable.
-func TestMergeWorkspaceConnectConfigsFromRemoteStripsLocalRefs(t *testing.T) {
-	service := api.WorkspaceService{ServiceID: "svc-github", EnabledVersions: remoteVersionsWithIDs("1.1.4", "ver-github")}
-	cfg := &configfile.WorkspaceConfig{Services: map[string]configfile.WorkspaceService{
-		"github-user": {
-			ServiceID: service.ServiceID,
-			Versions:  []string{"1.1.4"},
-		},
-	}, Buckets: map[string]configfile.WorkspaceBucket{"customer-accounts": {ServiceConfig: map[string]configfile.BucketServiceConfig{"github-user": {Connect: &configfile.ConnectConfig{AuthType: "oauth", ClientID: "$GITHUB_ID", ClientSecret: "$GITHUB_SECRET"}}}}}}
-	remote := []api.WorkspaceConnectConfig{{
-		BucketName: "customer-accounts", ServiceID: service.ServiceID, AuthType: "oauth", Enabled: true,
-		RedirectURI: "https://engine.example.com/callback", HasClientID: true, HasClientSecret: true,
-	}}
-
-	_, err := mergeWorkspaceConnectConfigsFromRemote(cfg, []api.WorkspaceService{service}, remote)
-
-	if err != nil {
-		t.Fatalf("merge connect config: %v", err)
-	}
-	got := cfg.Services["github-user"]
-	if !sameStringSet(got.Versions, []string{"1.1.4"}) || len(cfg.Buckets) != 0 {
-		t.Fatalf("expected unrelated fields to survive and bucket refs to be stripped: got=%+v buckets=%+v", got, cfg.Buckets)
-	}
-}
-
-// TestMergeWorkspaceConnectConfigsFromRemoteStripsOmittedConnect ensures sync
-// removes local-only bucket material refs even when the remote projection has
-// no connect rows; Engine-side material is not represented in YAML anymore.
-func TestMergeWorkspaceConnectConfigsFromRemoteStripsOmittedConnect(t *testing.T) {
-	cfg := &configfile.WorkspaceConfig{Services: map[string]configfile.WorkspaceService{
-		"github-user": {ServiceID: "svc-github"},
-	}, Buckets: map[string]configfile.WorkspaceBucket{"stale": {ServiceConfig: map[string]configfile.BucketServiceConfig{"github-user": {Connect: &configfile.ConnectConfig{AuthType: "oauth"}}}}}}
-
-	updated, err := mergeWorkspaceConnectConfigsFromRemote(cfg, []api.WorkspaceService{{ServiceID: "svc-github"}}, nil)
-
-	if err != nil || !reflect.DeepEqual(updated, []string{"github-user"}) {
-		t.Fatalf("strip omitted connect: updated=%v err=%v", updated, err)
-	}
-	if len(cfg.Buckets) != 0 {
-		t.Fatalf("omitted connect config should be stripped: %+v", cfg.Buckets)
-	}
-}
-
 // TestMergeWorkspaceConnectConfigsFromRemotePreservesRegistryIdentity proves
 // sync emits profile_id instead of downgrading a Registry profile to inline.
 func TestMergeWorkspaceConnectConfigsFromRemotePreservesRegistryIdentity(t *testing.T) {

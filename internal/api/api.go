@@ -1493,13 +1493,10 @@ func (c *Client) ApplyWebhookConfig(planID, sourceHash string) (*WebhookConfigAp
 	return &out, nil
 }
 
-func (c *Client) ApplyWorkspaceConfig(planID, sourceHash string, connectMaterials map[string]ConnectMaterial, authMaterials map[string]AuthMaterial, profileMaterials map[string]ConnectMaterial, bucketSecretMaterials map[string]string) (*ConfigApplyResponse, error) {
+func (c *Client) ApplyWorkspaceConfig(planID, sourceHash string, authMaterials map[string]AuthMaterial, profileMaterials map[string]ConnectMaterial, bucketSecretMaterials map[string]string) (*ConfigApplyResponse, error) {
 	reqBody := map[string]interface{}{
 		"plan_id":     planID,
 		"source_hash": sourceHash,
-	}
-	if len(connectMaterials) > 0 {
-		reqBody["connect_materials"] = connectMaterials
 	}
 	if len(authMaterials) > 0 {
 		reqBody["auth_materials"] = authMaterials

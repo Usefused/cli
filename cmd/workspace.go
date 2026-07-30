@@ -761,10 +761,6 @@ func applyForceRemoveWorkspacePlan(client *cliapi.Client, cfg *configfile.Parsed
 	if sourceHash == "" {
 		sourceHash = cfg.SourceHash
 	}
-	connectMaterials, err := workspaceConnectMaterials(cfg)
-	if err != nil {
-		return err
-	}
 	authMaterials, err := workspaceAuthMaterials(cfg)
 	if err != nil {
 		return err
@@ -777,7 +773,7 @@ func applyForceRemoveWorkspacePlan(client *cliapi.Client, cfg *configfile.Parsed
 	if err != nil {
 		return err
 	}
-	_, err = client.ApplyWorkspaceConfig(planResp.PlanID, sourceHash, connectMaterials, authMaterials, profileMaterials, bucketSecretMaterials)
+	_, err = client.ApplyWorkspaceConfig(planResp.PlanID, sourceHash, authMaterials, profileMaterials, bucketSecretMaterials)
 	return err
 }
 

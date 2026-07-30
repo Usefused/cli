@@ -146,11 +146,10 @@ func workspaceServiceWithLocalState(remote, local configfile.WorkspaceService) c
 	return remote
 }
 
-// mergeWorkspaceConnectConfigsFromRemote mirrors exportable routing policy but
-// intentionally leaves bucket OAuth material out of YAML. The Engine never
-// returns ciphertext/plaintext client credentials, and inventing $ENV refs here
-// makes an unrelated service-policy apply depend on local secrets the user did
-// not intend to touch.
+// mergeWorkspaceConnectConfigsFromRemote mirrors exportable routing policy
+// (connection profiles). Bucket-owned OAuth app registration is no longer a
+// workspace.yaml concept at all -- it's registered directly via `fused-cli
+// connect <slug> set` -- so there is nothing bucket-scoped left to strip here.
 func mergeWorkspaceConnectConfigsFromRemote(cfg *configfile.WorkspaceConfig, services []api.WorkspaceService, configs []api.WorkspaceConnectConfig) ([]string, error) {
 	remoteServices := remoteWorkspaceServicesByID(services)
 	serviceKeys := workspaceServiceKeysByID(cfg.Services)
@@ -159,15 +158,10 @@ func mergeWorkspaceConnectConfigsFromRemote(cfg *configfile.WorkspaceConfig, ser
 			return nil, fmt.Errorf("workspace sync received connect config for inactive service_id %s", remoteConfig.ServiceID)
 		}
 	}
-	// Sync is a read/export flow, not a secret rehydration flow. Strip any old
-	// bucket-owned Connect material refs so a later service-only apply does not
-	// require local OAuth app secrets for unrelated, unchanged services.
-	updated := stripWorkspaceBucketConnectConfigs(cfg)
-	profileUpdates, err := mergeWorkspaceConnectionProfilesFromRemote(cfg, remoteServices, serviceKeys, configs)
+	updated, err := mergeWorkspaceConnectionProfilesFromRemote(cfg, remoteServices, serviceKeys, configs)
 	if err != nil {
 		return nil, err
 	}
-	updated = append(updated, profileUpdates...)
 	sort.Strings(updated)
 	return uniqueStrings(updated), nil
 }
@@ -192,43 +186,6 @@ func remoteWorkspaceServicesByID(services []api.WorkspaceService) map[string]api
 		byID[service.ServiceID] = service
 	}
 	return byID
-}
-
-func stripWorkspaceBucketConnectConfigs(cfg *configfile.WorkspaceConfig) []string {
-	if cfg.Buckets == nil {
-		return nil
-	}
-	updated := make([]string, 0)
-	for bucketName, bucket := range cfg.Buckets {
-		changed := stripBucketConnectConfigs(bucket.ServiceConfig, &updated)
-		if !changed {
-			continue
-		}
-		if len(bucket.ServiceConfig) == 0 {
-			delete(cfg.Buckets, bucketName)
-			continue
-		}
-		cfg.Buckets[bucketName] = bucket
-	}
-	return uniqueStrings(updated)
-}
-
-func stripBucketConnectConfigs(serviceConfigs map[string]configfile.BucketServiceConfig, updated *[]string) bool {
-	changed := false
-	for serviceKey, serviceConfig := range serviceConfigs {
-		if serviceConfig.Connect == nil {
-			continue
-		}
-		serviceConfig.Connect = nil
-		changed = true
-		*updated = append(*updated, serviceKey)
-		if serviceConfig.Auth == nil {
-			delete(serviceConfigs, serviceKey)
-			continue
-		}
-		serviceConfigs[serviceKey] = serviceConfig
-	}
-	return changed
 }
 
 // uniqueStrings preserves first-seen order while preventing duplicate profile
