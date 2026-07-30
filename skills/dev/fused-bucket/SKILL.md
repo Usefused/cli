@@ -1,6 +1,6 @@
 ---
 name: fused-bucket
-description: "Use when the user wants to manage Fused bucket credentials using fused-cli -- storing static secrets or values, registering a service's OAuth/OIDC app (client_id/client_secret/redirect_uri), starting an OAuth/OIDC connect session for a user, or listing/selecting a connected user's provider resources. Trigger on 'bucket', 'secret', 'fused-cli secret', 'fused-cli value', 'fused-cli connect', 'OAuth connect', 'register OAuth app', 'connection resources', or 'connected resource'. For the auth_type/connect config field shapes themselves, or how a resource's fields get bound into a request, read fused-config."
+description: "Use when the user wants to manage Fused bucket credentials using fused-cli -- storing static secrets or values, registering or checking a service's OAuth/OIDC app (client_id/client_secret/redirect_uri), starting an OAuth/OIDC connect session for a user, or listing/selecting a connected user's provider resources. Trigger on 'bucket', 'secret', 'fused-cli secret', 'fused-cli value', 'fused-cli connect', 'OAuth connect', 'register OAuth app', 'check connect config', 'connection resources', or 'connected resource'. For the auth_type/connect config field shapes themselves, or how a resource's fields get bound into a request, read fused-config."
 ---
 
 # Buckets, secrets, and connections
@@ -143,6 +143,21 @@ to blank out a credential, the latter means "leave as-is." This works even
 though the admin API never returns decrypted values back to a caller --
 Engine merges an omitted field in from the existing encrypted row itself, not
 from anything the CLI resent.
+
+```shell
+fused-cli connect <service-slug> get --bucket <name>
+```
+
+Reads back whatever the last `set` saved -- `auth_type`, `enabled`,
+`redirect_uri` in plaintext, plus `has_client_id`/`has_client_secret` as
+booleans (never the actual `client_id`/`client_secret`, same as `set`'s
+response). This is the only way to check registration state on demand:
+`bucket <name> services` shows just a connect-config count, and
+workspace.yaml/`workspace sync` never reflect this at all -- app
+registration was deliberately taken out of the declarative surface entirely
+(see above), so there is nothing for `plan`/`apply`/`sync` to show. `get`
+fails with a clear error, not a raw 404, when nothing has been registered
+yet for that bucket+service.
 
 ## Starting an OAuth/OIDC connection
 
