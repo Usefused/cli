@@ -3,3 +3,8 @@
 github-mini-mcp-py/**
 github-mini-mcp-py2/venv/lib/python3.9/site-packages/anyio/abc/__init__.py
 bin/cli
+# go build ./... at repo root writes an executable here (module has one main
+# package, so there's no ambiguity for it to skip) -- a `cli` binary got
+# committed by this once before, so ignore both names it could take.
+/cli
+/fused-cli

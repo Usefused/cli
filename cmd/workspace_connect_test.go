@@ -22,8 +22,8 @@ func TestWorkspaceServiceConnectStartsSession(t *testing.T) {
 				_, _ = w.Write([]byte(`{"data":{"workspaceServices":[{"service_id":"svc-github","service_name":"GitHub REST API","version":"2026-07-01","enabled_versions":[{"version":"2026-07-01","service_version_id":"ver-1"}]}]}}`))
 				return
 			}
-			if strings.Contains(body.Query, "buckets") {
-				_, _ = w.Write([]byte(`{"data":{"buckets":[{"id":"bucket-prod","name":"prod","is_default":false,"created_at":"2026-07-21T00:00:00Z"}]}}`))
+			if strings.Contains(body.Query, "bucketSummaryPage") {
+				_, _ = w.Write([]byte(`{"data":{"bucketSummaryPage":{"total":1,"items":[{"id":"bucket-prod","name":"prod","is_default":false,"secret_count":0,"value_count":0,"created_at":"2026-07-21T00:00:00Z","updated_at":"2026-07-21T00:00:00Z"}]}}}`))
 				return
 			}
 			if strings.Contains(body.Query, "startConnectSession") {

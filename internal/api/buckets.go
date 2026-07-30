@@ -57,20 +57,44 @@ func (c *Client) CreateBucket(name string) error {
 	return nil
 }
 
+// ListBuckets returns every bucket in the workspace, for callers (name/ID
+// resolution, shell completion) that need to search the full set rather than
+// show one page. Engine has no "get bucket by name" query, so this is the
+// only way to resolve a `--bucket <name>` flag to an ID.
+//
+// This used to send its own `query Buckets { buckets {...} }` request, but
+// Engine's schema dropped the bare `buckets` field when bucket listing moved
+// to the paginated bucketSummaryPage surface `bucket list` already uses --
+// that migration missed this helper, which kept sending the removed query
+// until every `--bucket <name>` command started failing. Paging through
+// ListBucketSummariesPage instead of inventing a second query means this
+// reuses the one query already proven correct against the real schema.
 func (c *Client) ListBuckets() ([]BucketMetaResponse, error) {
-	query := `
-		query Buckets {
-			buckets { id name is_default created_at }
+	const pageSize = 100
+	var all []BucketMetaResponse
+	offset := 0
+	for {
+		page, err := c.ListBucketSummariesPage(PageOptions{Limit: pageSize, Offset: offset})
+		if err != nil {
+			return nil, err
 		}
-	`
-	var resp struct {
-		Buckets []BucketMetaResponse `json:"buckets"`
+		for _, item := range page.Items {
+			createdAt, err := parseGraphQLTime(item.CreatedAt)
+			if err != nil {
+				return nil, fmt.Errorf("parse bucket created_at: %w", err)
+			}
+			all = append(all, BucketMetaResponse{
+				ID:        item.ID,
+				Name:      item.Name,
+				IsDefault: item.IsDefault,
+				CreatedAt: createdAt,
+			})
+		}
+		offset += len(page.Items)
+		if len(page.Items) == 0 || offset >= page.Total {
+			return all, nil
+		}
 	}
-	// Why: Bucket listing is a read path shared by completions and name
-	// resolution, so route it through the same Engine GraphQL surface as the
-	// UI instead of keeping a REST-only backdoor for fetches.
-	err := c.EngineGraphQL(query, nil, &resp)
-	return resp.Buckets, err
 }
 
 func (c *Client) UpsertBucketValue(bucketID, serviceID, keyName, location, value string) error {

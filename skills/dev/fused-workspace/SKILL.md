@@ -27,6 +27,13 @@ deprecations:
     reason: "..."
 ```
 
+`buckets.<name>` here only configures an *existing* bucket's
+`service_config`/`secrets` -- **it cannot create the bucket itself.** Apply
+resolves `<bucket-name>` against a bucket that must already exist and fails
+with "bucket not found" if it doesn't; it never creates one implicitly. Run
+`fused-cli bucket <name> create` first (see `fused-bucket`) for any bucket
+name you're about to reference here.
+
 There is no `runtime_config` field on a workspace service anymore -- it was
 removed with no backward compatibility once `kind: webhook` shipped (a
 `workspace.yaml` still containing `runtime_config: {...}` now fails to parse
