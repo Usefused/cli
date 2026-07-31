@@ -25,9 +25,12 @@ func addWorkspaceService(path, serviceName, serviceID, version string) error {
 	if err != nil {
 		return err
 	}
-	versions := []string(nil)
+	// version is optional here -- an empty Versions list is valid and means
+	// "resolve Registry's latest public version during planning" rather than
+	// "enable nothing"; only build an entry when the caller actually gave one.
+	versions := []configfile.WorkspaceServiceVersion(nil)
 	if version != "" {
-		versions = []string{version}
+		versions = []configfile.WorkspaceServiceVersion{{Version: version}}
 	}
 	cfg.Services[serviceName] = configfile.WorkspaceService{
 		ServiceID: serviceID,
@@ -54,8 +57,10 @@ func addWorkspaceVersion(path, serviceName, version string) error {
 	if !ok {
 		return fmt.Errorf("service %s is not in this workspace config", serviceName)
 	}
-	if !containsString(service.Versions, version) {
-		service.Versions = append(service.Versions, version)
+	// Adding an already-enabled version is a no-op, not an error or a
+	// duplicate entry -- `version add` is meant to be safely re-runnable.
+	if !configWorkspaceServiceHasVersion(service, version) {
+		service.Versions = append(service.Versions, configfile.WorkspaceServiceVersion{Version: version})
 	}
 	cfg.Services[serviceName] = service
 	return writeWorkspaceConfig(path, cfg)
@@ -70,9 +75,43 @@ func removeWorkspaceVersion(path, serviceName, version string) error {
 	if !ok {
 		return fmt.Errorf("service %s is not in this workspace config", serviceName)
 	}
-	service.Versions = removeString(service.Versions, version)
+	service.Versions = removeWorkspaceServiceVersion(service.Versions, version)
 	cfg.Services[serviceName] = service
 	return writeWorkspaceConfig(path, cfg)
+}
+
+// workspaceServiceHasVersion checks by version identity only -- resolved ID
+// or per-version overrides don't affect whether a version is already enabled.
+func configWorkspaceServiceHasVersion(service configfile.WorkspaceService, version string) bool {
+	for _, v := range service.Versions {
+		// Match on the version string alone -- ServiceVersionID/overrides are
+		// irrelevant to "is this version already enabled".
+		if v.Version == version {
+			return true
+		}
+	}
+	return false
+}
+
+// removeWorkspaceServiceVersion drops the one matching entry (identity,
+// resolved ID, overrides, and connection profiles together) rather than just
+// the bare version string, since those now travel with it.
+func removeWorkspaceServiceVersion(versions []configfile.WorkspaceServiceVersion, version string) []configfile.WorkspaceServiceVersion {
+	// versions[:0:0] forces a fresh backing array (zero length, zero
+	// capacity) instead of reusing the caller's slice in place, so a partial
+	// write failure downstream can't leave the caller's original slice
+	// mutated out from under it.
+	out := versions[:0:0]
+	for _, v := range versions {
+		// Drop the one entry matching the version being removed; everything
+		// else (identity, overrides, connection profiles) for every other
+		// version carries over untouched.
+		if v.Version == version {
+			continue
+		}
+		out = append(out, v)
+	}
+	return out
 }
 
 func addWorkspaceDeprecation(path, serviceName, version, effectiveAt, reason string) error {

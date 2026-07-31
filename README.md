@@ -195,13 +195,13 @@ kind: "workspace"
 services:
   stripe:
     versions:
-      - "2026-07-09"
-      - "2026-08-01"
+      - version: "2026-07-09"
+      - version: "2026-08-01"
   okta:
     versions:
-      - "1.0.0"
+      - version: "1.0.0"
 ```
-The service keys are Registry service slugs. Engine resolves those slugs to service IDs during workspace planning, so teams do not need to know UUIDs. If `versions` is omitted, the Engine resolves Registry's latest public service version during planning and records the exact service-version ID in the plan. Service authentication secrets and API keys are stored securely using `fused-cli secret set <service-slug>`; a bucket's OAuth/OIDC app registration is a separate, immediate admin action via `fused-cli connect <service-slug> set` -- see [`docs/COMMANDS.md`](docs/COMMANDS.md) -- neither is a workspace.yaml field.
+The service keys are Registry service slugs. Engine resolves those slugs to service IDs during workspace planning, so teams do not need to know UUIDs. If `versions` is omitted, the Engine resolves Registry's latest public service version during planning and records the exact service-version ID in the plan. `versions` is a list of objects rather than bare version strings: each entry carries its own resolved `service_version_id` plus any per-version `public`/`execution_policy`/`connection_profiles` override, so that data doesn't need a separate sibling list keyed by a repeated version string. Service authentication secrets and API keys are stored securely using `fused-cli secret set <service-slug>`; a bucket's OAuth/OIDC app registration is a separate, immediate admin action via `fused-cli connect <service-slug> set` -- see [`docs/COMMANDS.md`](docs/COMMANDS.md) -- neither is a workspace.yaml field.
 
 ### Syncing Local Config From Remote State
 

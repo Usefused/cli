@@ -21,7 +21,7 @@ kind: workspace
 services:
   okta:
     service_id: "00000000-0000-0000-0000-000000000001"
-    versions: ["2026-07-01"]
+    versions: [{version: "2026-07-01"}]
 `)
 	parsed, err := configfile.ParseFile(path)
 	if err != nil {
@@ -59,7 +59,7 @@ kind: workspace
 services:
   okta:
     service_id: "00000000-0000-0000-0000-000000000001"
-    versions: ["2026-07-01"]
+    versions: [{version: "2026-07-01"}]
 `)
 	parsed, err := configfile.ParseFile(path)
 	if err != nil {
@@ -98,7 +98,7 @@ kind: workspace
 services:
   okta:
     service_id: "00000000-0000-0000-0000-000000000001"
-    versions: ["2026-07-01"]
+    versions: [{version: "2026-07-01"}]
 `)
 	parsed, err := configfile.ParseFile(path)
 	if err != nil {

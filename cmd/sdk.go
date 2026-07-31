@@ -327,11 +327,11 @@ func downloadSDKTarget(client *api.Client, target sdkDownloadTarget) error {
 	if err != nil {
 		return fmt.Errorf("failed to download sdk:%s: %w", target.Name, err)
 	}
-	outPath := filepath.Join(sdkDownloadOutDir, target.Name+".zip")
-	if err := os.WriteFile(outPath, data, 0644); err != nil {
-		return fmt.Errorf("failed to write %s: %w", outPath, err)
+	extractDir := filepath.Join(sdkDownloadOutDir, "fused-sdks", target.Name)
+	if err := extractSDKZip(data, extractDir); err != nil {
+		return fmt.Errorf("failed to extract sdk:%s: %w", target.Name, err)
 	}
-	fmt.Printf("Downloaded sdk:%s to %s\n", target.Name, outPath)
+	fmt.Printf("Downloaded and extracted sdk:%s to %s\n", target.Name, extractDir)
 	return nil
 }
 

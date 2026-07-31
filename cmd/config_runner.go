@@ -1,9 +1,12 @@
 package cmd
 
 import (
+	"archive/zip"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -498,11 +501,11 @@ func downloadSDKByID(client *api.Client, artifactID, sdkName, outDir string) err
 	if err != nil {
 		return fmt.Errorf("failed to download sdk:%s: %w", sdkName, err)
 	}
-	outPath := filepath.Join(outDir, sdkName+".zip")
-	if err := os.WriteFile(outPath, data, 0644); err != nil {
-		return fmt.Errorf("failed to write %s: %w", outPath, err)
+	extractDir := filepath.Join(outDir, "fused-sdks", sdkName)
+	if err := extractSDKZip(data, extractDir); err != nil {
+		return fmt.Errorf("failed to extract sdk:%s: %w", sdkName, err)
 	}
-	fmt.Printf("Downloaded sdk:%s to %s\n", sdkName, outPath)
+	fmt.Printf("Downloaded and extracted sdk:%s to %s\n", sdkName, extractDir)
 	return nil
 }
 
@@ -511,11 +514,59 @@ func downloadSDKConfig(client *api.Client, configKey, outDir string) error {
 	if err != nil {
 		return fmt.Errorf("failed to download %s: %w", configKey, err)
 	}
-	outPath := filepath.Join(outDir, strings.TrimPrefix(configKey, "sdk:")+".zip")
-	if err := os.WriteFile(outPath, data, 0644); err != nil {
-		return fmt.Errorf("failed to write %s: %w", outPath, err)
+	sdkName := strings.TrimPrefix(configKey, "sdk:")
+	extractDir := filepath.Join(outDir, "fused-sdks", sdkName)
+	if err := extractSDKZip(data, extractDir); err != nil {
+		return fmt.Errorf("failed to extract %s: %w", configKey, err)
 	}
-	fmt.Printf("Downloaded %s to %s\n", configKey, outPath)
+	fmt.Printf("Downloaded and extracted %s to %s\n", configKey, extractDir)
+	return nil
+}
+
+func extractSDKZip(zipData []byte, outDir string) error {
+	if err := os.MkdirAll(outDir, 0755); err != nil {
+		return fmt.Errorf("create extract dir: %w", err)
+	}
+
+	zipReader, err := zip.NewReader(bytes.NewReader(zipData), int64(len(zipData)))
+	if err != nil {
+		return fmt.Errorf("read zip: %w", err)
+	}
+
+	for _, f := range zipReader.File {
+		fpath := filepath.Join(outDir, f.Name)
+
+		if !strings.HasPrefix(fpath, filepath.Clean(outDir)+string(os.PathSeparator)) {
+			continue
+		}
+
+		if f.FileInfo().IsDir() {
+			os.MkdirAll(fpath, os.ModePerm)
+			continue
+		}
+
+		if err := os.MkdirAll(filepath.Dir(fpath), os.ModePerm); err != nil {
+			return err
+		}
+
+		outFile, err := os.OpenFile(fpath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
+		if err != nil {
+			return err
+		}
+
+		rc, err := f.Open()
+		if err != nil {
+			outFile.Close()
+			return err
+		}
+
+		_, err = io.Copy(outFile, rc)
+		outFile.Close()
+		rc.Close()
+		if err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

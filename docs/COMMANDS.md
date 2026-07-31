@@ -52,7 +52,17 @@ List Registry webhook definitions for a service.
 ## `secret <service-slug> set [value]`
 Set an authentication secret for a workspace service.
 If the service supports multiple authentication methods, use `--type` to specify the method, or use the `--interactive` flag to select from a menu.
-For `basic` or `mtls` authentication, you can pass credentials interactively via `--interactive`, or supply them inline as a semicolon-separated string (e.g. `username=x;password=y` or `cert=...;key=...`).
+
+> **`basic`/`mtls` credentials are ONE value, not two.** There is no
+> `--username`/`--password`/`--cert`/`--key` flag and no separate `set` call
+> per field. Pack both fields into the single positional `<value>` as a
+> `;`-delimited `key=value;key=value` string, quoted so the shell doesn't
+> split on the `;`:
+> ```shell
+> fused-cli secret jira set 'username=x;password=y' --type basic --bucket <bucket>
+> fused-cli secret jira set 'cert=...;key=...' --type mtls --bucket <bucket>
+> ```
+> Or omit the value and pass `--interactive` to supply both fields via prompts instead.
 
 > **Recommended Pattern:** Store API keys, tokens, and service credentials directly using `fused-cli secret set <service-slug> [value] --bucket <bucket>`. This stores secrets securely in Fused's encrypted vault.
 
@@ -135,7 +145,17 @@ List SDK or MCP scopes linked to a bucket.
 Remove a workspace bucket.
 
 ## `connect <service-slug> set [value]`
-Register or rotate a bucket's OAuth/OIDC app registration (`client_id`/`client_secret`/`redirect_uri`) for a service. This is an immediate admin action -- no workspace.yaml field, no plan/apply -- and it is the only way to register the app; a declarative `connect:` workspace.yaml block existed previously and was removed in favor of this single command. Every field is required the first time; afterward, omitting a field leaves it unchanged (a key present but blank is rejected as an attempt to blank out a credential). Pass the value inline as `key=value;...`, or omit it and use `--interactive` to be prompted per field.
+Register or rotate a bucket's OAuth/OIDC app registration (`client_id`/`client_secret`/`redirect_uri`) for a service. This is an immediate admin action -- no workspace.yaml field, no plan/apply -- and it is the only way to register the app; a declarative `connect:` workspace.yaml block existed previously and was removed in favor of this single command. Every field is required the first time; afterward, omitting a field leaves it unchanged (a key present but blank is rejected as an attempt to blank out a credential).
+
+There is no `--client-id`/`--client-secret`/`--redirect-uri` flag. The single
+positional `<value>` is the whole registration as ONE `;`-delimited
+`key=value;key=value;key=value` string, quoted so the shell doesn't split on
+the `;` -- the literal key names must be `client_id`, `client_secret`, and
+`redirect_uri`:
+```shell
+fused-cli connect jira set 'client_id=...;client_secret=...;redirect_uri=https://engine.example.com/workspace/connect/callback' --bucket <name>
+```
+Or omit the value and use `--interactive` to be prompted per field.
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|

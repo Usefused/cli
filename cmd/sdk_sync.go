@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 
@@ -179,7 +180,8 @@ func fetchSDKSyncData(client *api.Client, sdkName string) (artifactVersion strin
 
 		ref := serviceConfigRef(sel.ServiceSlug, sel.ServiceProvider)
 		if ref == "" {
-			return "", nil, fmt.Errorf("sdk sync missing service slug for service %s", sel.ServiceName)
+			fmt.Fprintf(os.Stderr, "Warning: skipping remote service %q because it is missing a slug\n", sel.ServiceName)
+			continue
 		}
 		remote = append(remote, sdkSyncRemoteService{
 			Name:       sel.ServiceName,

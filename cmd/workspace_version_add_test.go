@@ -19,7 +19,7 @@ services:
   plunk:
     service_id: svc-plunk
     versions:
-      - 1.0.0
+      - version: 1.0.0
 `
 	fusedDir := filepath.Join(dir, ".fused")
 	if err := os.Mkdir(fusedDir, 0755); err != nil {
@@ -67,7 +67,7 @@ services:
 		t.Fatal(err)
 	}
 	content := string(data)
-	if !strings.Contains(content, "- 1.0.0") || !strings.Contains(content, "- 1.1.0") {
+	if !strings.Contains(content, "version: 1.0.0") || !strings.Contains(content, "version: 1.1.0") {
 		t.Fatalf("expected both 1.0.0 and 1.1.0 in workspace.yaml, got:\n%s", content)
 	}
 }

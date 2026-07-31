@@ -375,21 +375,52 @@ func validateWorkspaceConfig(cfg *WorkspaceConfig) error {
 }
 
 func validateWorkspaceService(name string, svc WorkspaceService) error {
+	// Validate the service-level default policy first, independent of any
+	// per-version entries below -- it's legal for a service to set only this
+	// and have every version inherit it with no override of its own.
 	if err := validateWorkspaceExecutionPolicy(name, "", svc.ExecutionPolicy); err != nil {
 		return err
 	}
-	for _, versionPolicy := range svc.VersionPolicies {
-		if !containsString(svc.Versions, strings.TrimSpace(versionPolicy.Version)) {
-			return fmt.Errorf("workspace service %q version_policies version %s is not an enabled version", name, versionPolicy.Version)
+	seen := map[string]bool{}
+	for _, version := range svc.Versions {
+		v := strings.TrimSpace(version.Version)
+		if v == "" {
+			// An entry with no version string can't be matched against
+			// anything (not Registry identity, not a later add/remove), so
+			// reject it here rather than letting it silently no-op downstream.
+			return fmt.Errorf("workspace service %q versions entry requires a version", name)
 		}
-		if versionPolicy.ExecutionPolicy == nil {
-			return fmt.Errorf("workspace service %q version_policies version %s requires execution_policy", name, versionPolicy.Version)
+		if seen[v] {
+			// Two entries for the same version would make "which override
+			// applies" ambiguous -- nesting means there's no longer a
+			// separate list where this could accidentally happen per field,
+			// so catch it once here for the whole entry.
+			return fmt.Errorf("workspace service %q has duplicate version %s", name, v)
 		}
-		if err := validateWorkspaceExecutionPolicy(name, versionPolicy.Version, versionPolicy.ExecutionPolicy); err != nil {
+		seen[v] = true
+		// A version's own ExecutionPolicy is optional -- only validate it when
+		// actually set, since nil just means "inherit the service default".
+		if version.ExecutionPolicy != nil {
+			if err := validateWorkspaceExecutionPolicy(name, v, version.ExecutionPolicy); err != nil {
+				return err
+			}
+		}
+		if err := validateWorkspaceConnectionProfiles(name, version.ConnectionProfiles); err != nil {
 			return err
 		}
 	}
-	return validateWorkspaceConnectionProfiles(name, svc.ConnectionProfiles)
+	return nil
+}
+
+// workspaceVersionNames projects a service's nested Versions into the bare
+// string list callers that only care about identity (not overrides/profiles)
+// still need, e.g. deprecation/version-existence checks.
+func workspaceVersionNames(versions []WorkspaceServiceVersion) []string {
+	names := make([]string, 0, len(versions))
+	for _, version := range versions {
+		names = append(names, version.Version)
+	}
+	return names
 }
 
 // isBucketSecretRef matches exactly the forms internal/shared/secretref
@@ -488,17 +519,7 @@ func workspaceExecutionPolicyValidationError(name, version, message string) erro
 	if strings.TrimSpace(version) == "" {
 		return fmt.Errorf("workspace service %q execution_policy %s", name, message)
 	}
-	return fmt.Errorf("workspace service %q version_policies version %s execution_policy %s", name, version, message)
-}
-
-func containsString(values []string, target string) bool {
-	target = strings.TrimSpace(target)
-	for _, value := range values {
-		if strings.TrimSpace(value) == target {
-			return true
-		}
-	}
-	return false
+	return fmt.Errorf("workspace service %q versions entry %s execution_policy %s", name, version, message)
 }
 
 // validateWorkspaceConnectionProfiles catches semantic contradictions the raw
@@ -715,10 +736,12 @@ func workspaceServiceProfileMaterial(name string, svc WorkspaceService) (Connect
 // so unknown-but-valid profile fields survive CLI pass-through validation.
 func workspaceConnectionProfileMaps(svc WorkspaceService) []map[string]interface{} {
 	var out []map[string]interface{}
-	for _, item := range svc.ConnectionProfiles {
-		profile, _ := item["profile"].(map[string]interface{})
-		if profile != nil {
-			out = append(out, profile)
+	for _, version := range svc.Versions {
+		for _, item := range version.ConnectionProfiles {
+			profile, _ := item["profile"].(map[string]interface{})
+			if profile != nil {
+				out = append(out, profile)
+			}
 		}
 	}
 	return out

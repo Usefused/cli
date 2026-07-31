@@ -64,32 +64,46 @@ type WorkspaceService struct {
 	// true  → service page is visible to all Registry consumers (owner only).
 	// false → service is private to this workspace's account.
 	// Omitted for third-party services (non-owners cannot set this field).
-	Public   *bool    `yaml:"public,omitempty" json:"public,omitempty"`
-	Versions []string `yaml:"versions,omitempty" json:"versions,omitempty"`
-	// Engine apply needs immutable version IDs, not just display names; keeping
-	// the resolved pair in config lets CLI/CI re-apply without a fresh registry
-	// lookup that could drift under a reused version label.
-	ResolvedVersions []WorkspaceResolvedVersion `yaml:"resolved_versions,omitempty" json:"resolved_versions,omitempty"`
+	Public *bool `yaml:"public,omitempty" json:"public,omitempty"`
+	// Versions is one entry per enabled version: its identity (Version, plus
+	// the Engine-resolved ServiceVersionID once known), any per-version
+	// override of Public/ExecutionPolicy, and the connection profiles scoped
+	// to it. These used to be three separate service-level lists
+	// (resolved_versions, version_policies, connection_profiles), each keyed
+	// by a repeated `version` string; nesting them here means a version's
+	// identity is declared exactly once instead of once per list.
+	Versions []WorkspaceServiceVersion `yaml:"versions,omitempty" json:"versions,omitempty"`
 	// RuntimeConfig/runtime_config.webhooks (the workspace's own webhook
 	// registrations) was removed with no backward compatibility once
 	// kind: webhook shipped -- see plans/plan-webhook-kind.md. Registration
 	// now lives entirely in kind: webhook config files.
-	ExecutionPolicy *ExecutionPolicy         `yaml:"execution_policy,omitempty" json:"execution_policy,omitempty"`
-	VersionPolicies []WorkspaceVersionPolicy `yaml:"version_policies,omitempty" json:"version_policies,omitempty"`
-	// ConnectionProfiles is intentionally raw in the CLI: Engine owns full
-	// validation, while CLI only resolves local env refs before apply.
-	ConnectionProfiles []map[string]interface{} `yaml:"connection_profiles,omitempty" json:"connection_profiles,omitempty"`
+	// ExecutionPolicy is the default applied to every version in Versions
+	// unless that version sets its own ExecutionPolicy override.
+	ExecutionPolicy *ExecutionPolicy `yaml:"execution_policy,omitempty" json:"execution_policy,omitempty"`
 }
 
-type WorkspaceVersionPolicy struct {
+// WorkspaceServiceVersion is one version a service enables, along with
+// everything scoped to just that version.
+type WorkspaceServiceVersion struct {
 	Version string `yaml:"version" json:"version"`
+	// ServiceVersionID is the Engine-resolved immutable ID for Version, kept
+	// alongside it so CLI/CI can re-apply without a fresh registry lookup
+	// that could drift under a reused version label.
+	ServiceVersionID string `yaml:"service_version_id,omitempty" json:"service_version_id,omitempty"`
 	// Public controls Registry-level visibility for just this version via
 	// UpdateServiceVersionPublicStatus (owner only). Distinct from
 	// ExecutionPolicy.Public, which controls whether this version's
 	// rate_limit/retry are published, not whether the version itself is
 	// visible. Omitted means "leave this version's visibility unchanged".
-	Public          *bool            `yaml:"public,omitempty" json:"public,omitempty"`
+	Public *bool `yaml:"public,omitempty" json:"public,omitempty"`
+	// ExecutionPolicy overrides the service-level default for just this
+	// version. Nil means "use the service-level default unchanged".
 	ExecutionPolicy *ExecutionPolicy `yaml:"execution_policy,omitempty" json:"execution_policy,omitempty"`
+	// ConnectionProfiles is intentionally raw in the CLI: Engine owns full
+	// validation, while CLI only resolves local env refs before apply. Each
+	// entry only needs auth_type to disambiguate itself from siblings, since
+	// Version is already implied by nesting here.
+	ConnectionProfiles []map[string]interface{} `yaml:"connection_profiles,omitempty" json:"connection_profiles,omitempty"`
 }
 
 type ExecutionPolicy struct {
@@ -107,7 +121,8 @@ type ExecutionPolicy struct {
 	// rather than having its own.
 	Pagination *PaginationConfig `yaml:"pagination,omitempty" json:"pagination,omitempty"`
 	// BaseURL overrides a wrong or missing spec-derived base_url for this
-	// service (or, under version_policies, this one version). Takes effect
+	// service (or, on one WorkspaceServiceVersion's own ExecutionPolicy
+	// override, just that version). Takes effect
 	// locally in this workspace on every apply regardless of Public; Public
 	// additionally publishes it to the provider contract so every other
 	// consumer's effective base_url inherits it too.
@@ -159,11 +174,6 @@ type RetryConfig struct {
 	Strategy   string `yaml:"strategy" json:"strategy"`
 	MaxRetries int    `yaml:"max_retries" json:"max_retries"`
 	BackoffMs  int    `yaml:"backoff_ms" json:"backoff_ms"`
-}
-
-type WorkspaceResolvedVersion struct {
-	Version          string `yaml:"version" json:"version"`
-	ServiceVersionID string `yaml:"service_version_id" json:"service_version_id"`
 }
 
 // RuntimeConfig (workspace-level runtime_config.webhooks) was removed
