@@ -23,7 +23,7 @@ kind: workspace
 services:
   okta:
     service_id: "00000000-0000-0000-0000-000000000001"
-    versions: ["2026-07-01"]
+    versions: [{version: "2026-07-01"}]
 `)
 	var sawPlan bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -108,7 +108,7 @@ kind: workspace
 services:
   github:
     service_id: "00000000-0000-0000-0000-000000000001"
-    versions: ["2026-07-01"]
+    versions: [{version: "2026-07-01"}]
 buckets:
   prod:
     service_config:
@@ -155,7 +155,7 @@ kind: workspace
 services:
   github:
     service_id: "00000000-0000-0000-0000-000000000001"
-    versions: ["2026-07-01"]
+    versions: [{version: "2026-07-01"}]
 buckets:
   prod:
     service_config:
@@ -198,7 +198,7 @@ kind: workspace
 services:
   github:
     service_id: "00000000-0000-0000-0000-000000000001"
-    versions: ["2026-07-01"]
+    versions: [{version: "2026-07-01"}]
 buckets:
   prod:
     service_config:
@@ -227,7 +227,7 @@ kind: workspace
 services:
   okta:
     service_id: "00000000-0000-0000-0000-000000000001"
-    versions: ["2026-07-01"]
+    versions: [{version: "2026-07-01"}]
 `)
 	parsed, err := configfile.ParseFile(path)
 	if err != nil {
@@ -276,7 +276,7 @@ kind: workspace
 services:
   okta:
     service_id: "00000000-0000-0000-0000-000000000001"
-    versions: ["2026-07-01"]
+    versions: [{version: "2026-07-01"}]
 `)
 	writeSprintConfig(t, dir, ".fused/sdks/security.yaml", `
 apiVersion: fused/v1
@@ -375,7 +375,7 @@ kind: workspace
 services:
   okta:
     service_id: "00000000-0000-0000-0000-000000000001"
-    versions: ["2026-07-01"]
+    versions: [{version: "2026-07-01"}]
 `)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/workspace/config/plan" {
@@ -894,7 +894,7 @@ kind: workspace
 services:
   okta:
     service_id: "00000000-0000-0000-0000-000000000001"
-    versions: ["2026-07-01", "2026-08-01"]
+    versions: [{version: "2026-07-01"}, {version: "2026-08-01"}]
 `)
 	var paths []string
 	var patchedActions []map[string]any

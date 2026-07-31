@@ -71,12 +71,24 @@ they're different scopes of the word "connection."
 
 ```shell
 fused-cli secret list --list-bucket <bucket>
+# single-value scheme (api_key, bearer, oauth/oidc static token):
 fused-cli secret <service-slug> set <value> [--bucket <name>] [--type <scheme>] [--expires-at <RFC3339>] [-i]
+# multi-field scheme (basic, mtls): pack fields into ONE value, joined by ';' -- never separate flags, never separate `set` calls:
+fused-cli secret <service-slug> set 'username=x;password=y' [--bucket <name>] [--type basic]
+fused-cli secret <service-slug> set 'cert=...;key=...' [--bucket <name>] [--type mtls]
 fused-cli secret <service-slug> remove <key-name> [--remove-bucket <name>]
 fused-cli value <bucket-id> set <service-slug> <location> <key-name> <value>
 fused-cli value <bucket-id> list
 fused-cli value <bucket-id> remove <service-slug> <key-name>
 ```
+
+**There is no `--username`/`--password`/`--cert`/`--key` flag, and `basic`/
+`mtls` are not two separate secrets.** The single positional `<value>`
+argument is *itself* the whole credential: for these two schemes it's a
+`key=value;key=value` string -- semicolon-separated, quoted so the shell
+doesn't split it on the `;` -- not comma-separated, not JSON, not two
+sequential `set` calls. `-i` (interactive prompts) is the only alternative
+way to supply both fields at once.
 
 `secret set` is an **upsert with no separate apply step** -- unlike
 workspace/SDK/MCP config, writing a secret takes effect for the *next*
@@ -87,13 +99,10 @@ there's no versioning or grace period, the old value is simply gone.
 If a service declares more than one auth scheme (e.g. both `api_key` and
 `oauth` as alternatives), a bare `set` only auto-picks the scheme when
 there's exactly one -- otherwise pass `--type <scheme-name>` or use `-i` to
-pick interactively. `basic` and `mtls` schemes inherently require two distinct
-values (username+password, or cert+key). You can either pass them inline
-as a single value (e.g. `'username=x;password=y'` or `'cert=...;key=...'`)
-or omit the value and use `-i` to provide them via interactive prompts.
-They are always stored as two separate secret keys (`<name>_username`/
-`<name>_password`, or `<name>_cert`/`<name>_key`), and a client cert/key
-pair is validated (matching pair, not expired) before it's ever stored.
+pick interactively. They are always stored as two separate secret keys
+(`<name>_username`/`<name>_password`, or `<name>_cert`/`<name>_key`) once
+parsed out of that one `;`-delimited value, and a client cert/key pair is
+validated (matching pair, not expired) before it's ever stored.
 
 `--expires-at` is optional and purely advisory metadata (`secret list` and
 `bucket <name> secrets` flag an expired one) -- nothing auto-rotates or

@@ -118,13 +118,19 @@ func processServiceIntent(client *api.Client, svcIntent api.IntentService, wsCfg
 
 	svcAdded := false
 	var version string
+	// Prefer whatever version is already enabled locally over fetching the
+	// latest from Registry -- if the user already added this service to
+	// their workspace config, the Copilot should target that version rather
+	// than silently pinning a different (possibly newer) one underneath it.
 	if existing, ok := wsCfg.Services[key]; ok {
 		if len(existing.Versions) > 0 {
-			version = existing.Versions[0]
+			version = existing.Versions[0].Version
 		}
 	}
 
 	if version == "" {
+		// Not enabled locally yet -- fall back to Registry's latest version
+		// so intent-based discovery can add a brand-new service on its own.
 		versions, err := client.ServiceVersions(key)
 		if err != nil || len(versions) == 0 {
 			fmt.Printf("   -> Could not find any versions for %q\n", s.Name)
@@ -134,7 +140,7 @@ func processServiceIntent(client *api.Client, svcIntent api.IntentService, wsCfg
 
 		wsCfg.Services[key] = configfile.WorkspaceService{
 			ServiceID: s.ID,
-			Versions:  []string{version},
+			Versions:  []configfile.WorkspaceServiceVersion{{Version: version}},
 		}
 		svcAdded = true
 		fmt.Printf("   -> 🌟 Automatically added %s (v%s) to workspace config\n", key, version)

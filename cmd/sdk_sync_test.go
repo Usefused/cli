@@ -343,7 +343,7 @@ apiVersion: fused/v1
 kind: workspace
 services:
   github:
-    versions: ["1.1.4"]
+    versions: [{version: "1.1.4"}]
 `)
 
 	if _, err := resolveSDKDownloadTargets(nil, path); err == nil {
@@ -371,7 +371,7 @@ func TestSDKNameDownloadRoutesThroughEngineToRegistrySDKRecord(t *testing.T) {
 		case "/sdks/sdk-record-123/download":
 			sawDownload = true
 			w.Header().Set("Content-Type", "application/zip")
-			_, _ = w.Write([]byte("registry-zip"))
+			_, _ = w.Write([]byte{0x50, 0x4b, 0x05, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
@@ -383,12 +383,8 @@ func TestSDKNameDownloadRoutesThroughEngineToRegistrySDKRecord(t *testing.T) {
 	if !sawGraphQL || !sawDownload {
 		t.Fatalf("expected graphql and download requests, saw graphql=%v download=%v", sawGraphQL, sawDownload)
 	}
-	content, err := os.ReadFile(filepath.Join(dir, "security-sdk.zip"))
-	if err != nil {
-		t.Fatalf("read downloaded sdk: %v", err)
-	}
-	if string(content) != "registry-zip" {
-		t.Fatalf("unexpected downloaded content: %q", string(content))
+	if info, err := os.Stat(filepath.Join(dir, "fused-sdks", "security-sdk")); err != nil || !info.IsDir() {
+		t.Fatalf("failed to find extracted sdk directory: %v", err)
 	}
 }
 

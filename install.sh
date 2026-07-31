@@ -8,7 +8,7 @@ set -e
 
 REPO="Usefused/cli"
 BINARY="fused-cli"
-INSTALL_DIR="/usr/local/bin"
+INSTALL_DIR="${HOME}/.local/bin"
 
 # Detect OS
 OS="$(uname -s)"
@@ -71,7 +71,7 @@ if [ "$ASSUME_YES" -ne 1 ]; then
     echo ""
     echo "About to download and install:"
     echo "  ${DOWNLOAD_URL}"
-    echo "  -> ${INSTALL_DIR}/${BINARY} (requires sudo)"
+    echo "  -> ${INSTALL_DIR}/${BINARY}"
     if [ -r /dev/tty ]; then
         printf "Proceed? [y/N] "
         read -r REPLY < /dev/tty
@@ -111,10 +111,16 @@ fi
 echo "=> Extracting archive..."
 tar -xzf "${TAR_NAME}"
 
+# Ensure the install directory exists
+mkdir -p "${INSTALL_DIR}"
+
 # Move the binary to the install directory
-echo "=> Installing to ${INSTALL_DIR}/${BINARY} (requires sudo)..."
-sudo mv "${BINARY}" "${INSTALL_DIR}/${BINARY}"
-sudo chmod +x "${INSTALL_DIR}/${BINARY}"
+echo "=> Installing to ${INSTALL_DIR}/${BINARY}..."
+mv "${BINARY}" "${INSTALL_DIR}/${BINARY}"
+chmod +x "${INSTALL_DIR}/${BINARY}"
+
+echo "=> Note: Installed to ${INSTALL_DIR} to avoid requiring sudo."
+echo "=> If you prefer a system-wide installation, you can move it to /usr/local/bin using sudo."
 
 # Clean up
 cd - > /dev/null

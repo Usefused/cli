@@ -85,11 +85,9 @@ services:
   okta:
     service_id: "00000000-0000-0000-0000-000000000001"
     versions:
-      - "2026-07-01"
-      - "2026-08-01"
-    resolved_versions:
       - version: "2026-07-01"
         service_version_id: "10000000-0000-0000-0000-000000000001"
+      - version: "2026-08-01"
 deprecations:
   - service_id: "00000000-0000-0000-0000-000000000001"
     version: "2026-07-01"
@@ -112,14 +110,15 @@ func assertWorkspaceConfigParsed(t *testing.T, cfg *configfile.ParsedConfig) {
 	if cfg.ConfigKey != "workspace" {
 		t.Errorf("config key: got %q", cfg.ConfigKey)
 	}
-	if got := cfg.Workspace.Services["okta"].Versions; len(got) != 2 || got[0] != "2026-07-01" {
-		t.Errorf("versions: got %q", got)
+	versions := cfg.Workspace.Services["okta"].Versions
+	if len(versions) != 2 || versions[0].Version != "2026-07-01" {
+		t.Errorf("versions: got %+v", versions)
 	}
 	if got := cfg.Workspace.Services["okta"].ServiceID; got != "00000000-0000-0000-0000-000000000001" {
 		t.Errorf("service_id: got %q", got)
 	}
-	if got := cfg.Workspace.Services["okta"].ResolvedVersions; len(got) != 1 || got[0].ServiceVersionID != "10000000-0000-0000-0000-000000000001" {
-		t.Errorf("resolved_versions not parsed: %+v", got)
+	if got := versions[0].ServiceVersionID; got != "10000000-0000-0000-0000-000000000001" {
+		t.Errorf("service_version_id not parsed: %+v", versions)
 	}
 	if got := cfg.Workspace.Deprecations; len(got) != 1 || got[0].EffectiveAt != "2026-10-01" {
 		t.Errorf("deprecations not parsed: %+v", got)
@@ -132,7 +131,7 @@ apiVersion: fused/v1
 kind: workspace
 services:
   okta:
-    versions: ["2026-07-01"]
+    versions: [{version: "2026-07-01"}]
 `)
 
 	run, err := configfile.LoadRun(path)
@@ -155,7 +154,7 @@ kind: workspace
 services:
   github:
     service_id: "00000000-0000-0000-0000-000000000001"
-    versions: ["2026-07-01"]
+    versions: [{version: "2026-07-01"}]
 buckets:
   prod:
     secrets:
@@ -179,7 +178,7 @@ kind: workspace
 services:
   github:
     service_id: "00000000-0000-0000-0000-000000000001"
-    versions: ["2026-07-01"]
+    versions: [{version: "2026-07-01"}]
 buckets:
   prod:
     secrets:
@@ -208,7 +207,7 @@ kind: workspace
 services:
   github:
     service_id: "00000000-0000-0000-0000-000000000001"
-    versions: ["2026-07-01"]
+    versions: [{version: "2026-07-01"}]
 buckets:
   prod:
     secrets:
@@ -292,22 +291,22 @@ kind: workspace
 services:
   shopify:
     service_id: "00000000-0000-0000-0000-000000000001"
-    versions: ["2026-07-01"]
-    connection_profiles:
+    versions:
       - version: "2026-07-01"
-        auth_type: oauth
-        profile:
-          auth_type: oauth
-          resource_input:
-            fields: [{name: shop, required: true}]
-            base_url_template: "https://{shop}.myshopify.com"
-            resource_type: shop
-            allowed_hosts: ["*.myshopify.com"]
-          bindings:
-            - value: $SHOPIFY_API_VERSION
-              location: header
-              name: X-Shopify-API-Version
-              mode: force
+        connection_profiles:
+          - auth_type: oauth
+            profile:
+              auth_type: oauth
+              resource_input:
+                fields: [{name: shop, required: true}]
+                base_url_template: "https://{shop}.myshopify.com"
+                resource_type: shop
+                allowed_hosts: ["*.myshopify.com"]
+              bindings:
+                - value: $SHOPIFY_API_VERSION
+                  location: header
+                  name: X-Shopify-API-Version
+                  mode: force
 `)
 	parsed, err := configfile.ParseFile(path)
 	if err != nil {
@@ -332,11 +331,11 @@ kind: workspace
 services:
   jira:
     service_id: "00000000-0000-0000-0000-000000000001"
-    versions: ["2026-07-01"]
-    connection_profiles:
+    versions:
       - version: "2026-07-01"
-        auth_type: oauth
-        reset: true
+        connection_profiles:
+          - auth_type: oauth
+            reset: true
 `)
 	if _, err := configfile.ParseFile(valid); err != nil {
 		t.Fatalf("valid profile detach: %v", err)
@@ -347,12 +346,12 @@ kind: workspace
 services:
   jira:
     service_id: "00000000-0000-0000-0000-000000000001"
-    versions: ["2026-07-01"]
-    connection_profiles:
+    versions:
       - version: "2026-07-01"
-        auth_type: oauth
-        profile_id: "00000000-0000-0000-0000-000000000002"
-        reset: true
+        connection_profiles:
+          - auth_type: oauth
+            profile_id: "00000000-0000-0000-0000-000000000002"
+            reset: true
 `)
 	if _, err := configfile.ParseFile(conflict); err == nil {
 		t.Fatal("profile detach with profile_id was accepted")
@@ -368,7 +367,7 @@ kind: workspace
 services:
   okta:
     service_id: "00000000-0000-0000-0000-000000000001"
-    versions: ["2026-07-01"]
+    versions: [{version: "2026-07-01"}]
 `)
 	writeFile(t, dir, ".fused/sdks/security.yaml", `
 apiVersion: fused/v1

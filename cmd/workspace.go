@@ -646,6 +646,14 @@ func resolveWorkspaceOperationVersion(service cliapi.WorkspaceService, requested
 	return version, nil
 }
 
+func workspaceServiceVersionNames(service cliapi.WorkspaceService) []string {
+	names := make([]string, len(service.EnabledVersions))
+	for i, v := range service.EnabledVersions {
+		names[i] = v.Version
+	}
+	return names
+}
+
 func workspaceServiceHasVersion(service cliapi.WorkspaceService, version string) bool {
 	if service.Version == version {
 		return true

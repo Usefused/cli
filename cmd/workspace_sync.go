@@ -132,16 +132,55 @@ func mergeRemoteWorkspaceService(services map[string]configfile.WorkspaceService
 }
 
 // workspaceServiceWithLocalState preserves runtime configuration because the
-// service inventory GraphQL projection does not own those fields.
+// service inventory GraphQL projection does not own those fields. Version
+// identity (Version/ServiceVersionID) and per-version Public are never
+// carried forward from local -- both always come from whatever
+// workspaceServiceVersionsFromRemote just computed a moment earlier in the
+// same merge, since Public mirrors live Registry visibility truth (exactly
+// like the service-level Public field above, which has no local-carry path
+// at all). ExecutionPolicy and ConnectionProfiles are different: an
+// unpublished or non-owner ExecutionPolicy has no Registry truth to defer
+// to, and ConnectionProfiles isn't (re)derived here in the first place --
+// that's mergeWorkspaceConnectionProfilesFromRemote's job, from a separate
+// remote source, later in the same sync. So those two carry forward from the
+// existing local entry independently, field-by-field, each only when that
+// field is actually set locally -- never as an all-or-nothing bundle keyed
+// off whether *any* field was set. That coarser bundle rule is what the old
+// flat version_policies list required (the whole list entry really was one
+// local override with one provenance); nesting Public alongside these two
+// doesn't mean all three still share that provenance, so bundling them
+// together here would let a stale local Public silently overwrite a fresh
+// Registry-derived value just because ExecutionPolicy or ConnectionProfiles
+// also happened to be set on the same version.
 func workspaceServiceWithLocalState(remote, local configfile.WorkspaceService) configfile.WorkspaceService {
-	if len(local.ConnectionProfiles) > 0 {
-		remote.ConnectionProfiles = local.ConnectionProfiles
-	}
 	if local.ExecutionPolicy != nil {
 		remote.ExecutionPolicy = local.ExecutionPolicy
 	}
-	if len(local.VersionPolicies) > 0 {
-		remote.VersionPolicies = local.VersionPolicies
+	localByVersion := make(map[string]configfile.WorkspaceServiceVersion, len(local.Versions))
+	for _, v := range local.Versions {
+		localByVersion[v.Version] = v
+	}
+	for i, v := range remote.Versions {
+		existing, ok := localByVersion[v.Version]
+		if !ok {
+			// No local entry for this version at all -- nothing to carry
+			// forward, keep the freshly-computed remote entry as-is.
+			continue
+		}
+		// ExecutionPolicy: local-authored value wins whenever set, regardless
+		// of what (if anything) Registry published -- see doc comment above.
+		if existing.ExecutionPolicy != nil {
+			remote.Versions[i].ExecutionPolicy = existing.ExecutionPolicy
+		}
+		// ConnectionProfiles: carried forward as a placeholder in case the
+		// separate connect-config merge pass has nothing for this version;
+		// that pass overwrites it later if remote does have data.
+		if len(existing.ConnectionProfiles) > 0 {
+			remote.Versions[i].ConnectionProfiles = existing.ConnectionProfiles
+		}
+		// Public is deliberately NOT copied from existing here -- see doc
+		// comment above: it always reflects the value workspaceServiceVersionsFromRemote
+		// just derived from live Registry state, never a stale local one.
 	}
 	return remote
 }
@@ -203,79 +242,90 @@ func uniqueStrings(values []string) []string {
 	return out
 }
 
-// mergeWorkspaceConnectionProfilesFromRemote writes service-level routing
-// policy once per service, even when several buckets return the same effective
-// profile snapshot for that service/auth tuple.
+// mergeWorkspaceConnectionProfilesFromRemote splices each version's routing
+// policy onto the matching entry in that service's already-merged Versions
+// list (by service_version_id), even when several buckets return the same
+// effective profile snapshot for that service/auth tuple. Connection profiles
+// used to be one flat service-level list carrying its own `version` field per
+// entry; now that Versions is itself the per-version container, an entry
+// only needs auth_type to disambiguate itself from siblings on the same
+// version.
 func mergeWorkspaceConnectionProfilesFromRemote(cfg *configfile.WorkspaceConfig, services map[string]api.WorkspaceService, serviceKeys map[string]string, configs []api.WorkspaceConnectConfig) ([]string, error) {
-	grouped, err := workspaceConnectionProfilesByService(services, serviceKeys, configs)
+	grouped, err := workspaceConnectionProfilesByServiceVersion(services, serviceKeys, configs)
 	if err != nil {
 		return nil, err
 	}
 	updated := make([]string, 0, len(grouped))
-	for serviceID, profiles := range grouped {
+	for serviceID, byVersionID := range grouped {
 		key := serviceKeys[serviceID]
 		service := cfg.Services[key]
-		if reflect.DeepEqual(service.ConnectionProfiles, profiles) {
+		changed := false
+		for i := range service.Versions {
+			profiles, ok := byVersionID[service.Versions[i].ServiceVersionID]
+			if !ok || reflect.DeepEqual(service.Versions[i].ConnectionProfiles, profiles) {
+				continue
+			}
+			service.Versions[i].ConnectionProfiles = profiles
+			changed = true
+		}
+		if !changed {
 			continue
 		}
-		service.ConnectionProfiles = profiles
 		cfg.Services[key] = service
 		updated = append(updated, key)
 	}
 	return updated, nil
 }
 
-// workspaceConnectionProfilesByService validates profile/version ownership in
-// one pass and de-duplicates rows repeated through multiple bucket configs.
-func workspaceConnectionProfilesByService(services map[string]api.WorkspaceService, serviceKeys map[string]string, configs []api.WorkspaceConnectConfig) (map[string][]map[string]interface{}, error) {
-	grouped := map[string][]map[string]interface{}{}
+// workspaceConnectionProfilesByServiceVersion validates profile/version
+// ownership in one pass, de-duplicates rows repeated through multiple bucket
+// configs, and groups by the exact service_version_id each profile attaches
+// to so the caller can splice profiles onto the right Versions entry instead
+// of a flat service-level list.
+func workspaceConnectionProfilesByServiceVersion(services map[string]api.WorkspaceService, serviceKeys map[string]string, configs []api.WorkspaceConnectConfig) (map[string]map[string][]map[string]interface{}, error) {
+	grouped := map[string]map[string][]map[string]interface{}{}
 	seen := map[string]bool{}
 	for _, config := range configs {
-		service := services[config.ServiceID]
-		versionNames, err := workspaceEnabledVersionNames(service)
-		if err != nil {
-			return nil, err
-		}
-		for _, profile := range config.Profiles {
-			key := config.ServiceID + "\x00" + profile.ServiceVersionID + "\x00" + profile.AuthType
-			if seen[key] {
-				continue
-			}
-			intent, err := workspaceConnectionProfileIntent(config.ServiceID, profile, versionNames)
-			if err != nil {
-				return nil, err
-			}
-			seen[key] = true
-			grouped[config.ServiceID] = append(grouped[config.ServiceID], intent)
-		}
 		if serviceKeys[config.ServiceID] == "" && len(config.Profiles) > 0 {
 			return nil, fmt.Errorf("workspace sync received a connection profile for inactive service_id %s", config.ServiceID)
+		}
+		enabledVersionIDs := workspaceEnabledVersionIDs(services[config.ServiceID])
+		for _, profile := range config.Profiles {
+			if !enabledVersionIDs[profile.ServiceVersionID] {
+				return nil, fmt.Errorf("workspace sync received a connection profile for an inactive version of service_id %s", config.ServiceID)
+			}
+			dedupeKey := config.ServiceID + "\x00" + profile.ServiceVersionID + "\x00" + profile.AuthType
+			if seen[dedupeKey] {
+				continue
+			}
+			seen[dedupeKey] = true
+			if grouped[config.ServiceID] == nil {
+				grouped[config.ServiceID] = map[string][]map[string]interface{}{}
+			}
+			grouped[config.ServiceID][profile.ServiceVersionID] = append(grouped[config.ServiceID][profile.ServiceVersionID], workspaceConnectionProfileIntent(profile))
 		}
 	}
 	return grouped, nil
 }
 
-// workspaceEnabledVersionNames requires resolved IDs because connection
+// workspaceEnabledVersionIDs requires resolved IDs because connection
 // profiles attach to immutable service versions, not mutable display names.
-func workspaceEnabledVersionNames(service api.WorkspaceService) (map[string]string, error) {
-	names := make(map[string]string, len(service.EnabledVersions))
+func workspaceEnabledVersionIDs(service api.WorkspaceService) map[string]bool {
+	ids := make(map[string]bool, len(service.EnabledVersions))
 	for _, version := range service.EnabledVersions {
-		if version.ServiceVersionID == "" {
-			return nil, fmt.Errorf("workspace sync requires resolved version IDs to export connection profiles for service_id %s", service.ServiceID)
+		if version.ServiceVersionID != "" {
+			ids[version.ServiceVersionID] = true
 		}
-		names[version.ServiceVersionID] = version.Version
 	}
-	return names, nil
+	return ids
 }
 
 // workspaceConnectionProfileIntent preserves Registry identity when present;
 // only workspace-local attachments need to carry inline profile JSON.
-func workspaceConnectionProfileIntent(serviceID string, profile api.WorkspaceConnectProfile, versionNames map[string]string) (map[string]interface{}, error) {
-	version := versionNames[profile.ServiceVersionID]
-	if version == "" {
-		return nil, fmt.Errorf("workspace sync received a connection profile for an inactive version of service_id %s", serviceID)
-	}
-	intent := map[string]interface{}{"version": version, "auth_type": profile.AuthType}
+// Version is deliberately absent from the intent map -- it's implied by
+// which Versions entry this profile list gets attached to.
+func workspaceConnectionProfileIntent(profile api.WorkspaceConnectProfile) map[string]interface{} {
+	intent := map[string]interface{}{"auth_type": profile.AuthType}
 	// is_public reflects a prior successful, owner-gated publish recorded by
 	// the Engine (MarkWorkspaceProfilePublished only runs after
 	// PublishConnectionProfile succeeds), so sync can round-trip it here
@@ -285,10 +335,10 @@ func workspaceConnectionProfileIntent(serviceID string, profile api.WorkspaceCon
 	}
 	if id := strings.TrimSpace(profile.RegistryProfileID); id != "" {
 		intent["profile_id"] = id
-		return intent, nil
+		return intent
 	}
 	intent["profile"] = profile.Profile
-	return intent, nil
+	return intent
 }
 
 // workspaceServiceConfigKey requires Registry slug identity so sync never
@@ -332,48 +382,104 @@ func serviceConfigRef(slug, provider string) string {
 // workspaceServiceFromRemote projects only fields owned by Engine and
 // Registry, leaving runtime config reconciliation to its separate concern.
 func workspaceServiceFromRemote(svc api.WorkspaceService, visibility map[string]api.ServiceVisibility, versionsByServiceID map[string][]api.ServiceVersion) configfile.WorkspaceService {
-	versions := workspaceServiceVersionNames(svc)
-	if svc.Version != "" && !containsString(versions, svc.Version) {
-		versions = append(append([]string{}, versions...), svc.Version)
-	}
 	newEntry := configfile.WorkspaceService{
-		ServiceID:        svc.ServiceID,
-		Versions:         versions,
-		ResolvedVersions: workspaceServiceResolvedVersions(svc),
+		ServiceID: svc.ServiceID,
+		Versions:  workspaceServiceVersionsFromRemote(svc, visibility, versionsByServiceID),
 	}
 	if vis, ok := visibility[svc.ServiceID]; ok && vis.IsOwner {
 		newEntry.Public = boolPtr(vis.IsPublic)
 		newEntry.ExecutionPolicy = workspaceExecutionPolicyFromRemote(vis)
-		newEntry.VersionPolicies = workspaceVersionPoliciesFromRemote(versionsByServiceID[svc.ServiceID])
 	}
 	return newEntry
 }
 
-// workspaceVersionPoliciesFromRemote is workspaceExecutionPolicyFromRemote's
-// per-version sibling. Unlike the service-level Public field (always written
-// for an owned service, true or false), a version's public status defaults to
-// true on the Registry, so an entry is only emitted when a version deviates
-// from that default (is_public=false) or has a published execution policy to
-// round-trip -- otherwise every sync would grow workspace.yaml with one
-// version_policies entry per enabled version even when nothing was ever set.
-func workspaceVersionPoliciesFromRemote(versions []api.ServiceVersion) []configfile.WorkspaceVersionPolicy {
-	var out []configfile.WorkspaceVersionPolicy
-	for _, v := range versions {
-		policy := configfile.WorkspaceVersionPolicy{Version: v.Name}
-		hasEntry := false
-		if !v.IsPublic {
-			policy.Public = boolPtr(false)
-			hasEntry = true
-		}
-		if ep := workspaceVersionExecutionPolicyFromRemote(v); ep != nil {
-			policy.ExecutionPolicy = ep
-			hasEntry = true
-		}
-		if hasEntry {
-			out = append(out, policy)
-		}
+// workspaceServiceVersionsFromRemote builds one merged entry per enabled
+// version: its display name, the Engine-resolved ServiceVersionID, and --
+// for a service this workspace owns -- its per-version visibility/
+// execution-policy override. resolved_versions and version_policies used to
+// be two separate sibling lists, each keyed by a repeated `version` string;
+// this is their unified replacement, split into two focused passes below
+// (seed identity, then layer on owner-only overrides) so each stays easy to
+// reason about on its own rather than one function doing both at once.
+func workspaceServiceVersionsFromRemote(svc api.WorkspaceService, visibility map[string]api.ServiceVisibility, versionsByServiceID map[string][]api.ServiceVersion) []configfile.WorkspaceServiceVersion {
+	byName, order := workspaceEnabledVersionsByName(svc)
+	attachWorkspaceVersionPolicyOverrides(svc, visibility, versionsByServiceID, byName)
+	out := make([]configfile.WorkspaceServiceVersion, 0, len(order))
+	for _, name := range order {
+		out = append(out, *byName[name])
 	}
 	return out
+}
+
+// workspaceEnabledVersionsByName seeds one entry per version identity --
+// display name plus the Engine-resolved ServiceVersionID (so CLI/CI can
+// re-apply without a fresh registry lookup that could drift under a reused
+// version label) -- from the Engine's EnabledVersions list, falling back to
+// the currently-active Version as a safety net in case that list ever omits
+// it. order preserves first-seen insertion order so output stays
+// deterministic regardless of map iteration.
+func workspaceEnabledVersionsByName(svc api.WorkspaceService) (map[string]*configfile.WorkspaceServiceVersion, []string) {
+	byName := map[string]*configfile.WorkspaceServiceVersion{}
+	order := make([]string, 0, len(svc.EnabledVersions)+1)
+	ensure := func(name string) *configfile.WorkspaceServiceVersion {
+		if v, ok := byName[name]; ok {
+			// Already seeded (e.g. by an earlier EnabledVersions entry) --
+			// return the existing pointer so later mutations land on the
+			// same entry instead of creating a duplicate.
+			return v
+		}
+		v := &configfile.WorkspaceServiceVersion{Version: name}
+		byName[name] = v
+		order = append(order, name)
+		return v
+	}
+	for _, ev := range svc.EnabledVersions {
+		v := ensure(ev.Version)
+		if ev.ServiceVersionID != "" {
+			v.ServiceVersionID = ev.ServiceVersionID
+		}
+	}
+	if svc.Version != "" {
+		// Belt-and-suspenders: the currently-active version must always have
+		// an entry even if the Engine's enabled-list didn't separately
+		// include it (documented workspace sync behavior).
+		ensure(svc.Version)
+	}
+	return byName, order
+}
+
+// attachWorkspaceVersionPolicyOverrides layers each version's own
+// Public/ExecutionPolicy override onto the already-seeded entries.
+//
+// Unlike the service-level Public field (always written for an owned
+// service, true or false), a version's public status defaults to true on
+// the Registry, so a version only gets its Public/ExecutionPolicy fields
+// populated when it deviates from that default (is_public=false) or has a
+// published execution policy to round-trip -- otherwise every sync would
+// grow workspace.yaml with boilerplate for every enabled version even when
+// nothing was ever set.
+func attachWorkspaceVersionPolicyOverrides(svc api.WorkspaceService, visibility map[string]api.ServiceVisibility, versionsByServiceID map[string][]api.ServiceVersion, byName map[string]*configfile.WorkspaceServiceVersion) {
+	vis, ok := visibility[svc.ServiceID]
+	if !ok || !vis.IsOwner {
+		// version_policies data has no meaning for a service this workspace
+		// doesn't own -- nothing to attach.
+		return
+	}
+	for _, remoteVersion := range versionsByServiceID[svc.ServiceID] {
+		// Registry's ServiceVersions call can return versions beyond what's
+		// actually enabled for this workspace; only an already-enabled
+		// version gets a policy override attached here.
+		v, enabled := byName[remoteVersion.Name]
+		if !enabled {
+			continue
+		}
+		if !remoteVersion.IsPublic {
+			v.Public = boolPtr(false)
+		}
+		if ep := workspaceVersionExecutionPolicyFromRemote(remoteVersion); ep != nil {
+			v.ExecutionPolicy = ep
+		}
+	}
 }
 
 // mapExecRateLimit/mapExecRetry/mapExecPagination/mapExecWebhookConfig do the
@@ -460,17 +566,34 @@ func workspaceExecutionPolicyFromRemote(vis api.ServiceVisibility) *configfile.E
 	}
 }
 
-// workspaceServiceEqual compares the fields sync actually touches.
-// Versions is compared as a set so harmless remote ordering changes do not
-// churn local files.
+// workspaceServiceEqual compares the fields sync actually touches. Versions
+// is compared as a set so harmless remote ordering changes do not churn
+// local files.
 func workspaceServiceEqual(a, b configfile.WorkspaceService) bool {
 	return a.ServiceID == b.ServiceID &&
-		sameStringSet(a.Versions, b.Versions) &&
-		sameResolvedVersions(a.ResolvedVersions, b.ResolvedVersions) &&
 		sameBoolPtr(a.Public, b.Public) &&
-		reflect.DeepEqual(a.ConnectionProfiles, b.ConnectionProfiles) &&
 		reflect.DeepEqual(a.ExecutionPolicy, b.ExecutionPolicy) &&
-		reflect.DeepEqual(a.VersionPolicies, b.VersionPolicies)
+		sameWorkspaceServiceVersions(a.Versions, b.Versions)
+}
+
+// sameWorkspaceServiceVersions treats Versions as a set keyed by Version
+// (remote ordering is not part of the workspace contract), then deep-compares
+// each matched pair's identity and override fields.
+func sameWorkspaceServiceVersions(a, b []configfile.WorkspaceServiceVersion) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	byVersion := make(map[string]configfile.WorkspaceServiceVersion, len(a))
+	for _, v := range a {
+		byVersion[v.Version] = v
+	}
+	for _, v := range b {
+		existing, ok := byVersion[v.Version]
+		if !ok || !reflect.DeepEqual(existing, v) {
+			return false
+		}
+	}
+	return true
 }
 
 // boolPtr preserves an explicit false value through YAML omitempty handling.
@@ -485,55 +608,6 @@ func sameBoolPtr(a, b *bool) bool {
 		return a == b
 	}
 	return *a == *b
-}
-
-// workspaceServiceVersionNames projects the version labels in Engine order;
-// comparison later treats them as a set to avoid file churn.
-func workspaceServiceVersionNames(svc api.WorkspaceService) []string {
-	versions := make([]string, 0, len(svc.EnabledVersions))
-	for _, version := range svc.EnabledVersions {
-		versions = append(versions, version.Version)
-	}
-	return versions
-}
-
-// workspaceServiceResolvedVersions carries Engine-resolved IDs into config so
-// future applies do not depend on mutable version display names.
-func workspaceServiceResolvedVersions(svc api.WorkspaceService) []configfile.WorkspaceResolvedVersion {
-	versions := make([]configfile.WorkspaceResolvedVersion, 0, len(svc.EnabledVersions))
-	for _, version := range svc.EnabledVersions {
-		if version.ServiceVersionID == "" {
-			// Older Engines may not return IDs; omitting incomplete pairs keeps
-			// sync backward-compatible instead of writing config that apply will
-			// reject as a malformed resolved version.
-			continue
-		}
-		versions = append(versions, configfile.WorkspaceResolvedVersion{
-			Version:          version.Version,
-			ServiceVersionID: version.ServiceVersionID,
-		})
-	}
-	return versions
-}
-
-// sameResolvedVersions compares identity pairs as a set because remote order
-// is not part of the workspace contract.
-func sameResolvedVersions(a, b []configfile.WorkspaceResolvedVersion) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	// Treat resolved versions as identity pairs rather than ordered YAML
-	// slices so a harmless Engine ordering change does not churn local config.
-	byVersion := make(map[string]string, len(a))
-	for _, version := range a {
-		byVersion[version.Version] = version.ServiceVersionID
-	}
-	for _, version := range b {
-		if byVersion[version.Version] != version.ServiceVersionID {
-			return false
-		}
-	}
-	return true
 }
 
 // sameStringSet compares unordered declarative selections without sorting and

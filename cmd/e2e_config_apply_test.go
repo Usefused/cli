@@ -47,13 +47,9 @@ services:
 		t.Fatal("expected generated sdk id download request")
 	}
 
-	// 3. Verify Download Artifact
-	content, err := os.ReadFile(filepath.Join(dir, "my-sdk.zip"))
-	if err != nil {
-		t.Fatalf("failed to read downloaded zip: %v", err)
-	}
-	if string(content) != "mock-zip-content" {
-		t.Fatalf("unexpected zip content: %s", string(content))
+	// 3. Verify Download Artifact Extracted
+	if info, err := os.Stat(filepath.Join(dir, "fused-sdks", "my-sdk")); err != nil || !info.IsDir() {
+		t.Fatalf("failed to find extracted sdk directory: %v", err)
 	}
 }
 
@@ -80,7 +76,7 @@ func handleE2ESDKRequest(t *testing.T, seen *e2eSDKSeen, w http.ResponseWriter, 
 	case "/sdks/sdk-id-123/download":
 		seen.download = true
 		w.Header().Set("Content-Type", "application/zip")
-		_, _ = w.Write([]byte("mock-zip-content"))
+		_, _ = w.Write([]byte{0x50, 0x4b, 0x05, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
 	default:
 		t.Fatalf("unexpected path %s", r.URL.Path)
 	}

@@ -91,7 +91,7 @@ kind: workspace
 services:
   okta:
     service_id: "00000000-0000-0000-0000-000000000001"
-    versions: ["2026-07-01"]
+    versions: [{version: "2026-07-01"}]
 `)
 
 	oldwd, err := os.Getwd()
