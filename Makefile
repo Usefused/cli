@@ -21,8 +21,14 @@ skills-version:
 		rm -rf "skills/$$ver"; \
 	fi; \
 	cp -r skills/dev "skills/$$ver"; \
-	echo "Created/updated skills/$$ver from skills/dev."; \
-	echo "Next: git add skills/$$ver && git commit && git push origin main, then make cut-release VERSION=$(VERSION)"
+	if [ -n "$$(git status --porcelain -- "skills/$$ver")" ]; then \
+		git add -A -- "skills/$$ver"; \
+		git commit -m "chore: prepare CLI skills for $(VERSION)"; \
+		git push origin HEAD; \
+		echo "Committed and pushed skills/$$ver for $(VERSION)."; \
+	else \
+		echo "No changes detected for skills/$$ver."; \
+	fi
 
 bundle-skills: skills-version
 
