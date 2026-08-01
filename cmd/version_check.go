@@ -12,10 +12,23 @@ import (
 
 var updateCh = make(chan string, 1)
 
-func startUpdateCheck() {
+func startUpdateCheck() bool {
+	if updateCheckDisabled() {
+		return false
+	}
 	go func() {
 		updateCh <- fetchLatestVersion()
 	}()
+	return true
+}
+
+func updateCheckDisabled() bool {
+	return envEnabled("FUSED_NO_UPDATE_CHECK") || envEnabled("CI")
+}
+
+func envEnabled(name string) bool {
+	value := strings.TrimSpace(os.Getenv(name))
+	return value == "1" || strings.EqualFold(value, "true")
 }
 
 func fetchLatestVersion() string {

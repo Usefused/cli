@@ -6,9 +6,11 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.17.0"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // InitTelemetry sets up OpenTelemetry for the CLI.
@@ -43,8 +45,13 @@ func WithTelemetry(spanName string, runE func(cmd *cobra.Command, args []string)
 		ctx, span := otel.Tracer("fused-cli").Start(ctx, spanName)
 		defer span.End()
 
-		// Overwrite the context so child calls inherit the span
+		// Overwrite both contexts so API clients created by existing command
+		// helpers still inherit cancellation and tracing without a second,
+		// divergent client-construction path.
 		cmd.SetContext(ctx)
+		previousExecutionContext := executionContext
+		executionContext = ctx
+		defer func() { executionContext = previousExecutionContext }()
 
 		err := runE(cmd, args)
 		if err != nil {
@@ -52,6 +59,24 @@ func WithTelemetry(spanName string, runE func(cmd *cobra.Command, args []string)
 		}
 		return err
 	}
+}
+
+func recordAppliedChange(ctx context.Context, action, resourceKind string) {
+	if ctx == nil {
+		return
+	}
+	// Why: recording one event per completed mutation preserves evidence of
+	// partial applies while avoiding resource names, arguments, and secrets.
+	trace.SpanFromContext(ctx).AddEvent("cli_change_applied", trace.WithAttributes(
+		attribute.String("user_action", action),
+		attribute.String("resource_kind", resourceKind),
+	))
+}
+
+func withApplyAudit(cmd *cobra.Command, opts applyOptions) applyOptions {
+	opts.auditCtx = cmd.Context()
+	opts.auditAction = cmd.CommandPath()
+	return opts
 }
 
 // ExecuteWithTelemetry replaces the standard cmd.Execute() to ensure OTEL shuts down cleanly.

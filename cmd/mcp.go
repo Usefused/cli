@@ -37,7 +37,7 @@ var mcpApplyCmd = &cobra.Command{
 	Use:   "apply",
 	Short: "Apply MCP configuration",
 	RunE: WithTelemetry("cli.mcp.apply", func(cmd *cobra.Command, args []string) error {
-		return runConfigApply(applyOptions{filter: filterMCP, planID: mcpApplyPlanID, receiptPath: mcpApplyReceiptPath})
+		return runConfigApply(withApplyAudit(cmd, applyOptions{filter: filterMCP, planID: mcpApplyPlanID, receiptPath: mcpApplyReceiptPath}))
 	}),
 }
 
@@ -118,7 +118,7 @@ func runMCPRemove(cmd *cobra.Command, target string) error {
 		if len(parts) > 1 {
 			version = parts[1]
 		}
-		
+
 		server, err := client.GetMCPServerByName(name, version)
 		if err != nil {
 			return fmt.Errorf("failed to resolve mcp server %q: %w", target, err)
@@ -137,11 +137,10 @@ func runMCPRemove(cmd *cobra.Command, target string) error {
 func init() {
 	addListFlags(mcpListCmd, &mcpListFlags)
 	addListFlags(mcpCmd, &mcpListFlags)
-	mcpPlanCmd.Flags().BoolVar(&mcpPlanJSON, "json", false, "Print plan receipt as JSON")
+	mcpPlanCmd.Flags().BoolVar(&mcpPlanJSON, "json", false, "Print plan result JSON, including summary and notifications")
 	mcpPlanCmd.Flags().StringVar(&mcpPlanReceiptOut, "receipt-out", "", "Write the plan receipt to this path")
 	mcpApplyCmd.Flags().StringVar(&mcpApplyPlanID, "plan-id", "", "Apply this plan ID")
 	mcpApplyCmd.Flags().StringVar(&mcpApplyReceiptPath, "receipt", "", "Read a plan receipt from this path")
 	mcpCmd.AddCommand(mcpListCmd, mcpPlanCmd, mcpApplyCmd, mcpValidateCmd)
 	RootCmd.AddCommand(mcpCmd)
 }
-

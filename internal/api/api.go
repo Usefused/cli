@@ -2,20 +2,78 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/huh/spinner"
 )
 
 type Client struct {
-	BaseURL string
-	APIKey  string
-	HTTP    *http.Client
+	BaseURL      string
+	APIKey       string
+	HTTP         *http.Client
+	showProgress bool
+}
+
+const DefaultTimeout = 30 * time.Second
+
+type ClientOptions struct {
+	Context         context.Context
+	Timeout         time.Duration
+	RequestID       string
+	DisableProgress bool
+}
+
+type requestTransport struct {
+	base      http.RoundTripper
+	ctx       context.Context
+	requestID string
+}
+
+func (t *requestTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	ctx, cleanup := mergeRequestContext(req.Context(), t.ctx)
+	request := req.Clone(ctx)
+	if t.requestID != "" {
+		request.Header.Set("X-Request-ID", t.requestID)
+	}
+	resp, err := t.base.RoundTrip(request)
+	if err != nil {
+		cleanup()
+		return nil, err
+	}
+	// The request context must remain live while callers consume streaming
+	// response bodies; closing the body is the HTTP lifecycle boundary.
+	resp.Body = &cleanupReadCloser{ReadCloser: resp.Body, cleanup: cleanup}
+	return resp, nil
+}
+
+type cleanupReadCloser struct {
+	io.ReadCloser
+	cleanup func()
+}
+
+func (c *cleanupReadCloser) Close() error {
+	err := c.ReadCloser.Close()
+	c.cleanup()
+	return err
+}
+
+func mergeRequestContext(requestCtx, executionCtx context.Context) (context.Context, func()) {
+	if executionCtx == nil {
+		return requestCtx, func() {}
+	}
+	ctx, cancel := context.WithCancel(requestCtx)
+	stop := context.AfterFunc(executionCtx, cancel)
+	return ctx, func() {
+		stop()
+		cancel()
+	}
 }
 
 // doRequest executes an HTTP request while showing a spinner to the user on stderr.
@@ -30,7 +88,7 @@ func (c *Client) doRequest(req *http.Request) (*http.Response, error) {
 	fi, _ := os.Stderr.Stat()
 	isTTY := (fi.Mode() & os.ModeCharDevice) != 0
 
-	if isTTY {
+	if c.showProgress && isTTY {
 		_ = spinner.New().Title("Working...").Output(os.Stderr).Action(action).Run()
 	} else {
 		action()
@@ -40,10 +98,26 @@ func (c *Client) doRequest(req *http.Request) (*http.Response, error) {
 }
 
 func NewClient(baseURL, apiKey string) *Client {
+	return NewClientWithOptions(baseURL, apiKey, ClientOptions{})
+}
+
+func NewClientWithOptions(baseURL, apiKey string, opts ClientOptions) *Client {
+	timeout := opts.Timeout
+	if timeout <= 0 {
+		timeout = DefaultTimeout
+	}
 	return &Client{
-		BaseURL: baseURL,
-		APIKey:  apiKey,
-		HTTP:    &http.Client{},
+		BaseURL:      baseURL,
+		APIKey:       apiKey,
+		showProgress: !opts.DisableProgress,
+		HTTP: &http.Client{
+			Timeout: timeout,
+			Transport: &requestTransport{
+				base:      http.DefaultTransport,
+				ctx:       opts.Context,
+				requestID: opts.RequestID,
+			},
+		},
 	}
 }
 

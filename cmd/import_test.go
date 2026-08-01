@@ -161,16 +161,6 @@ func TestImportPlanPrintsUsageWarningWhenNonEmpty(t *testing.T) {
 // the receipt file, never re-plan.
 func TestImportApplyUsesReceiptWithoutReplanning(t *testing.T) {
 	dir := t.TempDir()
-	receiptPath := filepath.Join(dir, ".fused/.state/import.plan.json")
-	if err := os.MkdirAll(filepath.Dir(receiptPath), 0755); err != nil {
-		t.Fatal(err)
-	}
-	receipt := importPlanReceipt{Slug: "widgets", PlanID: "plan-3", SourceHash: "hash-3"}
-	data, _ := json.Marshal(receipt)
-	if err := os.WriteFile(receiptPath, data, 0644); err != nil {
-		t.Fatal(err)
-	}
-
 	var sawApply bool
 	var decoded map[string]string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -188,6 +178,15 @@ func TestImportApplyUsesReceiptWithoutReplanning(t *testing.T) {
 		w.Write([]byte(`{"status":"applied","plan_id":"plan-3","service_id":"svc-1","is_new_service":false,"action":"update_version","version":"2026-07-14","revision":2}`))
 	}))
 	defer server.Close()
+	receiptPath := filepath.Join(dir, ".fused/.state/import.plan.json")
+	if err := os.MkdirAll(filepath.Dir(receiptPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	receipt := importPlanReceipt{Slug: "widgets", PlanID: "plan-3", SourceHash: "hash-3", EngineURL: server.URL}
+	data, _ := json.Marshal(receipt)
+	if err := os.WriteFile(receiptPath, data, 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	out := runCommandInDirOutput(t, dir, server.URL, []string{"import", "apply"})
 
@@ -202,6 +201,35 @@ func TestImportApplyUsesReceiptWithoutReplanning(t *testing.T) {
 	}
 	if !strings.Contains(out, "revision 2") {
 		t.Errorf("expected apply result naming the internal revision, got %q", out)
+	}
+}
+
+func TestImportApplyRejectsReceiptForDifferentEngine(t *testing.T) {
+	dir := t.TempDir()
+	var requestCount int
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		requestCount++
+	}))
+	defer server.Close()
+	receiptPath := filepath.Join(dir, ".fused/.state/import.plan.json")
+	if err := os.MkdirAll(filepath.Dir(receiptPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	receipt := importPlanReceipt{
+		Slug: "widgets", PlanID: "plan-3", SourceHash: "hash-3",
+		EngineURL: "https://different-engine.example.com",
+	}
+	data, _ := json.Marshal(receipt)
+	if err := os.WriteFile(receiptPath, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	out := runCommandInDirExpectError(t, dir, server.URL, []string{"import", "apply"})
+	if !strings.Contains(out, "receipt targets") {
+		t.Fatalf("expected target mismatch, got %q", out)
+	}
+	if requestCount != 0 {
+		t.Fatalf("target mismatch must happen before import mutation; got %d request(s)", requestCount)
 	}
 }
 

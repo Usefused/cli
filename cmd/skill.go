@@ -592,12 +592,5 @@ func skillInstallRoot(target skillTarget, name string) (string, error) {
 // writeSkillFile mirrors internal/config.Save's atomic write (temp file then
 // rename) so a crash mid-write can't leave a truncated file behind.
 func writeSkillFile(path, content string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return err
-	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, []byte(content), 0644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	return atomicWriteFile(path, []byte(content), 0644, nil)
 }

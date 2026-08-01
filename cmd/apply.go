@@ -13,7 +13,7 @@ var applyCmd = &cobra.Command{
 	Short: "Apply changes for Fused configurations",
 	Long:  `Applies planned changes for all Fused configurations in the target directory or file.`,
 	RunE: WithTelemetry("cli.apply", func(cmd *cobra.Command, args []string) error {
-		return runConfigApply(applyOptions{download: applyDownload, planID: applyPlanID, receiptPath: applyReceiptPath})
+		return runConfigApply(withApplyAudit(cmd, applyOptions{download: applyDownload, planID: applyPlanID, receiptPath: applyReceiptPath}))
 	}),
 }
 

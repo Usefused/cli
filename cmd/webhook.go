@@ -44,7 +44,7 @@ var webhookApplyCmd = &cobra.Command{
 	Short: "Apply webhook configuration",
 	// Why: Write to OTEL to audit user/agent-triggered mutative execution.
 	RunE: WithTelemetry("cli.webhook.apply", func(cmd *cobra.Command, args []string) error {
-		return runConfigApply(applyOptions{filter: filterWebhook, planID: webhookApplyPlanID, receiptPath: webhookApplyReceiptPath})
+		return runConfigApply(withApplyAudit(cmd, applyOptions{filter: filterWebhook, planID: webhookApplyPlanID, receiptPath: webhookApplyReceiptPath}))
 	}),
 }
 
@@ -75,7 +75,7 @@ func init() {
 	RootCmd.AddCommand(webhookCmd)
 
 	webhookCmd.AddCommand(webhookPlanCmd)
-	webhookPlanCmd.Flags().BoolVar(&webhookPlanJSON, "json", false, "Print plan receipt JSON instead of writing default receipt")
+	webhookPlanCmd.Flags().BoolVar(&webhookPlanJSON, "json", false, "Print plan result JSON, including summary and notifications")
 	webhookPlanCmd.Flags().StringVar(&webhookPlanReceiptOut, "receipt-out", "", "Write the plan receipt to a specific path")
 
 	webhookCmd.AddCommand(webhookApplyCmd)

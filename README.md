@@ -94,6 +94,18 @@ The CLI resolves configuration in the following order (highest precedence first)
 2. **Environment Variables**: `FUSED_API_KEY` and `FUSED_ENGINE_URL`
 3. **Config File**: Set via `fused-cli config set` (stored in `~/.config/fused/config.json`)
 
+### Automation-safe execution
+
+Engine requests time out after 30 seconds by default. Override this per run
+with `--timeout`, and pass `--request-id` to attach a safe audit correlation ID
+to every Engine request. SIGINT and SIGTERM cancel outstanding requests.
+
+Use `--no-input` in scripts and agent runs to fail instead of prompting.
+`CI=true` enables the same non-interactive behavior and disables release update
+checks; `FUSED_NO_UPDATE_CHECK=1` disables only the update check. Interactive
+options such as `import docs --review` must be replaced by their explicit flag
+forms when non-interactive execution is active.
+
 ## Usage
 
 ### Common Workflows
@@ -213,5 +225,9 @@ fused-cli sdk sync my-sdk -f .fused/sdks/my-sdk.yaml
 ```
 
 `workspace sync` mirrors the Engine's active workspace services. `sdk sync` mirrors the most recently generated SDK with the given name, including its selected services, resolved versions, and operation names. Once you're satisfied with a plan (`fused-cli sdk plan` / `fused-cli workspace plan`), apply it the same way shown under Common Workflows above.
+
+Plan output includes the Engine's complete change summary. A saved plan receipt is bound to both the exact config content and the normalized Engine URL. Apply preflights every selected config before its first remote mutation and rejects receipts that are stale, unbound, or belong to another Engine; re-run plan against the intended Engine instead of bypassing this check.
+
+CLI-managed config files, plan receipts, generated SDK config, and installed skill files are replaced atomically. Existing file permissions are preserved, and structured config/receipt content is validated before it replaces the previous file.
 
 Run `fused-cli --help` for more information on available commands and flags.

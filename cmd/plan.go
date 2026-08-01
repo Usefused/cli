@@ -20,6 +20,6 @@ var planCmd = &cobra.Command{
 
 func init() {
 	RootCmd.AddCommand(planCmd)
-	planCmd.Flags().BoolVar(&planJSON, "json", false, "Print plan receipt JSON instead of writing default receipt")
+	planCmd.Flags().BoolVar(&planJSON, "json", false, "Print plan result JSON, including summary and notifications")
 	planCmd.Flags().StringVar(&planReceiptOut, "receipt-out", "", "Write the plan receipt to a specific path")
 }

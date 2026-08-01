@@ -156,10 +156,10 @@ func writeSDKConfig(path string, cfg *configfile.SDKConfig) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+	return atomicWriteFile(path, data, 0644, func(candidate []byte) error {
+		_, err := parseSDKConfig(path, candidate)
 		return err
-	}
-	return os.WriteFile(path, data, 0644)
+	})
 }
 
 func containsString(items []string, wanted string) bool {

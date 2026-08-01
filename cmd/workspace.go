@@ -44,11 +44,11 @@ var workspaceApplyCmd = &cobra.Command{
 	Short: "Apply workspace configuration",
 	RunE: WithTelemetry("cli.workspace.apply", func(cmd *cobra.Command, args []string) error {
 		warnIfProductionEnvironment(cmd)
-		return runConfigApply(applyOptions{
+		return runConfigApply(withApplyAudit(cmd, applyOptions{
 			filter:      filterWorkspace,
 			planID:      workspaceApplyPlanID,
 			receiptPath: workspaceApplyReceiptPath,
-		})
+		}))
 	}),
 }
 
@@ -85,6 +85,11 @@ var workspaceServicesListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List workspace services",
 	RunE: WithTelemetry("cli.workspace.services.list", func(cmd *cobra.Command, args []string) error {
+		if workspaceServicesListInteractive {
+			if err := requireInteractive("omit --interactive to print the complete service list"); err != nil {
+				return err
+			}
+		}
 		client, err := getAPIClient()
 		if err != nil {
 			return err
@@ -318,26 +323,26 @@ func runWorkspaceServiceVersionAdd(cmd *cobra.Command, serviceSlug, version stri
 	span := trace.SpanFromContext(ctx)
 
 	if version == "latest" {
-		// Why: Resolving "latest" eagerly before writing to the workspace config ensures 
-		// that the workspace remains deterministic. If we stored "latest" in the YAML directly, 
+		// Why: Resolving "latest" eagerly before writing to the workspace config ensures
+		// that the workspace remains deterministic. If we stored "latest" in the YAML directly,
 		// the same workspace configuration would drift silently as new registry versions are published.
 		client, err := getAPIClient()
 		if err != nil {
 			return err
 		}
-		
+
 		latestVersion, err := client.GetServiceLatestVersion(serviceSlug)
 		if err != nil {
 			return err
 		}
-		
+
 		fmt.Printf("Resolved 'latest' to version %s for service %s\n", latestVersion, serviceSlug)
-		
+
 		span.AddEvent("cli.workspace.service.version.add.latest_resolved", trace.WithAttributes(
 			attribute.String("service", serviceSlug),
 			attribute.String("resolved_version", latestVersion),
 		))
-		
+
 		version = latestVersion
 	}
 
@@ -830,7 +835,7 @@ func init() {
 	RootCmd.AddCommand(workspaceCmd)
 
 	workspaceCmd.AddCommand(workspacePlanCmd)
-	workspacePlanCmd.Flags().BoolVar(&workspacePlanJSON, "json", false, "Print plan receipt JSON instead of writing default receipt")
+	workspacePlanCmd.Flags().BoolVar(&workspacePlanJSON, "json", false, "Print plan result JSON, including summary and notifications")
 	workspacePlanCmd.Flags().StringVar(&workspacePlanReceiptOut, "receipt-out", "", "Write the plan receipt to a specific path")
 	workspaceCmd.AddCommand(workspaceApplyCmd)
 	workspaceApplyCmd.Flags().StringVar(&workspaceApplyPlanID, "plan-id", "", "Apply a specific remote plan ID")
