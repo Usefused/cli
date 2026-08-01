@@ -27,15 +27,17 @@ type planReceipt struct {
 }
 
 type plannedConfig struct {
-	receipt       planReceipt
-	summary       map[string]interface{}
-	notifications api.NotificationInbox
+	receipt             planReceipt
+	summary             map[string]interface{}
+	notifications       api.NotificationInbox
+	requiredPermissions []api.PermissionRequirement
 }
 
 type planResultOutput struct {
 	planReceipt
-	Summary       map[string]interface{} `json:"summary"`
-	Notifications api.NotificationInbox  `json:"notifications,omitempty"`
+	Summary             map[string]interface{}      `json:"summary"`
+	Notifications       api.NotificationInbox       `json:"notifications,omitempty"`
+	RequiredPermissions []api.PermissionRequirement `json:"required_permissions"`
 }
 
 type configKindFilter string
@@ -54,9 +56,10 @@ var (
 )
 
 type planOptions struct {
-	filter     configKindFilter
-	jsonOut    bool
-	receiptOut string
+	filter      configKindFilter
+	jsonOut     bool
+	receiptOut  string
+	ownerTeamID string
 }
 
 type applyOptions struct {
@@ -99,7 +102,7 @@ func runConfigPlan(opts planOptions) error {
 	engineURL, _ := GetEngineURL()
 	var planned []plannedConfig
 	for _, cfg := range configs {
-		result, err := planOneConfig(client, cfg, engineURL)
+		result, err := planOneConfig(client, cfg, engineURL, opts.ownerTeamID)
 		if err != nil {
 			return err
 		}
@@ -111,7 +114,7 @@ func runConfigPlan(opts planOptions) error {
 	return printPlanResult(planned, opts.jsonOut)
 }
 
-func planOneConfig(client *api.Client, cfg *configfile.ParsedConfig, engineURL string) (plannedConfig, error) {
+func planOneConfig(client *api.Client, cfg *configfile.ParsedConfig, engineURL, ownerTeamID string) (plannedConfig, error) {
 	switch cfg.Kind {
 	case configfile.KindWorkspace:
 		raw, _ := json.Marshal(cfg.Workspace)
@@ -120,47 +123,55 @@ func planOneConfig(client *api.Client, cfg *configfile.ParsedConfig, engineURL s
 			return plannedConfig{}, fmt.Errorf("failed to plan workspace %s: %w", cfg.ConfigKey, err)
 		}
 		return plannedConfig{
-			receipt:       newPlanReceipt(resp.PlanID, cfg.ConfigKey, cfg.SourceHash, engineURL),
-			summary:       resp.Summary,
-			notifications: resp.Notifications,
+			receipt:             newPlanReceipt(resp.PlanID, cfg.ConfigKey, cfg.SourceHash, engineURL),
+			summary:             resp.Summary,
+			notifications:       resp.Notifications,
+			requiredPermissions: resp.RequiredPermissions,
 		}, nil
 	case configfile.KindSDK:
 		raw, _ := json.Marshal(cfg.SDK)
-		resp, err := client.PlanSDKConfig(cfg.SourceHash, cfg.ConfigKey, raw)
+		resp, err := client.PlanSDKConfig(artifactPlanIntent(cfg, raw, ownerTeamID))
 		if err != nil {
 			return plannedConfig{}, fmt.Errorf("failed to plan SDK %s: %w", cfg.SDK.Name, err)
 		}
 		return plannedConfig{
-			receipt:       newPlanReceipt(resp.PlanID, cfg.ConfigKey, cfg.SourceHash, engineURL),
-			summary:       resp.Summary,
-			notifications: resp.Notifications,
+			receipt:             newPlanReceipt(resp.PlanID, cfg.ConfigKey, cfg.SourceHash, engineURL),
+			summary:             resp.Summary,
+			notifications:       resp.Notifications,
+			requiredPermissions: resp.RequiredPermissions,
 		}, nil
 	case configfile.KindMCP:
 		raw, _ := json.Marshal(cfg.MCP)
-		resp, err := client.PlanMCPConfig(cfg.SourceHash, cfg.ConfigKey, raw)
+		resp, err := client.PlanMCPConfig(artifactPlanIntent(cfg, raw, ownerTeamID))
 		if err != nil {
 			return plannedConfig{}, fmt.Errorf("failed to plan MCP %s: %w", cfg.MCP.Name, err)
 		}
 		return plannedConfig{
-			receipt:       newPlanReceipt(resp.PlanID, cfg.ConfigKey, cfg.SourceHash, engineURL),
-			summary:       resp.Summary,
-			notifications: resp.Notifications,
+			receipt:             newPlanReceipt(resp.PlanID, cfg.ConfigKey, cfg.SourceHash, engineURL),
+			summary:             resp.Summary,
+			notifications:       resp.Notifications,
+			requiredPermissions: resp.RequiredPermissions,
 		}, nil
 	case configfile.KindWebhook:
 		raw, _ := json.Marshal(cfg.Webhook)
-		resp, err := client.PlanWebhookConfig(cfg.SourceHash, cfg.ConfigKey, raw)
+		resp, err := client.PlanWebhookConfig(artifactPlanIntent(cfg, raw, ownerTeamID))
 		if err != nil {
 			return plannedConfig{}, fmt.Errorf("failed to plan webhook %s: %w", cfg.Webhook.Name, err)
 		}
 		// No notifications field -- kind: webhook never touches another
 		// artifact's state, unlike workspace/SDK/MCP applies.
 		return plannedConfig{
-			receipt: newPlanReceipt(resp.PlanID, cfg.ConfigKey, cfg.SourceHash, engineURL),
-			summary: resp.Summary,
+			receipt:             newPlanReceipt(resp.PlanID, cfg.ConfigKey, cfg.SourceHash, engineURL),
+			summary:             resp.Summary,
+			requiredPermissions: resp.RequiredPermissions,
 		}, nil
 	default:
 		return plannedConfig{}, fmt.Errorf("unsupported config kind %q", cfg.Kind)
 	}
+}
+
+func artifactPlanIntent(cfg *configfile.ParsedConfig, raw json.RawMessage, ownerTeamID string) api.ArtifactPlanIntent {
+	return api.ArtifactPlanIntent{SourceHash: cfg.SourceHash, ConfigKey: cfg.ConfigKey, OwnerTeamID: ownerTeamID, Config: raw}
 }
 
 func newPlanReceipt(planID, configKey, sourceHash, engineURL string) planReceipt {
@@ -196,6 +207,7 @@ func printPlanResult(planned []plannedConfig, jsonOut bool) error {
 		if err := printPlanSummary(os.Stdout, result.summary); err != nil {
 			return err
 		}
+		printRequiredPermissions(os.Stdout, result.requiredPermissions)
 		printNotificationInbox(receipt.ConfigKey, result.notifications)
 	}
 	return nil
@@ -205,12 +217,23 @@ func planResultOutputs(planned []plannedConfig) []planResultOutput {
 	results := make([]planResultOutput, 0, len(planned))
 	for _, result := range planned {
 		results = append(results, planResultOutput{
-			planReceipt:   result.receipt,
-			Summary:       result.summary,
-			Notifications: result.notifications,
+			planReceipt:         result.receipt,
+			Summary:             result.summary,
+			Notifications:       result.notifications,
+			RequiredPermissions: result.requiredPermissions,
 		})
 	}
 	return results
+}
+
+func printRequiredPermissions(out io.Writer, requirements []api.PermissionRequirement) {
+	if len(requirements) == 0 {
+		return
+	}
+	fmt.Fprintln(out, "Required permissions:")
+	for _, requirement := range requirements {
+		fmt.Fprintf(out, "- Ability to %s\n", requirement.ProductDescription())
+	}
 }
 
 func printPlanSummary(out io.Writer, summary map[string]interface{}) error {

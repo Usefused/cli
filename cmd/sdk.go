@@ -37,12 +37,13 @@ var sdkPlanCmd = &cobra.Command{
 	Short: "Plan SDK configuration",
 	// Why: Write to OTEL to audit user/agent-triggered mutative execution.
 	RunE: WithTelemetry("cli.sdk.plan", func(cmd *cobra.Command, args []string) error {
-		return runConfigPlan(planOptions{filter: filterSDK, jsonOut: sdkPlanJSON, receiptOut: sdkPlanReceiptOut})
+		return runConfigPlan(planOptions{filter: filterSDK, jsonOut: sdkPlanJSON, receiptOut: sdkPlanReceiptOut, ownerTeamID: sdkPlanOwnerTeam})
 	}),
 }
 
 var sdkPlanJSON bool
 var sdkPlanReceiptOut string
+var sdkPlanOwnerTeam string
 var sdkApplyDownload bool
 var sdkApplyPlanID string
 var sdkApplyReceiptPath string
@@ -955,6 +956,7 @@ func init() {
 	sdkCmd.AddCommand(sdkPlanCmd)
 	sdkPlanCmd.Flags().BoolVar(&sdkPlanJSON, "json", false, "Print plan result JSON, including summary and notifications")
 	sdkPlanCmd.Flags().StringVar(&sdkPlanReceiptOut, "receipt-out", "", "Write the plan receipt to a specific path")
+	sdkPlanCmd.Flags().StringVar(&sdkPlanOwnerTeam, "owner-team", "", "Owning team ID (required when creating a new SDK)")
 
 	sdkCmd.AddCommand(sdkApplyCmd)
 	sdkApplyCmd.Flags().BoolVar(&sdkApplyDownload, "download", false, "Download generated SDK after apply")

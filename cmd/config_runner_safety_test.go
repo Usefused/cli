@@ -22,6 +22,13 @@ func TestPrintPlanResultIncludesEngineSummary(t *testing.T) {
 				"service_id": "service-1",
 			}},
 		},
+		requiredPermissions: []api.PermissionRequirement{{
+			Permission: "service.manage", ResourceType: "service",
+			ResourceID: "11111111-1111-1111-1111-111111111111", DisplayName: "GitHub",
+		}, {
+			Permission: "bucket.use", ResourceType: "bucket",
+			ResourceID: "22222222-2222-2222-2222-222222222222",
+		}},
 	}}
 
 	out := captureStdout(t, func() {
@@ -30,10 +37,17 @@ func TestPrintPlanResultIncludesEngineSummary(t *testing.T) {
 		}
 	})
 
-	for _, expected := range []string{"Plan summary:", `"type": "add_service"`, `"service_id": "service-1"`} {
+	for _, expected := range []string{
+		"Plan summary:", `"type": "add_service"`, `"service_id": "service-1"`,
+		"Required permissions:", `Ability to manage service "GitHub"`,
+		"Ability to use the selected bucket",
+	} {
 		if !strings.Contains(out, expected) {
 			t.Fatalf("expected %q in plan output:\n%s", expected, out)
 		}
+	}
+	if strings.Contains(out, "service.manage") || strings.Contains(out, "11111111-1111-1111-1111-111111111111") {
+		t.Fatalf("normal plan output leaked advanced permission diagnostics:\n%s", out)
 	}
 }
 
@@ -47,6 +61,10 @@ func TestPrintPlanResultJSONIncludesSummaryAndNotifications(t *testing.T) {
 		notifications: api.NotificationInbox{Items: []api.NotificationItem{{
 			ID: "note-1", Type: "registry_version_changed", Severity: "breaking",
 		}}},
+		requiredPermissions: []api.PermissionRequirement{{
+			Permission: "artifact.create", ResourceType: "workspace",
+			ResourceID: "33333333-3333-3333-3333-333333333333", DisplayName: "workspace",
+		}},
 	}}
 
 	out := captureStdout(t, func() {
@@ -63,6 +81,9 @@ func TestPrintPlanResultJSONIncludesSummaryAndNotifications(t *testing.T) {
 	}
 	if len(decoded[0].Notifications.Items) != 1 || decoded[0].Notifications.Items[0].ID != "note-1" {
 		t.Fatalf("expected notifications in JSON output, got %#v", decoded[0].Notifications)
+	}
+	if len(decoded[0].RequiredPermissions) != 1 || decoded[0].RequiredPermissions[0].Permission != "artifact.create" {
+		t.Fatalf("expected required permissions in JSON output, got %#v", decoded[0].RequiredPermissions)
 	}
 }
 

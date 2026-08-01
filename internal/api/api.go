@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/charmbracelet/huh/spinner"
 )
@@ -22,6 +24,12 @@ type Client struct {
 }
 
 const DefaultTimeout = 30 * time.Second
+
+var (
+	errGraphQLResponseMalformed = errors.New("graphql_response_malformed: Engine returned a malformed GraphQL response; retry or check Engine logs")
+	errGraphQLRequestRejected   = errors.New("graphql_request_rejected: Engine rejected the GraphQL request; check command inputs and workspace permissions")
+	errGraphQLDataMalformed     = errors.New("graphql_data_malformed: Engine returned malformed GraphQL data; retry or check Engine logs")
+)
 
 type ClientOptions struct {
 	Context         context.Context
@@ -164,11 +172,7 @@ func (c *Client) graphQLAt(path string, query string, variables map[string]inter
 	}
 
 	if resp.StatusCode >= 400 {
-		bodyStr := string(respBody)
-		if len(bodyStr) > 200 {
-			bodyStr = bodyStr[:200] + "..."
-		}
-		return fmt.Errorf("graphql request failed (HTTP %d): %s", resp.StatusCode, bodyStr)
+		return fmt.Errorf("graphql request failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(resp.StatusCode, respBody))
 	}
 
 	return decodeGraphQLData(respBody, out)
@@ -176,42 +180,195 @@ func (c *Client) graphQLAt(path string, query string, variables map[string]inter
 
 func decodeGraphQLData(respBody []byte, out interface{}) error {
 	var graphqlResp struct {
-		Data   json.RawMessage `json:"data"`
-		Errors []struct {
-			Message string `json:"message"`
-		} `json:"errors"`
+		Data   json.RawMessage   `json:"data"`
+		Errors []json.RawMessage `json:"errors"`
 	}
 	if err := json.Unmarshal(respBody, &graphqlResp); err != nil {
-		return fmt.Errorf("failed to unmarshal graphql response: %v, body snippet: %s", err, truncateBody(respBody))
+		return errGraphQLResponseMalformed
 	}
 	if len(graphqlResp.Errors) > 0 {
-		return fmt.Errorf("graphql error: %s", graphqlResp.Errors[0].Message)
+		// GraphQL messages are remote input and can echo submitted credentials.
+		// A stable category keeps command errors and OTEL safe by construction.
+		return errGraphQLRequestRejected
 	}
-	return json.Unmarshal(graphqlResp.Data, out)
+	if err := json.Unmarshal(graphqlResp.Data, out); err != nil {
+		return errGraphQLDataMalformed
+	}
+	return nil
 }
 
-func truncateBody(body []byte) string {
-	bodyStr := string(body)
-	if len(bodyStr) > 200 {
-		return bodyStr[:200] + "..."
-	}
-	return bodyStr
+type PermissionRequirement struct {
+	Permission   string `json:"permission"`
+	ResourceType string `json:"resource_type"`
+	ResourceID   string `json:"resource_id"`
+	DisplayName  string `json:"display_name,omitempty"`
 }
 
-func formatHTTPErrorBody(respBody []byte) string {
-	var payload struct {
-		Error   string `json:"error"`
-		Message string `json:"message"`
-	}
+type apiErrorPayload struct {
+	Error   string                  `json:"error"`
+	Missing []PermissionRequirement `json:"missing"`
+}
+
+func formatHTTPErrorBody(status int, respBody []byte) string {
+	var payload apiErrorPayload
 	if err := json.Unmarshal(respBody, &payload); err == nil {
-		if msg := strings.TrimSpace(payload.Error); msg != "" {
-			return msg
+		if status == http.StatusUnauthorized && payload.Error == "authentication_required" {
+			return "authentication required; provide a valid Fused credential"
 		}
-		if msg := strings.TrimSpace(payload.Message); msg != "" {
-			return msg
+		if status == http.StatusForbidden && payload.Error == "permission_denied" {
+			return formatPermissionDenied(payload.Missing)
+		}
+		if message := artifactOwnerHTTPError(payload.Error); message != "" {
+			return message
 		}
 	}
-	return strings.TrimSpace(truncateBody(respBody))
+	// Response bodies are untrusted and may echo credentials. Callers already
+	// include the operation and status, so a status-based message stays useful
+	// without copying remote text into returned errors or telemetry.
+	return genericHTTPError(status)
+}
+
+func artifactOwnerHTTPError(code string) string {
+	switch code {
+	case "owner_team_id is required for a new artifact":
+		return "owner_team_required: choose an owning team with --owner-team"
+	case "artifact owner team is immutable", "sdk scope owner mismatch":
+		return "owner_team_immutable: this artifact already belongs to another team; use its existing owning team"
+	case "artifact owner is unavailable":
+		return "owner_team_unavailable: ask an access administrator for help"
+	case "artifact owner authorization denied":
+		return "owner_team_access_denied: you or the owning team no longer have the required access"
+	default:
+		return ""
+	}
+}
+
+func genericHTTPError(status int) string {
+	switch status {
+	case http.StatusBadRequest:
+		return "request_rejected: Engine rejected the request; check command inputs"
+	case http.StatusUnauthorized:
+		return "authentication_failed: provide a valid Fused credential"
+	case http.StatusForbidden:
+		return "request_forbidden: check workspace permissions"
+	case http.StatusNotFound:
+		return "resource_not_found: the requested resource was not found"
+	case http.StatusConflict:
+		return "request_conflict: workspace state changed; refresh and retry"
+	case http.StatusTooManyRequests:
+		return "request_rate_limited: retry later"
+	default:
+		return "engine_request_failed: check Engine logs and retry"
+	}
+}
+
+func formatPermissionDenied(missing []PermissionRequirement) string {
+	if len(missing) == 0 {
+		return "permission denied; ask a workspace administrator for access"
+	}
+	if containsPermission(missing, "access.manage") {
+		return "permission denied; you are not a member of the owning team; join that team or ask an access administrator to perform this action"
+	}
+	items := make([]string, 0, len(missing))
+	for _, requirement := range missing {
+		if !requirement.valid() {
+			continue
+		}
+		items = append(items, requirement.ProductDescription())
+	}
+	if len(items) == 0 {
+		return "permission denied; ask a workspace administrator for access"
+	}
+	return "permission denied; ask a workspace administrator to allow you to " + strings.Join(items, "; ")
+}
+
+func containsPermission(requirements []PermissionRequirement, permission string) bool {
+	for _, requirement := range requirements {
+		if safeAuthorizationValue(requirement.Permission) == permission {
+			return true
+		}
+	}
+	return false
+}
+
+func (requirement PermissionRequirement) valid() bool {
+	return safeAuthorizationValue(requirement.Permission) != "" &&
+		safeAuthorizationValue(requirement.ResourceType) != "" &&
+		safeAuthorizationValue(requirement.ResourceID) != ""
+}
+
+func (requirement PermissionRequirement) Description() string {
+	resource := safeAuthorizationValue(requirement.ResourceType)
+	if displayName := safeAuthorizationValue(requirement.DisplayName); displayName != "" {
+		resource += fmt.Sprintf(" %q", displayName)
+	}
+	if resourceID := safeAuthorizationValue(requirement.ResourceID); resourceID != "" {
+		resource += " (" + resourceID + ")"
+	}
+	return safeAuthorizationValue(requirement.Permission) + " on " + strings.TrimSpace(resource)
+}
+
+// ProductDescription is the normal CLI wording. Description retains the
+// exact permission and resource IDs for JSON/advanced diagnostics only.
+func (requirement PermissionRequirement) ProductDescription() string {
+	return permissionAction(requirement.Permission) + " " + requirement.productResource()
+}
+
+func (requirement PermissionRequirement) productResource() string {
+	resourceType := safeAuthorizationValue(requirement.ResourceType)
+	displayName := safeAuthorizationValue(requirement.DisplayName)
+	if displayName != "" {
+		return resourceType + " " + fmt.Sprintf("%q", displayName)
+	}
+	switch resourceType {
+	case "workspace":
+		return "this workspace"
+	case "service", "bucket", "artifact":
+		return "the selected " + resourceType
+	default:
+		return "the requested resource"
+	}
+}
+
+var productPermissionActions = map[string]string{
+	"workspace.read":         "view",
+	"workspace.update":       "change",
+	"service.read":           "view",
+	"service.consume":        "use",
+	"service.manage":         "manage",
+	"bucket.read":            "view",
+	"bucket.values.read":     "view",
+	"bucket.use":             "use",
+	"bucket.manage":          "manage",
+	"artifact.read":          "view",
+	"artifact.create":        "create an SDK, MCP server, or webhook in",
+	"artifact.manage":        "manage",
+	"artifact.tokens.manage": "manage",
+	"connection.read":        "view connections in",
+	"connection.manage":      "manage connections in",
+	"access.read":            "view access activity for",
+	"audit.read":             "view access activity for",
+	"access.manage":          "manage team access for",
+}
+
+func permissionAction(permission string) string {
+	if action := productPermissionActions[safeAuthorizationValue(permission)]; action != "" {
+		return action
+	}
+	return "complete this action for"
+}
+
+func safeAuthorizationValue(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" || len(value) > 128 || strings.Contains(strings.ToLower(value), "fsk_") {
+		return ""
+	}
+	for _, char := range value {
+		if unicode.IsControl(char) {
+			return ""
+		}
+	}
+	return value
 }
 
 // HealthStatus is the Engine's GET /health response shape.
@@ -244,7 +401,8 @@ func (c *Client) Health() (*HealthStatus, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("health check failed (HTTP %d)", resp.StatusCode)
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("health check failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(resp.StatusCode, respBody))
 	}
 
 	var out HealthStatus
@@ -973,7 +1131,7 @@ func (c *Client) GenerateSDK(reqBody GenerateSDKRequest) (*GenerateSDKResponse, 
 
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("failed to generate SDK (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(respBody))
+		return nil, fmt.Errorf("failed to generate SDK (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(resp.StatusCode, respBody))
 	}
 
 	var out GenerateSDKResponse
@@ -1010,7 +1168,8 @@ func (c *Client) StreamSDKGenerationEvents(jobID string, eventChan chan<- SDKEve
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		errChan <- fmt.Errorf("stream failed with status: %d", resp.StatusCode)
+		respBody, _ := io.ReadAll(resp.Body)
+		errChan <- fmt.Errorf("stream failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(resp.StatusCode, respBody))
 		return
 	}
 
@@ -1254,18 +1413,21 @@ func (c *Client) DownloadSDK(artifactID string) ([]byte, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("download failed with status %d", resp.StatusCode)
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("download failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(resp.StatusCode, respBody))
 	}
 
 	return io.ReadAll(resp.Body)
 }
 
 type SDKConfigPlanResponse struct {
-	PlanID        string                 `json:"plan_id"`
-	ConfigKey     string                 `json:"config_key"`
-	SourceHash    string                 `json:"source_hash"`
-	Summary       map[string]interface{} `json:"summary"`
-	Notifications NotificationInbox      `json:"notifications"`
+	PlanID              string                  `json:"plan_id"`
+	OwnerTeamID         string                  `json:"owner_team_id"`
+	ConfigKey           string                  `json:"config_key"`
+	SourceHash          string                  `json:"source_hash"`
+	Summary             map[string]interface{}  `json:"summary"`
+	Notifications       NotificationInbox       `json:"notifications"`
+	RequiredPermissions []PermissionRequirement `json:"required_permissions"`
 }
 
 type NotificationInbox struct {
@@ -1290,10 +1452,11 @@ type NotificationItem struct {
 }
 
 type ConfigPlanResponse struct {
-	PlanID     string                 `json:"plan_id"`
-	ConfigKey  string                 `json:"config_key"`
-	SourceHash string                 `json:"source_hash"`
-	Summary    map[string]interface{} `json:"summary"`
+	PlanID              string                  `json:"plan_id"`
+	ConfigKey           string                  `json:"config_key"`
+	SourceHash          string                  `json:"source_hash"`
+	Summary             map[string]interface{}  `json:"summary"`
+	RequiredPermissions []PermissionRequirement `json:"required_permissions"`
 	// Notifications was previously absent from this struct -- kind: workspace
 	// was the one plan response missing it entirely, unlike SDKConfigPlanResponse
 	// (sdk/mcp) above. WorkspaceConfigPlanHandler now returns the same
@@ -1333,15 +1496,22 @@ type AppliedWebhookConfig struct {
 	Slug       string `json:"slug"`
 }
 
+type ArtifactPlanIntent struct {
+	SourceHash  string
+	ConfigKey   string
+	OwnerTeamID string
+	Config      json.RawMessage
+}
+
 // PlanSDKConfig sends native SDK desired state through the shared artifact
 // plan client while preserving the SDK-specific Engine route.
-func (c *Client) PlanSDKConfig(sourceHash, configKey string, config json.RawMessage) (*SDKConfigPlanResponse, error) {
-	return c.planArtifactConfig("sdk", sourceHash, configKey, config)
+func (c *Client) PlanSDKConfig(intent ArtifactPlanIntent) (*SDKConfigPlanResponse, error) {
+	return c.planArtifactConfig("sdk", intent)
 }
 
 // PlanMCPConfig plans an Engine runtime without invoking Registry generation.
-func (c *Client) PlanMCPConfig(sourceHash, configKey string, config json.RawMessage) (*SDKConfigPlanResponse, error) {
-	return c.planArtifactConfig("mcp", sourceHash, configKey, config)
+func (c *Client) PlanMCPConfig(intent ArtifactPlanIntent) (*SDKConfigPlanResponse, error) {
+	return c.planArtifactConfig("mcp", intent)
 }
 
 // PlanWebhookConfig plans a kind: webhook artifact through the same shared
@@ -1350,17 +1520,22 @@ func (c *Client) PlanMCPConfig(sourceHash, configKey string, config json.RawMess
 // artifacts) -- SDKConfigPlanResponse.Notifications just decodes to its zero
 // value, same as reusing this helper already does for any response shape
 // that omits a field the shared struct declares.
-func (c *Client) PlanWebhookConfig(sourceHash, configKey string, config json.RawMessage) (*SDKConfigPlanResponse, error) {
-	return c.planArtifactConfig("webhook", sourceHash, configKey, config)
+func (c *Client) PlanWebhookConfig(intent ArtifactPlanIntent) (*SDKConfigPlanResponse, error) {
+	return c.planArtifactConfig("webhook", intent)
 }
 
 // planArtifactConfig keeps SDK and MCP command behavior identical while the
 // Engine routes each kind to its distinct executor.
-func (c *Client) planArtifactConfig(kind, sourceHash, configKey string, config json.RawMessage) (*SDKConfigPlanResponse, error) {
+func (c *Client) planArtifactConfig(kind string, intent ArtifactPlanIntent) (*SDKConfigPlanResponse, error) {
 	reqBody := map[string]interface{}{
-		"source_hash": sourceHash,
-		"config_key":  configKey,
-		"config":      config,
+		"source_hash": intent.SourceHash,
+		"config_key":  intent.ConfigKey,
+		"config":      intent.Config,
+	}
+	// Updates may omit the selector so Engine can infer the artifact's immutable
+	// owner. New artifacts require it, and apply never accepts an override.
+	if intent.OwnerTeamID != "" {
+		reqBody["owner_team_id"] = intent.OwnerTeamID
 	}
 	body, err := json.Marshal(reqBody)
 	if err != nil {
@@ -1384,7 +1559,7 @@ func (c *Client) planArtifactConfig(kind, sourceHash, configKey string, config j
 
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("plan %s config failed (HTTP %d): %s", kind, resp.StatusCode, formatHTTPErrorBody(respBody))
+		return nil, fmt.Errorf("plan %s config failed (HTTP %d): %s", kind, resp.StatusCode, formatHTTPErrorBody(resp.StatusCode, respBody))
 	}
 
 	var out SDKConfigPlanResponse
@@ -1422,7 +1597,7 @@ func (c *Client) PlanWorkspaceConfig(sourceHash, configKey string, config json.R
 
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("plan workspace config failed (HTTP %d): %s", resp.StatusCode, string(respBody))
+		return nil, fmt.Errorf("plan workspace config failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(resp.StatusCode, respBody))
 	}
 
 	var out ConfigPlanResponse
@@ -1492,7 +1667,7 @@ func (c *Client) ApplySDKConfig(planID, sourceHash string) (*SDKConfigApplyRespo
 
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("apply SDK config failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(respBody))
+		return nil, fmt.Errorf("apply SDK config failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(resp.StatusCode, respBody))
 	}
 
 	var out SDKConfigApplyResponse
@@ -1525,7 +1700,7 @@ func (c *Client) ApplyMCPConfig(planID, sourceHash string) (*MCPConfigApplyRespo
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("apply mcp config failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(respBody))
+		return nil, fmt.Errorf("apply mcp config failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(resp.StatusCode, respBody))
 	}
 	var out MCPConfigApplyResponse
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
@@ -1558,7 +1733,7 @@ func (c *Client) ApplyWebhookConfig(planID, sourceHash string) (*WebhookConfigAp
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("apply webhook config failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(respBody))
+		return nil, fmt.Errorf("apply webhook config failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(resp.StatusCode, respBody))
 	}
 	var out WebhookConfigApplyResponse
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
@@ -1603,7 +1778,7 @@ func (c *Client) ApplyWorkspaceConfig(planID, sourceHash string, authMaterials m
 
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("apply workspace config failed (HTTP %d): %s", resp.StatusCode, string(respBody))
+		return nil, fmt.Errorf("apply workspace config failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(resp.StatusCode, respBody))
 	}
 
 	var out ConfigApplyResponse
@@ -1648,7 +1823,7 @@ func (c *Client) UpdateWorkspacePlanAction(planID string, actions []map[string]a
 
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("update workspace plan action failed (HTTP %d): %s", resp.StatusCode, string(respBody))
+		return fmt.Errorf("update workspace plan action failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(resp.StatusCode, respBody))
 	}
 
 	return nil
@@ -1758,7 +1933,7 @@ func (c *Client) PlanSpecImport(req SpecImportPlanRequest) (*SpecImportPlanRespo
 
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("plan spec import failed (HTTP %d): %s", resp.StatusCode, string(respBody))
+		return nil, fmt.Errorf("plan spec import failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(resp.StatusCode, respBody))
 	}
 
 	var out SpecImportPlanResponse
@@ -1795,7 +1970,7 @@ func (c *Client) ApplySpecImport(planID, sourceHash string) (*SpecImportApplyRes
 
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("apply spec import failed (HTTP %d): %s", resp.StatusCode, string(respBody))
+		return nil, fmt.Errorf("apply spec import failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(resp.StatusCode, respBody))
 	}
 
 	var out SpecImportApplyResponse
@@ -1821,7 +1996,8 @@ func (c *Client) DownloadGeneratedSDK(configKey string) ([]byte, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("download generated SDK failed with status %d", resp.StatusCode)
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("download generated SDK failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(resp.StatusCode, respBody))
 	}
 
 	return io.ReadAll(resp.Body)
@@ -1843,7 +2019,7 @@ func (c *Client) DeactivateSDK(artifactID string) error {
 
 	if resp.StatusCode >= 400 {
 		b, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("deactivate failed with status %d: %s", resp.StatusCode, string(b))
+		return fmt.Errorf("deactivate failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(resp.StatusCode, b))
 	}
 	return nil
 }

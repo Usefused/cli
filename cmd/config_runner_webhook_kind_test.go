@@ -40,7 +40,7 @@ func TestPlanOneConfig_Webhook(t *testing.T) {
 		},
 	}
 
-	result, err := planOneConfig(client, cfg, "https://engine.example.com")
+	result, err := planOneConfig(client, cfg, "https://engine.example.com", "")
 	if err != nil {
 		t.Fatalf("planOneConfig: %v", err)
 	}

@@ -27,6 +27,7 @@ var webhookCmd = &cobra.Command{
 
 var webhookPlanJSON bool
 var webhookPlanReceiptOut string
+var webhookPlanOwnerTeam string
 var webhookApplyPlanID string
 var webhookApplyReceiptPath string
 
@@ -35,7 +36,7 @@ var webhookPlanCmd = &cobra.Command{
 	Short: "Plan webhook configuration",
 	// Why: Write to OTEL to audit user/agent-triggered mutative execution.
 	RunE: WithTelemetry("cli.webhook.plan", func(cmd *cobra.Command, args []string) error {
-		return runConfigPlan(planOptions{filter: filterWebhook, jsonOut: webhookPlanJSON, receiptOut: webhookPlanReceiptOut})
+		return runConfigPlan(planOptions{filter: filterWebhook, jsonOut: webhookPlanJSON, receiptOut: webhookPlanReceiptOut, ownerTeamID: webhookPlanOwnerTeam})
 	}),
 }
 
@@ -77,6 +78,7 @@ func init() {
 	webhookCmd.AddCommand(webhookPlanCmd)
 	webhookPlanCmd.Flags().BoolVar(&webhookPlanJSON, "json", false, "Print plan result JSON, including summary and notifications")
 	webhookPlanCmd.Flags().StringVar(&webhookPlanReceiptOut, "receipt-out", "", "Write the plan receipt to a specific path")
+	webhookPlanCmd.Flags().StringVar(&webhookPlanOwnerTeam, "owner-team", "", "Owning team ID (required when creating a new webhook)")
 
 	webhookCmd.AddCommand(webhookApplyCmd)
 	webhookApplyCmd.Flags().StringVar(&webhookApplyPlanID, "plan-id", "", "Apply a specific remote plan ID for a single webhook config")

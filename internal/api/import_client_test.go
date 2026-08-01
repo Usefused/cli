@@ -78,8 +78,8 @@ func TestPlanSpecImport_PostsToImportPlanEndpoint(t *testing.T) {
 	}
 }
 
-// TestPlanSpecImport_HandlesError verifies non-2xx responses surface as an
-// error carrying the server's message.
+// TestPlanSpecImport_HandlesError verifies non-2xx responses surface a stable,
+// actionable category without copying remote response bodies into telemetry.
 func TestPlanSpecImport_HandlesError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
@@ -92,8 +92,11 @@ func TestPlanSpecImport_HandlesError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error on 400 response")
 	}
-	if !strings.Contains(err.Error(), "invalid spec") {
-		t.Errorf("expected error to carry server message, got: %v", err)
+	if !strings.Contains(err.Error(), "HTTP 400") || !strings.Contains(err.Error(), "request_rejected") {
+		t.Errorf("expected safe HTTP error category, got: %v", err)
+	}
+	if strings.Contains(err.Error(), "invalid spec") {
+		t.Errorf("expected remote response body to be omitted, got: %v", err)
 	}
 }
 
@@ -145,7 +148,10 @@ func TestApplySpecImport_HandlesError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error on 409 response")
 	}
-	if !strings.Contains(err.Error(), "source_hash_mismatch") {
-		t.Errorf("expected error to carry server message, got: %v", err)
+	if !strings.Contains(err.Error(), "HTTP 409") || !strings.Contains(err.Error(), "request_conflict") {
+		t.Errorf("expected safe HTTP error category, got: %v", err)
+	}
+	if strings.Contains(err.Error(), "source_hash_mismatch") {
+		t.Errorf("expected remote response body to be omitted, got: %v", err)
 	}
 }

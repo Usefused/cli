@@ -22,6 +22,7 @@ var mcpCmd = &cobra.Command{
 var mcpListFlags listFlags
 var mcpPlanJSON bool
 var mcpPlanReceiptOut string
+var mcpPlanOwnerTeam string
 var mcpApplyPlanID string
 var mcpApplyReceiptPath string
 
@@ -29,7 +30,7 @@ var mcpPlanCmd = &cobra.Command{
 	Use:   "plan",
 	Short: "Plan MCP configuration",
 	RunE: WithTelemetry("cli.mcp.plan", func(cmd *cobra.Command, args []string) error {
-		return runConfigPlan(planOptions{filter: filterMCP, jsonOut: mcpPlanJSON, receiptOut: mcpPlanReceiptOut})
+		return runConfigPlan(planOptions{filter: filterMCP, jsonOut: mcpPlanJSON, receiptOut: mcpPlanReceiptOut, ownerTeamID: mcpPlanOwnerTeam})
 	}),
 }
 
@@ -139,6 +140,7 @@ func init() {
 	addListFlags(mcpCmd, &mcpListFlags)
 	mcpPlanCmd.Flags().BoolVar(&mcpPlanJSON, "json", false, "Print plan result JSON, including summary and notifications")
 	mcpPlanCmd.Flags().StringVar(&mcpPlanReceiptOut, "receipt-out", "", "Write the plan receipt to this path")
+	mcpPlanCmd.Flags().StringVar(&mcpPlanOwnerTeam, "owner-team", "", "Owning team ID (required when creating a new MCP server)")
 	mcpApplyCmd.Flags().StringVar(&mcpApplyPlanID, "plan-id", "", "Apply this plan ID")
 	mcpApplyCmd.Flags().StringVar(&mcpApplyReceiptPath, "receipt", "", "Read a plan receipt from this path")
 	mcpCmd.AddCommand(mcpListCmd, mcpPlanCmd, mcpApplyCmd, mcpValidateCmd)

@@ -187,7 +187,7 @@ func TestServiceVersionsSplitsProviderQualifiedSlug(t *testing.T) {
 	}
 }
 
-func TestGenerateSDK_UnwrapsJSONErrorBody(t *testing.T) {
+func TestGenerateSDK_DoesNotReturnJSONErrorBody(t *testing.T) {
 	const serverMessage = "service Stripe Billing is not activated in this workspace. Run 'fused-cli workspace service add stripe-billing' to activate it."
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
@@ -202,11 +202,11 @@ func TestGenerateSDK_UnwrapsJSONErrorBody(t *testing.T) {
 		t.Fatal("expected error on 403 response, got nil")
 	}
 	got := err.Error()
-	if !strings.Contains(got, serverMessage) {
-		t.Fatalf("expected unwrapped server message, got %q", got)
+	if !strings.Contains(got, "HTTP 403") || !strings.Contains(got, "request_forbidden") {
+		t.Fatalf("expected stable status and category, got %q", got)
 	}
-	if strings.Contains(got, `{"error"`) {
-		t.Fatalf("expected raw JSON wrapper to be removed, got %q", got)
+	if strings.Contains(got, serverMessage) || strings.Contains(got, `{"error"`) {
+		t.Fatalf("expected remote response body to be omitted, got %q", got)
 	}
 }
 
