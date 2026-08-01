@@ -357,6 +357,9 @@ func resolveBucketIDPrompt(client *cliapi.Client, nameOrID string) (string, erro
 }
 
 func createMissingBucketPrompt(client *cliapi.Client, nameOrID string) (string, error) {
+	if err := requireInteractive(fmt.Sprintf("create bucket %q explicitly before retrying", nameOrID)); err != nil {
+		return "", err
+	}
 	fmt.Printf("Bucket '%s' doesn't exist. Create it? [y/N] ", nameOrID)
 	var ans string
 	fmt.Scanln(&ans)

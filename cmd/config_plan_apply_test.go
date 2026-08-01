@@ -122,7 +122,6 @@ buckets:
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeReceipt(t, dir, planReceipt{ConfigKey: "workspace", PlanID: "plan-workspace", SourceHash: parsed.SourceHash})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/health" {
 			w.Write([]byte(`{"status":"ok","plane":"engine","environment":"staging"}`))
@@ -139,6 +138,7 @@ buckets:
 		_, _ = w.Write([]byte(`{"status":"applied","plan_id":"plan-workspace"}`))
 	}))
 	defer server.Close()
+	writeReceipt(t, dir, planReceipt{ConfigKey: "workspace", PlanID: "plan-workspace", SourceHash: parsed.SourceHash, EngineURL: server.URL})
 
 	runCommandInDir(t, dir, server.URL, []string{"workspace", "apply", "-f", path})
 }
@@ -169,7 +169,6 @@ buckets:
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeReceipt(t, dir, planReceipt{ConfigKey: "workspace", PlanID: "plan-workspace", SourceHash: parsed.SourceHash})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/health" {
 			w.Write([]byte(`{"status":"ok","plane":"engine","environment":"staging"}`))
@@ -186,6 +185,7 @@ buckets:
 		_, _ = w.Write([]byte(`{"status":"applied","plan_id":"plan-workspace"}`))
 	}))
 	defer server.Close()
+	writeReceipt(t, dir, planReceipt{ConfigKey: "workspace", PlanID: "plan-workspace", SourceHash: parsed.SourceHash, EngineURL: server.URL})
 
 	runCommandInDir(t, dir, server.URL, []string{"workspace", "apply", "-f", path})
 }
@@ -233,8 +233,6 @@ services:
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeReceipt(t, dir, planReceipt{ConfigKey: "workspace", PlanID: "plan-workspace", SourceHash: parsed.SourceHash})
-
 	var sawApply bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/health" {
@@ -261,6 +259,7 @@ services:
 		_, _ = w.Write([]byte(`{"status":"applied","plan_id":"plan-workspace"}`))
 	}))
 	defer server.Close()
+	writeReceipt(t, dir, planReceipt{ConfigKey: "workspace", PlanID: "plan-workspace", SourceHash: parsed.SourceHash, EngineURL: server.URL})
 
 	runCommandInDir(t, dir, server.URL, []string{"workspace", "apply", "-f", path})
 	if !sawApply {

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -21,10 +20,10 @@ import (
 const defaultImportReceiptPath = ".fused/.state/import.plan.json"
 
 type importSpecPlanOptions struct {
-	name       string
-	slug       string
-	url        string
-	version    string
+	name    string
+	slug    string
+	url     string
+	version string
 	// isPublic is nil when --public was not passed at all, distinct from an
 	// explicit --public=false -- see import.go's flag registration.
 	isPublic   *bool
@@ -127,7 +126,7 @@ func newImportPlanReceipt(resp *api.SpecImportPlanResponse) importPlanReceipt {
 		CreatedAt:  time.Now().UTC().Format(time.RFC3339),
 	}
 	if engineURL, err := GetEngineURL(); err == nil {
-		receipt.EngineURL = engineURL
+		receipt.EngineURL = canonicalEngineURLOrRaw(engineURL)
 	}
 	return receipt
 }
@@ -186,10 +185,17 @@ func runImportApply(cmd *cobra.Command, opts importSpecApplyOptions) error {
 	if err != nil {
 		return err
 	}
+	if opts.planID != "" {
+		receipt.EngineURL = canonicalEngineURLOrRaw(client.BaseURL)
+	}
+	if err := validateReceiptEngineURL(receipt.EngineURL, client.BaseURL); err != nil {
+		return fmt.Errorf("import receipt target invalid: %w", err)
+	}
 	resp, err := client.ApplySpecImport(receipt.PlanID, receipt.SourceHash)
 	if err != nil {
 		return err
 	}
+	recordAppliedChange(cmd.Context(), cmd.CommandPath(), "service_import")
 	printImportApplyResult(cmd.OutOrStdout(), resp)
 	return nil
 }
@@ -224,14 +230,18 @@ func printImportApplyResult(out io.Writer, resp *api.SpecImportApplyResponse) {
 }
 
 func writeImportPlanReceiptFile(path string, receipt importPlanReceipt) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return err
-	}
 	data, err := json.MarshalIndent(receipt, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(data, '\n'), 0644)
+	return atomicWriteFile(path, append(data, '\n'), 0644, validateJSONContent)
+}
+
+func validateJSONContent(data []byte) error {
+	if !json.Valid(data) {
+		return errors.New("invalid JSON")
+	}
+	return nil
 }
 
 func readImportPlanReceiptFile(path string) (importPlanReceipt, error) {

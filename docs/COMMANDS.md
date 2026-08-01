@@ -11,7 +11,15 @@ All commands support the following global flags:
 | `--key` | | API key (overrides config & `FUSED_API_KEY`) | `""` |
 | `--engine-url` | | Fused Engine URL (overrides config & `FUSED_ENGINE_URL`) | `""` |
 | `--file` | `-f` | Path to a Fused config file (disables `.fused/` discovery) | `""` |
+| `--no-input` | | Fail instead of prompting; also enabled by `CI=true` | `false` |
+| `--timeout` | | Maximum duration for an Engine request | `30s` |
+| `--request-id` | | Attach an audit correlation ID to every Engine request | `""` |
 | `--readme` | | Print the full CLI reference (this file plus the README) and exit | `false` |
+
+All Engine requests have a finite timeout and are cancelled when the CLI
+receives SIGINT or SIGTERM. `CI=true` and `FUSED_NO_UPDATE_CHECK=1` disable
+release update checks. A command that would prompt fails with remediation when
+`--no-input` or `CI=true` is active.
 
 ## `sdk prompt`
 Generate a brand new SDK using Fused intent AI. Automatically discovers and adds missing services to your workspace.
@@ -184,7 +192,7 @@ Preview changes that will be made to your Fused environment for SDKs.
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
-| `--json` | | Print plan receipt JSON instead of writing default receipt | `false` |
+| `--json` | | Print plan result JSON, including summary and notifications, instead of writing the default receipt | `false` |
 | `--receipt-out` | | Write the plan receipt to a specific path | `""` |
 
 ## `sdk apply`
@@ -287,7 +295,7 @@ Preview changes that will be made to your Fused environment for MCP server confi
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
-| `--json` | | Print plan receipt JSON instead of writing default receipt | `false` |
+| `--json` | | Print plan result JSON, including summary and notifications, instead of writing the default receipt | `false` |
 | `--receipt-out` | | Write the plan receipt to a specific path | `""` |
 
 ## `mcp apply`
@@ -314,7 +322,7 @@ Preview changes that will be made to your Workspace configuration.
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
-| `--json` | | Print plan receipt JSON instead of writing default receipt | `false` |
+| `--json` | | Print plan result JSON, including summary and notifications, instead of writing the default receipt | `false` |
 | `--receipt-out` | | Write the plan receipt to a specific path | `""` |
 
 ## `workspace apply`
@@ -446,7 +454,7 @@ Validates the syntax and references for all Fused configurations in the target d
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
-| `--json` | | Print plan receipt JSON instead of writing default receipt | `false` |
+| `--json` | | Print plan result JSON, including summary and notifications, instead of writing the default receipt | `false` |
 | `--receipt-out` | | Write the plan receipt to a specific path | `""` |
 
 **`apply`**

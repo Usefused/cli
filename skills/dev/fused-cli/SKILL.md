@@ -71,8 +71,19 @@ is valid.
 - `--key` / `--engine-url` -- override config/env for one invocation
 - `-f, --file <path>` -- point at a specific config file, disabling `.fused/`
   directory discovery
+- `--no-input` -- fail with remediation rather than opening a prompt;
+  `CI=true` enables this automatically
+- `--timeout <duration>` -- bound Engine requests (default `30s`)
+- `--request-id <id>` -- attach a non-secret audit correlation ID to every
+  Engine request
 - `--readme` -- print the full CLI reference and exit
 - `--version`
+
+SIGINT/SIGTERM cancel outstanding Engine requests. `CI=true` also disables the
+release update check; set `FUSED_NO_UPDATE_CHECK=1` when only the update check
+should be disabled. In non-interactive mode, replace prompt-oriented options
+with explicit inputs (for example, use `import docs --select METHOD:/path`
+instead of `--review`).
 
 ## Command surface drifts faster than these skills -- verify with `--help`
 
@@ -101,17 +112,26 @@ one kind.
 
 ## How plan/apply staleness is caught
 
-`plan` hashes the config file's content locally and sends that hash (not
-just a plan ID) to the Engine, then writes a local receipt at
-`.fused/.state/<config-key>.plan.json` (`config_key`, `plan_id`, and that
-same `source_hash`). `apply` with no `--plan-id` reads that receipt back and
-refuses to proceed if the file's hash no longer matches what's recorded --
-"config changed since plan was created" -- rather than silently applying a
-plan that was computed against an older version of the file. If you edit a
-config after `plan` but before `apply`, re-run `plan` first; don't assume
-`apply` will just pick up the new content. Passing an explicit `--plan-id`
-bypasses this local receipt check entirely, so avoid that unless you
-specifically captured the plan ID from that same, current file content.
+`plan` prints the Engine's complete plan summary and, with `--json`, includes
+that summary and any notifications alongside the receipt fields. It hashes
+the config file's content locally and sends that hash (not just a plan ID) to
+the Engine, then writes a local receipt at
+`.fused/.state/<config-key>.plan.json` (`config_key`, `plan_id`, that same
+`source_hash`, and the normalized `engine_url`).
+
+`apply` with no `--plan-id` preflights every selected config before applying
+the first one. It rejects a receipt when its config hash changed, when it has
+no `engine_url`, or when it targets a different Engine. Re-run `plan` against
+the intended Engine to replace an invalid receipt; there is no legacy bypass
+for an unbound or cross-Engine receipt. The all-config preflight prevents a
+bad later receipt from being discovered only after an earlier config was
+already applied. Passing an explicit `--plan-id` uses the current config hash
+and active Engine directly, so use it only when the plan ID was captured from
+that exact config and target. Each successfully applied resource also emits a
+secret-safe OTEL audit event; a partial multi-config apply therefore retains
+evidence for the resources that changed before a later failure. CLI-managed
+config and receipt writes use validated same-directory atomic replacement and
+preserve an existing file's permission mode.
 
 ## Importing a provider API
 

@@ -191,6 +191,9 @@ func connectSetFields(authType, value string) (api.ConnectConfigUpsertRequest, e
 	if value != "" {
 		return connectFieldsFromInline(authType, value), nil
 	}
+	if err := requireInteractive("provide connect fields in the value argument"); err != nil {
+		return api.ConnectConfigUpsertRequest{}, err
+	}
 	return connectFieldsFromPrompts(authType)
 }
 

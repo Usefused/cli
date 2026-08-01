@@ -2,9 +2,14 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
+	"os/signal"
+	"strings"
+	"syscall"
+	"time"
 
 	"github.com/Usefused/cli/internal/api"
 	"github.com/Usefused/cli/internal/config"
@@ -14,11 +19,15 @@ import (
 var Version = "dev"
 
 var (
-	APIKey        string
-	EngineURL     string
-	ConfigFile    string
-	showReadme    bool
-	ReadmeContent string
+	APIKey           string
+	EngineURL        string
+	ConfigFile       string
+	showReadme       bool
+	ReadmeContent    string
+	NoInput          bool
+	RequestID        string
+	RequestTimeout   = api.DefaultTimeout
+	executionContext = context.Background()
 
 	// EmbeddedSkillFS holds the whole skills/ tree (every fused-cli skill,
 	// every version folder) baked into the binary at build time (see main.go's
@@ -32,9 +41,11 @@ var (
 
 // RootCmd is exported for testing.
 var RootCmd = &cobra.Command{
-	Use:     "fused-cli",
-	Version: Version,
-	Short:   "Manage Fused Engine, Registry, workspace, and runtime configuration.",
+	Use:           "fused-cli",
+	Version:       Version,
+	Short:         "Manage Fused Engine, Registry, workspace, and runtime configuration.",
+	SilenceErrors: true,
+	SilenceUsage:  true,
 	Long: `Fused CLI is the config-as-code and operations CLI for the Fused
 integration layer. Use it to connect to a Fused Engine, import API services,
 apply workspace configuration, manage buckets and secrets, configure webhooks,
@@ -46,11 +57,12 @@ and operate SDK or MCP artifacts when you need them.`,
 		}
 		cmd.Help()
 	},
-	PersistentPreRun: func(cmd *cobra.Command, args []string) {
+	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		if showReadme {
 			fmt.Print(ReadmeContent)
 			os.Exit(0)
 		}
+		return validateExecutionOptions()
 	},
 }
 
@@ -59,7 +71,11 @@ func NewRootCommand() *cobra.Command {
 }
 
 func Execute() {
-	startUpdateCheck()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	executionContext = ctx
+	RootCmd.SetContext(ctx)
+	updateStarted := startUpdateCheck()
 
 	shutdown := InitTelemetry()
 	defer func() {
@@ -71,14 +87,60 @@ func Execute() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	printUpdateNudge()
+	if updateStarted {
+		printUpdateNudge()
+	}
 }
 
 func init() {
 	RootCmd.PersistentFlags().StringVar(&APIKey, "key", "", "API key (overrides config & FUSED_API_KEY)")
 	RootCmd.PersistentFlags().StringVar(&EngineURL, "engine-url", "", "Fused Engine URL (overrides config & FUSED_ENGINE_URL)")
 	RootCmd.PersistentFlags().StringVarP(&ConfigFile, "file", "f", "", "Path to a Fused config file (disables .fused/ discovery)")
+	RootCmd.PersistentFlags().BoolVar(&NoInput, "no-input", false, "Fail instead of prompting for input (also enabled by CI=true)")
+	RootCmd.PersistentFlags().DurationVar(&RequestTimeout, "timeout", api.DefaultTimeout, "Maximum duration for an Engine request")
+	RootCmd.PersistentFlags().StringVar(&RequestID, "request-id", "", "Attach an audit correlation ID to Engine requests")
 	RootCmd.PersistentFlags().BoolVar(&showReadme, "readme", false, "Print the full CLI README text and exit")
+}
+
+func validateExecutionOptions() error {
+	if RequestTimeout <= 0 {
+		return errors.New("--timeout must be greater than zero")
+	}
+	if !validRequestID(RequestID) {
+		return errors.New("--request-id must contain only letters, numbers, '.', '_', ':', or '-'")
+	}
+	return nil
+}
+
+func validRequestID(value string) bool {
+	if value == "" {
+		return true
+	}
+	if len(value) > 128 {
+		return false
+	}
+	for _, char := range value {
+		if !isRequestIDChar(char) {
+			return false
+		}
+	}
+	return true
+}
+
+func isRequestIDChar(char rune) bool {
+	return char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z' ||
+		char >= '0' && char <= '9' || strings.ContainsRune("._:-", char)
+}
+
+func nonInteractive() bool {
+	return NoInput || strings.EqualFold(strings.TrimSpace(os.Getenv("CI")), "true")
+}
+
+func requireInteractive(remediation string) error {
+	if !nonInteractive() {
+		return nil
+	}
+	return fmt.Errorf("interactive input is disabled; %s", remediation)
 }
 
 // GetEngineURL resolves the Engine URL.
@@ -115,6 +177,10 @@ func GetAPIKey() string {
 
 // getAPIClient returns an initialized API client.
 func getAPIClient() (*api.Client, error) {
+	return getAPIClientWithTimeout(RequestTimeout)
+}
+
+func getAPIClientWithTimeout(timeout time.Duration) (*api.Client, error) {
 	url, err := GetEngineURL()
 	if err != nil {
 		return nil, err
@@ -123,5 +189,10 @@ func getAPIClient() (*api.Client, error) {
 	if apiKey == "" {
 		return nil, fmt.Errorf("api-key is not configured.\n\nRun:\n  fused-cli config set api-key <key>\n\nOr set FUSED_API_KEY environment variable.")
 	}
-	return api.NewClient(url, apiKey), nil
+	return api.NewClientWithOptions(url, apiKey, api.ClientOptions{
+		Context:         executionContext,
+		Timeout:         timeout,
+		RequestID:       RequestID,
+		DisableProgress: nonInteractive(),
+	}), nil
 }

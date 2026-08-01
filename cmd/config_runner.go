@@ -3,10 +3,12 @@ package cmd
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,7 +28,14 @@ type planReceipt struct {
 
 type plannedConfig struct {
 	receipt       planReceipt
+	summary       map[string]interface{}
 	notifications api.NotificationInbox
+}
+
+type planResultOutput struct {
+	planReceipt
+	Summary       map[string]interface{} `json:"summary"`
+	Notifications api.NotificationInbox  `json:"notifications,omitempty"`
 }
 
 type configKindFilter string
@@ -55,6 +64,20 @@ type applyOptions struct {
 	download    bool
 	planID      string
 	receiptPath string
+	auditCtx    context.Context
+	auditAction string
+}
+
+type workspaceApplyPayload struct {
+	authMaterials         map[string]api.AuthMaterial
+	profileMaterials      map[string]api.ConnectMaterial
+	bucketSecretMaterials map[string]string
+}
+
+type preparedConfigApply struct {
+	config           *configfile.ParsedConfig
+	receipt          planReceipt
+	workspacePayload *workspaceApplyPayload
 }
 
 func runConfigPlan(opts planOptions) error {
@@ -98,6 +121,7 @@ func planOneConfig(client *api.Client, cfg *configfile.ParsedConfig, engineURL s
 		}
 		return plannedConfig{
 			receipt:       newPlanReceipt(resp.PlanID, cfg.ConfigKey, cfg.SourceHash, engineURL),
+			summary:       resp.Summary,
 			notifications: resp.Notifications,
 		}, nil
 	case configfile.KindSDK:
@@ -108,6 +132,7 @@ func planOneConfig(client *api.Client, cfg *configfile.ParsedConfig, engineURL s
 		}
 		return plannedConfig{
 			receipt:       newPlanReceipt(resp.PlanID, cfg.ConfigKey, cfg.SourceHash, engineURL),
+			summary:       resp.Summary,
 			notifications: resp.Notifications,
 		}, nil
 	case configfile.KindMCP:
@@ -116,7 +141,11 @@ func planOneConfig(client *api.Client, cfg *configfile.ParsedConfig, engineURL s
 		if err != nil {
 			return plannedConfig{}, fmt.Errorf("failed to plan MCP %s: %w", cfg.MCP.Name, err)
 		}
-		return plannedConfig{receipt: newPlanReceipt(resp.PlanID, cfg.ConfigKey, cfg.SourceHash, engineURL), notifications: resp.Notifications}, nil
+		return plannedConfig{
+			receipt:       newPlanReceipt(resp.PlanID, cfg.ConfigKey, cfg.SourceHash, engineURL),
+			summary:       resp.Summary,
+			notifications: resp.Notifications,
+		}, nil
 	case configfile.KindWebhook:
 		raw, _ := json.Marshal(cfg.Webhook)
 		resp, err := client.PlanWebhookConfig(cfg.SourceHash, cfg.ConfigKey, raw)
@@ -125,7 +154,10 @@ func planOneConfig(client *api.Client, cfg *configfile.ParsedConfig, engineURL s
 		}
 		// No notifications field -- kind: webhook never touches another
 		// artifact's state, unlike workspace/SDK/MCP applies.
-		return plannedConfig{receipt: newPlanReceipt(resp.PlanID, cfg.ConfigKey, cfg.SourceHash, engineURL)}, nil
+		return plannedConfig{
+			receipt: newPlanReceipt(resp.PlanID, cfg.ConfigKey, cfg.SourceHash, engineURL),
+			summary: resp.Summary,
+		}, nil
 	default:
 		return plannedConfig{}, fmt.Errorf("unsupported config kind %q", cfg.Kind)
 	}
@@ -136,7 +168,7 @@ func newPlanReceipt(planID, configKey, sourceHash, engineURL string) planReceipt
 		ConfigKey:  configKey,
 		PlanID:     planID,
 		SourceHash: sourceHash,
-		EngineURL:  engineURL,
+		EngineURL:  canonicalEngineURLOrRaw(engineURL),
 		CreatedAt:  time.Now().UTC().Format(time.RFC3339),
 	}
 }
@@ -156,22 +188,45 @@ func maybeWritePlanReceipt(cfg *configfile.ParsedConfig, receipt planReceipt, op
 
 func printPlanResult(planned []plannedConfig, jsonOut bool) error {
 	if jsonOut {
-		return json.NewEncoder(os.Stdout).Encode(planReceipts(planned))
+		return json.NewEncoder(os.Stdout).Encode(planResultOutputs(planned))
 	}
 	for _, result := range planned {
 		receipt := result.receipt
 		fmt.Printf("Plan created for %s (Plan ID: %s)\n", receipt.ConfigKey, receipt.PlanID)
+		if err := printPlanSummary(os.Stdout, result.summary); err != nil {
+			return err
+		}
 		printNotificationInbox(receipt.ConfigKey, result.notifications)
 	}
 	return nil
 }
 
-func planReceipts(planned []plannedConfig) []planReceipt {
-	receipts := make([]planReceipt, 0, len(planned))
+func planResultOutputs(planned []plannedConfig) []planResultOutput {
+	results := make([]planResultOutput, 0, len(planned))
 	for _, result := range planned {
-		receipts = append(receipts, result.receipt)
+		results = append(results, planResultOutput{
+			planReceipt:   result.receipt,
+			Summary:       result.summary,
+			Notifications: result.notifications,
+		})
 	}
-	return receipts
+	return results
+}
+
+func printPlanSummary(out io.Writer, summary map[string]interface{}) error {
+	if len(summary) == 0 {
+		fmt.Fprintln(out, "Plan summary: no changes reported.")
+		return nil
+	}
+	data, err := json.MarshalIndent(summary, "  ", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to render plan summary: %w", err)
+	}
+	// Why: the Engine owns kind-specific summary fields. Rendering its full
+	// JSON prevents new action details from being silently hidden while the
+	// CLI evolves richer kind-specific presentation independently.
+	fmt.Fprintf(out, "Plan summary:\n  %s\n", data)
+	return nil
 }
 
 func printNotificationInbox(configKey string, inbox api.NotificationInbox) {
@@ -236,16 +291,66 @@ func validateApplyOptions(opts applyOptions, configCount int) error {
 }
 
 func applyConfigs(client *api.Client, configs []*configfile.ParsedConfig, opts applyOptions) error {
-	for _, cfg := range configs {
-		receipt, err := receiptForApply(cfg, opts)
-		if err != nil {
+	prepared, err := prepareConfigApplies(configs, opts, client.BaseURL)
+	if err != nil {
+		return err
+	}
+	for _, item := range prepared {
+		if err := applyPreparedConfig(client, item, opts.download); err != nil {
 			return err
 		}
-		if err := applyOneConfig(client, cfg, receipt, opts.download); err != nil {
-			return err
-		}
+		recordAppliedChange(opts.auditCtx, opts.auditAction, string(item.config.Kind))
 	}
 	return nil
+}
+
+func prepareConfigApplies(configs []*configfile.ParsedConfig, opts applyOptions, engineURL string) ([]preparedConfigApply, error) {
+	prepared := make([]preparedConfigApply, 0, len(configs))
+	for _, cfg := range configs {
+		item, err := prepareConfigApply(cfg, opts, engineURL)
+		if err != nil {
+			return nil, err
+		}
+		prepared = append(prepared, item)
+	}
+	return prepared, nil
+}
+
+func prepareConfigApply(cfg *configfile.ParsedConfig, opts applyOptions, engineURL string) (preparedConfigApply, error) {
+	receipt, err := receiptForApply(cfg, opts, engineURL)
+	if err != nil {
+		return preparedConfigApply{}, err
+	}
+	item := preparedConfigApply{config: cfg, receipt: receipt}
+	if cfg.Kind != configfile.KindWorkspace {
+		return item, nil
+	}
+	payload, err := prepareWorkspaceApplyPayload(cfg)
+	if err != nil {
+		return preparedConfigApply{}, err
+	}
+	item.workspacePayload = payload
+	return item, nil
+}
+
+func prepareWorkspaceApplyPayload(cfg *configfile.ParsedConfig) (*workspaceApplyPayload, error) {
+	authMaterials, err := workspaceAuthMaterials(cfg)
+	if err != nil {
+		return nil, err
+	}
+	profileMaterials, err := workspaceProfileMaterials(cfg)
+	if err != nil {
+		return nil, err
+	}
+	bucketSecretMaterials, err := cfg.WorkspaceBucketSecretMaterials()
+	if err != nil {
+		return nil, err
+	}
+	return &workspaceApplyPayload{
+		authMaterials:         authMaterials,
+		profileMaterials:      profileMaterials,
+		bucketSecretMaterials: bucketSecretMaterials,
+	}, nil
 }
 
 func effectiveConfigFile() string {
@@ -297,9 +402,14 @@ func printResolvedConfigPaths(configs []*configfile.ParsedConfig) {
 	}
 }
 
-func receiptForApply(cfg *configfile.ParsedConfig, opts applyOptions) (planReceipt, error) {
+func receiptForApply(cfg *configfile.ParsedConfig, opts applyOptions, engineURL string) (planReceipt, error) {
 	if opts.planID != "" {
-		return planReceipt{ConfigKey: cfg.ConfigKey, PlanID: opts.planID, SourceHash: cfg.SourceHash}, nil
+		return planReceipt{
+			ConfigKey:  cfg.ConfigKey,
+			PlanID:     opts.planID,
+			SourceHash: cfg.SourceHash,
+			EngineURL:  canonicalEngineURLOrRaw(engineURL),
+		}, nil
 	}
 	path := opts.receiptPath
 	if path == "" {
@@ -315,43 +425,107 @@ func receiptForApply(cfg *configfile.ParsedConfig, opts applyOptions) (planRecei
 	if receipt.SourceHash != cfg.SourceHash {
 		return receipt, fmt.Errorf("config changed since plan was created for %s", cfg.ConfigKey)
 	}
+	if err := validateReceiptEngineURL(receipt.EngineURL, engineURL); err != nil {
+		return receipt, fmt.Errorf("receipt target invalid for %s: %w", cfg.ConfigKey, err)
+	}
 	return receipt, nil
 }
 
-func applyOneConfig(client *api.Client, cfg *configfile.ParsedConfig, receipt planReceipt, download bool) error {
+func canonicalEngineURLOrRaw(raw string) string {
+	canonical, err := canonicalEngineURL(raw)
+	if err != nil {
+		return strings.TrimSpace(raw)
+	}
+	return canonical
+}
+
+func canonicalEngineURL(raw string) (string, error) {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return "", fmt.Errorf("invalid Engine URL %q: %w", raw, err)
+	}
+	if parsed.Scheme == "" || parsed.Host == "" {
+		return "", fmt.Errorf("invalid Engine URL %q: absolute http(s) URL required", raw)
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return "", fmt.Errorf("invalid Engine URL %q: http(s) URL required", raw)
+	}
+	parsed.Scheme = strings.ToLower(parsed.Scheme)
+	parsed.Host = strings.ToLower(parsed.Host)
+	parsed.Path = strings.TrimRight(parsed.Path, "/")
+	parsed.RawPath = strings.TrimRight(parsed.RawPath, "/")
+	parsed.Fragment = ""
+	return parsed.String(), nil
+}
+
+func validateReceiptEngineURL(receiptURL, engineURL string) error {
+	if strings.TrimSpace(receiptURL) == "" {
+		return errors.New("receipt has no engine_url; run plan again against the intended Engine")
+	}
+	receiptTarget, err := canonicalEngineURL(receiptURL)
+	if err != nil {
+		return err
+	}
+	activeTarget, err := canonicalEngineURL(engineURL)
+	if err != nil {
+		return err
+	}
+	if receiptTarget != activeTarget {
+		return fmt.Errorf("receipt targets %s, active Engine is %s; run plan again", receiptTarget, activeTarget)
+	}
+	return nil
+}
+
+func applyPreparedConfig(client *api.Client, item preparedConfigApply, download bool) error {
+	cfg, receipt := item.config, item.receipt
 	switch cfg.Kind {
 	case configfile.KindWorkspace:
-		return applyWorkspaceConfig(client, cfg, receipt)
+		return applyWorkspaceConfig(client, cfg, receipt, item.workspacePayload)
 	case configfile.KindSDK:
-		resp, err := client.ApplySDKConfig(receipt.PlanID, receipt.SourceHash)
-		if err != nil {
-			return fmt.Errorf("failed to apply SDK %s: %w", cfg.SDK.Name, err)
-		}
-		fmt.Printf("Successfully applied SDK %s (Artifact ID: %s)\n", cfg.SDK.Name, resp.ArtifactID)
-		if download {
-			if err := waitForSDKGeneration(client, resp.JobID); err != nil {
-				return fmt.Errorf("failed to generate SDK %s: %w", cfg.SDK.Name, err)
-			}
-			return downloadSDKByID(client, resp.ArtifactID, cfg.SDK.Name, ".")
-		}
+		return applyPreparedSDK(client, cfg, receipt, download)
 	case configfile.KindMCP:
-		resp, err := client.ApplyMCPConfig(receipt.PlanID, receipt.SourceHash)
-		if err != nil {
-			return fmt.Errorf("failed to apply MCP %s: %w", cfg.MCP.Name, err)
-		}
-		fmt.Printf("Successfully applied MCP %s@%s\n", cfg.MCP.Name, cfg.MCP.Version)
-		fmt.Printf("  ID: %s\n  URL: %s\n", resp.MCPID, resp.MCPURL)
-		if resp.ExecutionToken != "" {
-			fmt.Printf("  Token (shown once): %s\n", resp.ExecutionToken)
-		}
+		return applyPreparedMCP(client, cfg, receipt)
 	case configfile.KindWebhook:
-		resp, err := client.ApplyWebhookConfig(receipt.PlanID, receipt.SourceHash)
-		if err != nil {
-			return fmt.Errorf("failed to apply webhook %s: %w", cfg.Webhook.Name, err)
-		}
-		fmt.Printf("Successfully applied webhook %s\n", resp.Name)
-		printAppliedWebhookRegistrations(client.BaseURL, resp.Name, resp.Registrations)
+		return applyPreparedWebhook(client, cfg, receipt)
 	}
+	return nil
+}
+
+func applyPreparedSDK(client *api.Client, cfg *configfile.ParsedConfig, receipt planReceipt, download bool) error {
+	resp, err := client.ApplySDKConfig(receipt.PlanID, receipt.SourceHash)
+	if err != nil {
+		return fmt.Errorf("failed to apply SDK %s: %w", cfg.SDK.Name, err)
+	}
+	fmt.Printf("Successfully applied SDK %s (Artifact ID: %s)\n", cfg.SDK.Name, resp.ArtifactID)
+	if !download {
+		return nil
+	}
+	if err := waitForSDKGeneration(client, resp.JobID); err != nil {
+		return fmt.Errorf("failed to generate SDK %s: %w", cfg.SDK.Name, err)
+	}
+	return downloadSDKByID(client, resp.ArtifactID, cfg.SDK.Name, ".")
+}
+
+func applyPreparedMCP(client *api.Client, cfg *configfile.ParsedConfig, receipt planReceipt) error {
+	resp, err := client.ApplyMCPConfig(receipt.PlanID, receipt.SourceHash)
+	if err != nil {
+		return fmt.Errorf("failed to apply MCP %s: %w", cfg.MCP.Name, err)
+	}
+	fmt.Printf("Successfully applied MCP %s@%s\n", cfg.MCP.Name, cfg.MCP.Version)
+	fmt.Printf("  ID: %s\n  URL: %s\n", resp.MCPID, resp.MCPURL)
+	if resp.ExecutionToken != "" {
+		fmt.Printf("  Token (shown once): %s\n", resp.ExecutionToken)
+	}
+	return nil
+}
+
+func applyPreparedWebhook(client *api.Client, cfg *configfile.ParsedConfig, receipt planReceipt) error {
+	resp, err := client.ApplyWebhookConfig(receipt.PlanID, receipt.SourceHash)
+	if err != nil {
+		return fmt.Errorf("failed to apply webhook %s: %w", cfg.Webhook.Name, err)
+	}
+	fmt.Printf("Successfully applied webhook %s\n", resp.Name)
+	printAppliedWebhookRegistrations(client.BaseURL, resp.Name, resp.Registrations)
 	return nil
 }
 
@@ -369,20 +543,17 @@ func printAppliedWebhookRegistrations(baseURL, label string, registrations []api
 
 // applyWorkspaceConfig sends resolved local material out-of-band from the
 // shareable YAML so plans stay reviewable without carrying secrets.
-func applyWorkspaceConfig(client *api.Client, cfg *configfile.ParsedConfig, receipt planReceipt) error {
-	authMaterials, err := workspaceAuthMaterials(cfg)
-	if err != nil {
-		return err
+func applyWorkspaceConfig(client *api.Client, cfg *configfile.ParsedConfig, receipt planReceipt, payload *workspaceApplyPayload) error {
+	if payload == nil {
+		return errors.New("workspace apply payload was not prepared")
 	}
-	profileMaterials, err := workspaceProfileMaterials(cfg)
-	if err != nil {
-		return err
-	}
-	bucketSecretMaterials, err := cfg.WorkspaceBucketSecretMaterials()
-	if err != nil {
-		return err
-	}
-	resp, err := client.ApplyWorkspaceConfig(receipt.PlanID, receipt.SourceHash, authMaterials, profileMaterials, bucketSecretMaterials)
+	resp, err := client.ApplyWorkspaceConfig(
+		receipt.PlanID,
+		receipt.SourceHash,
+		payload.authMaterials,
+		payload.profileMaterials,
+		payload.bucketSecretMaterials,
+	)
 	if err != nil {
 		return fmt.Errorf("failed to apply workspace %s: %w", cfg.ConfigKey, err)
 	}
@@ -613,14 +784,11 @@ func defaultReceiptPath(configKey string) string {
 }
 
 func writePlanReceiptFile(path string, receipt planReceipt) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return err
-	}
 	data, err := json.MarshalIndent(receipt, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(data, '\n'), 0644)
+	return atomicWriteFile(path, append(data, '\n'), 0644, validateJSONContent)
 }
 
 func readPlanReceiptFile(path string) (planReceipt, error) {

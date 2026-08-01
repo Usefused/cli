@@ -163,6 +163,9 @@ func selectSecretAuth(info *api.ServiceInfo, serviceSlug string) (*api.AuthConfi
 		}
 		return nil, fmt.Errorf("service %s has multiple authentication methods. Please use interactive mode (-i) or specify --type. Valid methods are: %s. Run 'fused-cli service %s show' for details", serviceSlug, strings.Join(validTypes, ", "), serviceSlug)
 	}
+	if err := requireInteractive("pass --type and provide the credential value explicitly"); err != nil {
+		return nil, err
+	}
 	return promptSecretAuthSelect(info)
 }
 
@@ -216,6 +219,9 @@ func handleBasicSecretSet(client *api.Client, serviceID, bucketID string, auth *
 			return fmt.Errorf("basic auth requires both username and password. Provide format 'username=...;password=...' or use interactive mode (-i)")
 		}
 	} else {
+		if err := requireInteractive("provide username and password using the command's value input"); err != nil {
+			return err
+		}
 		err := huh.NewInput().Title("Username:").Value(&username).Run()
 		if err != nil {
 			return err
@@ -248,6 +254,9 @@ func handleMTLSSecretSet(client *api.Client, serviceID, bucketID string, auth *a
 			return fmt.Errorf("mTLS auth requires both cert and key. Provide format 'cert=...;key=...' or use interactive mode (-i)")
 		}
 	} else {
+		if err := requireInteractive("provide the certificate and private key using the command's value input"); err != nil {
+			return err
+		}
 		err := huh.NewText().Title("Client certificate PEM:").Value(&cert).Run()
 		if err != nil {
 			return err
@@ -289,6 +298,9 @@ func handleTokenSecretSet(client *api.Client, serviceID, bucketID string, auth *
 	}
 
 	if value == "" {
+		if err := requireInteractive("provide the credential value explicitly"); err != nil {
+			return err
+		}
 		err := huh.NewInput().Title(promptTitle).EchoMode(huh.EchoModePassword).Value(&value).Run()
 		if err != nil {
 			return err

@@ -89,7 +89,7 @@ func runImportDocs(cmd *cobra.Command, opts importDocsOptions) error {
 	if err := validateImportDocsOptions(opts); err != nil {
 		return err
 	}
-	client, err := getAPIClient()
+	client, err := getAPIClientWithTimeout(opts.timeout)
 	if err != nil {
 		return err
 	}
@@ -352,6 +352,9 @@ func parseDocsEndpointSelector(raw string) (string, string, error) {
 }
 
 func reviewDocsEndpoints(cmd *cobra.Command, endpoints []cliapi.Integration) ([]cliapi.IntegrationEndpointIdentifier, error) {
+	if err := requireInteractive("replace --review with one or more --select METHOD:/path flags"); err != nil {
+		return nil, err
+	}
 	if !isTerminal(os.Stdin) {
 		return nil, errors.New("--review requires an interactive terminal")
 	}

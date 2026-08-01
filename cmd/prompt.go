@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,7 +10,6 @@ import (
 	"github.com/Usefused/cli/internal/configfile"
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
 )
 
 var description string
@@ -24,9 +22,14 @@ var autoYes bool
 var promptCmd = &cobra.Command{
 	Use:   "prompt",
 	Short: "Use AI to prompt and generate a new SDK config",
-	Run: func(cmd *cobra.Command, args []string) {
-		runPrompt()
-	},
+	RunE: WithTelemetry("cli.sdk.prompt", func(cmd *cobra.Command, args []string) error {
+		if !autoYes {
+			if err := requireInteractive("pass --yes to accept the generated SDK selection without prompts"); err != nil {
+				return err
+			}
+		}
+		return runPrompt(cmd)
+	}),
 }
 
 func init() {
@@ -42,18 +45,7 @@ func init() {
 }
 
 func searchAndAddEndpoints(client *api.Client, searchString string, currentCart map[string]api.Integration, servicesMap map[string]api.Service, wsServicesMap map[string]api.WorkspaceService) {
-	target := ConfigFile
-	if target == "" {
-		target = filepath.Join(".fused", "workspace.yaml")
-	}
-
-	if _, err := os.Stat(target); os.IsNotExist(err) {
-		fmt.Println("No local workspace config found. Syncing from Engine...")
-		_, syncErr := PerformWorkspaceSync(context.Background(), client, ConfigFile)
-		if syncErr != nil {
-			fmt.Printf("Warning: Failed to sync workspace config: %v\n", syncErr)
-		}
-	}
+	ensurePromptWorkspace(client, promptWorkspaceTarget())
 
 	wsPath, wsCfg, err := loadWorkspaceConfigForSync(ConfigFile)
 	if err != nil {
@@ -72,29 +64,53 @@ func searchAndAddEndpoints(client *api.Client, searchString string, currentCart 
 		return
 	}
 
-	added := 0
-	modifiedWorkspace := false
-	var newWorkspaceServices []string
-
-	for _, svcIntent := range intent.Services {
-		addedEndpoints, svcAdded := processServiceIntent(client, svcIntent, wsCfg, currentCart, servicesMap, wsServicesMap)
-		added += addedEndpoints
-		if svcAdded {
-			modifiedWorkspace = true
-			newWorkspaceServices = append(newWorkspaceServices, svcIntent.Name)
-		}
-	}
-
-	if modifiedWorkspace {
-		err = writeWorkspaceConfig(wsPath, wsCfg)
-		if err != nil {
-			fmt.Printf("Warning: failed to write updated workspace.yaml: %v\n", err)
-		} else {
-			fmt.Printf("✅ Automatically added %s to your workspace config.\n", strings.Join(newWorkspaceServices, ", "))
-		}
-	}
+	added, newWorkspaceServices := processPromptServiceIntents(client, intent.Services, wsCfg, currentCart, servicesMap, wsServicesMap)
+	persistPromptWorkspace(wsPath, wsCfg, newWorkspaceServices)
 
 	fmt.Printf("✅ Added %d new targeted endpoints to the cart.\n", added)
+}
+
+func promptWorkspaceTarget() string {
+	if ConfigFile != "" {
+		return ConfigFile
+	}
+	return filepath.Join(".fused", "workspace.yaml")
+}
+
+func ensurePromptWorkspace(client *api.Client, target string) {
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		return
+	}
+	fmt.Println("No local workspace config found. Syncing from Engine...")
+	// Why: the process execution context lets SIGINT stop the prerequisite
+	// sync instead of leaving an agent waiting on abandoned network work.
+	if _, err := PerformWorkspaceSync(executionContext, client, ConfigFile); err != nil {
+		fmt.Printf("Warning: Failed to sync workspace config: %v\n", err)
+	}
+}
+
+func processPromptServiceIntents(client *api.Client, intents []api.IntentService, wsCfg *configfile.WorkspaceConfig, cart map[string]api.Integration, servicesMap map[string]api.Service, wsServicesMap map[string]api.WorkspaceService) (int, []string) {
+	added := 0
+	var newWorkspaceServices []string
+	for _, intent := range intents {
+		addedEndpoints, serviceAdded := processServiceIntent(client, intent, wsCfg, cart, servicesMap, wsServicesMap)
+		added += addedEndpoints
+		if serviceAdded {
+			newWorkspaceServices = append(newWorkspaceServices, intent.Name)
+		}
+	}
+	return added, newWorkspaceServices
+}
+
+func persistPromptWorkspace(path string, cfg *configfile.WorkspaceConfig, addedServices []string) {
+	if len(addedServices) == 0 {
+		return
+	}
+	if err := writeWorkspaceConfig(path, cfg); err != nil {
+		fmt.Printf("Warning: failed to write updated workspace.yaml: %v\n", err)
+		return
+	}
+	fmt.Printf("✅ Automatically added %s to your workspace config.\n", strings.Join(addedServices, ", "))
 }
 
 func processServiceIntent(client *api.Client, svcIntent api.IntentService, wsCfg *configfile.WorkspaceConfig, cart map[string]api.Integration, servicesMap map[string]api.Service, wsServicesMap map[string]api.WorkspaceService) (int, bool) {
@@ -181,23 +197,34 @@ func mergeNewEndpoints(cart map[string]api.Integration, endpoints []api.Integrat
 
 // runPrompt retains the interactive endpoint cart for native SDKs. MCP
 // runtimes use the declarative `mcp plan` and `mcp apply` commands instead.
-func runPrompt() {
+func runPrompt(cmd *cobra.Command) error {
 	if description == "" {
-		fmt.Println("Error: --description is required")
-		os.Exit(1)
+		return fmt.Errorf("--description is required")
 	}
 
 	client, err := newPromptClient()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		return err
 	}
 
 	cart, wsServicesMap, proceed := buildCart(client, description)
 	if !proceed {
-		return
+		return nil
 	}
+	cfg := promptSDKConfig(cart, wsServicesMap)
+	path, err := writePromptSDKConfig(cfg)
+	if err != nil {
+		return err
+	}
+	recordAppliedChange(cmd.Context(), cmd.CommandPath(), "sdk_config")
+	fmt.Printf("✅ SDK config generated at %s\n", path)
+	fmt.Printf("\nNext steps:\n")
+	fmt.Printf("  1. Preview changes: fused-cli sdk plan\n")
+	fmt.Printf("  2. Apply changes:   fused-cli sdk apply\n")
+	return nil
+}
 
+func promptSDKConfig(cart map[string]api.Integration, wsServices map[string]api.WorkspaceService) *configfile.SDKConfig {
 	cfg := &configfile.SDKConfig{
 		BaseConfig: configfile.BaseConfig{
 			APIVersion: configfile.APIVersionV1,
@@ -210,53 +237,31 @@ func runPrompt() {
 	}
 
 	for _, ep := range cart {
-		wsSvc := wsServicesMap[ep.ServiceID]
-		svcSlug := wsSvc.ServiceSlug
-
-		svcCfg, exists := cfg.Services[svcSlug]
-		if !exists {
-			svcCfg = configfile.ArtifactService{
-				Version:    wsSvc.Version,
-				Operations: []string{},
-			}
-		}
-		// Avoid duplicates
-		found := false
-		for _, op := range svcCfg.Operations {
-			if op == ep.Name {
-				found = true
-				break
-			}
-		}
-		if !found {
-			svcCfg.Operations = append(svcCfg.Operations, ep.Name)
-		}
-		cfg.Services[svcSlug] = svcCfg
+		addPromptSDKOperation(cfg, wsServices[ep.ServiceID], ep.Name)
 	}
+	return cfg
+}
 
-	data, err := yaml.Marshal(cfg)
-	if err != nil {
-		fmt.Printf("Failed to marshal config: %v\n", err)
-		return
+func addPromptSDKOperation(cfg *configfile.SDKConfig, service api.WorkspaceService, operation string) {
+	serviceCfg, exists := cfg.Services[service.ServiceSlug]
+	if !exists {
+		serviceCfg = configfile.ArtifactService{Version: service.Version, Operations: []string{}}
 	}
-
-	err = os.MkdirAll(".fused/sdks", 0755)
-	if err != nil {
-		fmt.Printf("Failed to create .fused/sdks directory: %v\n", err)
-		return
+	for _, existing := range serviceCfg.Operations {
+		if existing == operation {
+			return
+		}
 	}
+	serviceCfg.Operations = append(serviceCfg.Operations, operation)
+	cfg.Services[service.ServiceSlug] = serviceCfg
+}
 
+func writePromptSDKConfig(cfg *configfile.SDKConfig) (string, error) {
 	path := fmt.Sprintf(".fused/sdks/%s.yaml", sdkName)
-	err = os.WriteFile(path, data, 0644)
-	if err != nil {
-		fmt.Printf("Failed to write config: %v\n", err)
-		return
+	if err := writeSDKConfig(path, cfg); err != nil {
+		return "", fmt.Errorf("failed to write config: %w", err)
 	}
-
-	fmt.Printf("✅ SDK config generated at %s\n", path)
-	fmt.Printf("\nNext steps:\n")
-	fmt.Printf("  1. Preview changes: fused-cli sdk plan\n")
-	fmt.Printf("  2. Apply changes:   fused-cli sdk apply\n")
+	return path, nil
 }
 
 // newPromptClient wires up the API client from stored credentials/config.
@@ -264,12 +269,7 @@ func runPrompt() {
 // which read from the user's local CLI config -- the meaningful logic those
 // two functions have is already covered by their own tests.
 func newPromptClient() (*api.Client, error) {
-	key := GetAPIKey()
-	engineURL, err := GetEngineURL()
-	if err != nil {
-		return nil, err
-	}
-	return api.NewClient(engineURL, key), nil
+	return getAPIClient()
 }
 
 // buildCart runs the initial search plus the interactive cart-building menu

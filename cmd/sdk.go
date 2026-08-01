@@ -51,12 +51,12 @@ var sdkApplyCmd = &cobra.Command{
 	Short: "Apply SDK configuration",
 	// Why: Write to OTEL to audit user/agent-triggered mutative execution.
 	RunE: WithTelemetry("cli.sdk.apply", func(cmd *cobra.Command, args []string) error {
-		return runConfigApply(applyOptions{
+		return runConfigApply(withApplyAudit(cmd, applyOptions{
 			filter:      filterSDK,
 			download:    sdkApplyDownload,
 			planID:      sdkApplyPlanID,
 			receiptPath: sdkApplyReceiptPath,
-		})
+		}))
 	}),
 }
 
@@ -406,7 +406,7 @@ func runSDKServiceAddAction(cmd *cobra.Command, serviceName string, operations [
 			return err
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "Added %d operationId(s) to service %s: %s\n", len(operations), serviceName, strings.Join(operations, ", "))
-		return maybeApplySDKServiceAction()
+		return maybeApplySDKServiceAction(cmd)
 	}
 	if err := addSDKService(ConfigFile, serviceName, sdkAddServiceVersion); err != nil {
 		return err
@@ -430,7 +430,7 @@ func runSDKServiceRemoveAction(cmd *cobra.Command, serviceName string, operation
 	return nil
 }
 
-func maybeApplySDKServiceAction() error {
+func maybeApplySDKServiceAction(cmd *cobra.Command) error {
 	if sdkServiceActionDownload {
 		sdkServiceActionApply = true
 	}
@@ -440,7 +440,7 @@ func maybeApplySDKServiceAction() error {
 	if err := runConfigPlan(planOptions{filter: filterSDK}); err != nil {
 		return err
 	}
-	return runConfigApply(applyOptions{filter: filterSDK, download: sdkServiceActionDownload})
+	return runConfigApply(withApplyAudit(cmd, applyOptions{filter: filterSDK, download: sdkServiceActionDownload}))
 }
 
 func isSDKServiceAction(action string) bool {
@@ -575,7 +575,7 @@ func runSDKAddOperationAction(cmd *cobra.Command, serviceName string, operations
 		if err := runConfigPlan(planOptions{filter: filterSDK}); err != nil {
 			return err
 		}
-		return runConfigApply(applyOptions{filter: filterSDK, download: sdkAddOperationDownload})
+		return runConfigApply(withApplyAudit(cmd, applyOptions{filter: filterSDK, download: sdkAddOperationDownload}))
 	}
 	return nil
 }
@@ -682,6 +682,13 @@ func completeSDKWebhookArgs(cmd *cobra.Command, args []string, toComplete string
 }
 
 func selectSDKOperationsInteractively(path, requestedService string) (string, []string, error) {
+	if err := requireInteractive("pass the service and operation IDs explicitly"); err != nil {
+		return "", nil, err
+	}
+	return selectSDKOperations(path, requestedService)
+}
+
+func selectSDKOperations(path, requestedService string) (string, []string, error) {
 	cfg, err := loadSDKConfigForEdit(path)
 	if err != nil {
 		return "", nil, err
@@ -721,6 +728,13 @@ func selectSDKOperationsInteractively(path, requestedService string) (string, []
 }
 
 func selectSDKWebhooksInteractively(path, requestedService string) (string, []string, error) {
+	if err := requireInteractive("pass the service and webhook IDs explicitly"); err != nil {
+		return "", nil, err
+	}
+	return selectSDKWebhooks(path, requestedService)
+}
+
+func selectSDKWebhooks(path, requestedService string) (string, []string, error) {
 	cfg, err := loadSDKConfigForEdit(path)
 	if err != nil {
 		return "", nil, err
@@ -939,7 +953,7 @@ func init() {
 	sdkCmd.Flags().BoolVar(&sdkListLatestOnly, "latest-only", true, "Only show the latest SDK per name")
 
 	sdkCmd.AddCommand(sdkPlanCmd)
-	sdkPlanCmd.Flags().BoolVar(&sdkPlanJSON, "json", false, "Print plan receipt JSON instead of writing default receipt")
+	sdkPlanCmd.Flags().BoolVar(&sdkPlanJSON, "json", false, "Print plan result JSON, including summary and notifications")
 	sdkPlanCmd.Flags().StringVar(&sdkPlanReceiptOut, "receipt-out", "", "Write the plan receipt to a specific path")
 
 	sdkCmd.AddCommand(sdkApplyCmd)

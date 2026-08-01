@@ -77,8 +77,12 @@ func TestApplyOneConfig_Webhook(t *testing.T) {
 	}
 
 	out := captureStdout(t, func() {
-		if err := applyOneConfig(client, cfg, planReceipt{ConfigKey: "webhook:team-x", PlanID: "plan-1", SourceHash: "abc"}, false); err != nil {
-			t.Fatalf("applyOneConfig: %v", err)
+		item := preparedConfigApply{
+			config:  cfg,
+			receipt: planReceipt{ConfigKey: "webhook:team-x", PlanID: "plan-1", SourceHash: "abc", EngineURL: server.URL},
+		}
+		if err := applyPreparedConfig(client, item, false); err != nil {
+			t.Fatalf("applyPreparedConfig: %v", err)
 		}
 	})
 

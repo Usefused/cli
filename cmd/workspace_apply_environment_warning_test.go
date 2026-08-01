@@ -27,8 +27,6 @@ services:
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeReceipt(t, dir, planReceipt{ConfigKey: "workspace", PlanID: "plan-workspace", SourceHash: parsed.SourceHash})
-
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/health":
@@ -40,6 +38,7 @@ services:
 		}
 	}))
 	defer server.Close()
+	writeReceipt(t, dir, planReceipt{ConfigKey: "workspace", PlanID: "plan-workspace", SourceHash: parsed.SourceHash, EngineURL: server.URL})
 
 	out := runCommandInDirOutput(t, dir, server.URL, []string{"workspace", "apply", "-f", path})
 
@@ -65,8 +64,6 @@ services:
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeReceipt(t, dir, planReceipt{ConfigKey: "workspace", PlanID: "plan-workspace", SourceHash: parsed.SourceHash})
-
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/health":
@@ -78,6 +75,7 @@ services:
 		}
 	}))
 	defer server.Close()
+	writeReceipt(t, dir, planReceipt{ConfigKey: "workspace", PlanID: "plan-workspace", SourceHash: parsed.SourceHash, EngineURL: server.URL})
 
 	out := runCommandInDirOutput(t, dir, server.URL, []string{"workspace", "apply", "-f", path})
 
@@ -104,8 +102,6 @@ services:
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeReceipt(t, dir, planReceipt{ConfigKey: "workspace", PlanID: "plan-workspace", SourceHash: parsed.SourceHash})
-
 	var sawApply bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -119,6 +115,7 @@ services:
 		}
 	}))
 	defer server.Close()
+	writeReceipt(t, dir, planReceipt{ConfigKey: "workspace", PlanID: "plan-workspace", SourceHash: parsed.SourceHash, EngineURL: server.URL})
 
 	runCommandInDir(t, dir, server.URL, []string{"workspace", "apply", "-f", path})
 
