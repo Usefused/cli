@@ -11,16 +11,16 @@ import (
 )
 
 type SDKTokenGenerateResponse struct {
-	ID        string    `json:"id"`
-	ArtifactID     string    `json:"artifact_id"`
-	Name      string    `json:"name"`
-	Token     string    `json:"token,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
+	ID         string    `json:"id"`
+	ArtifactID string    `json:"artifact_id"`
+	Name       string    `json:"name"`
+	Token      string    `json:"token,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 type SDKTokenResponse struct {
 	ID         string     `json:"id"`
-	ArtifactID      string     `json:"artifact_id"`
+	ArtifactID string     `json:"artifact_id"`
 	Name       string     `json:"name"`
 	CreatedAt  time.Time  `json:"created_at"`
 	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
@@ -29,7 +29,7 @@ type SDKTokenResponse struct {
 func (t *SDKTokenResponse) UnmarshalJSON(data []byte) error {
 	type rawSDKTokenResponse struct {
 		ID         string `json:"id"`
-		ArtifactID      string `json:"artifact_id"`
+		ArtifactID string `json:"artifact_id"`
 		Name       string `json:"name"`
 		CreatedAt  string `json:"created_at"`
 		LastUsedAt string `json:"last_used_at"`
@@ -48,7 +48,7 @@ func (t *SDKTokenResponse) UnmarshalJSON(data []byte) error {
 	}
 	*t = SDKTokenResponse{
 		ID:         raw.ID,
-		ArtifactID:      raw.ArtifactID,
+		ArtifactID: raw.ArtifactID,
 		Name:       raw.Name,
 		CreatedAt:  createdAt,
 		LastUsedAt: lastUsedAt,
@@ -90,7 +90,7 @@ func (c *Client) GenerateSDKToken(artifactID, name string) (*SDKTokenGenerateRes
 
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("generate sdk token failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(respBody))
+		return nil, fmt.Errorf("generate sdk token failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(resp.StatusCode, respBody))
 	}
 
 	var out SDKTokenGenerateResponse
@@ -141,7 +141,7 @@ func (c *Client) RevokeSDKToken(artifactID, name string) error {
 
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("revoke sdk token failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(respBody))
+		return fmt.Errorf("revoke sdk token failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(resp.StatusCode, respBody))
 	}
 
 	return nil

@@ -7,6 +7,7 @@ import (
 var (
 	planJSON       bool
 	planReceiptOut string
+	planOwnerTeam  string
 )
 
 var planCmd = &cobra.Command{
@@ -14,7 +15,7 @@ var planCmd = &cobra.Command{
 	Short: "Plan changes for Fused configurations",
 	Long:  `Discovers and plans changes for all Fused configurations in the target directory or file.`,
 	RunE: WithTelemetry("cli.plan", func(cmd *cobra.Command, args []string) error {
-		return runConfigPlan(planOptions{jsonOut: planJSON, receiptOut: planReceiptOut})
+		return runConfigPlan(planOptions{jsonOut: planJSON, receiptOut: planReceiptOut, ownerTeamID: planOwnerTeam})
 	}),
 }
 
@@ -22,4 +23,5 @@ func init() {
 	RootCmd.AddCommand(planCmd)
 	planCmd.Flags().BoolVar(&planJSON, "json", false, "Print plan result JSON, including summary and notifications")
 	planCmd.Flags().StringVar(&planReceiptOut, "receipt-out", "", "Write the plan receipt to a specific path")
+	planCmd.Flags().StringVar(&planOwnerTeam, "owner-team", "", "Owning team ID (required when creating a new SDK, MCP server, or webhook)")
 }

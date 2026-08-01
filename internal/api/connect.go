@@ -73,7 +73,7 @@ func (c *Client) UpsertConnectConfig(bucketID, serviceID string, payload Connect
 
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("upsert connect config failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(respBody))
+		return nil, fmt.Errorf("upsert connect config failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(resp.StatusCode, respBody))
 	}
 	var out ConnectConfigResponse
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
@@ -109,7 +109,7 @@ func (c *Client) GetConnectConfig(bucketID, serviceID string) (*ConnectConfigRes
 	}
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("get connect config failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(respBody))
+		return nil, fmt.Errorf("get connect config failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(resp.StatusCode, respBody))
 	}
 	var out ConnectConfigResponse
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {

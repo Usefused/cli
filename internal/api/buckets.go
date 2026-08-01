@@ -51,7 +51,7 @@ func (c *Client) CreateBucket(name string) error {
 
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("create bucket failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(respBody))
+		return fmt.Errorf("create bucket failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(resp.StatusCode, respBody))
 	}
 
 	return nil
@@ -126,7 +126,7 @@ func (c *Client) UpsertBucketValue(bucketID, serviceID, keyName, location, value
 
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("upsert bucket value failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(respBody))
+		return fmt.Errorf("upsert bucket value failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(resp.StatusCode, respBody))
 	}
 
 	return nil
@@ -162,7 +162,7 @@ func (c *Client) DeleteBucketValue(bucketID, serviceID, keyName string) error {
 
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("delete bucket value failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(respBody))
+		return fmt.Errorf("delete bucket value failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(resp.StatusCode, respBody))
 	}
 
 	return nil
@@ -185,7 +185,7 @@ func (c *Client) DeleteBucket(name string) error {
 
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("delete bucket failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(respBody))
+		return fmt.Errorf("delete bucket failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(resp.StatusCode, respBody))
 	}
 
 	return nil

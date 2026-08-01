@@ -121,7 +121,7 @@ func (c *Client) UpsertSecret(serviceID, keyName, credentialType, value string, 
 
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("upsert secret failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(respBody))
+		return fmt.Errorf("upsert secret failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(resp.StatusCode, respBody))
 	}
 
 	return nil
@@ -164,7 +164,7 @@ func (c *Client) UpsertSecrets(bucketID string, secrets []SecretUpsertRequest) e
 
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("upsert secrets failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(respBody))
+		return fmt.Errorf("upsert secrets failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(resp.StatusCode, respBody))
 	}
 	return nil
 }
@@ -216,7 +216,7 @@ func (c *Client) DeleteSecret(serviceID, keyName string, bucketID string) error 
 
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("delete secret failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(respBody))
+		return fmt.Errorf("delete secret failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(resp.StatusCode, respBody))
 	}
 
 	return nil

@@ -331,6 +331,12 @@ services:
 			"source_hash":"hash",
 			"base_generation":0,
 			"summary":{},
+			"required_permissions":[{
+				"permission":"service.manage",
+				"resource_type":"service",
+				"resource_id":"00000000-0000-0000-0000-000000000001",
+				"display_name":"Okta"
+			}],
 			"notifications":{
 				"items":[{
 					"id":"registry:drift-1",
@@ -386,6 +392,12 @@ services:
 			"source_hash":"hash",
 			"base_generation":0,
 			"summary":{},
+			"required_permissions":[{
+				"permission":"service.manage",
+				"resource_type":"service",
+				"resource_id":"00000000-0000-0000-0000-000000000001",
+				"display_name":"Okta"
+			}],
 			"notifications":{
 				"items":[{
 					"id":"engine:note-1",
@@ -408,6 +420,9 @@ services:
 	}
 	if !strings.Contains(out, "Version 2026-07-01 was deprecated") {
 		t.Fatalf("expected the registry_version_deprecated notification, got %q", out)
+	}
+	if !strings.Contains(out, `Ability to manage service "Okta"`) || strings.Contains(out, "service.manage") {
+		t.Fatalf("expected required permission preview, got %q", out)
 	}
 }
 
