@@ -3,6 +3,7 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/Usefused/cli/internal/api"
 	"github.com/charmbracelet/huh"
@@ -15,83 +16,78 @@ import (
 // the same way bucket secrets already are, since these are
 // credential-adjacent values rather than declarative service policy. See
 // fused-bucket skill for how this fits alongside `secret set` and
-// `workspace service <slug> connect`.
+// `workspace service connect <slug>`.
 var connectCmd = &cobra.Command{
-	Use:   "connect <service-slug> set|get [value]",
+	Use:   "connect",
 	Short: "Register, rotate, or check a bucket's OAuth/OIDC app registration for a service",
-	Args:  validateConnectArgs,
-	// Write to OTEL to audit user/agent-triggered mutative execution.
-	// Why no ValidArgsFunction: secret.go's completeSecretArgs offers "set"
-	// and "remove" as the action -- reusing it here would suggest a "remove"
-	// action connect doesn't have. Add shell completion offering "set"/"get"
-	// once this command's own completion is worth building.
-	RunE: WithTelemetry("cli.connect", func(cmd *cobra.Command, args []string) error {
-		return runConnectAction(cmd, args)
-	}),
+	Args:  cobra.NoArgs,
+	RunE:  requireSubcommand,
 }
 
 var connectSetInteractive bool
+var connectSetValueStdin bool
 var connectSetBucketID string
+var connectGetBucketID string
 var connectSetType string
 
-func validateConnectArgs(cmd *cobra.Command, args []string) error {
-	if len(args) < 2 {
-		return fmt.Errorf("connect requires a service slug and an action (set or get)")
-	}
-	switch args[1] {
-	case "set":
-		if connectSetInteractive {
-			if len(args) != 2 {
-				return fmt.Errorf("accepts no value argument when using interactive mode")
-			}
-			return nil
+var connectSetCmd = &cobra.Command{
+	Use:   "set <service-slug>",
+	Short: "Register or rotate an OAuth/OIDC app",
+	Args:  validateConnectSetArgs,
+	RunE: WithTelemetry("cli.connect.set", func(cmd *cobra.Command, args []string) error {
+		value, err := readConnectValue(cmd)
+		if err != nil {
+			return err
 		}
-		if len(args) > 3 {
-			return fmt.Errorf("set accepts exactly 1 arg after action (value)")
+		if err := runConnectSet(args[0], value); err != nil {
+			return err
 		}
+		recordAppliedChange(cmd.Context(), cmd.CommandPath(), "connect_config")
 		return nil
-	case "get":
-		// get only ever reads back the safe projection (see
-		// printConnectConfigResult) -- there is no value to parse and no
-		// -i/--type disambiguation, so any extra positional arg is a mistake
-		// worth catching before a network round trip rather than silently
-		// ignoring it.
-		if len(args) != 2 {
-			return fmt.Errorf("get accepts no arguments after the action")
-		}
-		return nil
-	default:
-		return fmt.Errorf("unknown connect action %q", args[1])
-	}
+	}),
 }
 
-func runConnectAction(cmd *cobra.Command, args []string) error {
-	serviceSlug := args[0]
-	if args[1] == "get" {
-		return runConnectGet(serviceSlug)
+var connectGetCmd = &cobra.Command{
+	Use:   "get <service-slug>",
+	Short: "Read the safe OAuth/OIDC app projection",
+	Args:  cobra.ExactArgs(1),
+	RunE: WithTelemetry("cli.connect.get", func(_ *cobra.Command, args []string) error {
+		return runConnectGet(args[0])
+	}),
+}
+
+func validateConnectSetArgs(cmd *cobra.Command, args []string) error {
+	if err := cobra.ExactArgs(1)(cmd, args); err != nil {
+		return err
 	}
-	var value string
-	if len(args) > 2 {
-		value = args[2]
+	if connectSetInteractive == connectSetValueStdin {
+		return fmt.Errorf("choose exactly one credential input: --interactive or --value-stdin")
 	}
-	return runConnectSet(serviceSlug, value)
+	return nil
+}
+
+func readConnectValue(cmd *cobra.Command) (string, error) {
+	if connectSetInteractive {
+		return "", nil
+	}
+	return readSensitiveValue(cmd, "connect config")
 }
 
 // resolveConnectTarget resolves the client/bucket/service triple both set
 // and get need, so the two actions can never disagree about which
 // bucket+service a slug refers to -- one resolution path, not two that could
 // drift.
-func resolveConnectTarget(action, serviceSlug string) (client *api.Client, bucketID, serviceID string, err error) {
+func resolveConnectTarget(action, serviceSlug, bucketValue string) (client *api.Client, bucketID, serviceID string, err error) {
 	client, err = getAPIClient()
 	if err != nil {
 		return nil, "", "", err
 	}
-	bucketID, err = resolveBucketIDPrompt(client, connectSetBucketID)
+	if strings.TrimSpace(bucketValue) == "" {
+		return nil, "", "", fmt.Errorf("connect %s requires --bucket", action)
+	}
+	bucketID, err = resolveExplicitBucketID(bucketValue)
 	if err != nil {
 		return nil, "", "", err
-	}
-	if bucketID == "" {
-		return nil, "", "", fmt.Errorf("connect %s requires --bucket", action)
 	}
 	serviceID, err = resolveServiceIDFromSlug(client, serviceSlug)
 	if err != nil {
@@ -107,7 +103,7 @@ func resolveConnectTarget(action, serviceSlug string) (client *api.Client, bucke
 // partial-update merge (see UpsertConnectConfigHandler) carries forward
 // whatever this call omits.
 func runConnectSet(serviceSlug, value string) error {
-	client, bucketID, serviceID, err := resolveConnectTarget("set", serviceSlug)
+	client, bucketID, serviceID, err := resolveConnectTarget("set", serviceSlug, connectSetBucketID)
 	if err != nil {
 		return err
 	}
@@ -135,14 +131,14 @@ func runConnectSet(serviceSlug, value string) error {
 // set, it needs no auth-type selection -- it just asks Engine for whatever
 // is on record for this bucket+service, or reports that nothing is.
 func runConnectGet(serviceSlug string) error {
-	client, bucketID, serviceID, err := resolveConnectTarget("get", serviceSlug)
+	client, bucketID, serviceID, err := resolveConnectTarget("get", serviceSlug, connectGetBucketID)
 	if err != nil {
 		return err
 	}
 	cfg, err := client.GetConnectConfig(bucketID, serviceID)
 	if err != nil {
 		if errors.Is(err, api.ErrConnectConfigNotFound) {
-			return fmt.Errorf("no connect config registered for service %s in this bucket -- see `fused-cli connect %s set`", serviceSlug, serviceSlug)
+			return fmt.Errorf("no connect config registered for service %s in this bucket -- see `fused-cli connect set %s`", serviceSlug, serviceSlug)
 		}
 		return err
 	}
@@ -248,7 +244,10 @@ func printConnectConfigResult(cfg *api.ConnectConfigResponse) {
 
 func init() {
 	RootCmd.AddCommand(connectCmd)
-	connectCmd.Flags().StringVar(&connectSetBucketID, "bucket", "", "Bucket (name or ID) to register this connect config against")
-	connectCmd.Flags().StringVar(&connectSetType, "type", "", "Disambiguate when a service declares both oauth and oidc")
-	connectCmd.Flags().BoolVarP(&connectSetInteractive, "interactive", "i", false, "Interactive mode, prompting per field (blank keeps it unchanged)")
+	connectCmd.AddCommand(connectSetCmd, connectGetCmd)
+	connectSetCmd.Flags().StringVar(&connectSetBucketID, "bucket", "", "Bucket name or UUID (required)")
+	connectSetCmd.Flags().StringVar(&connectSetType, "type", "", "Disambiguate when a service declares both oauth and oidc")
+	connectSetCmd.Flags().BoolVarP(&connectSetInteractive, "interactive", "i", false, "Prompt per field (blank keeps it unchanged)")
+	connectSetCmd.Flags().BoolVar(&connectSetValueStdin, "value-stdin", false, "Read the registration fields from stdin")
+	connectGetCmd.Flags().StringVar(&connectGetBucketID, "bucket", "", "Bucket name or UUID (required)")
 }

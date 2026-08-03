@@ -64,7 +64,7 @@ func TestServiceOperationsSearchUsesServerPagination(t *testing.T) {
 	}))
 	defer server.Close()
 
-	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"service", "github", "operations", "--q", "issue", "--limit", "5", "--offset", "10"})
+	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"service", "operations", "github", "--q", "issue", "--limit", "5", "--offset", "10"})
 	if sawSearchVars["limit"] != float64(5) || sawSearchVars["offset"] != float64(10) || sawSearchVars["q"] != "issue" {
 		t.Fatalf("unexpected search variables: %#v", sawSearchVars)
 	}
@@ -73,7 +73,8 @@ func TestServiceOperationsSearchUsesServerPagination(t *testing.T) {
 	}
 }
 
-func TestSDKListUsesRegistryPagination(t *testing.T) {
+func TestSecretListUsesBucketScopedPagination(t *testing.T) {
+	const bucketID = "11111111-1111-4111-8111-111111111111"
 	var sawVariables map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
@@ -83,20 +84,127 @@ func TestSDKListUsesRegistryPagination(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatalf("decode graphql body: %v", err)
 		}
-		if !strings.Contains(body.Query, "sdks") {
-			t.Fatalf("expected sdks query, got %s", body.Query)
+		if !strings.Contains(body.Query, "secretMetaPage") {
+			t.Fatalf("expected secretMetaPage query, got %s", body.Query)
 		}
 		sawVariables = body.Variables
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"data":{"sdks":{"total":1,"items":[{"id":"sdk-1","name":"security","description":"","version":"1.0.0","target_type":"sdk","target_language":"typescript","sandbox_url":"","created_at":"2026-07-21T00:00:00Z","killed_at":""}]}}}`))
+		_, _ = w.Write([]byte(`{"data":{"secretMetaPage":{"total":1,"items":[{"id":"secret-1","bucket_id":"` + bucketID + `","service_id":"svc-1","key_name":"Authorization","credential_type":"bearer","expires_at":"","created_at":"2026-08-01T00:00:00Z","updated_at":"2026-08-01T00:00:00Z"}]}}}`))
 	}))
 	defer server.Close()
 
-	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"sdk", "list", "--limit", "10", "--offset", "20", "--target", "sdk", "--language", "typescript"})
-	if sawVariables["limit"] != float64(10) || sawVariables["offset"] != float64(20) || sawVariables["targetLanguage"] != "typescript" {
+	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"secret", "list", "--bucket", bucketID, "--limit", "5", "--offset", "10"})
+	if sawVariables["bucketId"] != bucketID || sawVariables["limit"] != float64(5) || sawVariables["offset"] != float64(10) {
 		t.Fatalf("unexpected variables: %#v", sawVariables)
 	}
-	if !strings.Contains(out, "security") || !strings.Contains(out, "typescript") {
+	if !strings.Contains(out, "Authorization") || strings.Contains(out, "value") {
+		t.Fatalf("unexpected secret metadata output: %q", out)
+	}
+}
+
+func TestSDKListUsesEnginePaginationAndFixedKind(t *testing.T) {
+	var sawVariables map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Query     string         `json:"query"`
+			Variables map[string]any `json:"variables"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode graphql body: %v", err)
+		}
+		if !strings.Contains(body.Query, "artifacts") {
+			t.Fatalf("expected artifacts query, got %s", body.Query)
+		}
+		sawVariables = body.Variables
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"data":{"artifacts":{"total":1,"items":[{"id":"sdk-1","name":"security","version":"1.0.0","kind":"sdk","active":true,"created_at":"2026-07-21T00:00:00Z"}]}}}`))
+	}))
+	defer server.Close()
+
+	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"sdk", "list", "--limit", "10", "--offset", "20"})
+	if sawVariables["limit"] != float64(10) || sawVariables["offset"] != float64(20) || sawVariables["kind"] != "sdk" {
+		t.Fatalf("unexpected variables: %#v", sawVariables)
+	}
+	if !strings.Contains(out, "security") || !strings.Contains(out, "sdk-1") {
 		t.Fatalf("unexpected output: %q", out)
+	}
+}
+
+func TestSDKServicesUsesKindScopedHumanReferenceAtEngineBoundary(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Query     string         `json:"query"`
+			Variables map[string]any `json:"variables"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode graphql body: %v", err)
+		}
+		if body.Variables["reference"] != "support@2.0.0" || body.Variables["kind"] != "sdk" {
+			t.Fatalf("unexpected SDK reference: %#v", body.Variables)
+		}
+		_, _ = w.Write([]byte(`{"data":{"artifactServices":[{"service_id":"service-1","service_slug":"github","service_name":"GitHub","version":"v1","select_all":false,"endpoint_count":2,"webhook_count":1}]}}`))
+	}))
+	defer server.Close()
+
+	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"sdk", "support@2.0.0", "services"})
+	if !strings.Contains(out, "github") || !strings.Contains(out, "service-1") || !strings.Contains(out, "2") {
+		t.Fatalf("unexpected SDK services output: %q", out)
+	}
+}
+
+func TestMCPListUsesEnginePaginationAndFixedKind(t *testing.T) {
+	var sawVariables map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Query     string         `json:"query"`
+			Variables map[string]any `json:"variables"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode graphql body: %v", err)
+		}
+		if !strings.Contains(body.Query, "mcpServers") {
+			t.Fatalf("expected MCP server query, got %s", body.Query)
+		}
+		sawVariables = body.Variables
+		_, _ = w.Write([]byte(`{"data":{"mcpServers":{"total":1,"items":[{"id":"mcp-1","name":"support","version":"1.0.0","mcp_url":"https://engine.test/mcp/mcp-1","active":true,"created_at":"now"}]}}}`))
+	}))
+	defer server.Close()
+
+	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"mcp", "list", "--limit", "5", "--offset", "10"})
+	if _, hasKind := sawVariables["kind"]; hasKind || sawVariables["limit"] != float64(5) || sawVariables["offset"] != float64(10) {
+		t.Fatalf("unexpected MCP list variables: %#v", sawVariables)
+	}
+	if !strings.Contains(out, "support") || !strings.Contains(out, "mcp-1") || !strings.Contains(out, "https://engine.test/mcp/mcp-1") {
+		t.Fatalf("unexpected MCP list output: %q", out)
+	}
+}
+
+func TestMCPRemoveResolvesOnlyMCPNames(t *testing.T) {
+	var sawResolution, sawDeactivate bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/engine/graphql":
+			var body struct {
+				Variables map[string]any `json:"variables"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode MCP reference request: %v", err)
+			}
+			if body.Variables["reference"] != "support@1.0.0" || body.Variables["kind"] != "mcp" {
+				t.Fatalf("unexpected MCP reference variables: %#v", body.Variables)
+			}
+			sawResolution = true
+			_, _ = w.Write([]byte(`{"data":{"artifactReference":{"id":"mcp-1","kind":"artifact"}}}`))
+		case "/sdk-config/mcp-1/deactivate":
+			sawDeactivate = true
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Fatalf("unexpected MCP remove request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"mcp", "support@1.0.0", "remove"})
+	if !sawResolution || !sawDeactivate || !strings.Contains(out, "Removed MCP server") {
+		t.Fatalf("MCP remove = resolution:%t deactivate:%t output:%q", sawResolution, sawDeactivate, out)
 	}
 }

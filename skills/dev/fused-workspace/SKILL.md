@@ -47,7 +47,7 @@ parse outright.
 `service_config`/`secrets` -- **it cannot create the bucket itself.** Apply
 resolves `<bucket-name>` against a bucket that must already exist and fails
 with "bucket not found" if it doesn't; it never creates one implicitly. Run
-`fused-cli bucket <name> create` first (see `fused-bucket`) for any bucket
+`fused-cli bucket create <name>` first (see `fused-bucket`) for any bucket
 name you're about to reference here.
 
 There is no `runtime_config` field on a workspace service anymore -- it was
@@ -56,7 +56,7 @@ removed with no backward compatibility once `kind: webhook` shipped (a
 outright with a "field not found" error; that's the intended hard rejection,
 not a bug). Everything that used to live there moved out: webhook
 registration is now its own `kind: webhook` config file, spanning one or more
-services and attached to whichever SDK/MCP artifact should receive delivery
+services and attached to whichever SDK should receive delivery
 (see `fused-webhook`); `auth`/`connect` moved to
 `buckets.<bucket>.service_config.<slug>` (see `fused-bucket`);
 `pagination`/`pagination_overrides` moved under `execution_policy.pagination`
@@ -88,19 +88,19 @@ adding one does not deactivate anything by itself. It records intent (a
 target date, a reason) while the service or version stays fully active, so
 existing SDK/MCP configs that reference it keep working while consumers
 migrate. Actually deactivating it later is a separate step: `workspace
-service <slug> remove` (whole service) or `workspace service <slug> version
-remove <v>` (one version).
+service delete <slug>` (whole service) or `workspace service version delete
+<slug> <v>` (one version).
 
 Removal itself is blocked by default if any SDK/MCP config in the same
 Registry account still references the service or version being removed --
 the plan comes back with a blocker requiring an explicit decision rather
-than silently breaking those configs. Pass `--force` (service-level) or
-`--version-force` (version-level) to accept that and remove it anyway.
+than silently breaking those configs. Pass `--force` on the corresponding
+delete command to accept that and remove it anyway.
 There's no automatic date-triggered cutover from `effective_at` alone --
-treat it as the value you'll pass to the eventual `remove --force` once
+treat it as the value you'll pass to the eventual `delete --force` once
 you've actually confirmed nothing still needs the service.
 
-Overriding the blocker with `--force`/`--version-force` also writes a
+Overriding the blocker with `--force` also writes a
 `workspace_service_removed`/`workspace_version_removed` notification -- a
 record that you made that decision, not a new warning. See
 `fused-notifications` for what that (and the separate, proactive
@@ -117,21 +117,44 @@ This list may be behind the CLI's actual flags/subcommands -- run
 fused-cli workspace plan
 fused-cli workspace apply
 fused-cli workspace services list
-fused-cli workspace service <slug> versions
-fused-cli workspace service <slug> operations
-fused-cli workspace service <slug> webhooks   # read-only: lists this service's kind: webhook registrations, see fused-webhook
-fused-cli workspace service <slug> add --version <v>
-fused-cli workspace service <slug> remove [--force]
-fused-cli workspace service <slug> deprecate --effective-at <date> --reason "..."
-fused-cli workspace service <slug> version add <v|latest>
-fused-cli workspace service <slug> version remove <v> [--version-force]
-fused-cli workspace service <slug> version deprecate <v>
-fused-cli workspace service <slug> connect --bucket <name> --user-ref <ref> [--scope ...]
+fused-cli workspace service versions <slug>
+fused-cli workspace service operations <slug>
+fused-cli workspace service webhooks <slug>   # read-only: lists this service's kind: webhook registrations, see fused-webhook
+fused-cli workspace service add <slug> --version <v>
+fused-cli workspace service delete <slug> [--force]
+fused-cli workspace service deprecate <slug> --at <date> --reason "..."
+fused-cli workspace service version add <slug> <v|latest>
+fused-cli workspace service version delete <slug> <v> [--force]
+fused-cli workspace service version deprecate <slug> <v> --at <date> [--reason "..."]
+fused-cli workspace service connect <slug> --bucket <bucket-name-or-id> --user-ref <ref> [--scope ...]
 ```
 
 `connect` starts an OAuth/OIDC session for one user against a bucket -- the
 full flow (buckets, secrets, connection resources) is documented in
 `fused-bucket`.
+
+Before adding a service, always run `workspace services list` and reuse a
+suitable already-enabled service when present. Use `workspace has "<exact
+service name>"` only as an additional exact check; it matches the name, not the
+slug. Search the Registry with `service search --q` only when the workspace has
+no suitable service.
+
+## Permissions for activation
+
+Finding a Registry service does not imply permission to add it. Registry search
+requires `catalogue.read`; planning a workspace change requires `workspace.read`
+and `service.manage` for every changed service; applying it also requires
+`workspace.update`. Built-in Admin and Owner workspace roles provide these
+activation permissions, while Builder and Viewer do not.
+
+If adding, planning, or applying reports a permission denial, stop and preserve
+the local draft. Tell the user that the service was found but could not be added,
+and report the missing permission and resource instead of retrying with another
+key or attempting to grant access. An access administrator can use `team access
+workspace set <team> admin` or an appropriate scoped service binding; read the
+`fused-cli` skill's `reference/access-management.md`. A scoped `service.manage`
+grant does not by itself provide the workspace-level `workspace.update` needed
+to apply activation.
 
 ## Production warning
 

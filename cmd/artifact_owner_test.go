@@ -14,7 +14,7 @@ func TestSDKPlanOwnerTeamFlagUsesPlanMetadataContract(t *testing.T) {
 		sdkPlanOwnerTeam = ""
 		_ = sdkPlanCmd.Flags().Set("owner-team", "")
 	})
-	const ownerTeamID = "11111111-1111-1111-1111-111111111111"
+	const ownerTeamSlug = "platform"
 	dir := t.TempDir()
 	path := writeSprintConfig(t, dir, "owner.yaml", `
 apiVersion: fused/v1
@@ -39,8 +39,8 @@ services:
 	}))
 	defer server.Close()
 
-	out := runCommandInDirOutput(t, dir, server.URL, []string{"sdk", "plan", "-f", path, "--owner-team", ownerTeamID})
-	if request["owner_team_id"] != ownerTeamID || !strings.Contains(out, "Plan created") {
+	out := runCommandInDirOutput(t, dir, server.URL, []string{"sdk", "plan", "-f", path, "--owner-team", ownerTeamSlug})
+	if request["owner_team"] != ownerTeamSlug || !strings.Contains(out, "Plan created") {
 		t.Fatalf("request/output = %#v / %q", request, out)
 	}
 	if sdkApplyCmd.Flags().Lookup("owner-team") != nil {

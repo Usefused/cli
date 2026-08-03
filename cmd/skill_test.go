@@ -30,7 +30,7 @@ func setTestRawContentBaseURL(t *testing.T, url string) {
 // --- skillSpec / manifest ---------------------------------------------------
 
 func TestSkillSpecByName(t *testing.T) {
-	for _, name := range []string{"fused-cli", "fused-workspace", "fused-sdk", "fused-mcp", "fused-bucket", "fused-config"} {
+	for _, name := range []string{"fused-cli", "fused-workspace", "fused-sdk", "fused-mcp", "fused-bucket", "fused-config", "fused-webhook", "fused-notifications"} {
 		if _, ok := skillSpecByName(name); !ok {
 			t.Errorf("expected a spec for %q", name)
 		}
@@ -65,6 +65,32 @@ func TestSkillManifests_SkillMDFirstNoDuplicates(t *testing.T) {
 			seen[f] = true
 		}
 	}
+}
+
+func TestFusedCLISkillShipsAccessManagementReference(t *testing.T) {
+	spec, ok := skillSpecByName("fused-cli")
+	if !ok {
+		t.Fatal("fused-cli skill spec not found")
+	}
+	for _, path := range spec.manifest {
+		if path == "reference/access-management.md" {
+			return
+		}
+	}
+	t.Fatalf("fused-cli manifest does not include access management reference: %v", spec.manifest)
+}
+
+func TestFusedCLISkillShipsBuildWorkflowReference(t *testing.T) {
+	spec, ok := skillSpecByName("fused-cli")
+	if !ok {
+		t.Fatal("fused-cli skill spec not found")
+	}
+	for _, path := range spec.manifest {
+		if path == "reference/build-sdk-or-mcp.md" {
+			return
+		}
+	}
+	t.Fatalf("fused-cli manifest does not include build workflow reference: %v", spec.manifest)
 }
 
 // --- version folder / URL shape ---------------------------------------------

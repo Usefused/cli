@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
@@ -11,81 +12,18 @@ import (
 )
 
 var serviceCmd = &cobra.Command{
-	Use:   "service <service-slug> [versions]",
+	Use:   "service",
 	Short: "Inspect Registry services",
-	Args:  validateServiceArgs,
-	RunE: WithTelemetry("cli.service", func(cmd *cobra.Command, args []string) error {
-		return runServiceAction(cmd, args)
-	}),
-	ValidArgsFunction: completeServiceArgs,
+	Args:  cobra.NoArgs,
+	RunE:  requireSubcommand,
 }
 
-var serviceShowVersions bool
 var serviceListFlags listFlags
+var serviceSearchQuery string
+var serviceSearchJSON bool
 var serviceOperationsQuery string
 var serviceOperationsVersion string
-
-func validateServiceArgs(cmd *cobra.Command, args []string) error {
-	if len(args) == 0 {
-		return nil
-	}
-	if len(args) > 2 {
-		return fmt.Errorf("service accepts at most <service-slug> and one action")
-	}
-	if len(args) == 2 && !isServiceAction(args[1]) {
-		return fmt.Errorf("unknown service action %q", args[1])
-	}
-	return nil
-}
-
-func isServiceAction(action string) bool {
-	_, ok := serviceActionHandlers()[action]
-	return ok
-}
-
-func runServiceAction(cmd *cobra.Command, args []string) error {
-	if len(args) == 0 {
-		return cmd.Help()
-	}
-	if serviceShowVersions {
-		return runServiceVersions(cmd, args[0])
-	}
-	if len(args) != 2 {
-		return cmd.Help()
-	}
-	action, ok := serviceActionHandlers()[args[1]]
-	if !ok {
-		return fmt.Errorf("unknown service action %q", args[1])
-	}
-	return action(cmd, args[0])
-}
-
-type serviceActionHandler func(*cobra.Command, string) error
-
-func serviceActionHandlers() map[string]serviceActionHandler {
-	return map[string]serviceActionHandler{
-		"versions":   runServiceVersions,
-		"show":       runServiceShow,
-		"operations": runServiceOperations,
-		"webhooks":   runServiceWebhooks,
-	}
-}
-
-func completeServiceArgs(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-	if len(args) == 1 {
-		actions := []string{"versions", "show", "operations", "webhooks"}
-		var matches []string
-		for _, a := range actions {
-			if toComplete == "" || strings.HasPrefix(a, toComplete) {
-				matches = append(matches, a)
-			}
-		}
-		if len(matches) > 0 {
-			return matches, cobra.ShellCompDirectiveNoFileComp
-		}
-	}
-	return nil, cobra.ShellCompDirectiveNoFileComp
-}
+var serviceWebhooksVersion string
 
 func runServiceOperations(cmd *cobra.Command, serviceSlug string) error {
 	client, err := getAPIClient()
@@ -141,7 +79,7 @@ func runServiceWebhooks(cmd *cobra.Command, serviceSlug string) error {
 	if service == nil {
 		return fmt.Errorf("service %s not found", serviceSlug)
 	}
-	webhooks, err := client.FetchWebhooks(service.ID, serviceOperationsVersion)
+	webhooks, err := client.FetchWebhooks(service.ID, serviceWebhooksVersion)
 	if err != nil {
 		return err
 	}
@@ -163,12 +101,81 @@ var serviceVersionsCmd = &cobra.Command{
 	}),
 }
 
+type serviceSearchResult struct {
+	Name      string `json:"name"`
+	Slug      string `json:"slug"`
+	ServiceID string `json:"service_id"`
+	IsOwner   bool   `json:"is_owner"`
+	IsPublic  bool   `json:"is_public"`
+}
+
+var serviceSearchCmd = &cobra.Command{
+	Use:   "search",
+	Short: "Search Registry services when the slug is unknown",
+	Args:  cobra.NoArgs,
+	RunE: WithTelemetry("cli.service.search", func(cmd *cobra.Command, _ []string) error {
+		query := strings.TrimSpace(serviceSearchQuery)
+		if query == "" {
+			return fmt.Errorf("--q must not be empty")
+		}
+		client, err := getAPIClient()
+		if err != nil {
+			return err
+		}
+		services, err := client.SearchServices(query)
+		if err != nil {
+			return err
+		}
+		results := make([]serviceSearchResult, 0, len(services))
+		for _, service := range services {
+			results = append(results, serviceSearchResult{
+				Name:      service.Name,
+				Slug:      service.DisplaySlug(),
+				ServiceID: service.ID,
+				IsOwner:   service.IsOwner,
+				IsPublic:  service.IsPublic,
+			})
+		}
+		if serviceSearchJSON {
+			return json.NewEncoder(cmd.OutOrStdout()).Encode(results)
+		}
+		if len(results) == 0 {
+			fmt.Fprintf(cmd.OutOrStdout(), "No Registry services found for query %q.\n", query)
+			return nil
+		}
+		w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 8, 2, ' ', 0)
+		fmt.Fprintln(w, "NAME\tSLUG\tSERVICE_ID")
+		for _, result := range results {
+			fmt.Fprintf(w, "%s\t%s\t%s\n", result.Name, result.Slug, result.ServiceID)
+		}
+		return w.Flush()
+	}),
+}
+
 var serviceShowCmd = &cobra.Command{
 	Use:   "show <service-slug>",
 	Short: "Show base URL and servers for a service",
 	Args:  cobra.ExactArgs(1),
 	RunE: WithTelemetry("cli.service.show", func(cmd *cobra.Command, args []string) error {
 		return runServiceShow(cmd, args[0])
+	}),
+}
+
+var serviceOperationsCmd = &cobra.Command{
+	Use:   "operations <service-slug>",
+	Short: "List or search service operations",
+	Args:  cobra.ExactArgs(1),
+	RunE: WithTelemetry("cli.service.operations", func(cmd *cobra.Command, args []string) error {
+		return runServiceOperations(cmd, args[0])
+	}),
+}
+
+var serviceWebhooksCmd = &cobra.Command{
+	Use:   "webhooks <service-slug>",
+	Short: "List service webhooks",
+	Args:  cobra.ExactArgs(1),
+	RunE: WithTelemetry("cli.service.webhooks", func(cmd *cobra.Command, args []string) error {
+		return runServiceWebhooks(cmd, args[0])
 	}),
 }
 
@@ -231,10 +238,11 @@ func printServiceVersions(out io.Writer, service string, versions []cliapi.Servi
 
 func init() {
 	RootCmd.AddCommand(serviceCmd)
-	serviceCmd.Flags().BoolVar(&serviceShowVersions, "versions", false, "List available versions for the service slug; supports @provider/slug")
-	serviceCmd.Flags().StringVar(&serviceOperationsQuery, "q", "", "Search query for service operations")
-	serviceCmd.Flags().StringVar(&serviceOperationsVersion, "version", "", "Service version for operations/webhooks")
-	addListFlags(serviceCmd, &serviceListFlags)
-	serviceCmd.AddCommand(serviceVersionsCmd)
-	serviceCmd.AddCommand(serviceShowCmd)
+	serviceCmd.AddCommand(serviceSearchCmd, serviceVersionsCmd, serviceShowCmd, serviceOperationsCmd, serviceWebhooksCmd)
+	serviceSearchCmd.Flags().StringVar(&serviceSearchQuery, "q", "", "Service name or capability to search for")
+	serviceSearchCmd.Flags().BoolVar(&serviceSearchJSON, "json", false, "Print results as JSON")
+	serviceOperationsCmd.Flags().StringVar(&serviceOperationsQuery, "q", "", "Search query")
+	serviceOperationsCmd.Flags().StringVar(&serviceOperationsVersion, "version", "", "Service version")
+	addListFlags(serviceOperationsCmd, &serviceListFlags)
+	serviceWebhooksCmd.Flags().StringVar(&serviceWebhooksVersion, "version", "", "Service version")
 }

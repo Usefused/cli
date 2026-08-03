@@ -73,6 +73,15 @@ func recordAppliedChange(ctx context.Context, action, resourceKind string) {
 	))
 }
 
+func recordAppliedChangeIf(ctx context.Context, action, resourceKind string, changed bool) {
+	// A successful idempotent request is useful operationally, but it is not
+	// evidence that state changed and must not be represented as such in audit data.
+	if !changed {
+		return
+	}
+	recordAppliedChange(ctx, action, resourceKind)
+}
+
 func withApplyAudit(cmd *cobra.Command, opts applyOptions) applyOptions {
 	opts.auditCtx = cmd.Context()
 	opts.auditAction = cmd.CommandPath()

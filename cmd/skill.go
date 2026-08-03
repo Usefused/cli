@@ -27,8 +27,8 @@ type skillSpec struct {
 	// never needs network access to be useful.
 	summary string
 	// manifest lists every file (relative to this skill's own root) that
-	// makes up the skill: a SKILL.md plus, for fused-config, one reference
-	// doc per cross-cutting config domain. This is the same SKILL.md +
+	// makes up the skill: a SKILL.md plus any progressively loaded reference
+	// documents. This is the same SKILL.md +
 	// reference/ progressive disclosure shape Claude Code, Codex, and
 	// Antigravity skills all document natively (a "references" or
 	// "resources" subfolder alongside SKILL.md).
@@ -36,22 +36,25 @@ type skillSpec struct {
 }
 
 // skillSpecs is every skill this CLI ships. fused-cli is the entry point
-// (setup, global config, and an index of the other four); fused-workspace/
-// fused-sdk/fused-mcp/fused-bucket each own one config kind's commands and
-// shape; fused-config holds cross-cutting config owned by no single kind
-// (execution policy, connection profiles, and their OpenAPI/Postman
-// equivalent) that the other four link out to instead of duplicating.
+// (setup, access management, global config, and an index); fused-workspace/
+// fused-sdk/fused-mcp/fused-webhook/fused-bucket each own one config kind's
+// commands and shape; fused-config holds cross-cutting config owned by no
+// single kind (execution policy, connection profiles, and their
+// OpenAPI/Postman equivalent); fused-notifications explains plan/apply
+// notices. Domain skills link to one another instead of duplicating details.
 var skillSpecs = []skillSpec{
 	{
 		name:    "fused-cli",
-		summary: "Setup, global config (engine-url/api-key), and an index of the other skills",
+		summary: "Setup, credentials, team/user access management, and an index of the other skills",
 		manifest: []string{
 			"SKILL.md",
+			"reference/access-management.md",
+			"reference/build-sdk-or-mcp.md",
 		},
 	},
 	{
 		name:    "fused-workspace",
-		summary: "Workspace service allowlist: enabling services/versions, runtime_config, deprecations",
+		summary: "Workspace service allowlist: enabling services and versions, policy, deprecations",
 		manifest: []string{
 			"SKILL.md",
 		},
@@ -65,7 +68,7 @@ var skillSpecs = []skillSpec{
 	},
 	{
 		name:    "fused-mcp",
-		summary: "Generating an Engine-hosted MCP server: operation/webhook selection, calling convention",
+		summary: "Deploying an Engine-hosted MCP server: operation selection and calling convention",
 		manifest: []string{
 			"SKILL.md",
 		},
@@ -85,6 +88,20 @@ var skillSpecs = []skillSpec{
 			"reference/execution-policies.md",
 			"reference/connection-profiles.md",
 			"reference/openapi-postman.md",
+		},
+	},
+	{
+		name:    "fused-webhook",
+		summary: "Inbound webhook registration and SDK webhook attachments",
+		manifest: []string{
+			"SKILL.md",
+		},
+	},
+	{
+		name:    "fused-notifications",
+		summary: "Interpret Registry and workspace notifications shown by plan and apply",
+		manifest: []string{
+			"SKILL.md",
 		},
 	},
 }

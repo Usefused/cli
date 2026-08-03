@@ -1,6 +1,6 @@
 ---
 name: fused-cli
-description: "Use this skill when the user wants to set up or use fused-cli itself -- installing it, authenticating against a Fused Engine (engine-url/api-key), understanding global flags, importing API specs or docs URLs, or figuring out which fused-cli skill covers a specific config domain (workspace, SDK, MCP, webhook registration, buckets, execution policy, connection profiles, OpenAPI/Postman connect config, workspace notifications). Also use this skill when there is no Engine running yet to connect to -- starting a self-hosted Fused Engine (binary or Docker) with a license key. Trigger on 'fused-cli', 'Fused CLI setup', 'engine-url', 'api-key', 'import docs', 'import an API', 'start the engine', 'run the engine', 'FUSED_LICENSE_KEY', 'engine won't start', 'connection refused', or any general 'how do I configure/run Fused' question before it's clear which domain it belongs to. Once the domain is clear, read one of the seven domain skills (fused-workspace, fused-sdk, fused-mcp, fused-webhook, fused-bucket, fused-config, fused-notifications) for the actual config shape and subcommands."
+description: "Use this skill when the user wants to set up or use fused-cli itself, or starts with a business goal and wants Fused to produce a ready SDK or MCP server: installing it, authenticating against a Fused Engine, discovering Registry services when the slug is unknown, understanding global flags, managing workspace teams or people, assigning RBAC or workspace-wide resource access, issuing personal credentials, selecting an owner team, importing API specs or docs URLs, or choosing a domain skill. Also use it when no Engine is running yet. Trigger on 'fused-cli', 'Fused CLI setup', 'build an SDK', 'create an MCP', 'integration workflow', 'find a service', 'engine-url', 'api-key', 'team access', 'workspace access', 'workspace role', 'add user', 'personal credential', 'owner-team', 'required permissions', 'import docs', 'start the engine', 'FUSED_LICENSE_KEY', or connection failures. Read the relevant domain skill once the task concerns a specific config shape."
 ---
 
 # fused-cli
@@ -47,13 +47,15 @@ actually reachable.
 
 ## First-time setup
 
-Every command that talks to an Engine needs two things, resolved in this
-order: flag -> env var -> local config file -> error.
+Every command that talks to an Engine needs two things. The Engine URL resolves
+as flag -> environment -> local config -> error. The credential resolves as
+flag -> `FUSED_API_KEY` -> `FUSED_LICENSE_KEY` -> local config -> error.
 
 - Engine URL: `--engine-url` flag, `FUSED_ENGINE_URL` env var, or
   `fused-cli config set engine-url <url>`
-- API key: `--key` flag, `FUSED_API_KEY` env var, or
-  `fused-cli config set api-key <key>`
+- Credential: `--key` flag, `FUSED_API_KEY` personal/service credential,
+  `FUSED_LICENSE_KEY` bootstrap Owner credential, or `fused-cli config set
+  api-key <key>`. `FUSED_API_KEY` deliberately wins when both variables exist.
 
 ```shell
 fused-cli config set engine-url https://engine.example.com
@@ -98,6 +100,28 @@ current flags and any subcommands these files don't list yet. `fused-cli
 you need the whole surface rather than one subcommand. Treat a command list
 in any of these skills as a starting point for what's likely available, not
 the final word on exact syntax.
+
+## Build an SDK or MCP from a business goal
+
+When the user describes what they want to accomplish rather than supplying an
+existing config, read [reference/build-sdk-or-mcp.md](reference/build-sdk-or-mcp.md)
+and run its workspace-first discovery workflow. It covers setup, reuse of
+enabled workspace services, Registry fallback, workspace activation, operation
+selection, credentials, config authoring, and the final ready-to-use handoff.
+Do not guess service slugs or operation IDs.
+
+## Team ownership and access management
+
+Use `team` and `user` for RBAC, and `workspace access` when a specific bucket
+or SDK/MCP permission scope should be usable by everyone in the local workspace.
+The access commands still call that shared Engine resource `artifact`; this is
+an internal RBAC label, not a claim that MCP produces a downloadable artifact. These are
+immediate access-management commands, not config-file fields. Read
+[reference/access-management.md](reference/access-management.md) before
+changing membership, roles, resource access, personal credentials, or resource
+ownership. Prefer human names/slugs for normal commands, and use the displayed
+full UUID when the same `name@version` exists as both an SDK and MCP server. Use `team
+eligible-owners` before planning a new SDK, MCP server, or webhook.
 
 ## Every config file shares this shape
 
@@ -205,9 +229,8 @@ user tokens -- `auth`/`connect` live under `buckets.<bucket>.service_config.
 app is a separate, immediate admin action, not a workspace.yaml field:
 
 ```shell
-fused-cli connect jira set \
-  'client_id=...;client_secret=...;redirect_uri=https://engine.example.com/workspace/connect/callback' \
-  --bucket customer-accounts
+printf '%s' 'client_id=...;client_secret=...;redirect_uri=https://engine.example.com/workspace/connect/callback' | \
+  fused-cli connect set jira --bucket company-credentials --value-stdin
 ```
 
 (Omit the value and add `-i` to be prompted per field instead, or see
@@ -219,7 +242,7 @@ requiring every field on every apply, one supporting partial updates) was
 duplicated decision-making with no upside.
 
 ```shell
-fused-cli connect jira get --bucket customer-accounts
+fused-cli connect get jira --bucket company-credentials
 ```
 
 Checks what's actually registered (`auth_type`/`enabled`/`redirect_uri` plus
@@ -234,7 +257,7 @@ add one explicitly.
 Start one user's OAuth session (see `fused-bucket`):
 
 ```shell
-fused-cli workspace service jira connect --bucket customer-accounts \
+fused-cli workspace service connect jira --bucket company-credentials \
   --user-ref user_123 --scope read:jira-work --scope write:jira-work --scope offline_access
 ```
 
@@ -280,10 +303,10 @@ await sdk.Jira.issues.getIssue({
 });
 ```
 
-Swapping the last two steps for `kind: mcp` (see `fused-mcp`) instead of
-`kind: sdk` stands up a hosted MCP server against the same bucket rather
-than generating a package -- the workspace/bucket/connect steps above don't
-change.
+Changing the file to `kind: mcp`, then running `fused-cli mcp plan` and
+`fused-cli mcp apply` (see `fused-mcp`), deploys an Engine-hosted MCP server
+against the same bucket rather than generating a package. The
+workspace/bucket/connect steps above do not change.
 
 ## Which skill to read next
 
@@ -292,7 +315,7 @@ change.
 | `fused-workspace` | The service allowlist: enabling services/versions, execution policy, deprecations |
 | `fused-sdk` | Generating a typed SDK package from selected operations/webhooks |
 | `fused-mcp` | Generating an Engine-hosted MCP server from selected operations (MCP cannot select webhooks) |
-| `fused-webhook` | Registering inbound webhook ingress (`kind: webhook`) and attaching it to an SDK/MCP artifact via `webhook_attachment` so that artifact actually receives delivery |
+| `fused-webhook` | Registering inbound webhook ingress (`kind: webhook`) and attaching it to an SDK via `webhook_attachment` so that SDK receives delivery |
 | `fused-bucket` | Credential containers: secrets, static values, registering a service's OAuth/OIDC app, starting an OAuth connect session, managing a connected user's resources |
 | `fused-config` | Cross-cutting config owned by no single concept above: execution policy (rate limits/retries/pagination/outbound webhook verification, local-workspace-effect vs. Registry-publish), connection profiles (auth + dynamic request routing), and the OpenAPI/Postman `x-fused-connect` equivalent |
 | `fused-notifications` | Reading, not authoring: what a `plan`/`apply` notification block means, `registry_*` vs. `workspace_*` types, severity, and how/where one gets marked read or dismissed (UI only, not `fused-cli`) |

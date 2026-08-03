@@ -1,11 +1,16 @@
 ---
 name: fused-sdk
-description: "Use when the user wants to generate or manage a typed SDK package from a Fused workspace using fused-cli -- selecting services/operations, receiving webhook events via webhook_attachment, scoping auth or OAuth consent for the SDK, or running sdk plan/apply/validate/download/sync/token. Trigger on 'generate an SDK', 'fused-cli sdk', 'kind: sdk' files, or SDK language/version questions. For MCP server generation read fused-mcp instead; for registering the webhook itself (kind: webhook) read fused-webhook; for the auth_type/connect scope shape itself read fused-config."
+description: "Use when the user wants to generate or manage a typed SDK package from a Fused workspace using fused-cli sdk -- selecting services/operations, receiving webhook events, scoping auth, or running SDK plan/apply/validate/download/sync/token commands. Trigger on 'generate an SDK', 'fused-cli sdk', or 'kind: sdk' files. For Engine-hosted MCP runtime behavior read fused-mcp instead."
 ---
 
-# SDK artifact config
+# SDK package config
 
-`kind: sdk`, managed by `fused-cli sdk ...`. Declares a typed SDK package
+If the user starts with a business goal and no existing config, first follow
+the `fused-cli` skill's `reference/build-sdk-or-mcp.md` workflow. Use this skill
+for the SDK-specific config and lifecycle once Engine setup, service discovery,
+workspace activation, and credential requirements are understood.
+
+`kind: sdk`, managed by `fused-cli sdk ...`, declares a typed SDK package
 generated from a bucket's already-configured services.
 
 ```yaml
@@ -29,7 +34,7 @@ services:
         value: ${bucket.env.MY_VAR}           # Supports ${bucket.env.*}, ${bucket.values.*} (identical alias), and ${bucket.secrets.*}
 ```
 
-`injections[].value` tags always resolve against *this artifact's own* `bucket:` -- there's no way to name a different bucket here, unlike `kind: webhook`'s `${bucket.<name>.secret.<key>}` (see `fused-webhook`). A value can also merge a tag with surrounding text (e.g. `"Bearer ${bucket.secrets.API_KEY}"`), which a webhook's secret field cannot. Writing a webhook-style named-bucket reference here (e.g. `${bucket.prod.secrets.API_KEY}`) is rejected at dispatch time with an explicit error naming the unsupported reference, rather than one of the three ambient forms above.
+`injections[].value` tags always resolve against *this SDK's own* `bucket:` -- there's no way to name a different bucket here, unlike `kind: webhook`'s `${bucket.<name>.secret.<key>}` (see `fused-webhook`). A value can also merge a tag with surrounding text (e.g. `"Bearer ${bucket.secrets.API_KEY}"`), which a webhook's secret field cannot. Writing a webhook-style named-bucket reference here (e.g. `${bucket.prod.secrets.API_KEY}`) is rejected at dispatch time with an explicit error naming the unsupported reference, rather than one of the three ambient forms above.
 
 `webhooks`/`webhooks_select_all` only make sense once a `kind: webhook`
 artifact exists and is named via top-level `webhook_attachment` -- this
@@ -63,13 +68,13 @@ This list may be behind the CLI's actual flags/subcommands -- run
 fused-cli sdk plan
 fused-cli sdk apply
 fused-cli sdk validate
-fused-cli sdk download
-fused-cli sdk sync [--sync-version]
-fused-cli sdk token <sdk-id> generate|list|revoke <name>
+fused-cli sdk download [sdk-name[@version]]
+fused-cli sdk sync <sdk-name> [--sync-version]
+fused-cli sdk token <sdk-name[@version]> generate|list|revoke <name>
 fused-cli sdk service <slug> add
 fused-cli sdk service <slug> remove
-fused-cli sdk service <slug> operation add|remove
-fused-cli sdk service <slug> webhook add|remove
+fused-cli sdk operation <slug> add|remove
+fused-cli sdk webhook <slug> add|remove
 ```
 
 `sdk token` manages named, revocable API tokens for calling an already
@@ -78,12 +83,21 @@ set api-key`, which authenticates CLI-to-Engine management calls, not a
 generated SDK's own runtime traffic) -- `generate` prints the token exactly
 once, so capture it immediately.
 
+SDK ownership does not have to match its audience. The owning person or team
+keeps management authority, while `fused-cli workspace access artifact grant
+<sdk-name[@version]>` grants bounded workspace-wide use through the Engine's
+shared RBAC resource. This does not replace
+the generated SDK's runtime token or reveal it; token issuance/revocation stays
+with SDK managers. Likewise, a platform-owned bucket shared with
+`workspace access bucket grant <bucket-name>` can be selected by any eligible
+owning team without granting those teams secret management.
+
 `sdk sync` full-mirrors the most recently generated SDK's actual
 service/operation selections back into this file: anything the remote SDK
 no longer selects is removed locally, not just flagged, and the remote's
 values win on any conflict. The top-level `version` field is treated as
 identity, not state, so sync leaves it alone by default -- pass
-`--sync-version` to explicitly bump it to match the generated artifact.
+`--sync-version` to explicitly bump it to match the generated SDK.
 
 Generated SDK calls only ever carry Fused selectors (`endUserRef`,
 `authType`, `resourceId`) -- never a raw provider token, API key, or

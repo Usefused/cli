@@ -2,71 +2,44 @@ package cmd
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/spf13/cobra"
 )
 
 var valueCmd = &cobra.Command{
-	Use:   "value <bucket-id> [set|list|remove] [args...]",
+	Use:   "value",
 	Short: "Manage workspace bucket values",
-	Args:  validateValueArgs,
-	// Why: Write to OTEL to audit user/agent-triggered mutative execution.
-	RunE: WithTelemetry("cli.value", func(cmd *cobra.Command, args []string) error {
-		return runValueAction(cmd, args)
+	Args:  cobra.NoArgs,
+	RunE:  requireSubcommand,
+}
+
+var valueListFlags listFlags
+
+var valueSetCmd = &cobra.Command{
+	Use:   "set <bucket-name-or-id> <service-slug> <location> <key-name> <value>",
+	Short: "Set a non-secret bucket value",
+	Args:  cobra.ExactArgs(5),
+	RunE: WithTelemetry("cli.value.set", func(cmd *cobra.Command, args []string) error {
+		return runValueSet(cmd, args[0], args[1], args[3], args[2], args[4])
 	}),
-	ValidArgsFunction: completeValueArgs,
 }
 
-func validateValueArgs(cmd *cobra.Command, args []string) error {
-	if len(args) == 0 {
-		return nil
-	}
-	if len(args) < 2 {
-		return fmt.Errorf("value requires an action (e.g. set, list, remove)")
-	}
-	action := args[1]
-	expected, ok := valueActionArgCounts()[action]
-	if !ok {
-		return fmt.Errorf("unknown value action %q", action)
-	}
-	if len(args) != expected {
-		return fmt.Errorf("%s accepts exactly %d arg(s) after action", action, expected-2)
-	}
-	return nil
+var valueListCmd = &cobra.Command{
+	Use:   "list <bucket-name-or-id>",
+	Short: "List non-secret values in a bucket",
+	Args:  cobra.ExactArgs(1),
+	RunE: WithTelemetry("cli.value.list", func(cmd *cobra.Command, args []string) error {
+		return runValueList(cmd, args[0])
+	}),
 }
 
-func valueActionArgCounts() map[string]int {
-	return map[string]int{"set": 6, "list": 2, "remove": 4}
-}
-
-func runValueAction(cmd *cobra.Command, args []string) error {
-	if len(args) == 0 {
-		return cmd.Help()
-	}
-
-	bucketID := args[0]
-	action := args[1]
-
-	switch action {
-	case "set":
-		// CLI quirk resolution: Rearranged the argument order for better UX.
-		// The command now reads naturally: "set <service> <location> <key> <value>"
-		// Example: "value default set plunk env FROM_EMAIL me@example.com"
-		serviceSlug := args[2]
-		location := args[3]
-		keyName := args[4]
-		value := args[5]
-		return runValueSet(cmd, bucketID, serviceSlug, keyName, location, value)
-	case "list":
-		return runValueList(cmd, bucketID)
-	case "remove":
-		serviceSlug := args[2]
-		keyName := args[3]
-		return runValueRemove(cmd, bucketID, serviceSlug, keyName)
-	default:
-		return fmt.Errorf("unknown action %s", action)
-	}
+var valueDeleteCmd = &cobra.Command{
+	Use:   "delete <bucket-name-or-id> <service-slug> <key-name>",
+	Short: "Delete a non-secret bucket value",
+	Args:  cobra.ExactArgs(3),
+	RunE: WithTelemetry("cli.value.delete", func(cmd *cobra.Command, args []string) error {
+		return runValueDelete(cmd, args[0], args[1], args[2])
+	}),
 }
 
 func runValueSet(cmd *cobra.Command, bucketID, serviceSlug, keyName, location, value string) error {
@@ -74,7 +47,7 @@ func runValueSet(cmd *cobra.Command, bucketID, serviceSlug, keyName, location, v
 	if err != nil {
 		return err
 	}
-	resolvedBucketID, err := resolveBucketIDPrompt(client, bucketID)
+	resolvedBucketID, err := resolveExplicitBucketID(bucketID)
 	if err != nil {
 		return err
 	}
@@ -88,7 +61,8 @@ func runValueSet(cmd *cobra.Command, bucketID, serviceSlug, keyName, location, v
 	if err != nil {
 		return err
 	}
-	fmt.Printf("Bucket value '%s' set successfully.\n", keyName)
+	recordAppliedChange(cmd.Context(), cmd.CommandPath(), "bucket_value")
+	fmt.Fprintf(cmd.OutOrStdout(), "Bucket value %q set.\n", keyName)
 	return nil
 }
 
@@ -97,27 +71,28 @@ func runValueList(cmd *cobra.Command, bucketID string) error {
 	if err != nil {
 		return err
 	}
-	resolvedBucketID, err := resolveBucketID(client, bucketID)
+	resolvedBucketID, err := resolveExplicitBucketID(bucketID)
 	if err != nil {
 		return err
 	}
 
-	values, err := client.ListBucketValues(resolvedBucketID)
+	page, err := client.ListBucketValuesPage(resolvedBucketID, valueListFlags.pageOptions())
 	if err != nil {
 		return err
 	}
-	for _, v := range values {
-		fmt.Printf("Service: %s, Key: %s, Location: %s\n", v.ServiceID, v.KeyName, v.Location)
+	for _, value := range page.Items {
+		fmt.Fprintf(cmd.OutOrStdout(), "Service: %s, Key: %s, Location: %s\n", value.ServiceID, value.KeyName, value.Location)
 	}
+	printPageSummary(cmd.OutOrStdout(), page.Total, valueListFlags)
 	return nil
 }
 
-func runValueRemove(cmd *cobra.Command, bucketID, serviceSlug, keyName string) error {
+func runValueDelete(cmd *cobra.Command, bucketID, serviceSlug, keyName string) error {
 	client, err := getAPIClient()
 	if err != nil {
 		return err
 	}
-	resolvedBucketID, err := resolveBucketID(client, bucketID)
+	resolvedBucketID, err := resolveExplicitBucketID(bucketID)
 	if err != nil {
 		return err
 	}
@@ -131,44 +106,13 @@ func runValueRemove(cmd *cobra.Command, bucketID, serviceSlug, keyName string) e
 	if err != nil {
 		return err
 	}
-	fmt.Printf("Bucket value '%s' removed successfully.\n", keyName)
+	recordAppliedChange(cmd.Context(), cmd.CommandPath(), "bucket_value")
+	fmt.Fprintf(cmd.OutOrStdout(), "Bucket value %q deleted.\n", keyName)
 	return nil
-}
-
-func completeValueArgs(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-	if len(args) == 0 {
-		client, err := getAPIClient()
-		if err != nil {
-			return nil, cobra.ShellCompDirectiveNoFileComp
-		}
-		buckets, err := client.ListBuckets()
-		if err != nil {
-			return nil, cobra.ShellCompDirectiveNoFileComp
-		}
-		var candidates []string
-		for _, bucket := range buckets {
-			if strings.HasPrefix(bucket.Name, toComplete) {
-				candidates = append(candidates, bucket.Name)
-			}
-			if strings.HasPrefix(bucket.ID, toComplete) {
-				candidates = append(candidates, bucket.ID)
-			}
-		}
-		return candidates, cobra.ShellCompDirectiveNoFileComp
-	}
-	if len(args) == 1 {
-		actions := []string{"set", "list", "remove"}
-		var matches []string
-		for _, a := range actions {
-			if strings.HasPrefix(a, toComplete) {
-				matches = append(matches, a)
-			}
-		}
-		return matches, cobra.ShellCompDirectiveNoFileComp
-	}
-	return nil, cobra.ShellCompDirectiveNoFileComp
 }
 
 func init() {
 	RootCmd.AddCommand(valueCmd)
+	valueCmd.AddCommand(valueSetCmd, valueListCmd, valueDeleteCmd)
+	addListFlags(valueListCmd, &valueListFlags)
 }

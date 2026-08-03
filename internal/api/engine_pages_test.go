@@ -82,49 +82,6 @@ func TestSearchEndpointsPageSendsLimitOffset(t *testing.T) {
 	}
 }
 
-func TestLegacyBucketReadHelpersUseEngineGraphQL(t *testing.T) {
-	var paths []string
-	var queries []string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		paths = append(paths, r.URL.Path)
-		var body struct {
-			Query string `json:"query"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Fatalf("decode graphql body: %v", err)
-		}
-		queries = append(queries, body.Query)
-		w.Header().Set("Content-Type", "application/json")
-		switch {
-		case strings.Contains(body.Query, "bucketSummaryPage"):
-			w.Write([]byte(`{"data":{"bucketSummaryPage":{"total":1,"items":[{"id":"bucket-1","name":"prod","is_default":true,"secret_count":0,"value_count":0,"created_at":"2026-07-21T00:00:00Z","updated_at":"2026-07-21T00:00:00Z"}]}}}`))
-		case strings.Contains(body.Query, "bucketValues"):
-			w.Write([]byte(`{"data":{"bucketValues":[{"id":"value-1","service_id":"svc-1","key_name":"region","location":"env","value":"eu"}]}}`))
-		case strings.Contains(body.Query, "secretMetas"):
-			w.Write([]byte(`{"data":{"secretMetas":[{"id":"secret-1","service_id":"svc-1","key_name":"token","credential_type":"bearer","bucket_id":"bucket-1","expires_at":"","created_at":"2026-07-21T00:00:00Z","updated_at":"2026-07-21T00:00:00Z"}]}}`))
-		default:
-			t.Fatalf("unexpected query: %s", body.Query)
-		}
-	}))
-	defer srv.Close()
-
-	client := api.NewClient(srv.URL, "fsk_test")
-	if buckets, err := client.ListBuckets(); err != nil || len(buckets) != 1 {
-		t.Fatalf("ListBuckets = %#v, %v", buckets, err)
-	}
-	if values, err := client.ListBucketValues("bucket-1"); err != nil || len(values) != 1 {
-		t.Fatalf("ListBucketValues = %#v, %v", values, err)
-	}
-	if secrets, err := client.ListSecrets("bucket-1"); err != nil || len(secrets) != 1 || secrets[0].ExpiresAt != nil {
-		t.Fatalf("ListSecrets = %#v, %v", secrets, err)
-	}
-	for _, path := range paths {
-		if path != "/engine/graphql" {
-			t.Fatalf("expected all helper reads to use /engine/graphql, paths=%#v queries=%#v", paths, queries)
-		}
-	}
-}
-
 func TestWorkspaceWebhooksAndSDKTokensUseEngineGraphQL(t *testing.T) {
 	var paths []string
 	var queries []string

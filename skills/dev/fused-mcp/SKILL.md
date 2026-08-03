@@ -1,14 +1,19 @@
 ---
 name: fused-mcp
-description: "Use when the user wants to generate or manage an MCP server from a Fused workspace using fused-cli -- selecting services/operations for the MCP tool surface, or running mcp plan/apply/validate/list. Trigger on 'MCP server', 'fused-cli mcp', 'kind: mcp' files. Note: an MCP service cannot select webhooks at all (Engine rejects it) -- for webhook registration/delivery read fused-webhook instead. For SDK package generation read fused-sdk instead; for the auth_type/connect scope shape itself read fused-config."
+description: "Use when the user wants to deploy or manage an Engine-hosted MCP server using fused-cli mcp and a kind: mcp config. Trigger on 'MCP server', 'fused-cli mcp', or 'kind: mcp' files. An MCP service cannot select webhooks; for generated SDK packages read fused-sdk instead."
 ---
 
-# MCP artifact config
+# MCP server config
 
-`kind: mcp`, managed by `fused-cli mcp ...`. Shares the same
-`ArtifactConfig` shape as SDK (minus `language`) so plan results don't drift
-between the two, but an MCP apply creates an Engine-hosted runtime only --
-it never builds or archives a package.
+If the user starts with a business goal and no existing config, first follow
+the `fused-cli` skill's `reference/build-sdk-or-mcp.md` workflow. Use this skill
+for the MCP-specific config and lifecycle once Engine setup, service discovery,
+workspace activation, and credential requirements are understood.
+
+`kind: mcp`, managed by `fused-cli mcp ...`, declares an Engine-hosted runtime.
+It never builds, archives, or downloads a code package. Its config shares service
+selection fields with SDK configs so validation remains consistent where the
+runtime capabilities overlap.
 
 ```yaml
 apiVersion: fused/v1
@@ -28,7 +33,7 @@ services:
         value: ${bucket.env.FROM_EMAIL}       # Supports ${bucket.env.*}, ${bucket.values.*} (identical alias), and ${bucket.secrets.*}
 ```
 
-`injections[].value` tags always resolve against *this artifact's own* `bucket:` -- there's no way to name a different bucket here, unlike `kind: webhook`'s `${bucket.<name>.secret.<key>}` (see `fused-webhook`). A value can also merge a tag with surrounding text (e.g. `"Bearer ${bucket.secrets.API_KEY}"`), which a webhook's secret field cannot. Writing a webhook-style named-bucket reference here (e.g. `${bucket.prod.secrets.API_KEY}`) is rejected at dispatch time with an explicit error naming the unsupported reference, rather than one of the three ambient forms above.
+`injections[].value` tags always resolve against *this MCP server's* `bucket:` -- there's no way to name a different bucket here, unlike `kind: webhook`'s `${bucket.<name>.secret.<key>}` (see `fused-webhook`). A value can also merge a tag with surrounding text (e.g. `"Bearer ${bucket.secrets.API_KEY}"`), which a webhook's secret field cannot. Writing a webhook-style named-bucket reference here (e.g. `${bucket.prod.secrets.API_KEY}`) is rejected at dispatch time with an explicit error naming the unsupported reference, rather than one of the three ambient forms above.
 
 `select_all: true` is the alternative to listing `operations` explicitly --
 exactly one of the two is required (see `fused-sdk`; the validation and
@@ -52,16 +57,24 @@ fused-cli mcp plan
 fused-cli mcp apply
 fused-cli mcp validate
 fused-cli mcp list
-fused-cli mcp <name> remove
+fused-cli mcp <name[@version]> remove
 ```
 
 `mcp apply` doesn't just validate config -- it stands up (or updates) a
 persistent, named Engine-hosted server with its own URL, which stays live
-until explicitly removed. `mcp list` shows each one's name, version, ID,
-whether it's active, when it was created, and that URL -- that URL is what
+until explicitly removed. `mcp list` shows each server's name, version, ID,
+and active state. The server URL is what
 you hand to an MCP client's SSE connection (see below). Removing one is
 immediate and not gated behind the same SDK-config blocker `fused-workspace`
 describes for removing a workspace service.
+
+The owning person or team retains management even when the MCP server is offered
+to the whole company. `fused-cli workspace access artifact grant
+<mcp-name[@version]>` adds bounded workspace-wide use through the Engine's
+shared RBAC resource without granting token or lifecycle management;
+the MCP execution token below is still required at runtime. A platform-owned
+bucket can be made selectable by every eligible owning team with `workspace
+access bucket grant <bucket-name>` while its secrets remain platform-managed.
 
 ## Calling the running MCP
 

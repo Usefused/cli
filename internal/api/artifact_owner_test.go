@@ -8,7 +8,7 @@ import (
 )
 
 func TestArtifactPlansSendOwnerTeamOnlyAtPlanTime(t *testing.T) {
-	const ownerTeamID = "11111111-1111-1111-1111-111111111111"
+	const ownerTeamSlug = "platform"
 	requests := make([]map[string]any, 0, 6)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
@@ -22,7 +22,7 @@ func TestArtifactPlansSendOwnerTeamOnlyAtPlanTime(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(server.URL, "fsk_test")
-	intent := ArtifactPlanIntent{SourceHash: "hash", ConfigKey: "artifact:test:1", OwnerTeamID: ownerTeamID, Config: json.RawMessage(`{"kind":"sdk"}`)}
+	intent := ArtifactPlanIntent{SourceHash: "hash", ConfigKey: "artifact:test:1", OwnerTeamSlug: ownerTeamSlug, Config: json.RawMessage(`{"kind":"sdk"}`)}
 	_, err := client.PlanSDKConfig(intent)
 	requireArtifactTestNoError(t, err)
 	_, err = client.PlanMCPConfig(intent)
@@ -37,9 +37,9 @@ func TestArtifactPlansSendOwnerTeamOnlyAtPlanTime(t *testing.T) {
 	requireArtifactTestNoError(t, err)
 
 	for index, request := range requests {
-		_, hasOwner := request["owner_team_id"]
-		if index < 3 && (!hasOwner || request["owner_team_id"] != ownerTeamID) {
-			t.Fatalf("plan request %d owner = %#v", index, request["owner_team_id"])
+		_, hasOwner := request["owner_team"]
+		if index < 3 && (!hasOwner || request["owner_team"] != ownerTeamSlug) {
+			t.Fatalf("plan request %d owner = %#v", index, request["owner_team"])
 		}
 		if index >= 3 && hasOwner {
 			t.Fatalf("apply request %d forged owner override: %#v", index, request)
@@ -86,7 +86,7 @@ func TestArtifactUpdatePlanCanOmitOwnerForEngineInference(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, exists := request["owner_team_id"]; exists {
+	if _, exists := request["owner_team"]; exists {
 		t.Fatalf("omitted update owner was sent: %#v", request)
 	}
 }

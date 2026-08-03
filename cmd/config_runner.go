@@ -56,10 +56,10 @@ var (
 )
 
 type planOptions struct {
-	filter      configKindFilter
-	jsonOut     bool
-	receiptOut  string
-	ownerTeamID string
+	filter        configKindFilter
+	jsonOut       bool
+	receiptOut    string
+	ownerTeamSlug string
 }
 
 type applyOptions struct {
@@ -102,7 +102,7 @@ func runConfigPlan(opts planOptions) error {
 	engineURL, _ := GetEngineURL()
 	var planned []plannedConfig
 	for _, cfg := range configs {
-		result, err := planOneConfig(client, cfg, engineURL, opts.ownerTeamID)
+		result, err := planOneConfig(client, cfg, engineURL, opts.ownerTeamSlug)
 		if err != nil {
 			return err
 		}
@@ -114,7 +114,7 @@ func runConfigPlan(opts planOptions) error {
 	return printPlanResult(planned, opts.jsonOut)
 }
 
-func planOneConfig(client *api.Client, cfg *configfile.ParsedConfig, engineURL, ownerTeamID string) (plannedConfig, error) {
+func planOneConfig(client *api.Client, cfg *configfile.ParsedConfig, engineURL, ownerTeamSlug string) (plannedConfig, error) {
 	switch cfg.Kind {
 	case configfile.KindWorkspace:
 		raw, _ := json.Marshal(cfg.Workspace)
@@ -130,7 +130,7 @@ func planOneConfig(client *api.Client, cfg *configfile.ParsedConfig, engineURL, 
 		}, nil
 	case configfile.KindSDK:
 		raw, _ := json.Marshal(cfg.SDK)
-		resp, err := client.PlanSDKConfig(artifactPlanIntent(cfg, raw, ownerTeamID))
+		resp, err := client.PlanSDKConfig(artifactPlanIntent(cfg, raw, ownerTeamSlug))
 		if err != nil {
 			return plannedConfig{}, fmt.Errorf("failed to plan SDK %s: %w", cfg.SDK.Name, err)
 		}
@@ -142,7 +142,7 @@ func planOneConfig(client *api.Client, cfg *configfile.ParsedConfig, engineURL, 
 		}, nil
 	case configfile.KindMCP:
 		raw, _ := json.Marshal(cfg.MCP)
-		resp, err := client.PlanMCPConfig(artifactPlanIntent(cfg, raw, ownerTeamID))
+		resp, err := client.PlanMCPConfig(artifactPlanIntent(cfg, raw, ownerTeamSlug))
 		if err != nil {
 			return plannedConfig{}, fmt.Errorf("failed to plan MCP %s: %w", cfg.MCP.Name, err)
 		}
@@ -154,7 +154,7 @@ func planOneConfig(client *api.Client, cfg *configfile.ParsedConfig, engineURL, 
 		}, nil
 	case configfile.KindWebhook:
 		raw, _ := json.Marshal(cfg.Webhook)
-		resp, err := client.PlanWebhookConfig(artifactPlanIntent(cfg, raw, ownerTeamID))
+		resp, err := client.PlanWebhookConfig(artifactPlanIntent(cfg, raw, ownerTeamSlug))
 		if err != nil {
 			return plannedConfig{}, fmt.Errorf("failed to plan webhook %s: %w", cfg.Webhook.Name, err)
 		}
@@ -170,8 +170,8 @@ func planOneConfig(client *api.Client, cfg *configfile.ParsedConfig, engineURL, 
 	}
 }
 
-func artifactPlanIntent(cfg *configfile.ParsedConfig, raw json.RawMessage, ownerTeamID string) api.ArtifactPlanIntent {
-	return api.ArtifactPlanIntent{SourceHash: cfg.SourceHash, ConfigKey: cfg.ConfigKey, OwnerTeamID: ownerTeamID, Config: raw}
+func artifactPlanIntent(cfg *configfile.ParsedConfig, raw json.RawMessage, ownerTeamSlug string) api.ArtifactPlanIntent {
+	return api.ArtifactPlanIntent{SourceHash: cfg.SourceHash, ConfigKey: cfg.ConfigKey, OwnerTeamSlug: ownerTeamSlug, Config: raw}
 }
 
 func newPlanReceipt(planID, configKey, sourceHash, engineURL string) planReceipt {
@@ -519,7 +519,7 @@ func applyPreparedSDK(client *api.Client, cfg *configfile.ParsedConfig, receipt 
 	if err != nil {
 		return fmt.Errorf("failed to apply SDK %s: %w", cfg.SDK.Name, err)
 	}
-	fmt.Printf("Successfully applied SDK %s (Artifact ID: %s)\n", cfg.SDK.Name, resp.ArtifactID)
+	fmt.Printf("Successfully applied SDK %s (SDK ID: %s)\n", cfg.SDK.Name, resp.ArtifactID)
 	if !download {
 		return nil
 	}

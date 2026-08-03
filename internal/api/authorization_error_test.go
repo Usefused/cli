@@ -91,14 +91,14 @@ func TestFormatHTTPAuthorizationErrors(t *testing.T) {
 
 func TestArtifactOwnerErrorsUseAllowlistedProductMessages(t *testing.T) {
 	tests := map[string]string{
-		"owner_team_id is required for a new artifact": "choose an owning team",
-		"artifact owner team is immutable":             "already belongs to another team",
-		"artifact owner is unavailable":                "access administrator",
-		"artifact owner authorization denied":          "owning team",
+		"artifact owner is immutable":             "already has an owner",
+		"artifact owner is unavailable":           "workspace administrator",
+		"owner team was not found or is archived": "active team slug",
+		"artifact owner authorization denied":     "owning team",
 	}
 	for code, want := range tests {
 		message := formatHTTPErrorBody(http.StatusConflict, []byte(`{"error":`+strconv.Quote(code)+`}`))
-		if !strings.Contains(message, want) || strings.Contains(message, "owner_team_id") {
+		if !strings.Contains(message, want) {
 			t.Errorf("message for %q = %q", code, message)
 		}
 	}
@@ -151,6 +151,29 @@ func TestGraphQLDecodeErrorsDoNotReturnRemoteContent(t *testing.T) {
 			}
 			if strings.Contains(err.Error(), secret) {
 				t.Fatalf("error contains GraphQL credential: %q", err)
+			}
+		})
+	}
+}
+
+func TestGraphQLDecodeUsesOnlyAllowlistedSafeErrorCodes(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{name: "resource not found", body: `{"errors":[{"message":"untrusted","extensions":{"code":"FUSED_RESOURCE_NOT_FOUND"}}]}`, want: "resource_not_found"},
+		{name: "ambiguous resource", body: `{"errors":[{"message":"untrusted","extensions":{"code":"FUSED_RESOURCE_AMBIGUOUS"}}]}`, want: "use the full UUID"},
+		{name: "unknown code", body: `{"errors":[{"message":"fsk_never_return","extensions":{"code":"REMOTE_FAILURE"}}]}`, want: "graphql_request_rejected"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := decodeGraphQLData([]byte(test.body), &struct{}{})
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error = %v, want %q", err, test.want)
+			}
+			if strings.Contains(err.Error(), "untrusted") || strings.Contains(err.Error(), "fsk_never_return") {
+				t.Fatalf("error contains remote GraphQL message: %q", err)
 			}
 		})
 	}

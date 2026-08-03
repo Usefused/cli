@@ -1,7 +1,5 @@
 package api
 
-import "fmt"
-
 type PageOptions struct {
 	Limit  int
 	Offset int
@@ -55,22 +53,22 @@ type BucketSDKSummaryPageResponse struct {
 }
 
 type AuthConnectionResponse struct {
-	ID                 string   `json:"id"`
-	BucketID           string   `json:"bucket_id"`
-	ServiceID          string   `json:"service_id"`
-	EndUserRef         string   `json:"end_user_ref"`
-	AuthType           string   `json:"auth_type"`
-	TokenType          string   `json:"token_type"`
-	Scopes             []string `json:"scopes"`
-	ExpiresAt          string   `json:"expires_at"`
-	LastUsedAt         string   `json:"last_used_at"`
-	RefreshState       string   `json:"refresh_state"`
-	LastFailureCode    string   `json:"last_failure_code"`
-	LastFailureAt      string   `json:"last_failure_at"`
-	LastFailureTraceID string   `json:"last_failure_trace_id"`
-	CreatedAt          string   `json:"created_at"`
-	UpdatedAt          string   `json:"updated_at"`
-	CreatedByArtifactID     string   `json:"created_by_artifact_id"`
+	ID                  string   `json:"id"`
+	BucketID            string   `json:"bucket_id"`
+	ServiceID           string   `json:"service_id"`
+	EndUserRef          string   `json:"end_user_ref"`
+	AuthType            string   `json:"auth_type"`
+	TokenType           string   `json:"token_type"`
+	Scopes              []string `json:"scopes"`
+	ExpiresAt           string   `json:"expires_at"`
+	LastUsedAt          string   `json:"last_used_at"`
+	RefreshState        string   `json:"refresh_state"`
+	LastFailureCode     string   `json:"last_failure_code"`
+	LastFailureAt       string   `json:"last_failure_at"`
+	LastFailureTraceID  string   `json:"last_failure_trace_id"`
+	CreatedAt           string   `json:"created_at"`
+	UpdatedAt           string   `json:"updated_at"`
+	CreatedByArtifactID string   `json:"created_by_artifact_id"`
 }
 
 type AuthConnectionPageResponse struct {
@@ -230,43 +228,17 @@ func (c *Client) ListSDKBuckets(artifactID string) ([]BucketResponse, error) {
 }
 
 func (c *Client) ListMCPServers(opts PageOptions) (*MCPServerPageResponse, error) {
-	query := `
-		query MCPServers($limit: Int!, $offset: Int!) {
-			mcpServers(limit: $limit, offset: $offset) {
-				total
-				items { id name version mcp_url active deactivated_at created_at }
-			}
+	query := `query MCPServers($limit: Int!, $offset: Int!) {
+		mcpServers(limit: $limit, offset: $offset) {
+			total
+			items { id name version mcp_url active deactivated_at created_at }
 		}
-	`
-	var resp struct {
+	}`
+	var response struct {
 		Page MCPServerPageResponse `json:"mcpServers"`
 	}
-	err := c.EngineGraphQL(query, pageVars(opts), &resp)
-	return &resp.Page, err
-}
-
-func (c *Client) GetMCPServerByName(name, version string) (*MCPServerResponse, error) {
-	query := `
-		query MCPServerByName($name: String!, $version: String) {
-			mcpServerByName(name: $name, version: $version) {
-				id name version mcp_url active deactivated_at created_at
-			}
-		}
-	`
-	var resp struct {
-		Server *MCPServerResponse `json:"mcpServerByName"`
-	}
-	vars := map[string]interface{}{"name": name}
-	if version != "" {
-		vars["version"] = version
-	}
-	if err := c.EngineGraphQL(query, vars, &resp); err != nil {
-		return nil, err
-	}
-	if resp.Server == nil {
-		return nil, fmt.Errorf("mcp server not found")
-	}
-	return resp.Server, nil
+	err := c.EngineGraphQL(query, pageVars(opts), &response)
+	return &response.Page, err
 }
 
 func pageVars(opts PageOptions) map[string]interface{} {

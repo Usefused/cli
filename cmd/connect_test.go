@@ -84,43 +84,25 @@ func TestConnectFieldsFromInline_BlankValueIsExplicit(t *testing.T) {
 // TestValidateConnectArgs covers the action/arity rules a malformed command
 // line should fail on before ever reaching the network.
 func TestValidateConnectArgs(t *testing.T) {
-	connectSetInteractive = false
-	t.Cleanup(func() { connectSetInteractive = false })
+	connectSetInteractive, connectSetValueStdin = false, false
+	t.Cleanup(func() {
+		connectSetInteractive = false
+		connectSetValueStdin = false
+	})
 
-	if err := validateConnectArgs(nil, []string{"jira"}); err == nil {
-		t.Fatal("expected error: missing action")
+	if err := validateConnectSetArgs(connectSetCmd, []string{"jira"}); err == nil {
+		t.Fatal("expected an explicit input mode")
 	}
-	if err := validateConnectArgs(nil, []string{"jira", "remove"}); err == nil {
-		t.Fatal("expected error: unsupported action")
+	connectSetValueStdin = true
+	if err := validateConnectSetArgs(connectSetCmd, []string{"jira"}); err != nil {
+		t.Fatalf("expected stdin form to pass, got %v", err)
 	}
-	if err := validateConnectArgs(nil, []string{"jira", "set", "a=b", "extra"}); err == nil {
-		t.Fatal("expected error: too many positional args")
+	if err := validateConnectSetArgs(connectSetCmd, []string{"jira", "client_id=x"}); err == nil {
+		t.Fatal("connect config values in argv must be rejected")
 	}
-	if err := validateConnectArgs(nil, []string{"jira", "set", "client_id=x"}); err != nil {
-		t.Fatalf("expected valid inline form to pass, got %v", err)
-	}
-
-	connectSetInteractive = true
-	if err := validateConnectArgs(nil, []string{"jira", "set", "client_id=x"}); err == nil {
-		t.Fatal("expected error: value arg not allowed in interactive mode")
-	}
-	if err := validateConnectArgs(nil, []string{"jira", "set"}); err != nil {
-		t.Fatalf("expected bare interactive form to pass, got %v", err)
-	}
-}
-
-// TestValidateConnectArgs_Get proves get has its own, stricter arity rule
-// than set -- it never takes a value, inline or interactive, so any trailing
-// arg is a mistake worth catching before a network round trip.
-func TestValidateConnectArgs_Get(t *testing.T) {
-	connectSetInteractive = false
-	t.Cleanup(func() { connectSetInteractive = false })
-
-	if err := validateConnectArgs(nil, []string{"jira", "get"}); err != nil {
-		t.Fatalf("expected bare get form to pass, got %v", err)
-	}
-	if err := validateConnectArgs(nil, []string{"jira", "get", "client_id=x"}); err == nil {
-		t.Fatal("expected error: get accepts no value argument")
+	connectSetInteractive, connectSetValueStdin = true, false
+	if err := validateConnectSetArgs(connectSetCmd, []string{"jira"}); err != nil {
+		t.Fatalf("expected interactive form to pass, got %v", err)
 	}
 }
 
@@ -132,6 +114,11 @@ func TestValidateConnectArgs_Get(t *testing.T) {
 func TestConnectSet_CreateThenPartialUpdate(t *testing.T) {
 	connectSetType = ""
 	connectSetInteractive = false
+	connectSetValueStdin = true
+	t.Cleanup(func() {
+		connectSetValueStdin = false
+		RootCmd.SetIn(nil)
+	})
 	var requests []map[string]any
 
 	server := connectTargetServer(t, func(w http.ResponseWriter, r *http.Request) {
@@ -152,15 +139,15 @@ func TestConnectSet_CreateThenPartialUpdate(t *testing.T) {
 	defer server.Close()
 
 	dir := t.TempDir()
+	RootCmd.SetIn(strings.NewReader("client_id=abc123;client_secret=shh;redirect_uri=https://engine.example.com/connect/callback"))
 	runCommandInDirOutput(t, dir, server.URL, []string{
-		"connect", "jira", "set",
-		"client_id=abc123;client_secret=shh;redirect_uri=https://engine.example.com/connect/callback",
-		"--bucket", "customer-accounts",
+		"connect", "set", "jira", "--value-stdin",
+		"--bucket", "11111111-1111-4111-8111-111111111111",
 	})
+	RootCmd.SetIn(strings.NewReader("redirect_uri=https://engine.example.com/connect/new-callback"))
 	runCommandInDirOutput(t, dir, server.URL, []string{
-		"connect", "jira", "set",
-		"redirect_uri=https://engine.example.com/connect/new-callback",
-		"--bucket", "customer-accounts",
+		"connect", "set", "jira", "--value-stdin",
+		"--bucket", "11111111-1111-4111-8111-111111111111",
 	})
 
 	if len(requests) != 2 {
@@ -188,7 +175,7 @@ func TestConnectSet_CreateThenPartialUpdate(t *testing.T) {
 	}
 }
 
-// connectTargetServer stands up the same bucket/service resolution GraphQL
+// connectTargetServer stands up the same service-resolution GraphQL
 // responses both TestConnectSet_CreateThenPartialUpdate and the get tests
 // below need, then defers to connectConfigHandler for the connect-config
 // path itself -- shared so a get test never has to duplicate the resolution
@@ -207,12 +194,6 @@ func connectTargetServer(t *testing.T, connectConfigHandler http.HandlerFunc) *h
 			default:
 				t.Fatalf("unexpected registry graphql query: %s", body.Query)
 			}
-		case r.URL.Path == "/engine/graphql":
-			body := decodeTestGraphQLBody(t, r)
-			if !strings.Contains(body.Query, "bucketSummaryPage") {
-				t.Fatalf("unexpected engine graphql query: %s", body.Query)
-			}
-			_, _ = w.Write([]byte(`{"data":{"bucketSummaryPage":{"total":1,"items":[{"id":"bucket-1","name":"customer-accounts","is_default":false,"secret_count":0,"value_count":0,"created_at":"2026-07-21T00:00:00Z","updated_at":"2026-07-21T00:00:00Z"}]}}}`))
 		case strings.HasSuffix(r.URL.Path, "/connect-config"):
 			connectConfigHandler(w, r)
 		default:
@@ -241,7 +222,7 @@ func TestConnectGet_ReturnsExistingConfig(t *testing.T) {
 	defer server.Close()
 
 	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{
-		"connect", "jira", "get", "--bucket", "customer-accounts",
+		"connect", "get", "jira", "--bucket", "11111111-1111-4111-8111-111111111111",
 	})
 	if !strings.Contains(out, "auth_type=oauth") || !strings.Contains(out, "has_client_secret=true") {
 		t.Fatalf("expected connect config fields in output, got %q", out)
@@ -258,9 +239,9 @@ func TestConnectGet_NotFoundReportsFriendlyError(t *testing.T) {
 	defer server.Close()
 
 	out := runCommandInDirExpectError(t, t.TempDir(), server.URL, []string{
-		"connect", "jira", "get", "--bucket", "customer-accounts",
+		"connect", "get", "jira", "--bucket", "11111111-1111-4111-8111-111111111111",
 	})
-	if !strings.Contains(out, "no connect config registered") || !strings.Contains(out, "connect jira set") {
+	if !strings.Contains(out, "no connect config registered") || !strings.Contains(out, "connect set jira") {
 		t.Fatalf("expected a friendly not-found message pointing at connect set, got %q", out)
 	}
 }

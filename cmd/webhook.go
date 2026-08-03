@@ -8,7 +8,7 @@ import (
 	"github.com/Usefused/cli/internal/configfile"
 )
 
-// webhookCmd is deliberately much thinner than sdkCmd/mcpCmd: kind: webhook
+// webhookCmd remains separate from artifact because kind: webhook
 // has no operations/webhooks-selection surface of its own (that lives on
 // whichever kind: sdk/kind: mcp artifact declares webhook_attachment) and no
 // generated package or deployed runtime -- it only reconciles rows in
@@ -34,15 +34,17 @@ var webhookApplyReceiptPath string
 var webhookPlanCmd = &cobra.Command{
 	Use:   "plan",
 	Short: "Plan webhook configuration",
+	Args:  cobra.NoArgs,
 	// Why: Write to OTEL to audit user/agent-triggered mutative execution.
 	RunE: WithTelemetry("cli.webhook.plan", func(cmd *cobra.Command, args []string) error {
-		return runConfigPlan(planOptions{filter: filterWebhook, jsonOut: webhookPlanJSON, receiptOut: webhookPlanReceiptOut, ownerTeamID: webhookPlanOwnerTeam})
+		return runConfigPlan(planOptions{filter: filterWebhook, jsonOut: webhookPlanJSON, receiptOut: webhookPlanReceiptOut, ownerTeamSlug: webhookPlanOwnerTeam})
 	}),
 }
 
 var webhookApplyCmd = &cobra.Command{
 	Use:   "apply",
 	Short: "Apply webhook configuration",
+	Args:  cobra.NoArgs,
 	// Why: Write to OTEL to audit user/agent-triggered mutative execution.
 	RunE: WithTelemetry("cli.webhook.apply", func(cmd *cobra.Command, args []string) error {
 		return runConfigApply(withApplyAudit(cmd, applyOptions{filter: filterWebhook, planID: webhookApplyPlanID, receiptPath: webhookApplyReceiptPath}))
@@ -52,6 +54,7 @@ var webhookApplyCmd = &cobra.Command{
 var webhookValidateCmd = &cobra.Command{
 	Use:   "validate",
 	Short: "Validate webhook configuration",
+	Args:  cobra.NoArgs,
 	// Why: Write to OTEL to audit user/agent-triggered mutative execution.
 	RunE: WithTelemetry("cli.webhook.validate", func(cmd *cobra.Command, args []string) error {
 		run, err := configfile.LoadRun(effectiveConfigFile())
@@ -78,7 +81,7 @@ func init() {
 	webhookCmd.AddCommand(webhookPlanCmd)
 	webhookPlanCmd.Flags().BoolVar(&webhookPlanJSON, "json", false, "Print plan result JSON, including summary and notifications")
 	webhookPlanCmd.Flags().StringVar(&webhookPlanReceiptOut, "receipt-out", "", "Write the plan receipt to a specific path")
-	webhookPlanCmd.Flags().StringVar(&webhookPlanOwnerTeam, "owner-team", "", "Owning team ID (required when creating a new webhook)")
+	webhookPlanCmd.Flags().StringVar(&webhookPlanOwnerTeam, "owner-team", "", "Optional owning team slug; defaults to the authenticated person")
 
 	webhookCmd.AddCommand(webhookApplyCmd)
 	webhookApplyCmd.Flags().StringVar(&webhookApplyPlanID, "plan-id", "", "Apply a specific remote plan ID for a single webhook config")

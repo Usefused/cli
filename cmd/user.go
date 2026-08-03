@@ -36,7 +36,7 @@ var userListCmd = &cobra.Command{
 }
 
 var userShowCmd = &cobra.Command{
-	Use: "show <user-id>", Short: "Show a person, team memberships, and credential metadata", Args: cobra.ExactArgs(1),
+	Use: "show <email-or-id>", Short: "Show a person, team memberships, and credential metadata", Args: cobra.ExactArgs(1),
 	RunE: WithTelemetry("cli.user.show", func(cmd *cobra.Command, args []string) error {
 		client, err := getAPIClient()
 		if err != nil {
@@ -53,7 +53,7 @@ var userShowCmd = &cobra.Command{
 
 var userCreateName string
 var userCreateCmd = &cobra.Command{
-	Use: "create <email>", Short: "Create an invited person", Args: cobra.ExactArgs(1),
+	Use: "create <email>", Short: "Add a person without sending an email", Args: cobra.ExactArgs(1),
 	RunE: WithTelemetry("cli.user.create", func(cmd *cobra.Command, args []string) error {
 		if strings.TrimSpace(userCreateName) == "" {
 			return fmt.Errorf("flag --name is required")
@@ -66,8 +66,12 @@ var userCreateCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		recordAppliedChange(cmd.Context(), "user.create", "user")
-		fmt.Fprintf(cmd.OutOrStdout(), "Created invited person %s (%s).\n", payload.User.DisplayName, payload.User.ID)
+		recordAppliedChangeIf(cmd.Context(), "user.create", "user", payload.Changed)
+		if !payload.Changed {
+			fmt.Fprintf(cmd.OutOrStdout(), "%s (%s) already exists.\n", payload.User.DisplayName, payload.User.ID)
+			return nil
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "Added %s (%s). Create a personal credential when they need to sign in.\n", payload.User.DisplayName, payload.User.ID)
 		return nil
 	}),
 }
@@ -75,7 +79,7 @@ var userCreateCmd = &cobra.Command{
 var userUpdateEmail string
 var userUpdateName string
 var userUpdateCmd = &cobra.Command{
-	Use: "update <user-id>", Short: "Update a person's details", Args: cobra.ExactArgs(1),
+	Use: "update <email-or-id>", Short: "Update a person's details", Args: cobra.ExactArgs(1),
 	RunE: WithTelemetry("cli.user.update", func(cmd *cobra.Command, args []string) error {
 		input, err := userUpdateInput(cmd)
 		if err != nil {
@@ -89,16 +93,20 @@ var userUpdateCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		recordAppliedChange(cmd.Context(), "user.update", "user")
+		recordAppliedChangeIf(cmd.Context(), "user.update", "user", payload.Changed)
+		if !payload.Changed {
+			fmt.Fprintln(cmd.OutOrStdout(), "Person is already up to date.")
+			return nil
+		}
 		fmt.Fprintf(cmd.OutOrStdout(), "Updated %s (%s).\n", payload.User.DisplayName, payload.User.ID)
 		return nil
 	}),
 }
 
-var userSuspendCmd = userStatusCommand("suspend <user-id>", "Suspend a person and stop their credentials", "cli.user.suspend", func(client *cliapi.Client, id string) (*cliapi.UserMutationPayload, error) {
+var userSuspendCmd = userStatusCommand("suspend <email-or-id>", "Suspend a person and stop their credentials", "cli.user.suspend", func(client *cliapi.Client, id string) (*cliapi.UserMutationPayload, error) {
 	return client.SuspendUser(id)
 })
-var userReactivateCmd = userStatusCommand("reactivate <user-id>", "Reactivate a suspended person", "cli.user.reactivate", func(client *cliapi.Client, id string) (*cliapi.UserMutationPayload, error) {
+var userReactivateCmd = userStatusCommand("reactivate <email-or-id>", "Reactivate a suspended person", "cli.user.reactivate", func(client *cliapi.Client, id string) (*cliapi.UserMutationPayload, error) {
 	return client.ReactivateUser(id)
 })
 
@@ -116,7 +124,11 @@ func userStatusCommand(use, short, spanName string, mutate userStatusMutation) *
 			if err != nil {
 				return err
 			}
-			recordAppliedChange(cmd.Context(), spanName, "user")
+			recordAppliedChangeIf(cmd.Context(), spanName, "user", payload.Changed)
+			if !payload.Changed {
+				fmt.Fprintf(cmd.OutOrStdout(), "%s is already %s.\n", payload.User.DisplayName, strings.ToLower(payload.User.Status))
+				return nil
+			}
 			fmt.Fprintf(cmd.OutOrStdout(), "%s is now %s.\n", payload.User.DisplayName, strings.ToLower(payload.User.Status))
 			return nil
 		}),
@@ -126,7 +138,7 @@ func userStatusCommand(use, short, spanName string, mutate userStatusMutation) *
 var userCredentialCmd = &cobra.Command{Use: "credential", Short: "Issue or revoke personal credentials"}
 var userCredentialName string
 var userCredentialIssueCmd = &cobra.Command{
-	Use: "issue <user-id>", Short: "Issue a personal credential and show it once", Args: cobra.ExactArgs(1),
+	Use: "issue <email-or-id>", Short: "Issue a personal credential and show it once", Args: cobra.ExactArgs(1),
 	RunE: WithTelemetry("cli.user.credential.issue", func(cmd *cobra.Command, args []string) error {
 		name := strings.TrimSpace(userCredentialName)
 		if name == "" {
@@ -140,24 +152,28 @@ var userCredentialIssueCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		recordAppliedChange(cmd.Context(), "user.credential.issue", "control_credential")
-		printIssuedCredential(cmd, payload)
-		return nil
+		recordAppliedChangeIf(cmd.Context(), "user.credential.issue", "control_credential", payload.Changed)
+		if !payload.Changed {
+			fmt.Fprintln(cmd.OutOrStdout(), "Credential was not issued; no state changed.")
+			return nil
+		}
+		return printIssuedCredential(cmd, payload)
 	}),
 }
 
 var userCredentialRevokeCmd = &cobra.Command{
-	Use: "revoke <user-id> <credential-id>", Short: "Revoke a personal credential", Args: cobra.ExactArgs(2),
+	Use: "revoke <user> <credential-name-or-id>", Short: "Revoke a personal credential", Args: cobra.ExactArgs(2),
 	RunE: WithTelemetry("cli.user.credential.revoke", func(cmd *cobra.Command, args []string) error {
 		client, err := getAPIClient()
 		if err != nil {
 			return err
 		}
-		if _, err := client.RevokeUserCredential(args[0], args[1]); err != nil {
+		payload, err := client.RevokeUserCredential(args[0], args[1])
+		if err != nil {
 			return err
 		}
-		recordAppliedChange(cmd.Context(), "user.credential.revoke", "control_credential")
-		fmt.Fprintln(cmd.OutOrStdout(), "Credential revoked.")
+		recordAppliedChangeIf(cmd.Context(), "user.credential.revoke", "control_credential", payload.Changed)
+		printMutationOutcome(cmd, payload.Changed, "Credential revoked.", "Credential is already revoked.")
 		return nil
 	}),
 }
@@ -221,13 +237,17 @@ func printUserCredentials(cmd *cobra.Command, credentials []cliapi.ControlCreden
 	_ = w.Flush()
 }
 
-func printIssuedCredential(cmd *cobra.Command, payload *cliapi.IssuedCredentialPayload) {
+func printIssuedCredential(cmd *cobra.Command, payload *cliapi.IssuedCredentialPayload) error {
+	if payload.Secret == "" {
+		return fmt.Errorf("Engine reported an issued credential without returning its one-time secret")
+	}
 	// The raw key is intentionally written only to the command's requested
 	// output. It is never attached to OTEL, logs, config, or command state.
 	fmt.Fprintln(cmd.OutOrStdout(), "WARNING: Copy this personal key now. It will not be shown again.")
 	fmt.Fprintln(cmd.OutOrStdout(), "Keep it secret; anyone with this key can act as this person.")
 	fmt.Fprintln(cmd.OutOrStdout(), payload.Secret)
 	fmt.Fprintf(cmd.OutOrStdout(), "Credential ID: %s\n", payload.Credential.ID)
+	return nil
 }
 
 func init() {

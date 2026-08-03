@@ -29,6 +29,13 @@ var (
 	errGraphQLResponseMalformed = errors.New("graphql_response_malformed: Engine returned a malformed GraphQL response; retry or check Engine logs")
 	errGraphQLRequestRejected   = errors.New("graphql_request_rejected: Engine rejected the GraphQL request; check command inputs and workspace permissions")
 	errGraphQLDataMalformed     = errors.New("graphql_data_malformed: Engine returned malformed GraphQL data; retry or check Engine logs")
+	errGraphQLResourceNotFound  = errors.New("resource_not_found: resource was not found; use its name, slug, email, or full UUID")
+	errGraphQLResourceAmbiguous = errors.New("resource_ambiguous: name exists as both an SDK and MCP server; use the full UUID")
+)
+
+const (
+	graphQLCodeResourceNotFound  = "FUSED_RESOURCE_NOT_FOUND"
+	graphQLCodeResourceAmbiguous = "FUSED_RESOURCE_AMBIGUOUS"
 )
 
 type ClientOptions struct {
@@ -180,21 +187,36 @@ func (c *Client) graphQLAt(path string, query string, variables map[string]inter
 
 func decodeGraphQLData(respBody []byte, out interface{}) error {
 	var graphqlResp struct {
-		Data   json.RawMessage   `json:"data"`
-		Errors []json.RawMessage `json:"errors"`
+		Data   json.RawMessage `json:"data"`
+		Errors []struct {
+			Extensions struct {
+				Code string `json:"code"`
+			} `json:"extensions"`
+		} `json:"errors"`
 	}
 	if err := json.Unmarshal(respBody, &graphqlResp); err != nil {
 		return errGraphQLResponseMalformed
 	}
 	if len(graphqlResp.Errors) > 0 {
 		// GraphQL messages are remote input and can echo submitted credentials.
-		// A stable category keeps command errors and OTEL safe by construction.
-		return errGraphQLRequestRejected
+		// Only fixed extension codes select more useful, locally-authored errors.
+		return safeGraphQLRequestError(graphqlResp.Errors[0].Extensions.Code)
 	}
 	if err := json.Unmarshal(graphqlResp.Data, out); err != nil {
 		return errGraphQLDataMalformed
 	}
 	return nil
+}
+
+func safeGraphQLRequestError(code string) error {
+	switch code {
+	case graphQLCodeResourceNotFound:
+		return errGraphQLResourceNotFound
+	case graphQLCodeResourceAmbiguous:
+		return errGraphQLResourceAmbiguous
+	default:
+		return errGraphQLRequestRejected
+	}
 }
 
 type PermissionRequirement struct {
@@ -230,12 +252,12 @@ func formatHTTPErrorBody(status int, respBody []byte) string {
 
 func artifactOwnerHTTPError(code string) string {
 	switch code {
-	case "owner_team_id is required for a new artifact":
-		return "owner_team_required: choose an owning team with --owner-team"
-	case "artifact owner team is immutable", "sdk scope owner mismatch":
-		return "owner_team_immutable: this artifact already belongs to another team; use its existing owning team"
+	case "artifact owner is immutable":
+		return "artifact_owner_immutable: this artifact already has an owner; omit --owner-team or use its existing team slug"
 	case "artifact owner is unavailable":
-		return "owner_team_unavailable: ask an access administrator for help"
+		return "artifact_owner_unavailable: ask a workspace administrator for help"
+	case "owner team was not found or is archived":
+		return "owner_team_unavailable: choose an active team slug"
 	case "artifact owner authorization denied":
 		return "owner_team_access_denied: you or the owning team no longer have the required access"
 	default:
@@ -415,8 +437,22 @@ func (c *Client) Health() (*HealthStatus, error) {
 // Models
 
 type Service struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID       string                   `json:"id"`
+	Name     string                   `json:"name"`
+	Slug     string                   `json:"slug"`
+	Provider *ServiceProviderIdentity `json:"provider"`
+	IsOwner  bool                     `json:"is_owner"`
+	IsPublic bool                     `json:"is_public"`
+}
+
+// DisplaySlug returns the account-scoped reference accepted by subsequent
+// CLI commands. A foreign public service must retain its provider qualifier;
+// a service owned by the caller can use its bare slug.
+func (s Service) DisplaySlug() string {
+	if s.IsOwner || s.Provider == nil || s.Provider.Handle == "" {
+		return s.Slug
+	}
+	return "@" + s.Provider.Handle + "/" + s.Slug
 }
 
 // ServiceProviderIdentity keeps the Registry's public ownership projection
@@ -977,6 +1013,10 @@ func (c *Client) SearchServices(q string) ([]Service, error) {
 			searchServices(q: $q) {
 				id
 				name
+				slug
+				provider { handle }
+				is_owner
+				is_public
 			}
 		}
 	`
@@ -1270,50 +1310,6 @@ func (c *Client) GetSDKByName(name string, version string) (*SDKBasicDetails, er
 	return &resp.SDK, nil
 }
 
-type SDKListOptions struct {
-	PageOptions
-	TargetType     string
-	TargetLanguage string
-	LatestOnly     bool
-}
-
-type SDKSummary struct {
-	ID             string `json:"id"`
-	Name           string `json:"name"`
-	Description    string `json:"description"`
-	Version        string `json:"version"`
-	TargetType     string `json:"target_type"`
-	TargetLanguage string `json:"target_language"`
-	SandboxURL     string `json:"sandbox_url"`
-	CreatedAt      string `json:"created_at"`
-	KilledAt       string `json:"killed_at"`
-}
-
-type SDKPageResponse struct {
-	Items []SDKSummary `json:"items"`
-	Total int          `json:"total"`
-}
-
-func (c *Client) ListSDKs(opts SDKListOptions) (*SDKPageResponse, error) {
-	query := `
-		query ListSDKs($limit: Int!, $offset: Int!, $targetType: String, $targetLanguage: String, $latestOnly: Boolean!) {
-			sdks(limit: $limit, offset: $offset, target_type: $targetType, target_language: $targetLanguage, latest_only: $latestOnly) {
-				total
-				items { id name description version target_type target_language sandbox_url created_at killed_at }
-			}
-		}
-	`
-	var resp struct {
-		Page SDKPageResponse `json:"sdks"`
-	}
-	vars := pageVars(opts.PageOptions)
-	vars["targetType"] = opts.TargetType
-	vars["targetLanguage"] = opts.TargetLanguage
-	vars["latestOnly"] = opts.LatestOnly
-	err := c.GraphQL(query, vars, &resp)
-	return &resp.Page, err
-}
-
 type SDKSelectionDetail struct {
 	ServiceID          string   `json:"service_id"`
 	ServiceName        string   `json:"service_name"`
@@ -1422,7 +1418,7 @@ func (c *Client) DownloadSDK(artifactID string) ([]byte, error) {
 
 type SDKConfigPlanResponse struct {
 	PlanID              string                  `json:"plan_id"`
-	OwnerTeamID         string                  `json:"owner_team_id"`
+	OwnerType           string                  `json:"owner_type"`
 	ConfigKey           string                  `json:"config_key"`
 	SourceHash          string                  `json:"source_hash"`
 	Summary             map[string]interface{}  `json:"summary"`
@@ -1497,10 +1493,10 @@ type AppliedWebhookConfig struct {
 }
 
 type ArtifactPlanIntent struct {
-	SourceHash  string
-	ConfigKey   string
-	OwnerTeamID string
-	Config      json.RawMessage
+	SourceHash    string
+	ConfigKey     string
+	OwnerTeamSlug string
+	Config        json.RawMessage
 }
 
 // PlanSDKConfig sends native SDK desired state through the shared artifact
@@ -1532,10 +1528,10 @@ func (c *Client) planArtifactConfig(kind string, intent ArtifactPlanIntent) (*SD
 		"config_key":  intent.ConfigKey,
 		"config":      intent.Config,
 	}
-	// Updates may omit the selector so Engine can infer the artifact's immutable
-	// owner. New artifacts require it, and apply never accepts an override.
-	if intent.OwnerTeamID != "" {
-		reqBody["owner_team_id"] = intent.OwnerTeamID
+	// Omission makes the authenticated subject the owner. A team is only
+	// selected explicitly, by stable slug, and apply never accepts an override.
+	if intent.OwnerTeamSlug != "" {
+		reqBody["owner_team"] = intent.OwnerTeamSlug
 	}
 	body, err := json.Marshal(reqBody)
 	if err != nil {

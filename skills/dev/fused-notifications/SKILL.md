@@ -19,8 +19,8 @@ Engine deployment," never a second workspace living inside this one.
 
 **`workspace_service_removed` / `workspace_version_removed`** -- a
 decision-audit record of something *you* just did. Created only when
-`workspace service <slug> remove --force` or `workspace service <slug>
-version remove <v> --version-force` overrides the default removal blocker
+`workspace service delete <slug> --force` or `workspace service version
+delete <slug> <v> --force` overrides the default removal blocker
 (see `fused-workspace`) while an SDK/MCP config in this account still
 references what got removed. You already know this happened -- the
 notification exists so it's traceable later, not to inform you of something

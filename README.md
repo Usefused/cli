@@ -1,6 +1,6 @@
 # Fused CLI
 
-The `fused-cli` is the official command-line interface for [Fused](https://usefused.com). It manages a Fused Engine from your terminal: connect the CLI to an Engine, import API services into the Registry, apply workspace configuration, manage buckets and secrets, configure webhooks, and operate SDK or MCP artifacts when you need them.
+The `fused-cli` is the official command-line interface for [Fused](https://usefused.com). It manages a Fused Engine from your terminal: connect the CLI to an Engine, import API services into the Registry, apply workspace configuration, manage buckets and secrets, generate SDK packages, and deploy MCP servers.
 
 Use it as the config-as-code and operations CLI for the Fused integration layer. SDK and MCP generation are supported workflows, not the whole product.
 
@@ -67,7 +67,7 @@ Head over to the [Releases](https://github.com/Usefused/cli/releases) page and d
 
 ## Configuration
 
-The `fused-cli` requires an **API Key** and an **Engine URL** to connect to the Fused data plane. If you do not have an Engine running yet, install or run one from the [Fused Engine releases](https://github.com/Usefused/engine/releases).
+The `fused-cli` requires an **Engine credential** and an **Engine URL** to connect to the Fused data plane. A small workspace can use its `FUSED_LICENSE_KEY` as the bootstrap Owner credential; workspaces that add people can use a personal key through `FUSED_API_KEY` instead. If you do not have an Engine running yet, install or run one from the [Fused Engine releases](https://github.com/Usefused/engine/releases).
 
 ```bash
 # Set the URL for your Fused Engine
@@ -91,8 +91,11 @@ fused-cli workspace services list
 ### Resolution Order
 The CLI resolves configuration in the following order (highest precedence first):
 1. **Command Line Flags**: `--key` and `--engine-url`
-2. **Environment Variables**: `FUSED_API_KEY` and `FUSED_ENGINE_URL`
-3. **Config File**: Set via `fused-cli config set` (stored in `~/.config/fused/config.json`)
+2. **Personal/service credential**: `FUSED_API_KEY`
+3. **Bootstrap Owner credential**: `FUSED_LICENSE_KEY`
+4. **Config File**: Set via `fused-cli config set` (stored in `~/.config/fused/config.json`)
+
+`FUSED_API_KEY` deliberately wins when both credential variables are set, allowing an operator to use an individually attributable personal key without removing the Engine's Registry license from their environment.
 
 ### Automation-safe execution
 
@@ -121,25 +124,43 @@ fused-cli workspace apply
 
 # Manage credentials and bucket-scoped values
 fused-cli bucket list
-fused-cli secret github set "$GITHUB_TOKEN"
+printf '%s' "$GITHUB_TOKEN" | fused-cli secret set github --value-stdin
+
+# Manage people, teams, and team-scoped access
+fused-cli team list
+fused-cli user list
+fused-cli team eligible-owners
+
+# Share a company bucket for bounded use by every workspace member and team
+fused-cli workspace access bucket grant company-credentials
 ```
 
-### Generate an SDK or MCP Artifact (`sdk prompt`)
+For organisation workspaces, `team` manages membership and workspace, service,
+bucket, and runtime access; `user` manages people and their personal
+credentials. SDKs, MCP servers, and webhook registrations belong to the
+authenticated person by default. Use `plan --owner-team <team-slug>` only when
+that SDK, MCP server, or webhook should be managed by a team. `workspace access`
+is separate from ownership: it grants bounded use of selected buckets or
+permission-scoped resources to the whole workspace without
+granting secret, configuration, or token management. Solo workspaces need no
+RBAC setup.
 
-The `sdk prompt` command uses Fused intent AI to turn a business use case into a Business Capability SDK or MCP artifact. Describe the workflow your team wants to ship, and Fused maps the right services and endpoints into a single, scoped runtime surface with authentication, retries, tracing, and typed errors wired in.
+### Generate an SDK (`sdk prompt`)
+
+The `sdk prompt` command uses Fused intent AI to turn a business use case into
+a typed Business Capability SDK. Describe the workflow your team wants to ship,
+and Fused maps the right services and endpoints into a scoped generated package.
 
 If your query requires services you haven't added to your workspace yet, the Copilot will automatically discover the latest stable versions from the Global Registry and safely append them to your local `.fused/workspace.yaml`.
 
 ```bash
 # Generate a standard SDK around a business capability
 fused-cli sdk prompt --name onboarding-sdk --version 1.0.0 -d "When a new employee joins, use Jira to create an onboarding ticket, use GitHub to provision repository access, and use Slack to send a welcome message"
-
-# Generate a Python MCP server non-interactively, and deploy a TypeScript MCP server directly instead of downloading it
-fused-cli sdk prompt --name support-agent-mcp -t mcp -l python -y -d "Search Zendesk for tickets and use Linear to update corresponding issues"
-fused-cli sdk prompt --name sales-mcp -t mcp --deploy -d "Read Salesforce leads and fetch Intercom conversations"
 ```
 
-Fused parses the use case, finds the required services, and opens an interactive Cart UI where you can review, add, or refine the SDK before either downloading the generated `.zip` file or deploying it as an MCP server. See [`docs/COMMANDS.md`](docs/COMMANDS.md#sdk-prompt) for the full `--type`/`--language`/`--deploy`/`--yes` flag reference (Python MCP servers cannot be deployed and must be downloaded locally).
+Fused parses the use case, finds the required services, and opens an interactive
+Cart UI where you can review, add, or refine the SDK before generating it.
+MCP servers use their own `mcp plan` and `mcp apply` deployment flow.
 
 ### Import a Provider API (`import`)
 
@@ -163,7 +184,7 @@ fused-cli import docs --url https://docs.example.com/api --name "Docs API" --slu
 
 ## Command Reference
 
-Every command and flag -- `service`, `secret`, `bucket`, `connect`, `value`, `sdk`, `mcp`, `workspace`, `import`, and the global `plan`/`apply`/`validate` -- is documented in [`docs/COMMANDS.md`](docs/COMMANDS.md). `fused-cli --readme` prints that reference together with this file as one combined document.
+Every command and flag -- including `team`, `user`, `service`, `secret`, `bucket`, `connect`, `value`, `sdk`, `mcp`, `webhook`, `workspace`, `import`, and the global `plan`/`apply`/`validate` -- is documented in [`docs/COMMANDS.md`](docs/COMMANDS.md). `fused-cli --readme` prints that reference together with this file as one combined document.
 
 ## Config-as-Code (GitOps)
 
@@ -190,7 +211,7 @@ The `operations` values are OpenAPI `operationId`s for the selected service vers
 
 ```bash
 fused-cli sdk service okta add -f .fused/sdks/my-sdk.yaml --version 2026-07-09
-fused-cli workspace service okta operations --version 2026-07-09
+fused-cli workspace service operations okta --version 2026-07-09
 fused-cli sdk service okta add listLogEvents getUser -f .fused/sdks/my-sdk.yaml
 ```
 
@@ -213,7 +234,7 @@ services:
     versions:
       - version: "1.0.0"
 ```
-The service keys are Registry service slugs. Engine resolves those slugs to service IDs during workspace planning, so teams do not need to know UUIDs. If `versions` is omitted, the Engine resolves Registry's latest public service version during planning and records the exact service-version ID in the plan. `versions` is a list of objects rather than bare version strings: each entry carries its own resolved `service_version_id` plus any per-version `public`/`execution_policy`/`connection_profiles` override, so that data doesn't need a separate sibling list keyed by a repeated version string. Service authentication secrets and API keys are stored securely using `fused-cli secret set <service-slug>`; a bucket's OAuth/OIDC app registration is a separate, immediate admin action via `fused-cli connect <service-slug> set` -- see [`docs/COMMANDS.md`](docs/COMMANDS.md) -- neither is a workspace.yaml field.
+The service keys are Registry service slugs. Engine resolves those slugs to service IDs during workspace planning, so teams do not need to know UUIDs. If `versions` is omitted, the Engine resolves Registry's latest public service version during planning and records the exact service-version ID in the plan. `versions` is a list of objects rather than bare version strings: each entry carries its own resolved `service_version_id` plus any per-version `public`/`execution_policy`/`connection_profiles` override, so that data doesn't need a separate sibling list keyed by a repeated version string. Service authentication secrets and API keys are stored securely using `fused-cli secret set <service-slug>`; a bucket's OAuth/OIDC app registration is a separate, immediate admin action via `fused-cli connect set <service-slug>` -- see [`docs/COMMANDS.md`](docs/COMMANDS.md) -- neither is a workspace.yaml field.
 
 ### Syncing Local Config From Remote State
 
@@ -224,7 +245,11 @@ fused-cli workspace sync -f .fused/workspace.yaml
 fused-cli sdk sync my-sdk -f .fused/sdks/my-sdk.yaml
 ```
 
-`workspace sync` mirrors the Engine's active workspace services. `sdk sync` mirrors the most recently generated SDK with the given name, including its selected services, resolved versions, and operation names. Once you're satisfied with a plan (`fused-cli sdk plan` / `fused-cli workspace plan`), apply it the same way shown under Common Workflows above.
+`workspace sync` mirrors the Engine's active workspace services. `sdk sync`
+mirrors the most recently generated SDK with the given name, including its
+selected services, resolved versions, and operation names. Once you're satisfied
+with a plan (`fused-cli sdk plan` / `fused-cli workspace plan`), apply it the
+same way shown under Common Workflows above.
 
 Plan output includes the Engine's complete change summary. A saved plan receipt is bound to both the exact config content and the normalized Engine URL. Apply preflights every selected config before its first remote mutation and rejects receipts that are stale, unbound, or belong to another Engine; re-run plan against the intended Engine instead of bypassing this check.
 
