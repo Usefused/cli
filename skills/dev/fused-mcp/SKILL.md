@@ -68,6 +68,40 @@ you hand to an MCP client's SSE connection (see below). Removing one is
 immediate and not gated behind the same SDK-config blocker `fused-workspace`
 describes for removing a workspace service.
 
+## Permissions and team access
+
+A new MCP plan requires `artifact.create`, `service.read`, and `bucket.read`.
+Planning an update requires `artifact.manage` plus the dependency reads. Apply
+requires `artifact.create` for a new server or `artifact.manage` for an existing
+one, together with `service.consume` for every selected service and `bucket.use`
+for its bucket. `mcp list` requires `artifact.read`, removal requires
+`artifact.manage`, and any execution-token management surface requires
+`artifact.tokens.manage`.
+
+For team ownership, preflight the owner and dependencies before planning:
+
+```shell
+fused-cli team eligible-owners
+fused-cli team build-access <team> --resource service
+fused-cli team build-access <team> --resource bucket
+fused-cli mcp plan --owner-team <team>
+```
+
+An authorised administrator can grant only the missing scope:
+
+```shell
+fused-cli team access service grant <team> <service> use
+fused-cli team access bucket grant <team> <bucket> use
+fused-cli team access artifact grant <team> <mcp-server> read|use|manage
+```
+
+Use workspace-wide bucket/artifact grants only when that audience is intended.
+On denial, stop the blocked action, preserve the config and plan, and tell the
+user the missing permission and resource. Never self-grant, switch credentials,
+broaden scope, or retry with guessed authority. Do not run access commands
+unless explicitly requested and authorised. Read the `fused-cli` skill's
+`reference/access-management.md` for the full matrix.
+
 The owning person or team retains management even when the MCP server is offered
 to the whole company. `fused-cli workspace access artifact grant
 <mcp-name[@version]>` adds bounded workspace-wide use through the Engine's

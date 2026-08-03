@@ -163,3 +163,20 @@ mechanism: the Registry has its own delete-drift-snapshot endpoint, but no
 `updateWorkspaceNotificationStatus` mutation above -- a drift snapshot's
 `source: registry` id can't be acknowledged/dismissed the way an
 `source: engine` notification can.
+
+## Permissions and team access
+
+Reading workspace notifications requires `workspace.read`. Acknowledging or
+dismissing an Engine notification requires `notification.update`; there is no
+notification-scoped team grant. Builder includes `notification.update`, while
+Viewer can read workspace state but cannot update notification status.
+
+If an update is denied, stop and leave the notification unchanged. Tell the
+user the missing permission (`notification.update`) and workspace resource;
+preserve the notification ID/status needed for an authorised user to finish.
+Never self-grant, switch credentials, broaden scope, or retry with guessed
+authority. An authorised administrator may assign a suitable workspace role
+with `fused-cli team access workspace set <team> <role>`, but the agent must not
+run that command unless the user explicitly requests the access change. Read
+the `fused-cli` skill's `reference/access-management.md` for the complete role
+matrix.

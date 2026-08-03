@@ -83,6 +83,40 @@ set api-key`, which authenticates CLI-to-Engine management calls, not a
 generated SDK's own runtime traffic) -- `generate` prints the token exactly
 once, so capture it immediately.
 
+## Permissions and team access
+
+A new SDK plan requires `artifact.create`, `service.read`, and `bucket.read`.
+Planning an update requires `artifact.manage` plus the dependency reads. Apply
+requires `artifact.create` for a new SDK or `artifact.manage` for an existing
+one, together with `service.consume` for every selected service and `bucket.use`
+for the selected bucket. Download requires `artifact.read`; `sdk token`
+generate/list/revoke requires `artifact.tokens.manage`.
+
+For team ownership, preflight the owner and every dependency before planning:
+
+```shell
+fused-cli team eligible-owners
+fused-cli team build-access <team> --resource service
+fused-cli team build-access <team> --resource bucket
+fused-cli sdk plan --owner-team <team>
+```
+
+An authorised administrator can grant only the missing scope:
+
+```shell
+fused-cli team access service grant <team> <service> use
+fused-cli team access bucket grant <team> <bucket> use
+fused-cli team access artifact grant <team> <sdk> read|use|manage
+```
+
+Use `workspace access bucket grant` or `workspace access artifact grant` only
+when bounded use is intentionally workspace-wide. On denial, stop the blocked
+action, preserve the config and plan, and tell the user the missing permission
+and resource. Never self-grant, switch credentials, broaden scope, or retry
+with guessed authority. Do not run an access command unless the user explicitly
+requests it and the caller is authorised. Read the `fused-cli` skill's
+`reference/access-management.md` for the full matrix.
+
 SDK ownership does not have to match its audience. The owning person or team
 keeps management authority, while `fused-cli workspace access artifact grant
 <sdk-name[@version]>` grants bounded workspace-wide use through the Engine's

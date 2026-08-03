@@ -93,6 +93,56 @@ func TestFusedCLISkillShipsBuildWorkflowReference(t *testing.T) {
 	t.Fatalf("fused-cli manifest does not include build workflow reference: %v", spec.manifest)
 }
 
+func TestDevSkillsIncludePermissionAndDenialGuidance(t *testing.T) {
+	tests := []struct {
+		name     string
+		required []string
+	}{
+		{name: "fused-cli", required: []string{"catalogue.read", "catalogue.import", "access.read", "access.manage", "team access service", "team access workspace"}},
+		{name: "fused-workspace", required: []string{"service.read", "service.manage", "workspace.update", "team access service", "team access bucket", "team access workspace"}},
+		{name: "fused-sdk", required: []string{"artifact.create", "artifact.manage", "artifact.read", "artifact.tokens.manage", "service.consume", "bucket.use", "team eligible-owners", "team build-access", "team access artifact"}},
+		{name: "fused-mcp", required: []string{"artifact.create", "artifact.manage", "artifact.read", "artifact.tokens.manage", "service.consume", "bucket.use", "team eligible-owners", "team build-access", "team access artifact"}},
+		{name: "fused-bucket", required: []string{"bucket.read", "bucket.manage", "credentials.manage", "connection.manage", "service.consume", "team access bucket", "team access service"}},
+		{name: "fused-webhook", required: []string{"artifact.create", "artifact.manage", "service.consume", "bucket.use", "team eligible-owners", "team build-access", "team access service", "team access bucket"}},
+		{name: "fused-config", required: []string{"service.manage", "credentials.manage", "catalogue.import", "connection.manage", "team access service", "team access bucket", "team access workspace"}},
+		{name: "fused-notifications", required: []string{"workspace.read", "notification.update", "team access workspace"}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			spec, ok := skillSpecByName(test.name)
+			if !ok {
+				t.Fatalf("skill spec %q not found", test.name)
+			}
+
+			var combined strings.Builder
+			for _, manifestPath := range spec.manifest {
+				path := filepath.Join("..", "skills", "dev", test.name, filepath.FromSlash(manifestPath))
+				data, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatalf("read %s: %v", path, err)
+				}
+				combined.Write(data)
+				combined.WriteByte('\n')
+			}
+			content := combined.String()
+			if !strings.Contains(content, "## Permissions and team access") && test.name != "fused-cli" {
+				t.Error("missing a Permissions and team access section")
+			}
+			for _, required := range append(test.required,
+				"reference/access-management.md",
+				"missing permission",
+				"resource",
+				"Never self-grant",
+			) {
+				if !strings.Contains(content, required) {
+					t.Errorf("missing permission-guidance token %q", required)
+				}
+			}
+		})
+	}
+}
+
 // --- version folder / URL shape ---------------------------------------------
 
 func TestSkillVersionFolder(t *testing.T) {

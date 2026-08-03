@@ -48,3 +48,34 @@ OAuth `connect` app registration's `client_secret` uses this same
 bucket-secret path -- `${bucket.secret.<key>}` -- resolved by the Engine at
 apply time against this connect config's own bucket, same as `auth` (see
 `reference/connection-profiles.md`).
+
+## Permissions and team access
+
+Follow the lifecycle of the command that owns the config:
+
+- A local workspace execution-policy or profile change needs `service.manage`
+  to plan and `workspace.update` plus `service.manage` to apply. Bucket changes
+  also need `bucket.manage`; secret material needs `credentials.manage`.
+- Publishing a Registry connection-profile baseline needs `service.manage` and
+  `credentials.manage`. Publishing owner-only service policy remains owner-only
+  even when the caller otherwise has workspace access.
+- Importing `x-fused-connect` through OpenAPI/Postman needs `catalogue.import`;
+  reading the import session needs `catalogue.read`.
+- `connect set` needs `credentials.manage` and `service.consume`; starting a
+  connect session needs `connection.manage`, `bucket.use`, and
+  `service.consume`.
+
+The narrow remediation commands are usually:
+
+```shell
+fused-cli team access service grant <team> <service> use|manage
+fused-cli team access bucket grant <team> <bucket> use|manage
+fused-cli team access workspace set <team> admin   # only for a missing workspace-level permission
+```
+
+On denial, stop the blocked action, preserve the config/source and plan, and
+tell the user the missing permission and resource. Never self-grant, switch
+credentials, broaden scope, or retry with guessed authority. Do not run access
+commands unless explicitly requested and authorised. Read the `fused-cli`
+skill's `reference/access-management.md` for the full matrix, then use
+`fused-workspace` or `fused-bucket` for the owning command's exact workflow.
