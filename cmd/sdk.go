@@ -19,60 +19,63 @@ import (
 
 var sdkInput io.Reader = os.Stdin
 
-var sdkCmd = &cobra.Command{
-	Use:   "sdk",
-	Short: "Manage Fused SDK configuration",
-	Long:  `Manage your SDK generation config files, plan changes, and download generated SDKs.`,
-	Example: `  fused-cli sdk security-sdk download
-  fused-cli sdk security-sdk@1.2.0 download`,
-	Args: cobra.ArbitraryArgs,
-	// Why: Write to OTEL to audit user/agent-triggered mutative execution.
-	RunE: WithTelemetry("cli.sdk", func(cmd *cobra.Command, args []string) error {
-		return runSDKDynamicAction(cmd, args)
-	}),
-}
-
-var sdkPlanCmd = &cobra.Command{
-	Use:   "plan",
-	Short: "Plan SDK configuration",
-	// Why: Write to OTEL to audit user/agent-triggered mutative execution.
-	RunE: WithTelemetry("cli.sdk.plan", func(cmd *cobra.Command, args []string) error {
-		return runConfigPlan(planOptions{filter: filterSDK, jsonOut: sdkPlanJSON, receiptOut: sdkPlanReceiptOut, ownerTeamID: sdkPlanOwnerTeam})
-	}),
-}
-
+var sdkDownloadOutDir string
+var sdkListFlags listFlags
 var sdkPlanJSON bool
 var sdkPlanReceiptOut string
 var sdkPlanOwnerTeam string
 var sdkApplyDownload bool
 var sdkApplyPlanID string
 var sdkApplyReceiptPath string
+
+var sdkCmd = &cobra.Command{
+	Use:   "sdk",
+	Short: "Manage generated SDKs",
+	Args:  cobra.ArbitraryArgs,
+	RunE: WithTelemetry("cli.sdk", func(cmd *cobra.Command, args []string) error {
+		return runSDKDynamicAction(cmd, args)
+	}),
+}
+
+var sdkListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List generated SDKs",
+	Args:  cobra.NoArgs,
+	RunE: WithTelemetry("cli.sdk.list", func(cmd *cobra.Command, _ []string) error {
+		return runSDKList(cmd)
+	}),
+}
+
+var sdkPlanCmd = &cobra.Command{
+	Use:   "plan",
+	Short: "Plan SDK configuration",
+	Args:  cobra.NoArgs,
+	RunE: WithTelemetry("cli.sdk.plan", func(_ *cobra.Command, _ []string) error {
+		return runConfigPlan(planOptions{filter: filterSDK, jsonOut: sdkPlanJSON, receiptOut: sdkPlanReceiptOut, ownerTeamSlug: sdkPlanOwnerTeam})
+	}),
+}
+
 var sdkApplyCmd = &cobra.Command{
 	Use:   "apply",
 	Short: "Apply SDK configuration",
-	// Why: Write to OTEL to audit user/agent-triggered mutative execution.
-	RunE: WithTelemetry("cli.sdk.apply", func(cmd *cobra.Command, args []string) error {
-		return runConfigApply(withApplyAudit(cmd, applyOptions{
-			filter:      filterSDK,
-			download:    sdkApplyDownload,
-			planID:      sdkApplyPlanID,
-			receiptPath: sdkApplyReceiptPath,
-		}))
+	Args:  cobra.NoArgs,
+	RunE: WithTelemetry("cli.sdk.apply", func(cmd *cobra.Command, _ []string) error {
+		return runConfigApply(withApplyAudit(cmd, applyOptions{filter: filterSDK, download: sdkApplyDownload, planID: sdkApplyPlanID, receiptPath: sdkApplyReceiptPath}))
 	}),
 }
 
 var sdkValidateCmd = &cobra.Command{
 	Use:   "validate",
 	Short: "Validate SDK configuration",
-	// Why: Write to OTEL to audit user/agent-triggered mutative execution.
-	RunE: WithTelemetry("cli.sdk.validate", func(cmd *cobra.Command, args []string) error {
+	Args:  cobra.NoArgs,
+	RunE: WithTelemetry("cli.sdk.validate", func(cmd *cobra.Command, _ []string) error {
 		run, err := configfile.LoadRun(effectiveConfigFile())
 		if err != nil {
 			return err
 		}
 		count := 0
-		for _, cfg := range run.Configs {
-			if cfg.Kind == configfile.KindSDK {
+		for _, config := range run.Configs {
+			if config.Kind == configfile.KindSDK {
 				count++
 			}
 		}
@@ -83,12 +86,6 @@ var sdkValidateCmd = &cobra.Command{
 		return nil
 	}),
 }
-
-var sdkDownloadOutDir string
-var sdkListFlags listFlags
-var sdkListTarget string
-var sdkListLanguage string
-var sdkListLatestOnly bool
 
 type sdkDownloadTarget struct {
 	Name    string
@@ -177,21 +174,16 @@ func runSDKList(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	page, err := client.ListSDKs(api.SDKListOptions{
-		PageOptions:    sdkListFlags.pageOptions(),
-		TargetType:     sdkListTarget,
-		TargetLanguage: sdkListLanguage,
-		LatestOnly:     sdkListLatestOnly,
-	})
+	page, err := client.ListArtifacts("sdk", sdkListFlags.pageOptions())
 	if err != nil {
 		return err
 	}
-	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 8, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tVERSION\tTARGET_TYPE\tLANGUAGE\tID")
+	writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 8, 2, ' ', 0)
+	fmt.Fprintln(writer, "NAME\tVERSION\tACTIVE\tID")
 	for _, sdk := range page.Items {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", sdk.Name, sdk.Version, sdk.TargetType, sdk.TargetLanguage, sdk.ID)
+		fmt.Fprintf(writer, "%s\t%s\t%t\t%s\n", sdk.Name, sdk.Version, sdk.Active, sdk.ID)
 	}
-	w.Flush()
+	_ = writer.Flush()
 	printPageSummary(cmd.OutOrStdout(), page.Total, sdkListFlags)
 	return nil
 }
@@ -201,11 +193,11 @@ func runSDKShow(cmd *cobra.Command, target sdkDownloadTarget) error {
 	if err != nil {
 		return err
 	}
-	sdk, err := client.GetSDKByName(target.Name, target.Version)
+	sdk, err := client.GetArtifactSummary(sdkTargetReference(target), "sdk")
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "name:\t%s\nversion:\t%s\nid:\t%s\nsandbox_url:\t%s\n", sdk.Name, sdk.Version, sdk.ID, sdk.SandboxURL)
+	fmt.Fprintf(cmd.OutOrStdout(), "name:\t%s\nversion:\t%s\nactive:\t%t\nid:\t%s\n", sdk.Name, sdk.Version, sdk.Active, sdk.ID)
 	return nil
 }
 
@@ -214,25 +206,29 @@ func runSDKServices(cmd *cobra.Command, target sdkDownloadTarget) error {
 	if err != nil {
 		return err
 	}
-	sdk, err := client.GetSDKSelectionsByNameVersion(target.Name, target.Version)
+	services, err := client.ListArtifactServices(sdkTargetReference(target), "sdk")
 	if err != nil {
 		return err
 	}
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 8, 2, ' ', 0)
 	fmt.Fprintln(w, "SERVICE\tSERVICE_ID\tVERSION\tSELECT_ALL\tENDPOINTS\tWEBHOOKS")
-	for _, service := range sdk.DetailedSelections {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%t\t%d\t%d\n", displaySDKServiceSlug(service), service.ServiceID, service.ServiceVersionName, service.SelectAll, len(service.EndpointIDs), len(service.WebhookIDs))
+	for _, service := range services {
+		name := service.ServiceSlug
+		if name == "" {
+			name = service.ServiceName
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%t\t%d\t%d\n", name, service.ServiceID, service.Version, service.SelectAll, service.EndpointCount, service.WebhookCount)
 	}
 	w.Flush()
 	return nil
 }
 
 func runSDKBuckets(cmd *cobra.Command, target sdkDownloadTarget) error {
-	client, sdk, err := sdkClientAndDetails(target)
+	client, sdkID, err := sdkClientAndID(target)
 	if err != nil {
 		return err
 	}
-	buckets, err := client.ListSDKBuckets(sdk.ID)
+	buckets, err := client.ListSDKBuckets(sdkID)
 	if err != nil {
 		return err
 	}
@@ -246,11 +242,11 @@ func runSDKBuckets(cmd *cobra.Command, target sdkDownloadTarget) error {
 }
 
 func runSDKTokens(cmd *cobra.Command, target sdkDownloadTarget) error {
-	client, sdk, err := sdkClientAndDetails(target)
+	client, sdkID, err := sdkClientAndID(target)
 	if err != nil {
 		return err
 	}
-	tokens, err := client.ListSDKTokens(sdk.ID)
+	tokens, err := client.ListSDKTokens(sdkID)
 	if err != nil {
 		return err
 	}
@@ -263,26 +259,23 @@ func runSDKTokens(cmd *cobra.Command, target sdkDownloadTarget) error {
 	return nil
 }
 
-func sdkClientAndDetails(target sdkDownloadTarget) (*api.Client, *api.SDKBasicDetails, error) {
+func sdkClientAndID(target sdkDownloadTarget) (*api.Client, string, error) {
 	client, err := getAPIClient()
 	if err != nil {
-		return nil, nil, err
+		return nil, "", err
 	}
-	sdk, err := client.GetSDKByName(target.Name, target.Version)
+	sdkID, err := client.ResolveSDKReference(sdkTargetReference(target))
 	if err != nil {
-		return nil, nil, err
+		return nil, "", err
 	}
-	return client, sdk, nil
+	return client, sdkID, nil
 }
 
-func displaySDKServiceSlug(service api.SDKSelectionDetail) string {
-	if service.ServiceProvider != "" && service.ServiceSlug != "" {
-		return "@" + service.ServiceProvider + "/" + service.ServiceSlug
+func sdkTargetReference(target sdkDownloadTarget) string {
+	if target.Version == "" {
+		return target.Name
 	}
-	if service.ServiceSlug != "" {
-		return service.ServiceSlug
-	}
-	return service.ServiceName
+	return target.Name + "@" + target.Version
 }
 
 func downloadTargetFromName(name string) sdkDownloadTarget {
@@ -337,14 +330,14 @@ func downloadSDKTarget(client *api.Client, target sdkDownloadTarget) error {
 }
 
 func downloadSDKByName(client *api.Client, target sdkDownloadTarget) ([]byte, error) {
-	sdk, err := client.GetSDKByName(target.Name, target.Version)
+	artifactID, err := client.ResolveSDKReference(sdkTargetReference(target))
 	if err != nil {
 		return nil, err
 	}
-	if sdk == nil || strings.TrimSpace(sdk.ID) == "" {
+	if strings.TrimSpace(artifactID) == "" {
 		return nil, fmt.Errorf("generated SDK not found")
 	}
-	return client.DownloadSDK(sdk.ID)
+	return client.DownloadSDK(artifactID)
 }
 
 var sdkServiceCmd = &cobra.Command{
@@ -947,25 +940,14 @@ func selectedIndex(rawChoice string, size int) (int, error) {
 
 func init() {
 	RootCmd.AddCommand(sdkCmd)
-	sdkCmd.Flags().StringVarP(&sdkDownloadOutDir, "out", "o", ".", "Output directory for SDK download")
-	addListFlags(sdkCmd, &sdkListFlags)
-	sdkCmd.Flags().StringVar(&sdkListTarget, "target", "sdk", "Target type for sdk list")
-	sdkCmd.Flags().StringVar(&sdkListLanguage, "language", "", "Target language for sdk list")
-	sdkCmd.Flags().BoolVar(&sdkListLatestOnly, "latest-only", true, "Only show the latest SDK per name")
-
-	sdkCmd.AddCommand(sdkPlanCmd)
-	sdkPlanCmd.Flags().BoolVar(&sdkPlanJSON, "json", false, "Print plan result JSON, including summary and notifications")
-	sdkPlanCmd.Flags().StringVar(&sdkPlanReceiptOut, "receipt-out", "", "Write the plan receipt to a specific path")
-	sdkPlanCmd.Flags().StringVar(&sdkPlanOwnerTeam, "owner-team", "", "Owning team ID (required when creating a new SDK)")
-
-	sdkCmd.AddCommand(sdkApplyCmd)
-	sdkApplyCmd.Flags().BoolVar(&sdkApplyDownload, "download", false, "Download generated SDK after apply")
-	sdkApplyCmd.Flags().StringVar(&sdkApplyPlanID, "plan-id", "", "Apply a specific remote plan ID for a single SDK config")
-	sdkApplyCmd.Flags().StringVar(&sdkApplyReceiptPath, "receipt", "", "Read a specific plan receipt for a single SDK config")
-
-	sdkCmd.AddCommand(sdkValidateCmd)
-
-	sdkCmd.AddCommand(sdkDownloadCmd)
+	sdkCmd.AddCommand(sdkListCmd, sdkPlanCmd, sdkApplyCmd, sdkValidateCmd, sdkDownloadCmd)
+	addListFlags(sdkListCmd, &sdkListFlags)
+	sdkPlanCmd.Flags().BoolVar(&sdkPlanJSON, "json", false, "Print plan result JSON")
+	sdkPlanCmd.Flags().StringVar(&sdkPlanReceiptOut, "receipt-out", "", "Write the plan receipt to this path")
+	sdkPlanCmd.Flags().StringVar(&sdkPlanOwnerTeam, "owner-team", "", "Optional owning team slug; defaults to the authenticated person")
+	sdkApplyCmd.Flags().BoolVar(&sdkApplyDownload, "download", false, "Download generated SDKs after apply")
+	sdkApplyCmd.Flags().StringVar(&sdkApplyPlanID, "plan-id", "", "Apply a specific remote plan ID")
+	sdkApplyCmd.Flags().StringVar(&sdkApplyReceiptPath, "receipt", "", "Read a plan receipt from this path")
 	sdkDownloadCmd.Flags().StringVarP(&sdkDownloadOutDir, "out", "o", ".", "Output directory for the SDK")
 
 	sdkCmd.AddCommand(sdkServiceCmd)

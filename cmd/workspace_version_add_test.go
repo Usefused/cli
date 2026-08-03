@@ -3,15 +3,15 @@ package cmd
 import (
 	"net/http"
 	"net/http/httptest"
-	"strings"
-	"testing"
 	"os"
 	"path/filepath"
+	"strings"
+	"testing"
 )
 
 func TestWorkspaceServiceVersionAddLatest(t *testing.T) {
 	dir := t.TempDir()
-	
+
 	// Create a dummy workspace.yaml
 	workspaceYAML := `kind: workspace
 api_version: v1
@@ -49,8 +49,8 @@ services:
 	}))
 	defer server.Close()
 
-	out := runCommandInDirOutput(t, dir, server.URL, []string{"workspace", "service", "plunk", "version", "add", "latest", "-f", filepath.Join(dir, ".fused", "workspace.yaml")})
-	
+	out := runCommandInDirOutput(t, dir, server.URL, []string{"workspace", "service", "version", "add", "plunk", "latest", "-f", filepath.Join(dir, ".fused", "workspace.yaml")})
+
 	if !sawLatestQuery {
 		t.Fatal("expected GetServiceLatestVersion request")
 	}
@@ -60,7 +60,7 @@ services:
 	if !strings.Contains(out, "Added version 1.1.0 to service plunk") {
 		t.Fatalf("expected added version output, got %q", out)
 	}
-	
+
 	// Verify workspace.yaml has the resolved version
 	data, err := os.ReadFile(filepath.Join(fusedDir, "workspace.yaml"))
 	if err != nil {

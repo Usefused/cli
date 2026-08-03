@@ -14,81 +14,77 @@ import (
 )
 
 var secretCmd = &cobra.Command{
-	Use:   "secret <service-slug|list> [set|remove] [args...]",
+	Use:   "secret",
 	Short: "Manage workspace secrets",
-	Args:  validateSecretArgs,
-	// Write to OTEL to audit user/agent-triggered mutative execution.
-	RunE: WithTelemetry("cli.secret", func(cmd *cobra.Command, args []string) error {
-		return runSecretAction(cmd, args)
-	}),
-	ValidArgsFunction: completeSecretArgs,
+	Args:  cobra.NoArgs,
+	RunE:  requireSubcommand,
 }
 
 var secretSetInteractive bool
+var secretSetValueStdin bool
 var secretSetBucketID string
 var secretSetExpiresAt string
 var secretSetType string
 var secretListBucketID string
 var secretRemoveBucketID string
+var secretListFlags listFlags
 
-func validateSecretArgs(cmd *cobra.Command, args []string) error {
-	if len(args) == 0 || args[0] == "list" {
-		return nil
+func validateSecretSetArgs(cmd *cobra.Command, args []string) error {
+	if err := cobra.ExactArgs(1)(cmd, args); err != nil {
+		return err
 	}
-	if len(args) < 2 {
-		return fmt.Errorf("secret requires an action (e.g. set, remove)")
-	}
-	action := args[1]
-	if action == "set" {
-		return validateSecretSetArgs(args)
-	}
-	if action == "remove" {
-		if len(args) != 3 {
-			return fmt.Errorf("remove accepts exactly 1 arg after action (key-name)")
-		}
-		return nil
-	}
-	return fmt.Errorf("unknown secret action %q", action)
-}
-
-func validateSecretSetArgs(args []string) error {
-	// Interactive mode handles value input dynamically through UI prompts, so we don't expect it as a CLI argument.
-	if secretSetInteractive {
-		if len(args) != 2 {
-			return fmt.Errorf("accepts exactly 1 arg after action (value is omitted) when using interactive mode")
-		}
-		return nil
-	}
-	if len(args) != 3 {
-		return fmt.Errorf("set accepts exactly 1 arg after action (value). Use -i for interactive mode if the service has multiple auth methods")
+	if secretSetInteractive == secretSetValueStdin {
+		return fmt.Errorf("choose exactly one credential input: --interactive or --value-stdin")
 	}
 	return nil
 }
 
-func runSecretAction(cmd *cobra.Command, args []string) error {
-	if len(args) == 0 {
-		return cmd.Help()
-	}
-	if args[0] == "list" {
-		return runSecretList(cmd, args)
-	}
-
-	serviceSlug := args[0]
-	action := args[1]
-
-	switch action {
-	case "set":
-		var value string
-		if len(args) > 2 {
-			value = args[2]
+var secretSetCmd = &cobra.Command{
+	Use:   "set <service-slug>",
+	Short: "Set credentials for a service",
+	Args:  validateSecretSetArgs,
+	RunE: WithTelemetry("cli.secret.set", func(cmd *cobra.Command, args []string) error {
+		value, err := readSecretValue(cmd)
+		if err != nil {
+			return err
 		}
-		return runSecretSet(cmd, serviceSlug, value)
-	case "remove":
-		keyName := args[2]
-		return runSecretRemove(cmd, serviceSlug, keyName)
-	default:
-		return fmt.Errorf("unknown action %s", action)
+		if err := runSecretSet(cmd, args[0], value); err != nil {
+			return err
+		}
+		recordAppliedChange(cmd.Context(), cmd.CommandPath(), "secret")
+		return nil
+	}),
+}
+
+func readSecretValue(cmd *cobra.Command) (string, error) {
+	if secretSetInteractive {
+		return "", nil
 	}
+	// Secrets never belong in argv because shell history and process listings
+	// can retain them long after the command finishes.
+	return readSensitiveValue(cmd, "credential")
+}
+
+var secretListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List secret metadata in a bucket",
+	Args:  cobra.NoArgs,
+	RunE: WithTelemetry("cli.secret.list", func(cmd *cobra.Command, _ []string) error {
+		return runSecretList(cmd)
+	}),
+}
+
+var secretDeleteCmd = &cobra.Command{
+	Use:   "delete <service-slug> <key-name>",
+	Short: "Delete a service secret",
+	Args:  cobra.ExactArgs(2),
+	RunE: WithTelemetry("cli.secret.delete", func(cmd *cobra.Command, args []string) error {
+		if err := runSecretDelete(cmd, args[0], args[1]); err != nil {
+			return err
+		}
+		recordAppliedChange(cmd.Context(), cmd.CommandPath(), "secret")
+		return nil
+	}),
 }
 
 // runSecretSet resolves the bucket and service before inspecting auth metadata
@@ -103,17 +99,16 @@ func runSecretSet(cmd *cobra.Command, serviceSlug, value string) error {
 	if err != nil {
 		return err
 	}
-	bucketID, err := resolveBucketIDPrompt(client, secretSetBucketID)
-	if err != nil {
-		return err
-	}
-	serviceID, err := resolveServiceIDFromSlug(client, serviceSlug)
+	bucketID, err := resolveOptionalBucketID(secretSetBucketID)
 	if err != nil {
 		return err
 	}
 	info, err := client.GetServiceInfo(serviceSlug)
 	if err != nil {
 		return err
+	}
+	if info == nil || strings.TrimSpace(info.ID) == "" {
+		return fmt.Errorf("service %s not found", serviceSlug)
 	}
 	auth, err := selectSecretAuth(info, serviceSlug)
 	if err != nil {
@@ -122,12 +117,12 @@ func runSecretSet(cmd *cobra.Command, serviceSlug, value string) error {
 	authType := canonicalSecretAuthType(auth)
 	// Basic auth requires two distinct inputs (username and password) which can't be cleanly parsed from a single positional argument, so we route it to a specialized handler.
 	if authType == "basic" {
-		return handleBasicSecretSet(client, serviceID, bucketID, auth, value, expiresAt)
+		return handleBasicSecretSet(client, info.ID, bucketID, auth, value, expiresAt)
 	}
 	if authType == "mtls" {
-		return handleMTLSSecretSet(client, serviceID, bucketID, auth, value, expiresAt)
+		return handleMTLSSecretSet(client, info.ID, bucketID, auth, value, expiresAt)
 	}
-	return handleTokenSecretSet(client, serviceID, bucketID, auth, value, expiresAt, serviceSlug)
+	return handleTokenSecretSet(client, info.ID, bucketID, auth, value, expiresAt, serviceSlug)
 }
 
 // parseSecretExpiresAt validates expiry locally so malformed timestamps do not
@@ -396,24 +391,23 @@ func secretAuthCredentialName(auth *api.AuthConfig) string {
 	return ""
 }
 
-func runSecretList(cmd *cobra.Command, args []string) error {
+func runSecretList(cmd *cobra.Command) error {
 	client, err := getAPIClient()
 	if err != nil {
 		return err
 	}
 	if secretListBucketID == "" {
-		return fmt.Errorf("flag --list-bucket is required for secret list; use 'bucket <name-or-id> secrets' for bucket-scoped browsing")
+		return fmt.Errorf("flag --bucket is required")
 	}
-	bucketID := secretListBucketID
-	resolvedBucketID, err := resolveBucketID(client, bucketID)
+	resolvedBucketID, err := resolveExplicitBucketID(secretListBucketID)
 	if err != nil {
 		return err
 	}
-	secrets, err := client.ListSecrets(resolvedBucketID)
+	page, err := client.ListSecretMetaPage(resolvedBucketID, secretListFlags.pageOptions())
 	if err != nil {
 		return err
 	}
-	for _, s := range secrets {
+	for _, s := range page.Items {
 		bucket := s.BucketID
 		expiry := "never"
 		if s.ExpiresAt != nil {
@@ -422,19 +416,20 @@ func runSecretList(cmd *cobra.Command, args []string) error {
 				expiry += " (EXPIRED)"
 			}
 		}
-		fmt.Printf("Service: %s, Key: %s, Bucket: %s, Type: %s, Expires: %s, Updated: %s\n", s.ServiceID, s.KeyName, bucket, s.CredentialType, expiry, s.UpdatedAt.Format("2006-01-02 15:04:05"))
+		fmt.Fprintf(cmd.OutOrStdout(), "Service: %s, Key: %s, Bucket: %s, Type: %s, Expires: %s, Updated: %s\n", s.ServiceID, s.KeyName, bucket, s.CredentialType, expiry, s.UpdatedAt.Format("2006-01-02 15:04:05"))
 	}
+	printPageSummary(cmd.OutOrStdout(), page.Total, secretListFlags)
 	return nil
 }
 
-func runSecretRemove(cmd *cobra.Command, serviceSlug, keyName string) error {
+func runSecretDelete(cmd *cobra.Command, serviceSlug, keyName string) error {
 	client, err := getAPIClient()
 	if err != nil {
 		return err
 	}
 	bucketID := secretRemoveBucketID
 
-	resolvedBucketID, err := resolveBucketID(client, bucketID)
+	resolvedBucketID, err := resolveOptionalBucketID(bucketID)
 	if err != nil {
 		return err
 	}
@@ -448,65 +443,27 @@ func runSecretRemove(cmd *cobra.Command, serviceSlug, keyName string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("Secret '%s' removed successfully.\n", keyName)
+	fmt.Fprintf(cmd.OutOrStdout(), "Secret %q deleted.\n", keyName)
 	return nil
 }
 
-func completeSecretArgs(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-	if len(args) == 0 {
-		return completeSecretFirstArg(toComplete)
+func resolveOptionalBucketID(value string) (string, error) {
+	if strings.TrimSpace(value) == "" {
+		return "", nil
 	}
-	if len(args) == 1 && args[0] != "list" {
-		return completeSecretActionArg(toComplete)
-	}
-	return nil, cobra.ShellCompDirectiveNoFileComp
-}
-
-func completeSecretFirstArg(toComplete string) ([]string, cobra.ShellCompDirective) {
-	client, err := getAPIClient()
-	if err != nil {
-		return nil, cobra.ShellCompDirectiveNoFileComp
-	}
-	services, err := client.ListWorkspaceServices()
-	if err != nil {
-		return nil, cobra.ShellCompDirectiveNoFileComp
-	}
-	var candidates []string
-	if strings.HasPrefix("list", toComplete) {
-		candidates = append(candidates, "list")
-	}
-	for _, service := range services {
-		slug := workspaceServiceSlugColumn(service)
-		if slug != "-" && strings.HasPrefix(slug, toComplete) {
-			candidates = append(candidates, slug)
-		}
-	}
-	return candidates, cobra.ShellCompDirectiveNoFileComp
-}
-
-func completeSecretActionArg(toComplete string) ([]string, cobra.ShellCompDirective) {
-	actions := []string{"set", "remove"}
-	var matches []string
-	for _, a := range actions {
-		if strings.HasPrefix(a, toComplete) {
-			matches = append(matches, a)
-		}
-	}
-	return matches, cobra.ShellCompDirectiveNoFileComp
+	return resolveExplicitBucketID(value)
 }
 
 func init() {
 	RootCmd.AddCommand(secretCmd)
+	secretCmd.AddCommand(secretSetCmd, secretListCmd, secretDeleteCmd)
 
-	// Flags for the "set" action
-	secretCmd.Flags().StringVar(&secretSetBucketID, "bucket", "", "Set secret as an override for a specific Bucket (name or ID) (for 'set' action)")
-	secretCmd.Flags().StringVar(&secretSetExpiresAt, "expires-at", "", "RFC3339 expiry timestamp (e.g. 2026-12-31T23:59:59Z); omit for no expiry (for 'set' action)")
-	secretCmd.Flags().StringVar(&secretSetType, "type", "", "Specify the logical authentication method name (e.g., bearerAuth) (for 'set' action)")
-	secretCmd.Flags().BoolVarP(&secretSetInteractive, "interactive", "i", false, "Interactive mode to prompt for service's supported authentication methods (for 'set' action)")
-
-	// Flags for the "list" action
-	secretCmd.Flags().StringVar(&secretListBucketID, "list-bucket", "", "Filter secrets by Bucket (name or ID) (for 'list' action)")
-
-	// Flags for the "remove" action
-	secretCmd.Flags().StringVar(&secretRemoveBucketID, "remove-bucket", "", "Remove override secret for a specific Bucket (name or ID) (for 'remove' action)")
+	secretSetCmd.Flags().StringVar(&secretSetBucketID, "bucket", "", "Bucket name or UUID; omit to use the default bucket")
+	secretSetCmd.Flags().StringVar(&secretSetExpiresAt, "expires-at", "", "RFC3339 expiry timestamp; omit for no expiry")
+	secretSetCmd.Flags().StringVar(&secretSetType, "type", "", "Logical authentication method name, such as bearerAuth")
+	secretSetCmd.Flags().BoolVarP(&secretSetInteractive, "interactive", "i", false, "Prompt for the supported authentication method and value")
+	secretSetCmd.Flags().BoolVar(&secretSetValueStdin, "value-stdin", false, "Read the credential value from stdin")
+	secretListCmd.Flags().StringVar(&secretListBucketID, "bucket", "", "Bucket name or UUID (required)")
+	addListFlags(secretListCmd, &secretListFlags)
+	secretDeleteCmd.Flags().StringVar(&secretRemoveBucketID, "bucket", "", "Bucket name or UUID; omit to use the default bucket")
 }

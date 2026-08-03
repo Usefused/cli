@@ -6,6 +6,10 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"go.opentelemetry.io/otel"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
 func TestTeamListUsesPagedEngineContract(t *testing.T) {
@@ -90,6 +94,44 @@ func TestNormalizeTeamRoles(t *testing.T) {
 	if got, err := normalizeArtifactAccessLevel("read"); err != nil || got != "READER" {
 		t.Fatalf("normalizeArtifactAccessLevel(read) = %q, %v", got, err)
 	}
+	if got, err := normalizeArtifactAccessLevel("use"); err != nil || got != "USER" {
+		t.Fatalf("normalizeArtifactAccessLevel(use) = %q, %v", got, err)
+	}
+	for _, legacy := range []string{"user", "manager"} {
+		if _, err := normalizeAccessLevel(legacy); err == nil {
+			t.Errorf("legacy service access level %q was accepted", legacy)
+		}
+	}
+	for _, legacy := range []string{"reader", "manager"} {
+		if _, err := normalizeArtifactAccessLevel(legacy); err == nil {
+			t.Errorf("legacy artifact access level %q was accepted", legacy)
+		}
+	}
+	if _, err := normalizeSelectorResourceType("services"); err == nil {
+		t.Error("legacy plural resource selector was accepted")
+	}
+}
+
+func TestNoOpTeamAccessDoesNotEmitAppliedChangeAudit(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"grantTeamServiceAccess":{"binding":null,"authorization_revision":5,"changed":false}}}`))
+	}))
+	defer server.Close()
+
+	exporter := tracetest.NewInMemoryExporter()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
+	previousProvider := otel.GetTracerProvider()
+	otel.SetTracerProvider(provider)
+	t.Cleanup(func() { otel.SetTracerProvider(previousProvider) })
+
+	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"team", "access", "service", "grant", "team-1", "service-1", "use"})
+	if !strings.Contains(out, "already up to date") {
+		t.Fatalf("no-op output = %q", out)
+	}
+	if got := countAppliedChangeEvents(exporter.GetSpans()); got != 0 {
+		t.Fatalf("applied change event count = %d, want 0", got)
+	}
 }
 
 func TestTeamArtifactAccessCanShareOneArtifactWithTwoTeams(t *testing.T) {
@@ -104,16 +146,16 @@ func TestTeamArtifactAccessCanShareOneArtifactWithTwoTeams(t *testing.T) {
 	}))
 	defer server.Close()
 
-	runCommandInDir(t, t.TempDir(), server.URL, []string{"team", "access", "artifact", "grant", "team-1", "artifact-1", "read"})
-	runCommandInDir(t, t.TempDir(), server.URL, []string{"team", "access", "artifact", "grant", "team-2", "artifact-1", "manage"})
+	runCommandInDir(t, t.TempDir(), server.URL, []string{"team", "access", "artifact", "grant", "platform", "support@1.0.0", "read"})
+	runCommandInDir(t, t.TempDir(), server.URL, []string{"team", "access", "artifact", "grant", "support", "support@1.0.0", "manage"})
 
 	if len(requests) != 2 {
 		t.Fatalf("request count = %d, want 2", len(requests))
 	}
-	if requests[0].Variables["teamId"] != "team-1" || requests[0].Variables["resourceId"] != "artifact-1" || requests[0].Variables["level"] != "READER" {
+	if requests[0].Variables["teamId"] != "platform" || requests[0].Variables["resourceId"] != "support@1.0.0" || requests[0].Variables["level"] != "READER" {
 		t.Fatalf("first team sharing request = %#v", requests[0])
 	}
-	if requests[1].Variables["teamId"] != "team-2" || requests[1].Variables["resourceId"] != "artifact-1" || requests[1].Variables["level"] != "MANAGER" {
+	if requests[1].Variables["teamId"] != "support" || requests[1].Variables["resourceId"] != "support@1.0.0" || requests[1].Variables["level"] != "MANAGER" {
 		t.Fatalf("second team sharing request = %#v", requests[1])
 	}
 	for _, request := range requests {

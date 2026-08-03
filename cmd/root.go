@@ -49,7 +49,7 @@ var RootCmd = &cobra.Command{
 	Long: `Fused CLI is the config-as-code and operations CLI for the Fused
 integration layer. Use it to connect to a Fused Engine, import API services,
 apply workspace configuration, manage buckets and secrets, configure webhooks,
-and operate SDK or MCP artifacts when you need them.`,
+generate SDKs, and deploy MCP servers.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		if showReadme {
 			fmt.Print(ReadmeContent)
@@ -93,7 +93,7 @@ func Execute() {
 }
 
 func init() {
-	RootCmd.PersistentFlags().StringVar(&APIKey, "key", "", "API key (overrides config & FUSED_API_KEY)")
+	RootCmd.PersistentFlags().StringVar(&APIKey, "key", "", "Engine credential (overrides config, FUSED_API_KEY & FUSED_LICENSE_KEY)")
 	RootCmd.PersistentFlags().StringVar(&EngineURL, "engine-url", "", "Fused Engine URL (overrides config & FUSED_ENGINE_URL)")
 	RootCmd.PersistentFlags().StringVarP(&ConfigFile, "file", "f", "", "Path to a Fused config file (disables .fused/ discovery)")
 	RootCmd.PersistentFlags().BoolVar(&NoInput, "no-input", false, "Fail instead of prompting for input (also enabled by CI=true)")
@@ -160,13 +160,19 @@ func GetEngineURL() (string, error) {
 	return "", fmt.Errorf("engine-url is not configured.\n\nRun:\n  fused-cli config set engine-url <url>\n\nOr set FUSED_ENGINE_URL environment variable.")
 }
 
-// GetAPIKey resolves the API key.
-// Resolution order: flag -> env -> config file -> empty string.
+// GetAPIKey resolves the local Engine control credential.
+// Resolution order: flag -> personal/service env -> license env -> config.
 func GetAPIKey() string {
 	if APIKey != "" {
 		return APIKey
 	}
 	if env := os.Getenv("FUSED_API_KEY"); env != "" {
+		return env
+	}
+	// The workspace license is also the bootstrap Owner credential. Keep it
+	// below FUSED_API_KEY so operators can adopt personal credentials without
+	// having to remove the server-side Registry credential from their shell.
+	if env := os.Getenv("FUSED_LICENSE_KEY"); env != "" {
 		return env
 	}
 	if cfgVal, err := config.Get("api-key"); err == nil && cfgVal != "" {
@@ -187,7 +193,7 @@ func getAPIClientWithTimeout(timeout time.Duration) (*api.Client, error) {
 	}
 	apiKey := GetAPIKey()
 	if apiKey == "" {
-		return nil, fmt.Errorf("api-key is not configured.\n\nRun:\n  fused-cli config set api-key <key>\n\nOr set FUSED_API_KEY environment variable.")
+		return nil, fmt.Errorf("api-key is not configured.\n\nRun:\n  fused-cli config set api-key <key>\n\nOr set FUSED_API_KEY or FUSED_LICENSE_KEY.")
 	}
 	return api.NewClientWithOptions(url, apiKey, api.ClientOptions{
 		Context:         executionContext,

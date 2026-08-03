@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -60,13 +61,13 @@ func TestApplyCmdSkeleton(t *testing.T) {
 }
 
 func TestWorkspaceServiceAddCmdSkeleton(t *testing.T) {
-	RootCmd.SetArgs([]string{"workspace", "service", "okta", "add", "--add-version", "2026-07-01"})
+	RootCmd.SetArgs([]string{"workspace", "service", "add", "okta", "--version", "2026-07-01"})
 
-	origRunE := workspaceServiceCmd.RunE
-	defer func() { workspaceServiceCmd.RunE = origRunE }()
+	origRunE := workspaceServiceAddCmd.RunE
+	defer func() { workspaceServiceAddCmd.RunE = origRunE }()
 
-	workspaceServiceCmd.RunE = func(cmd *cobra.Command, args []string) error {
-		if len(args) != 2 || args[0] != "okta" || args[1] != "add" && args[1] != "deprecate" {
+	workspaceServiceAddCmd.RunE = func(cmd *cobra.Command, args []string) error {
+		if len(args) != 1 || args[0] != "okta" {
 			t.Errorf("expected arg 'okta', got %v", args)
 		}
 		if workspaceServiceAddVersion != "2026-07-01" {
@@ -83,14 +84,14 @@ func TestWorkspaceServiceAddCmdSkeleton(t *testing.T) {
 }
 
 func TestWorkspaceServiceVersionsCmdSkeleton(t *testing.T) {
-	RootCmd.SetArgs([]string{"workspace", "service", "okta", "versions"})
+	RootCmd.SetArgs([]string{"workspace", "service", "versions", "okta"})
 
-	origRunE := workspaceServiceCmd.RunE
-	defer func() { workspaceServiceCmd.RunE = origRunE }()
+	origRunE := workspaceServiceVersionsCmd.RunE
+	defer func() { workspaceServiceVersionsCmd.RunE = origRunE }()
 
-	workspaceServiceCmd.RunE = func(cmd *cobra.Command, args []string) error {
-		if len(args) != 2 || args[0] != "okta" || args[1] != "versions" {
-			t.Errorf("expected args 'okta versions', got %v", args)
+	workspaceServiceVersionsCmd.RunE = func(cmd *cobra.Command, args []string) error {
+		if len(args) != 1 || args[0] != "okta" {
+			t.Errorf("expected arg 'okta', got %v", args)
 		}
 		return nil
 	}
@@ -161,13 +162,13 @@ func TestSdkServiceDynamicAddCmdSkeleton(t *testing.T) {
 }
 
 func TestWorkspaceServiceDeprecateCmdSkeleton(t *testing.T) {
-	RootCmd.SetArgs([]string{"workspace", "service", "okta", "deprecate", "--at", "2026-10-01", "--reason", "migration"})
+	RootCmd.SetArgs([]string{"workspace", "service", "deprecate", "okta", "--at", "2026-10-01", "--reason", "migration"})
 
-	origRunE := workspaceServiceCmd.RunE
-	defer func() { workspaceServiceCmd.RunE = origRunE }()
+	origRunE := workspaceServiceDeprecateCmd.RunE
+	defer func() { workspaceServiceDeprecateCmd.RunE = origRunE }()
 
-	workspaceServiceCmd.RunE = func(cmd *cobra.Command, args []string) error {
-		if len(args) != 2 || args[0] != "okta" || args[1] != "add" && args[1] != "deprecate" {
+	workspaceServiceDeprecateCmd.RunE = func(cmd *cobra.Command, args []string) error {
+		if len(args) != 1 || args[0] != "okta" {
 			t.Errorf("expected arg 'okta', got %v", args)
 		}
 		if workspaceServiceDeprecateAt != "2026-10-01" {
@@ -206,22 +207,9 @@ func TestServiceVersionsCmdSkeleton(t *testing.T) {
 	}
 }
 
-func TestServiceVersionsFlagCmdSkeleton(t *testing.T) {
-	RootCmd.SetArgs([]string{"service", "okta", "versions"})
-
-	origRunE := serviceCmd.RunE
-	defer func() { serviceCmd.RunE = origRunE }()
-
-	serviceCmd.RunE = func(cmd *cobra.Command, args []string) error {
-		if len(args) != 2 || args[0] != "okta" || args[1] != "versions" {
-			t.Errorf("expected args 'okta versions', got %v", args)
-		}
-		return nil
-	}
-
-	out := new(bytes.Buffer)
-	RootCmd.SetOut(out)
-	if err := RootCmd.Execute(); err != nil {
-		t.Fatalf("unexpected error executing service versions action: %v", err)
+func TestServiceVersionsRejectsLegacyNounFirstForm(t *testing.T) {
+	out := runCommandInDirExpectError(t, t.TempDir(), "http://unused.invalid", []string{"service", "okta", "versions"})
+	if !strings.Contains(out, `unknown command "okta"`) {
+		t.Fatalf("expected legacy form to be rejected, got %q", out)
 	}
 }

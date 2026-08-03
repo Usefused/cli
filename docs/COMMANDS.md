@@ -8,7 +8,7 @@ All commands support the following global flags:
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
-| `--key` | | API key (overrides config & `FUSED_API_KEY`) | `""` |
+| `--key` | | Engine credential (overrides config, `FUSED_API_KEY`, and `FUSED_LICENSE_KEY`) | `""` |
 | `--engine-url` | | Fused Engine URL (overrides config & `FUSED_ENGINE_URL`) | `""` |
 | `--file` | `-f` | Path to a Fused config file (disables `.fused/` discovery) | `""` |
 | `--no-input` | | Fail instead of prompting; also enabled by `CI=true` | `false` |
@@ -38,13 +38,13 @@ Generate a brand new SDK using Fused intent AI. Automatically discovers and adds
 ## `config`
 Manage your local CLI configuration (`set`, `get`, `list`, `reset`). Inherits global flags.
 
-## `service <service-slug> versions`
+## `service versions <service-slug>`
 List Registry versions visible to the current account for a service slug. Supports provider-qualified slugs such as `@provider/slug`.
 
-## `service <service-slug> show`
+## `service show <service-slug>`
 Show the base URL, servers, and supported authentication methods for a service.
 
-## `service <service-slug> operations`
+## `service operations <service-slug>`
 List or search Registry operations for a service. Passing `--q` uses the server-side endpoint search path and supports pagination.
 
 | Argument | Short | Description | Default |
@@ -54,33 +54,36 @@ List or search Registry operations for a service. Passing `--q` uses the server-
 | `--limit` | | Maximum rows to read; requires `--q` | `20` |
 | `--offset` | | Rows to skip before reading; requires `--q` | `0` |
 
-## `service <service-slug> webhooks`
+## `service webhooks <service-slug>`
 List Registry webhook definitions for a service.
 
-## `secret <service-slug> set [value]`
-Set an authentication secret for a workspace service.
-If the service supports multiple authentication methods, use `--type` to specify the method, or use the `--interactive` flag to select from a menu.
+## `secret set <service-slug>`
+Set authentication credentials for a workspace service. Choose exactly one
+input mode: `--interactive` for protected prompts or `--value-stdin` for
+automation. Credential values are rejected in argv so they cannot leak through
+shell history or process listings.
+If the service supports multiple authentication methods, use `--type` to specify the method, or use `--interactive` to select from a menu.
 
 > **`basic`/`mtls` credentials are ONE value, not two.** There is no
 > `--username`/`--password`/`--cert`/`--key` flag and no separate `set` call
-> per field. Pack both fields into the single positional `<value>` as a
-> `;`-delimited `key=value;key=value` string, quoted so the shell doesn't
-> split on the `;`:
+> per field. Send both fields as one `;`-delimited
+> `key=value;key=value` value over stdin:
 > ```shell
-> fused-cli secret jira set 'username=x;password=y' --type basic --bucket <bucket>
-> fused-cli secret jira set 'cert=...;key=...' --type mtls --bucket <bucket>
+> printf '%s' 'username=x;password=y' | fused-cli secret set jira --type basic --value-stdin
+> printf '%s' 'cert=...;key=...' | fused-cli secret set jira --type mtls --value-stdin
 > ```
-> Or omit the value and pass `--interactive` to supply both fields via prompts instead.
+> Or pass `--interactive` to supply both fields via prompts.
 
-> **Recommended Pattern:** Store API keys, tokens, and service credentials directly using `fused-cli secret set <service-slug> [value] --bucket <bucket>`. This stores secrets securely in Fused's encrypted vault.
+> **Recommended Pattern:** Pipe API keys, tokens, and service credentials to `fused-cli secret set <service-slug> --value-stdin`. Add `--bucket <bucket-name>` for a bucket override. This stores secrets securely in Fused's encrypted vault.
 
 > **Tip:** To see the available authentication methods (and their logical names for the `--type` flag) for a service, run `fused-cli service show <service-slug>`.
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
 | `--interactive` | `-i` | Force interactive mode to select the authentication method | `false` |
+| `--value-stdin` | | Read the credential value from stdin | `false` |
 | `--type` | | Specify the logical authentication method name (e.g., bearerAuth) | `""` |
-| `--bucket` | | Set secret as an override for a specific Bucket | `""` |
+| `--bucket` | | Bucket name or full UUID; omit to use the default bucket | `""` |
 | `--expires-at` | | RFC3339 expiry timestamp (e.g. 2026-12-31T23:59:59Z) | `""` |
 
 ## `secret list`
@@ -88,12 +91,14 @@ List secret metadata in a specific bucket. Secret values are never read back.
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
-| `--list-bucket-id` | | Bucket name or ID to inspect | `""` |
+| `--bucket` | | Bucket name or full UUID to inspect (required) | `""` |
+| `--limit` | | Maximum rows to read | `20` |
+| `--offset` | | Rows to skip before reading | `0` |
 
-## `secret <service-slug> remove <key-name>`
-Remove a workspace secret.
+## `secret delete <service-slug> <key-name>`
+Delete a workspace secret. Use `--bucket <bucket-name-or-id>` for an override secret.
 
-## `bucket <name> create`
+## `bucket create <name>`
 Create a new bucket for storing overrides and secrets.
 
 ## `bucket list`
@@ -104,10 +109,10 @@ List workspace buckets from the Engine GraphQL page used by the UI.
 | `--limit` | | Maximum rows to read | `20` |
 | `--offset` | | Rows to skip before reading | `0` |
 
-## `bucket <name-or-id> show`
+## `bucket show <bucket-name-or-id>`
 Show bucket counts and metadata.
 
-## `bucket <name-or-id> services`
+## `bucket services <bucket-name-or-id>`
 List services represented in a bucket, including secret, value, Connect config, and connected-user counts.
 
 | Argument | Short | Description | Default |
@@ -115,7 +120,7 @@ List services represented in a bucket, including secret, value, Connect config, 
 | `--limit` | | Maximum rows to read | `20` |
 | `--offset` | | Rows to skip before reading | `0` |
 
-## `bucket <name-or-id> secrets`
+## `bucket secrets <bucket-name-or-id>`
 List secret metadata in a bucket without reading secret values.
 
 | Argument | Short | Description | Default |
@@ -123,7 +128,7 @@ List secret metadata in a bucket without reading secret values.
 | `--limit` | | Maximum rows to read | `20` |
 | `--offset` | | Rows to skip before reading | `0` |
 
-## `bucket <name-or-id> values`
+## `bucket values <bucket-name-or-id>`
 List non-secret values in a bucket.
 
 | Argument | Short | Description | Default |
@@ -131,7 +136,7 @@ List non-secret values in a bucket.
 | `--limit` | | Maximum rows to read | `20` |
 | `--offset` | | Rows to skip before reading | `0` |
 
-## `bucket <name-or-id> connections`
+## `bucket connections <bucket-name-or-id>`
 List connected users in a bucket. Filters are sent to Engine GraphQL.
 
 | Argument | Short | Description | Default |
@@ -141,7 +146,7 @@ List connected users in a bucket. Filters are sent to Engine GraphQL.
 | `--limit` | | Maximum rows to read | `20` |
 | `--offset` | | Rows to skip before reading | `0` |
 
-## `bucket <name-or-id> sdks`
+## `bucket artifacts <bucket-name-or-id>`
 List SDK or MCP scopes linked to a bucket.
 
 | Argument | Short | Description | Default |
@@ -149,94 +154,191 @@ List SDK or MCP scopes linked to a bucket.
 | `--limit` | | Maximum rows to read | `20` |
 | `--offset` | | Rows to skip before reading | `0` |
 
-## `bucket <name> remove`
-Remove a workspace bucket.
+## `bucket delete <name>`
+Delete a workspace bucket.
 
-## `connect <service-slug> set [value]`
+## `connect set <service-slug>`
 Register or rotate a bucket's OAuth/OIDC app registration (`client_id`/`client_secret`/`redirect_uri`) for a service. This is an immediate admin action -- no workspace.yaml field, no plan/apply -- and it is the only way to register the app; a declarative `connect:` workspace.yaml block existed previously and was removed in favor of this single command. Every field is required the first time; afterward, omitting a field leaves it unchanged (a key present but blank is rejected as an attempt to blank out a credential).
 
-There is no `--client-id`/`--client-secret`/`--redirect-uri` flag. The single
-positional `<value>` is the whole registration as ONE `;`-delimited
-`key=value;key=value;key=value` string, quoted so the shell doesn't split on
-the `;` -- the literal key names must be `client_id`, `client_secret`, and
-`redirect_uri`:
+There is no `--client-id`/`--client-secret`/`--redirect-uri` flag. Send the
+whole registration as one `;`-delimited value over stdin; the literal key
+names must be `client_id`, `client_secret`, and `redirect_uri`:
 ```shell
-fused-cli connect jira set 'client_id=...;client_secret=...;redirect_uri=https://engine.example.com/workspace/connect/callback' --bucket <name>
+printf '%s' 'client_id=...;client_secret=...;redirect_uri=https://engine.example.com/workspace/connect/callback' | fused-cli connect set jira --bucket company-credentials --value-stdin
 ```
-Or omit the value and use `--interactive` to be prompted per field.
+Or use `--interactive` to be prompted per field. Values in argv are rejected.
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
-| `--bucket` | | Bucket (name or ID) to register this connect config against (required) | `""` |
+| `--bucket` | | Bucket name or full UUID to register this connect config against (required) | `""` |
 | `--type` | | Disambiguate when a service declares both `oauth` and `oidc` | `""` |
 | `--interactive` | `-i` | Prompt per field instead of parsing an inline value | `false` |
+| `--value-stdin` | | Read registration fields from stdin | `false` |
 
-## `connect <service-slug> get`
-Read back a bucket's registered OAuth/OIDC app: `auth_type`, `enabled`, `redirect_uri` in plaintext, plus `has_client_id`/`has_client_secret` as booleans -- never the decrypted `client_id`/`client_secret`. This is the only way to check registration state on demand: `bucket <name-or-id> services` shows just a count, and neither `workspace.yaml` nor `workspace sync` reflect this at all. Fails with a clear error, not a raw 404, when nothing has been registered yet.
+## `connect get <service-slug>`
+Read back a bucket's registered OAuth/OIDC app: `auth_type`, `enabled`, `redirect_uri` in plaintext, plus `has_client_id`/`has_client_secret` as booleans -- never the decrypted `client_id`/`client_secret`. This is the only way to check registration state on demand: `bucket services <bucket-name-or-id>` shows just a count, and neither `workspace.yaml` nor `workspace sync` reflect this at all. Fails with a clear error, not a raw 404, when nothing has been registered yet.
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
-| `--bucket` | | Bucket (name or ID) to look up (required) | `""` |
+| `--bucket` | | Bucket name or full UUID to look up (required) | `""` |
 
-## `value <bucket-id> set <service-slug> <location> <key-name> <value>`
+## `value set <bucket-name-or-id> <service-slug> <location> <key-name> <value>`
 Set a non-secret configuration value in a bucket. Location can be `env`, `body`, `query`, `header`, or `path`.
 
-## `value <bucket-id> list`
+## `value list <bucket-name-or-id>`
 List all non-secret values stored in a bucket.
 
-## `value <bucket-id> remove <service-slug> <key-name>`
-Remove a non-secret value from a bucket.
+## `value delete <bucket-name-or-id> <service-slug> <key-name>`
+Delete a non-secret value from a bucket.
 
-## `sdk plan`
-Preview changes that will be made to your Fused environment for SDKs.
+## Teams and access
+
+Commands accept team slugs and user email addresses. Bucket names, workspace
+service slugs, and artifact names are accepted at their respective resource
+boundaries. A full UUID remains available for automation and recovery. List
+operations are paginated by the Engine; use `--limit` and `--offset` rather
+than fetching an entire workspace into the CLI.
+
+Provider connection and discovered-resource IDs remain opaque IDs because
+providers do not guarantee a stable, workspace-unique human name for them.
+
+### `team list`
+List active teams. Use `--search <text>` to search names and slugs and
+`--include-archived` to include archived teams.
+
+### `team show <team-slug-or-id>`
+Show a team and its workspace, service, bucket, and artifact bindings.
+
+### `team eligible-owners`
+List active teams the current caller can select as the owner of a new SDK, MCP
+server, or webhook. Supports `--search`, `--limit`, and `--offset`.
+
+### `team create <name>`
+Create a team. Optional flags are `--slug` and `--description`.
+
+### `team update <team-slug-or-id>`
+Update a team with one or more of `--name`, `--slug`, or `--description`.
+Pass an empty `--description` value to clear it.
+
+### `team archive <team-slug-or-id>`
+Archive a team after its bindings and owned artifacts have been removed or
+transferred.
+
+### `team member list <team-slug-or-id>`
+List team members. Supports `--limit` and `--offset`.
+
+### `team member add <team-slug-or-id> <email>`
+Add a person to a team, creating their person record when needed. Use
+`--role member` (default) or `--role manager`.
+
+### `team member remove <team-slug-or-id> <user-email-or-id>`
+Remove a person from a team.
+
+### `team access workspace set <team-slug-or-id> <role>`
+Set the team's workspace role. The canonical roles are `owner`, `admin`,
+`builder`, and `viewer`.
+
+### `team access workspace clear <team-slug-or-id>`
+Clear the team's workspace role.
+
+### `team access service grant|revoke <team-slug-or-id> <service-slug-or-id> <level>`
+Grant or revoke `use` or `manage` access to a service.
+
+### `team access bucket grant|revoke <team-slug-or-id> <bucket-name-or-id> <level>`
+Grant or revoke `use` or `manage` access to a bucket.
+
+### `team access artifact grant|revoke <team-slug-or-id> <artifact-name[@version]-or-id> <level>`
+Grant or revoke `read`, `use`, or `manage` on the shared RBAC resource used by
+an SDK or MCP server. `artifact` remains the internal permission-resource name;
+MCP management itself lives under `mcp`. Use `name@version` for an exact version.
+If an SDK and MCP server share that identity, use the displayed full UUID.
+
+### `team build-access <team-slug-or-id>`
+List services or buckets available to both the current caller and the team.
+Use `--resource service|bucket`, with optional `--search`, `--limit`, and
+`--offset`.
+
+## People and personal credentials
+
+### `user list`
+List active people. Use `--search <text>` to search names and email addresses,
+`--include-suspended` to include suspended people, and `--limit`/`--offset` for
+pagination.
+
+### `user show <email-or-id>`
+Show a person, their team memberships, and non-secret credential metadata.
+
+### `user create <email>`
+Add a person without sending an email. `--name <display-name>` is required.
+
+### `user update <email-or-id>`
+Update a person with `--email`, `--name`, or both.
+
+### `user suspend <email-or-id>` / `user reactivate <email-or-id>`
+Suspend a person and stop their credentials, or reactivate a suspended person.
+
+### `user credential issue <email-or-id>`
+Issue a personal credential. `--name` defaults to `personal`. The raw key is
+printed once and is never written to config, logs, or OTEL.
+
+### `user credential revoke <email-or-id> <credential-name-or-id>`
+Revoke a personal credential.
+
+## `sdk plan` / `mcp plan`
+Preview SDK package or MCP server changes. Each command reads only its matching
+config kind, so an MCP plan never generates SDK code and an SDK plan never
+deploys an MCP server.
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
 | `--json` | | Print plan result JSON, including summary and notifications, instead of writing the default receipt | `false` |
 | `--receipt-out` | | Write the plan receipt to a specific path | `""` |
+| `--owner-team` | | Optional owning team slug; defaults to the authenticated person | `""` |
 
-## `sdk apply`
-Apply a generated plan to deploy SDK changes.
+## `sdk apply` / `mcp apply`
+Apply an SDK generation plan or deploy an MCP server plan.
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
-| `--download` | | Download generated SDK after apply | `false` |
-| `--plan-id` | | Apply a specific remote plan ID for a single SDK config | `""` |
-| `--receipt` | | Read a specific plan receipt for a single SDK config | `""` |
+| `--download` | | Download generated SDKs after `sdk apply`; unavailable for MCP | `false` |
+| `--plan-id` | | Apply a specific remote plan ID | `""` |
+| `--receipt` | | Read a specific plan receipt | `""` |
 
 ## `sdk sync`
 Full-mirror a local SDK config from the most recently generated remote SDK with the given name.
 
 Usage: `fused-cli sdk sync <name> -f .fused/sdks/<name>.yaml`
 
-## `sdk validate`
-Validates an SDK configuration file. Inherits global flags.
+## `sdk validate` / `mcp validate`
+Validate only the matching SDK or MCP configuration files. Inherits global flags.
 
-## `sdk list`
-List generated SDK records.
+## `sdk list` / `mcp list`
+List generated SDKs or deployed MCP servers. The kind is fixed by the command.
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
-| `--target` | | Target type to list (`sdk` or `mcp`) | `"sdk"` |
-| `--language` | | Target language to filter by | `""` |
-| `--latest-only` | | Only show the latest SDK per name | `true` |
 | `--limit` | | Maximum rows to read | `20` |
 | `--offset` | | Rows to skip before reading | `0` |
 
-## `sdk <sdk-name[@version]> show`
-Show the generated SDK ID, version, and sandbox URL.
+## `sdk <name[@version]> show`
+Show the SDK ID, version, and active state from the Engine.
 
-## `sdk <sdk-name[@version]> services`
-List services selected by a generated SDK.
+## `sdk <name[@version]> services`
+List services selected by an SDK from its Engine scope.
 
-## `sdk <sdk-name[@version]> buckets`
-List credential buckets linked to a generated SDK scope.
+## `sdk <name[@version]> buckets`
+List credential buckets linked to an SDK scope.
 
-## `sdk <sdk-name[@version]> tokens`
-List tokens for the generated SDK.
+## `sdk <name[@version]> tokens`
+List runtime tokens for an SDK.
+
+## `mcp <name[@version]> remove`
+Deactivate an MCP server. Use a plain name for its latest active version or
+`name@version` for an exact version.
 
 ## `sdk <sdk-name> download`
-Download generated SDK artifacts from Registry records through the Engine. Pass an SDK name to download the latest generated SDK, or use `name@version` to request a specific SDK version.
+Download generated SDK code from Registry records through the Engine. Pass an
+SDK name for the latest generated version, or use `name@version` for an exact version.
 
 ```bash
 fused-cli sdk security-sdk download
@@ -270,7 +372,7 @@ Add one or more operationIds to an existing service in an SDK configuration.
 Remove one or more operationIds from an existing service in an SDK configuration. Inherits global flags.
 
 ## `sdk operation <service-slug> add [operationId...]`
-Compatibility alias for adding operationIds to an existing service in an SDK configuration.
+Add operationIds to an existing SDK configuration.
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
@@ -279,43 +381,36 @@ Compatibility alias for adding operationIds to an existing service in an SDK con
 | `--download` | | Download SDK after apply (implies `--apply`) | `false` |
 
 ## `sdk operation <service-slug> remove <operationId...>`
-Compatibility alias for removing operationIds from an existing service in an SDK configuration. Inherits global flags.
+Remove operationIds from an existing SDK configuration. Inherits global flags.
 
-## `sdk token <sdk-id> generate <token-name>`
-Generate a new SDK token for authenticating SDK requests to the Engine.
+## `sdk token <sdk-name-or-id> generate <token-name>`
+Generate an execution token for an SDK.
 
-## `sdk token <sdk-id> list`
-List all active tokens for an SDK.
+## `sdk token <sdk-name-or-id> list`
+List active execution tokens for an SDK.
 
-## `sdk token <sdk-id> revoke <token-name>`
-Revoke an SDK token.
+## `sdk token <sdk-name-or-id> revoke <token-name>`
+Revoke an SDK execution token.
 
-## `mcp plan`
-Preview changes that will be made to your Fused environment for MCP server configurations (`.fused/mcps/*.yaml`).
+## `webhook plan`
+Preview changes for webhook registration configurations.
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
 | `--json` | | Print plan result JSON, including summary and notifications, instead of writing the default receipt | `false` |
 | `--receipt-out` | | Write the plan receipt to a specific path | `""` |
+| `--owner-team` | | Optional owning team slug; defaults to the authenticated person | `""` |
 
-## `mcp apply`
-Apply a generated plan to deploy MCP server configurations to the Fused Engine runtime.
-
-| Argument | Short | Description | Default |
-|----------|-------|-------------|---------|
-| `--plan-id` | | Apply a specific remote plan ID for a single MCP config | `""` |
-| `--receipt` | | Read a specific plan receipt for a single MCP config | `""` |
-
-## `mcp validate`
-Validates MCP configuration files (`kind: mcp`).
-
-## `mcp list`
-List deployed MCP servers from the Engine.
+## `webhook apply`
+Apply a generated plan for webhook registration configurations.
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
-| `--limit` | | Maximum rows to read | `20` |
-| `--offset` | | Rows to skip before reading | `0` |
+| `--plan-id` | | Apply a specific remote plan ID for a single webhook config | `""` |
+| `--receipt` | | Read a specific plan receipt for a single webhook config | `""` |
+
+## `webhook validate`
+Validate webhook registration configuration files (`kind: webhook`).
 
 ## `workspace plan`
 Preview changes that will be made to your Workspace configuration.
@@ -338,6 +433,33 @@ Full-mirror the local workspace config from the Engine's current activation stat
 
 Usage: `fused-cli workspace sync -f .fused/workspace.yaml`
 
+## `workspace access list`
+List buckets and SDK/MCP permission scopes shared for bounded workspace-wide use. The
+Engine filters and paginates this collection; the CLI does not load the full
+workspace and filter it locally.
+
+| Argument | Short | Description | Default |
+|----------|-------|-------------|---------|
+| `--resource` | | Filter by `bucket` or `artifact` | `""` |
+| `--limit` | | Maximum rows to return | `20` |
+| `--offset` | | Rows to skip before reading | `0` |
+
+## `workspace access bucket grant <bucket-name-or-id>`
+Grant every authenticated workspace member and eligible artifact-owning team
+bounded use of a bucket. Ownership and secret, value, connection, and bucket
+management remain unchanged.
+
+## `workspace access bucket revoke <bucket-name-or-id>`
+Remove workspace-wide bucket use. Owner and explicit team bindings remain.
+
+## `workspace access artifact grant <artifact-name[@version]-or-id>`
+Grant bounded workspace-wide read/use of an SDK or MCP server's internal RBAC
+scope. This does not grant lifecycle or token management and does not replace
+its runtime token.
+
+## `workspace access artifact revoke <artifact-name[@version]-or-id>`
+Remove workspace-wide artifact use. Owner and explicit team bindings remain.
+
 ## `workspace services list`
 List workspace services along with their enabled versions.
 
@@ -349,7 +471,7 @@ List workspace services along with their enabled versions.
 Check if a specific service is available in the workspace and output its enabled versions.
 Usage: `fused-cli workspace has <service_name>`
 
-## `workspace service <service-slug> add`
+## `workspace service add <service-slug>`
 Add a service to your Workspace configuration.
 
 | Argument | Short | Description | Default |
@@ -357,14 +479,14 @@ Add a service to your Workspace configuration.
 | `--version` | | Default version to add | `""` |
 | `--service-id` | | Optional service ID to store when editing a local config directly | `""` |
 
-## `workspace service <service-slug> remove`
-Remove a service from your Workspace configuration.
+## `workspace service delete <service-slug>`
+Delete a service from your Workspace configuration.
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
 | `--force` | | Force removal when the generated plan action is applied | `false` |
 
-## `workspace service <service-slug> deprecate`
+## `workspace service deprecate <service-slug>`
 Deprecate a service in your Workspace configuration.
 
 | Argument | Short | Description | Default |
@@ -372,10 +494,10 @@ Deprecate a service in your Workspace configuration.
 | `--at` | | Deprecation effective date in YYYY-MM-DD | `""` |
 | `--reason` | | Reason for deprecation | `""` |
 
-## `workspace service <service-slug> versions`
+## `workspace service versions <service-slug>`
 List versions enabled in the workspace for a service slug. Supports provider-qualified slugs such as `@provider/slug`.
 
-## `workspace service <service-slug> operations`
+## `workspace service operations <service-slug>`
 List or search operationIds available for an enabled workspace service. Passing `--q` uses server-side endpoint search and supports pagination.
 
 | Argument | Short | Description | Default |
@@ -385,17 +507,32 @@ List or search operationIds available for an enabled workspace service. Passing 
 | `--limit` | | Maximum rows to read; requires `--q` | `20` |
 | `--offset` | | Rows to skip before reading; requires `--q` | `0` |
 
-## `workspace service <service-slug> version add <version>`
+## `workspace service webhooks <service-slug>`
+List the service's workspace webhook registrations without exposing signing
+secrets.
+
+## `workspace service connect <service-slug>`
+Start an OAuth/OIDC connection session for an end user.
+
+| Argument | Short | Description | Default |
+|----------|-------|-------------|---------|
+| `--bucket` | | Workspace bucket name or full UUID (required) | `""` |
+| `--user-ref` | | Stable end-user reference (required) | `""` |
+| `--artifact` | | Optional artifact name or full UUID for audit attribution | `""` |
+| `--resource-input` | | Tenant input as `key=value`; repeatable | |
+| `--scope` | | OAuth/OIDC scope; repeatable | |
+
+## `workspace service version add <service-slug> <version>`
 Add an allowed version to a workspace service. Inherits global flags.
 
-## `workspace service <service-slug> version remove <version>`
-Remove a specific version of a service from your Workspace configuration.
+## `workspace service version delete <service-slug> <version>`
+Delete a specific version of a service from your Workspace configuration.
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
 | `--force` | | Force removal | `false` |
 
-## `workspace service <service-slug> version deprecate <version>`
+## `workspace service version deprecate <service-slug> <version>`
 Deprecate a specific version of a service in your Workspace configuration.
 
 | Argument | Short | Description | Default |
@@ -456,6 +593,7 @@ Validates the syntax and references for all Fused configurations in the target d
 |----------|-------|-------------|---------|
 | `--json` | | Print plan result JSON, including summary and notifications, instead of writing the default receipt | `false` |
 | `--receipt-out` | | Write the plan receipt to a specific path | `""` |
+| `--owner-team` | | Optional owning team slug for selected SDK, MCP, and webhook configs; defaults to the authenticated person | `""` |
 
 **`apply`**
 
@@ -464,3 +602,7 @@ Validates the syntax and references for all Fused configurations in the target d
 | `--download` | | Download generated SDKs after apply | `false` |
 | `--plan-id` | | Apply a specific remote plan ID for a single config | `""` |
 | `--receipt` | | Read a specific plan receipt for a single config | `""` |
+
+Plan output includes the Engine's required permission checks. Human output
+prints them under `Required permissions`; `--json` exposes them as
+`required_permissions` for agents and CI policy checks.

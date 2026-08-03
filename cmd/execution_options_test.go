@@ -56,8 +56,8 @@ func TestNoInputStopsPromptingHelpersBeforeSideEffects(t *testing.T) {
 	if _, _, err := selectSDKOperationsInteractively("missing.yaml", ""); err == nil {
 		t.Fatal("expected SDK prompt to be rejected before reading config")
 	}
-	if _, err := createMissingBucketPrompt(nil, "production"); err == nil {
-		t.Fatal("expected bucket creation prompt to be rejected before using the client")
+	if _, err := resolveExplicitBucketID("production"); err == nil {
+		t.Fatal("expected bucket names to be rejected before any lookup or prompt")
 	}
 	endpoints := []cliapi.Integration{{Method: "GET", Path: "/users"}}
 	if _, err := reviewDocsEndpoints(RootCmd, endpoints); err == nil {

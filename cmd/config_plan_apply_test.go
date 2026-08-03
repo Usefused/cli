@@ -633,7 +633,7 @@ func TestWorkspaceServiceVersionsUsesSlugResolvedServiceID(t *testing.T) {
 	server := httptest.NewServer(workspaceServiceVersionsSlugHandler(t, state))
 	defer server.Close()
 
-	out := runCommandInDirOutput(t, dir, server.URL, []string{"workspace", "service", "@acme-inc/github", "versions"})
+	out := runCommandInDirOutput(t, dir, server.URL, []string{"workspace", "service", "versions", "@acme-inc/github"})
 	if !state.sawGraphQL || !state.sawWorkspaceList {
 		t.Fatalf("expected graphql and workspace requests, saw graphql=%v workspace=%v", state.sawGraphQL, state.sawWorkspaceList)
 	}
@@ -653,7 +653,7 @@ func TestWorkspaceServiceVersionsRejectsUnapprovedService(t *testing.T) {
 		switch r.URL.Path {
 		case "/graphql":
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"data":{"serviceVersions":[{"id":"ver-1","service_id":"svc-github","name":"2026-07-01","status":"public"}]}}`))
+			_, _ = w.Write([]byte(`{"data":{"service":{"id":"svc-github"}}}`))
 		case "/engine/graphql":
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"data":{"workspaceServices":[{"service_id":"svc-other","service_name":"Other","enabled_versions":[]}]}}`))
@@ -663,8 +663,8 @@ func TestWorkspaceServiceVersionsRejectsUnapprovedService(t *testing.T) {
 	}))
 	defer server.Close()
 
-	errText := runCommandInDirExpectError(t, dir, server.URL, []string{"workspace", "service", "@acme-inc/github", "versions"})
-	if !strings.Contains(errText, "not found in workspace") {
+	errText := runCommandInDirExpectError(t, dir, server.URL, []string{"workspace", "service", "versions", "@acme-inc/github"})
+	if !strings.Contains(errText, "is not enabled in this workspace") {
 		t.Fatalf("expected workspace approval rejection, got %q", errText)
 	}
 }
@@ -680,14 +680,18 @@ func workspaceServiceVersionsSlugHandler(t *testing.T, state *workspaceServiceVe
 		switch r.URL.Path {
 		case "/graphql":
 			state.sawGraphQL = true
-			assertProviderQualifiedSlugRequest(t, r)
+			assertProviderQualifiedServiceLookupRequest(t, r)
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"data":{"serviceVersions":[{"id":"ver-1","service_id":"svc-github","name":"2026-07-01","status":"public","created_at":"2026-07-16T00:00:00Z"}]}}`))
+			_, _ = w.Write([]byte(`{"data":{"service":{"id":"svc-github"}}}`))
 		case "/engine/graphql":
 			state.sawWorkspaceList = true
 			body := decodeTestGraphQLBody(t, r)
 			if !strings.Contains(body.Query, "workspaceServices") {
 				t.Fatalf("unexpected engine graphql query: %s", body.Query)
+			}
+			names, _ := body.Variables["names"].([]interface{})
+			if len(names) != 1 || names[0] != "github" {
+				t.Fatalf("expected server-filtered workspace lookup, got %#v", body.Variables)
 			}
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"data":{"workspaceServices":[
@@ -706,7 +710,7 @@ func TestWorkspaceServiceOperationsDefaultsToLatestEnabledVersion(t *testing.T) 
 	server := httptest.NewServer(workspaceOperationsLatestHandler(t, state))
 	defer server.Close()
 
-	out := runCommandInDirOutput(t, dir, server.URL, []string{"workspace", "service", "@acme-inc/github", "operations"})
+	out := runCommandInDirOutput(t, dir, server.URL, []string{"workspace", "service", "operations", "@acme-inc/github"})
 	if state.sawVersion != "2026-07-16" {
 		t.Fatalf("expected latest enabled version, got %q", state.sawVersion)
 	}
@@ -743,9 +747,9 @@ func workspaceOperationsLatestHandler(t *testing.T, state *workspaceOperationsLa
 func handleWorkspaceOperationsGraphQL(t *testing.T, w http.ResponseWriter, r *http.Request, state *workspaceOperationsLatestState) {
 	t.Helper()
 	body := decodeTestGraphQLBody(t, r)
-	if strings.Contains(body.Query, "serviceVersions") {
-		assertProviderQualifiedSlugVariables(t, body.Variables)
-		_, _ = w.Write([]byte(`{"data":{"serviceVersions":[{"id":"ver-latest","service_id":"svc-github","name":"2026-07-16","status":"public","created_at":"2026-07-16T00:00:00Z"}]}}`))
+	if strings.Contains(body.Query, "GetServiceInfo") {
+		assertProviderQualifiedServiceLookupVariables(t, body.Variables)
+		_, _ = w.Write([]byte(`{"data":{"service":{"id":"svc-github"}}}`))
 		return
 	}
 	state.sawVersion, _ = body.Variables["version"].(string)
@@ -774,10 +778,13 @@ func writeEngineWorkspaceServices(t *testing.T, w http.ResponseWriter, r *http.R
 	return true
 }
 
-func assertProviderQualifiedSlugRequest(t *testing.T, r *http.Request) {
+func assertProviderQualifiedServiceLookupRequest(t *testing.T, r *http.Request) {
 	t.Helper()
 	body := decodeTestGraphQLBody(t, r)
-	assertProviderQualifiedSlugVariables(t, body.Variables)
+	if !strings.Contains(body.Query, "GetServiceInfo") {
+		t.Fatalf("expected exact service lookup, got %s", body.Query)
+	}
+	assertProviderQualifiedServiceLookupVariables(t, body.Variables)
 }
 
 func decodeTestGraphQLBody(t *testing.T, r *http.Request) testGraphQLBody {
@@ -789,9 +796,9 @@ func decodeTestGraphQLBody(t *testing.T, r *http.Request) testGraphQLBody {
 	return body
 }
 
-func assertProviderQualifiedSlugVariables(t *testing.T, variables map[string]any) {
+func assertProviderQualifiedServiceLookupVariables(t *testing.T, variables map[string]any) {
 	t.Helper()
-	if variables["serviceId"] != "github" || variables["provider"] != "acme-inc" {
+	if variables["id"] != "github" || variables["provider"] != "acme-inc" {
 		t.Fatalf("expected provider-qualified slug split, got %#v", variables)
 	}
 }
@@ -809,8 +816,8 @@ func TestWorkspaceServiceOperationsUsesExplicitEnabledVersion(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Fatalf("decode graphql body: %v", err)
 			}
-			if strings.Contains(body.Query, "serviceVersions") {
-				_, _ = w.Write([]byte(`{"data":{"serviceVersions":[{"id":"ver-old","service_id":"svc-github","name":"2026-01-01","status":"public","created_at":"2026-01-01T00:00:00Z"}]}}`))
+			if strings.Contains(body.Query, "GetServiceInfo") {
+				_, _ = w.Write([]byte(`{"data":{"service":{"id":"svc-github"}}}`))
 				return
 			}
 			sawVersion, _ = body.Variables["version"].(string)
@@ -825,7 +832,7 @@ func TestWorkspaceServiceOperationsUsesExplicitEnabledVersion(t *testing.T) {
 	}))
 	defer server.Close()
 
-	runCommandInDir(t, dir, server.URL, []string{"workspace", "service", "github", "operations", "--version", "2026-01-01"})
+	runCommandInDir(t, dir, server.URL, []string{"workspace", "service", "operations", "github", "--version", "2026-01-01"})
 	if sawVersion != "2026-01-01" {
 		t.Fatalf("expected explicit version to be used, got %q", sawVersion)
 	}
@@ -836,7 +843,7 @@ func TestWorkspaceServiceOperationsRejectsNonWorkspaceVersion(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/graphql":
-			_, _ = w.Write([]byte(`{"data":{"serviceVersions":[{"id":"ver-new","service_id":"svc-github","name":"2026-08-01","status":"public","created_at":"2026-08-01T00:00:00Z"}]}}`))
+			_, _ = w.Write([]byte(`{"data":{"service":{"id":"svc-github"}}}`))
 		case "/engine/graphql":
 			if !writeEngineWorkspaceServices(t, w, r, `[{"service_id":"svc-github","service_name":"GitHub REST API","version":"2026-07-16","enabled_versions":[{"version":"2026-07-16","service_version_id":"ver-latest"}]}]`) {
 				t.Fatalf("unexpected engine graphql query")
@@ -847,29 +854,24 @@ func TestWorkspaceServiceOperationsRejectsNonWorkspaceVersion(t *testing.T) {
 	}))
 	defer server.Close()
 
-	out := runCommandInDirExpectError(t, dir, server.URL, []string{"workspace", "service", "github", "operations", "--version", "2026-08-01"})
+	out := runCommandInDirExpectError(t, dir, server.URL, []string{"workspace", "service", "operations", "github", "--version", "2026-08-01"})
 	if !strings.Contains(out, "not enabled in this workspace") {
 		t.Fatalf("expected workspace-version rejection, got %q", out)
 	}
 }
 
-func TestWorkspaceServiceActionCompletionAfterSlug(t *testing.T) {
-	got, directive := completeWorkspaceServiceArgs(workspaceServiceCmd, []string{"github"}, "op")
-	if directive != cobra.ShellCompDirectiveNoFileComp {
-		t.Fatalf("expected no-file completion directive, got %v", directive)
-	}
-	if len(got) != 1 || got[0] != "operations" {
-		t.Fatalf("expected operations completion after slug, got %#v", got)
+func TestWorkspaceServiceUsesDiscoverableSubcommands(t *testing.T) {
+	for _, name := range []string{"add", "connect", "delete", "deprecate", "operations", "versions", "webhooks", "version"} {
+		if child, _, err := workspaceServiceCmd.Find([]string{name}); err != nil || child.Name() != name {
+			t.Fatalf("expected %q subcommand, child=%v err=%v", name, child, err)
+		}
 	}
 }
 
 func TestWorkspaceServiceSlugHelpShowsReadableActions(t *testing.T) {
 	dir := t.TempDir()
-	out := runCommandInDirOutput(t, dir, "", []string{"workspace", "service", "github", "--help"})
-	if !strings.Contains(out, "service <service-slug> [versions|operations|webhooks|add|connect|remove|deprecate|version]") {
-		t.Fatalf("expected readable service use in help, got %q", out)
-	}
-	if !strings.Contains(out, "operations") || !strings.Contains(out, "versions") || !strings.Contains(out, "webhooks") || !strings.Contains(out, "add") {
+	out := runCommandInDirOutput(t, dir, "", []string{"workspace", "service", "--help"})
+	if !strings.Contains(out, "Available Commands:") || !strings.Contains(out, "operations") || !strings.Contains(out, "versions") || !strings.Contains(out, "webhooks") || !strings.Contains(out, "add") {
 		t.Fatalf("expected service actions in help, got %q", out)
 	}
 }
@@ -955,7 +957,7 @@ services:
 	}))
 	defer server.Close()
 
-	runCommandInDir(t, dir, server.URL, []string{"workspace", "service", "okta", "version", "remove", "2026-07-01", "-f", path, "--version-force"})
+	runCommandInDir(t, dir, server.URL, []string{"workspace", "service", "version", "delete", "okta", "2026-07-01", "-f", path, "--force"})
 
 	if got := strings.Join(paths, ","); got != "/workspace/config/plan,/config/plans/plan-workspace/actions,/workspace/config/apply" {
 		t.Fatalf("unexpected request order %s", got)
@@ -972,7 +974,7 @@ apiVersion: fused/v1
 kind: workspace
 services: {}
 `)
-	runCommandInDir(t, dir, "", []string{"workspace", "service", "okta", "add", "-f", path, "--add-version", "2026-07-01"})
+	runCommandInDir(t, dir, "", []string{"workspace", "service", "add", "okta", "-f", path, "--version", "2026-07-01"})
 
 	after, err := os.ReadFile(path)
 	if err != nil {

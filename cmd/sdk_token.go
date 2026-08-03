@@ -8,8 +8,8 @@ import (
 )
 
 var sdkTokenCmd = &cobra.Command{
-	Use:   "token <sdk-id> [generate|list|revoke] [args...]",
-	Short: "Manage SDK tokens",
+	Use:   "token <sdk-name-or-id> [generate|list|revoke] [args...]",
+	Short: "Manage SDK execution tokens",
 	Args:  validateSDKTokenArgs,
 	// Why: Write to OTEL to audit user/agent-triggered mutative execution.
 	RunE: WithTelemetry("cli.sdk.token", func(cmd *cobra.Command, args []string) error {
@@ -26,21 +26,14 @@ func validateSDKTokenArgs(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("sdk token action is required (e.g. generate, list, revoke)")
 	}
 	action := args[1]
-	if action != "generate" && action != "list" && action != "revoke" {
+	// Keep argument arity data-driven so adding another token action does not
+	// duplicate branching between validation and execution.
+	expectedArgs, supported := map[string]int{"generate": 1, "list": 0, "revoke": 1}[action]
+	if !supported {
 		return fmt.Errorf("unknown sdk token action %q", action)
 	}
-	if action == "generate" {
-		if len(args) != 3 {
-			return fmt.Errorf("generate accepts exactly 1 arg after action (token-name)")
-		}
-	} else if action == "list" {
-		if len(args) != 2 {
-			return fmt.Errorf("list accepts exactly 0 args after action")
-		}
-	} else if action == "revoke" {
-		if len(args) != 3 {
-			return fmt.Errorf("revoke accepts exactly 1 arg after action (token-name)")
-		}
+	if len(args)-2 != expectedArgs {
+		return fmt.Errorf("%s accepts exactly %d args after action", action, expectedArgs)
 	}
 	return nil
 }
@@ -50,18 +43,27 @@ func runSDKTokenAction(cmd *cobra.Command, args []string) error {
 		return cmd.Help()
 	}
 
-	artifactID := args[0]
+	client, err := getAPIClient()
+	if err != nil {
+		return err
+	}
+	// Resolve UUIDs too so token management cannot target an MCP server through
+	// the shared Engine permission repository.
+	sdkID, err := client.ResolveSDKReference(strings.TrimSpace(args[0]))
+	if err != nil {
+		return err
+	}
 	action := args[1]
 
 	switch action {
 	case "generate":
 		name := args[2]
-		return runSDKTokenGenerate(cmd, artifactID, name)
+		return runSDKTokenGenerate(cmd, sdkID, name)
 	case "list":
-		return runSDKTokenList(cmd, artifactID)
+		return runSDKTokenList(cmd, sdkID)
 	case "revoke":
 		name := args[2]
-		return runSDKTokenRevoke(cmd, artifactID, name)
+		return runSDKTokenRevoke(cmd, sdkID, name)
 	default:
 		return fmt.Errorf("unknown action %s", action)
 	}

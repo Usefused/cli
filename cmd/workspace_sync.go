@@ -188,7 +188,7 @@ func workspaceServiceWithLocalState(remote, local configfile.WorkspaceService) c
 // mergeWorkspaceConnectConfigsFromRemote mirrors exportable routing policy
 // (connection profiles). Bucket-owned OAuth app registration is no longer a
 // workspace.yaml concept at all -- it's registered directly via `fused-cli
-// connect <slug> set` -- so there is nothing bucket-scoped left to strip here.
+// connect set <slug>` -- so there is nothing bucket-scoped left to strip here.
 func mergeWorkspaceConnectConfigsFromRemote(cfg *configfile.WorkspaceConfig, services []api.WorkspaceService, configs []api.WorkspaceConnectConfig) ([]string, error) {
 	remoteServices := remoteWorkspaceServicesByID(services)
 	serviceKeys := workspaceServiceKeysByID(cfg.Services)

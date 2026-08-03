@@ -28,3 +28,28 @@ func TestRecordAppliedChangeEmitsSecretSafeAuditEvent(t *testing.T) {
 		t.Fatalf("unexpected apply audit attributes: %#v", attributes)
 	}
 }
+
+func TestRecordAppliedChangeIfSkipsNoOpMutation(t *testing.T) {
+	exporter := tracetest.NewInMemoryExporter()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
+	ctx, span := provider.Tracer("test").Start(context.Background(), "mutation")
+
+	recordAppliedChangeIf(ctx, "team.update", "team", false)
+	span.End()
+
+	if got := countAppliedChangeEvents(exporter.GetSpans()); got != 0 {
+		t.Fatalf("applied change event count = %d, want 0", got)
+	}
+}
+
+func countAppliedChangeEvents(spans tracetest.SpanStubs) int {
+	count := 0
+	for _, span := range spans {
+		for _, event := range span.Events {
+			if event.Name == "cli_change_applied" {
+				count++
+			}
+		}
+	}
+	return count
+}

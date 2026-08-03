@@ -1,6 +1,6 @@
 ---
 name: fused-webhook
-description: "Use when the user wants to register inbound webhook ingress (a provider calling into Fused) using fused-cli -- creating a kind: webhook config, attaching it to an SDK/MCP artifact via webhook_attachment so that artifact receives delivery, or running webhook plan/apply/validate. Trigger on 'register a webhook', 'kind: webhook', 'webhook_attachment', 'receive webhooks in my SDK/MCP', or 'fused-cli webhook'. For the read-only `workspace service <slug> webhooks` listing command read fused-workspace instead; for the auth_type/connect scope shape itself read fused-config."
+description: "Use when the user wants to register inbound webhook ingress (a provider calling into Fused) using fused-cli -- creating a kind: webhook config, attaching it to an SDK via webhook_attachment so that SDK receives delivery, or running webhook plan/apply/validate. Trigger on 'register a webhook', 'kind: webhook', 'webhook_attachment', 'receive webhooks in my SDK', or 'fused-cli webhook'. For the read-only workspace service webhooks command read fused-workspace instead; for the auth_type/connect scope shape itself read fused-config."
 ---
 
 # Webhook registration config
@@ -65,7 +65,7 @@ services:
 ```
 
 - `webhook_attachment` names exactly one `kind: webhook` artifact -- one
-  attachment per SDK/MCP artifact today (a list isn't supported yet).
+  attachment per SDK today (a list isn't supported yet).
   Required as soon as any service below sets `webhooks` or
   `webhooks_select_all: true`; omitting it while selecting webhooks is
   rejected at plan time, both locally and by the Engine.
@@ -104,6 +104,6 @@ fused-cli webhook validate
 
 `apply` prints each registration's URL as `<engine-url>/webhook/<slug>-<service>`.
 To look up a service's registrations later without re-running apply, use the
-read-only `fused-cli workspace service <slug> webhooks` command (see
+read-only `fused-cli workspace service webhooks <slug>` command (see
 `fused-workspace`) -- its `SIGNATURE` column is `set`/`none` only, never the
 secret value.

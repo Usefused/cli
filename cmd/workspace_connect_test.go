@@ -8,22 +8,18 @@ import (
 )
 
 // TestWorkspaceServiceConnectStartsSession covers the CLI path users run,
-// including service enablement and bucket-name resolution before session start.
+// including service enablement and explicit bucket targeting before session start.
 func TestWorkspaceServiceConnectStartsSession(t *testing.T) {
 	dir := t.TempDir()
 	var sawConnect bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/graphql":
-			_, _ = w.Write([]byte(`{"data":{"serviceVersions":[{"id":"ver-1","service_id":"svc-github","name":"2026-07-01","status":"public","created_at":"2026-07-16T00:00:00Z"}]}}`))
+			_, _ = w.Write([]byte(`{"data":{"service":{"id":"svc-github"}}}`))
 		case "/engine/graphql":
 			body := decodeTestGraphQLBody(t, r)
 			if strings.Contains(body.Query, "workspaceServices") {
 				_, _ = w.Write([]byte(`{"data":{"workspaceServices":[{"service_id":"svc-github","service_name":"GitHub REST API","version":"2026-07-01","enabled_versions":[{"version":"2026-07-01","service_version_id":"ver-1"}]}]}}`))
-				return
-			}
-			if strings.Contains(body.Query, "bucketSummaryPage") {
-				_, _ = w.Write([]byte(`{"data":{"bucketSummaryPage":{"total":1,"items":[{"id":"bucket-prod","name":"prod","is_default":false,"secret_count":0,"value_count":0,"created_at":"2026-07-21T00:00:00Z","updated_at":"2026-07-21T00:00:00Z"}]}}}`))
 				return
 			}
 			if strings.Contains(body.Query, "startConnectSession") {
@@ -39,7 +35,7 @@ func TestWorkspaceServiceConnectStartsSession(t *testing.T) {
 	}))
 	defer server.Close()
 
-	out := runCommandInDirOutput(t, dir, server.URL, []string{"workspace", "service", "github", "connect", "--bucket", "prod", "--user-ref", "user_123", "--resource-input", "subdomain=acme", "--scope", "repo:read", "--scope", "offline_access"})
+	out := runCommandInDirOutput(t, dir, server.URL, []string{"workspace", "service", "connect", "github", "--bucket", "11111111-1111-4111-8111-111111111111", "--user-ref", "user_123", "--resource-input", "subdomain=acme", "--scope", "repo:read", "--scope", "offline_access"})
 	if !sawConnect {
 		t.Fatal("expected connect session request")
 	}
@@ -52,7 +48,7 @@ func TestWorkspaceServiceConnectStartsSession(t *testing.T) {
 // identifiers; provider token generation/storage remains Engine-owned.
 func assertConnectSessionGraphQLRequest(t *testing.T, body testGraphQLBody) {
 	t.Helper()
-	if body.Variables["bucketId"] != "bucket-prod" || body.Variables["serviceId"] != "svc-github" || body.Variables["endUserRef"] != "user_123" {
+	if body.Variables["bucketId"] != "11111111-1111-4111-8111-111111111111" || body.Variables["serviceId"] != "svc-github" || body.Variables["endUserRef"] != "user_123" {
 		t.Fatalf("unexpected connect session variables: %#v", body.Variables)
 	}
 	resourceInput, ok := body.Variables["resourceInput"].(map[string]interface{})

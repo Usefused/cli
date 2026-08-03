@@ -12,7 +12,7 @@ import (
 var teamMemberCmd = &cobra.Command{Use: "member", Short: "Manage team members"}
 var teamMemberListFlags listFlags
 var teamMemberListCmd = &cobra.Command{
-	Use: "list <team-id>", Short: "List team members", Args: cobra.ExactArgs(1),
+	Use: "list <team-slug-or-id>", Short: "List team members", Args: cobra.ExactArgs(1),
 	RunE: WithTelemetry("cli.team.member.list", func(cmd *cobra.Command, args []string) error {
 		client, err := getAPIClient()
 		if err != nil {
@@ -34,7 +34,7 @@ var teamMemberListCmd = &cobra.Command{
 
 var teamMemberRole string
 var teamMemberAddCmd = &cobra.Command{
-	Use: "add <team-id> <email>", Short: "Add a person by email, inviting them when needed", Args: cobra.ExactArgs(2),
+	Use: "add <team-slug-or-id> <email>", Short: "Add a person by email, creating their record when needed", Args: cobra.ExactArgs(2),
 	RunE: WithTelemetry("cli.team.member.add", func(cmd *cobra.Command, args []string) error {
 		role, err := normalizeMembershipRole(teamMemberRole)
 		if err != nil {
@@ -48,7 +48,7 @@ var teamMemberAddCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		recordAppliedChange(cmd.Context(), "team.member.add", "team_membership")
+		recordAppliedChangeIf(cmd.Context(), "team.member.add", "team_membership", payload.Changed)
 		if payload.Changed && payload.Membership != nil {
 			fmt.Fprintf(cmd.OutOrStdout(), "Added %s to the team.\n", payload.Membership.DisplayName)
 		} else {
@@ -59,17 +59,18 @@ var teamMemberAddCmd = &cobra.Command{
 }
 
 var teamMemberRemoveCmd = &cobra.Command{
-	Use: "remove <team-id> <user-id>", Short: "Remove a person from a team", Args: cobra.ExactArgs(2),
+	Use: "remove <team-slug-or-id> <user-email-or-id>", Short: "Remove a person from a team", Args: cobra.ExactArgs(2),
 	RunE: WithTelemetry("cli.team.member.remove", func(cmd *cobra.Command, args []string) error {
 		client, err := getAPIClient()
 		if err != nil {
 			return err
 		}
-		if _, err := client.RemoveTeamMember(args[0], args[1]); err != nil {
+		payload, err := client.RemoveTeamMember(args[0], args[1])
+		if err != nil {
 			return err
 		}
-		recordAppliedChange(cmd.Context(), "team.member.remove", "team_membership")
-		fmt.Fprintln(cmd.OutOrStdout(), "Team member removed.")
+		recordAppliedChangeIf(cmd.Context(), "team.member.remove", "team_membership", payload.Changed)
+		printMutationOutcome(cmd, payload.Changed, "Team member removed.", "Team member is already absent.")
 		return nil
 	}),
 }

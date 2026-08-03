@@ -40,7 +40,7 @@ var teamListCmd = &cobra.Command{
 }
 
 var teamShowCmd = &cobra.Command{
-	Use:   "show <team-id>",
+	Use:   "show <team-slug-or-id>",
 	Short: "Show a team and its access",
 	Args:  cobra.ExactArgs(1),
 	RunE: WithTelemetry("cli.team.show", func(cmd *cobra.Command, args []string) error {
@@ -98,7 +98,11 @@ var teamCreateCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		recordAppliedChange(cmd.Context(), "team.create", "team")
+		recordAppliedChangeIf(cmd.Context(), "team.create", "team", payload.Changed)
+		if !payload.Changed {
+			fmt.Fprintf(cmd.OutOrStdout(), "Team %s (%s) already exists.\n", payload.Team.Name, payload.Team.ID)
+			return nil
+		}
 		fmt.Fprintf(cmd.OutOrStdout(), "Created team %s (%s).\n", payload.Team.Name, payload.Team.ID)
 		return nil
 	}),
@@ -108,7 +112,7 @@ var teamUpdateName string
 var teamUpdateSlug string
 var teamUpdateDescription string
 var teamUpdateCmd = &cobra.Command{
-	Use:   "update <team-id>",
+	Use:   "update <team-slug-or-id>",
 	Short: "Update a team's details",
 	Args:  cobra.ExactArgs(1),
 	RunE: WithTelemetry("cli.team.update", func(cmd *cobra.Command, args []string) error {
@@ -124,14 +128,18 @@ var teamUpdateCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		recordAppliedChange(cmd.Context(), "team.update", "team")
+		recordAppliedChangeIf(cmd.Context(), "team.update", "team", payload.Changed)
+		if !payload.Changed {
+			fmt.Fprintln(cmd.OutOrStdout(), "Team is already up to date.")
+			return nil
+		}
 		fmt.Fprintf(cmd.OutOrStdout(), "Updated team %s (%s).\n", payload.Team.Name, payload.Team.ID)
 		return nil
 	}),
 }
 
 var teamArchiveCmd = &cobra.Command{
-	Use:   "archive <team-id>",
+	Use:   "archive <team-slug-or-id>",
 	Short: "Archive a team that has no remaining bindings or owned artifacts",
 	Args:  cobra.ExactArgs(1),
 	RunE: WithTelemetry("cli.team.archive", func(cmd *cobra.Command, args []string) error {
@@ -143,7 +151,11 @@ var teamArchiveCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		recordAppliedChange(cmd.Context(), "team.archive", "team")
+		recordAppliedChangeIf(cmd.Context(), "team.archive", "team", payload.Changed)
+		if !payload.Changed {
+			fmt.Fprintln(cmd.OutOrStdout(), "Team is already archived.")
+			return nil
+		}
 		fmt.Fprintf(cmd.OutOrStdout(), "Archived team %s (%s).\n", payload.Team.Name, payload.Team.ID)
 		return nil
 	}),
@@ -153,7 +165,7 @@ var teamBuildAccessFlags listFlags
 var teamBuildAccessSearch string
 var teamBuildAccessResource string
 var teamBuildAccessCmd = &cobra.Command{
-	Use:   "build-access <team-id>",
+	Use:   "build-access <team-slug-or-id>",
 	Short: "List services or buckets available to both you and a team",
 	Args:  cobra.ExactArgs(1),
 	RunE: WithTelemetry("cli.team.build_access", func(cmd *cobra.Command, args []string) error {
@@ -182,7 +194,7 @@ var teamBuildAccessCmd = &cobra.Command{
 var teamAccessCmd = &cobra.Command{Use: "access", Short: "Manage a team's workspace and resource access"}
 var teamWorkspaceAccessCmd = &cobra.Command{Use: "workspace", Short: "Manage workspace roles"}
 var teamWorkspaceSetCmd = &cobra.Command{
-	Use:   "set <team-id> <owner|admin|builder|viewer>",
+	Use:   "set <team-slug-or-id> <owner|admin|builder|viewer>",
 	Short: "Set a team's workspace role",
 	Args:  cobra.ExactArgs(2),
 	RunE: WithTelemetry("cli.team.access.workspace.set", func(cmd *cobra.Command, args []string) error {
@@ -194,17 +206,18 @@ var teamWorkspaceSetCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		if _, err := client.SetTeamWorkspaceRole(args[0], stringPointer(role)); err != nil {
+		payload, err := client.SetTeamWorkspaceRole(args[0], stringPointer(role))
+		if err != nil {
 			return err
 		}
-		recordAppliedChange(cmd.Context(), "team.access.workspace.set", "team_binding")
-		fmt.Fprintln(cmd.OutOrStdout(), "Workspace role updated.")
+		recordAppliedChangeIf(cmd.Context(), "team.access.workspace.set", "team_binding", payload.Changed)
+		printMutationOutcome(cmd, payload.Changed, "Workspace role updated.", "Workspace role is already up to date.")
 		return nil
 	}),
 }
 
 var teamWorkspaceClearCmd = &cobra.Command{
-	Use:   "clear <team-id>",
+	Use:   "clear <team-slug-or-id>",
 	Short: "Clear a team's workspace role",
 	Args:  cobra.ExactArgs(1),
 	RunE: WithTelemetry("cli.team.access.workspace.clear", func(cmd *cobra.Command, args []string) error {
@@ -212,26 +225,27 @@ var teamWorkspaceClearCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		if _, err := client.SetTeamWorkspaceRole(args[0], nil); err != nil {
+		payload, err := client.SetTeamWorkspaceRole(args[0], nil)
+		if err != nil {
 			return err
 		}
-		recordAppliedChange(cmd.Context(), "team.access.workspace.clear", "team_binding")
-		fmt.Fprintln(cmd.OutOrStdout(), "Workspace role cleared.")
+		recordAppliedChangeIf(cmd.Context(), "team.access.workspace.clear", "team_binding", payload.Changed)
+		printMutationOutcome(cmd, payload.Changed, "Workspace role cleared.", "Workspace role is already clear.")
 		return nil
 	}),
 }
 
 var teamServiceAccessCmd = &cobra.Command{Use: "service", Short: "Manage service access"}
-var teamServiceGrantCmd = resourceAccessCommand("grant <team-id> <service-id> <use|manage>", "Grant service access", "cli.team.access.service.grant", grantTeamServiceAccess)
-var teamServiceRevokeCmd = resourceAccessCommand("revoke <team-id> <service-id> <use|manage>", "Revoke service access", "cli.team.access.service.revoke", revokeTeamServiceAccess)
+var teamServiceGrantCmd = resourceAccessCommand("grant <team-slug-or-id> <service-slug-or-id> <use|manage>", "Grant service access", "cli.team.access.service.grant", grantTeamServiceAccess)
+var teamServiceRevokeCmd = resourceAccessCommand("revoke <team-slug-or-id> <service-slug-or-id> <use|manage>", "Revoke service access", "cli.team.access.service.revoke", revokeTeamServiceAccess)
 var teamBucketAccessCmd = &cobra.Command{Use: "bucket", Short: "Manage bucket access"}
-var teamBucketGrantCmd = resourceAccessCommand("grant <team-id> <bucket-id> <use|manage>", "Grant bucket access", "cli.team.access.bucket.grant", grantTeamBucketAccess)
-var teamBucketRevokeCmd = resourceAccessCommand("revoke <team-id> <bucket-id> <use|manage>", "Revoke bucket access", "cli.team.access.bucket.revoke", revokeTeamBucketAccess)
+var teamBucketGrantCmd = resourceAccessCommand("grant <team-slug-or-id> <bucket-name-or-id> <use|manage>", "Grant bucket access", "cli.team.access.bucket.grant", grantTeamBucketAccess)
+var teamBucketRevokeCmd = resourceAccessCommand("revoke <team-slug-or-id> <bucket-name-or-id> <use|manage>", "Revoke bucket access", "cli.team.access.bucket.revoke", revokeTeamBucketAccess)
 var teamArtifactAccessCmd = &cobra.Command{Use: "artifact", Short: "Share SDKs and MCP servers with a team"}
-var teamArtifactGrantCmd = artifactAccessCommand("grant <team-id> <artifact-id> <read|manage>", "Grant SDK or MCP server access", "cli.team.access.artifact.grant", grantTeamArtifactAccess)
-var teamArtifactRevokeCmd = artifactAccessCommand("revoke <team-id> <artifact-id> <read|manage>", "Revoke SDK or MCP server access", "cli.team.access.artifact.revoke", revokeTeamArtifactAccess)
+var teamArtifactGrantCmd = artifactAccessCommand("grant <team-slug-or-id> <artifact-name[@version]-or-id> <read|use|manage>", "Grant SDK or MCP server access", "cli.team.access.artifact.grant", grantTeamArtifactAccess)
+var teamArtifactRevokeCmd = artifactAccessCommand("revoke <team-slug-or-id> <artifact-name[@version]-or-id> <read|use|manage>", "Revoke SDK or MCP server access", "cli.team.access.artifact.revoke", revokeTeamArtifactAccess)
 
-type resourceAccessMutation func(*cliapi.Client, string, string, string) error
+type resourceAccessMutation func(*cliapi.Client, string, string, string) (*cliapi.TeamBindingMutationPayload, error)
 
 func resourceAccessCommand(use, short, spanName string, mutate resourceAccessMutation) *cobra.Command {
 	return teamAccessCommand(use, short, spanName, normalizeAccessLevel, mutate)
@@ -255,44 +269,39 @@ func teamAccessCommand(use, short, spanName string, normalize accessLevelNormali
 			if err != nil {
 				return err
 			}
-			if err := mutate(client, args[0], args[1], level); err != nil {
+			payload, err := mutate(client, args[0], args[1], level)
+			if err != nil {
 				return err
 			}
-			recordAppliedChange(cmd.Context(), spanName, "team_binding")
-			fmt.Fprintln(cmd.OutOrStdout(), "Team access updated.")
+			recordAppliedChangeIf(cmd.Context(), spanName, "team_binding", payload.Changed)
+			printMutationOutcome(cmd, payload.Changed, "Team access updated.", "Team access is already up to date.")
 			return nil
 		}),
 	}
 }
 
-func grantTeamServiceAccess(client *cliapi.Client, teamID, resourceID, level string) error {
-	_, err := client.GrantTeamServiceAccess(teamID, resourceID, level)
-	return err
+func grantTeamServiceAccess(client *cliapi.Client, teamID, resourceID, level string) (*cliapi.TeamBindingMutationPayload, error) {
+	return client.GrantTeamServiceAccess(teamID, resourceID, level)
 }
 
-func revokeTeamServiceAccess(client *cliapi.Client, teamID, resourceID, level string) error {
-	_, err := client.RevokeTeamServiceAccess(teamID, resourceID, level)
-	return err
+func revokeTeamServiceAccess(client *cliapi.Client, teamID, resourceID, level string) (*cliapi.TeamBindingMutationPayload, error) {
+	return client.RevokeTeamServiceAccess(teamID, resourceID, level)
 }
 
-func grantTeamBucketAccess(client *cliapi.Client, teamID, resourceID, level string) error {
-	_, err := client.GrantTeamBucketAccess(teamID, resourceID, level)
-	return err
+func grantTeamBucketAccess(client *cliapi.Client, teamID, resourceID, level string) (*cliapi.TeamBindingMutationPayload, error) {
+	return client.GrantTeamBucketAccess(teamID, resourceID, level)
 }
 
-func revokeTeamBucketAccess(client *cliapi.Client, teamID, resourceID, level string) error {
-	_, err := client.RevokeTeamBucketAccess(teamID, resourceID, level)
-	return err
+func revokeTeamBucketAccess(client *cliapi.Client, teamID, resourceID, level string) (*cliapi.TeamBindingMutationPayload, error) {
+	return client.RevokeTeamBucketAccess(teamID, resourceID, level)
 }
 
-func grantTeamArtifactAccess(client *cliapi.Client, teamID, resourceID, level string) error {
-	_, err := client.GrantTeamArtifactAccess(teamID, resourceID, level)
-	return err
+func grantTeamArtifactAccess(client *cliapi.Client, teamID, resourceID, level string) (*cliapi.TeamBindingMutationPayload, error) {
+	return client.GrantTeamArtifactAccess(teamID, resourceID, level)
 }
 
-func revokeTeamArtifactAccess(client *cliapi.Client, teamID, resourceID, level string) error {
-	_, err := client.RevokeTeamArtifactAccess(teamID, resourceID, level)
-	return err
+func revokeTeamArtifactAccess(client *cliapi.Client, teamID, resourceID, level string) (*cliapi.TeamBindingMutationPayload, error) {
+	return client.RevokeTeamArtifactAccess(teamID, resourceID, level)
 }
 
 func teamUpdateInput(cmd *cobra.Command) (cliapi.UpdateTeamInput, error) {
@@ -328,9 +337,9 @@ func normalizeAccessLevel(value string) (string, error) {
 	// Product language is Use/Manage while the GraphQL enum uses USER/MANAGER
 	// to match the seeded resource-role slugs.
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "use", "user":
+	case "use":
 		return "USER", nil
-	case "manage", "manager":
+	case "manage":
 		return "MANAGER", nil
 	default:
 		return "", fmt.Errorf("access level must be use or manage")
@@ -339,20 +348,22 @@ func normalizeAccessLevel(value string) (string, error) {
 
 func normalizeArtifactAccessLevel(value string) (string, error) {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "read", "reader":
+	case "read":
 		return "READER", nil
-	case "manage", "manager":
+	case "use":
+		return "USER", nil
+	case "manage":
 		return "MANAGER", nil
 	default:
-		return "", fmt.Errorf("artifact access level must be read or manage")
+		return "", fmt.Errorf("artifact access level must be read, use, or manage")
 	}
 }
 
 func normalizeSelectorResourceType(value string) (string, error) {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "service", "services":
+	case "service":
 		return "SERVICE", nil
-	case "bucket", "buckets":
+	case "bucket":
 		return "BUCKET", nil
 	default:
 		return "", fmt.Errorf("resource must be service or bucket")

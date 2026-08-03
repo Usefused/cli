@@ -19,8 +19,8 @@ func TestUserListAndTeamMemberCommandsUseEngineContract(t *testing.T) {
 	defer server.Close()
 
 	listOutput := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"user", "list", "--search", "ada", "--include-suspended"})
-	memberOutput := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"team", "member", "list", "team-1"})
-	addOutput := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"team", "member", "add", "team-1", "Ada@Example.test", "--role", "manager"})
+	memberOutput := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"team", "member", "list", "platform"})
+	addOutput := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"team", "member", "add", "platform", "Ada@Example.test", "--role", "manager"})
 
 	for _, want := range []string{"Ada", "Ada@Example.test", "active", "user-1"} {
 		if !strings.Contains(listOutput, want) {
@@ -40,7 +40,7 @@ func TestIssueUserCredentialShowsSecretOnceWithWarning(t *testing.T) {
 	server := userCommandServer(t, &requests)
 	defer server.Close()
 
-	output := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"user", "credential", "issue", "user-1", "--name", "laptop"})
+	output := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"user", "credential", "issue", "ada@example.test", "--name", "laptop"})
 
 	if strings.Count(output, "fsk_once_only") != 1 || !strings.Contains(output, "will not be shown again") || !strings.Contains(output, "Keep it secret") {
 		t.Fatalf("credential output = %q", output)
@@ -87,11 +87,11 @@ func TestUserAndMembershipMutationCommandsUseSharedFields(t *testing.T) {
 	defer server.Close()
 
 	runCommandInDir(t, t.TempDir(), server.URL, []string{"user", "create", "Ada@Example.test", "--name", "Ada"})
-	runCommandInDir(t, t.TempDir(), server.URL, []string{"user", "update", "user-1", "--name", "Ada Lovelace"})
-	runCommandInDir(t, t.TempDir(), server.URL, []string{"user", "suspend", "user-1"})
-	runCommandInDir(t, t.TempDir(), server.URL, []string{"user", "reactivate", "user-1"})
-	runCommandInDir(t, t.TempDir(), server.URL, []string{"user", "credential", "revoke", "user-1", "credential-1"})
-	runCommandInDir(t, t.TempDir(), server.URL, []string{"team", "member", "remove", "team-1", "user-1"})
+	runCommandInDir(t, t.TempDir(), server.URL, []string{"user", "update", "ada@example.test", "--name", "Ada Lovelace"})
+	runCommandInDir(t, t.TempDir(), server.URL, []string{"user", "suspend", "ada@example.test"})
+	runCommandInDir(t, t.TempDir(), server.URL, []string{"user", "reactivate", "ada@example.test"})
+	runCommandInDir(t, t.TempDir(), server.URL, []string{"user", "credential", "revoke", "ada@example.test", "laptop"})
+	runCommandInDir(t, t.TempDir(), server.URL, []string{"team", "member", "remove", "platform", "ada@example.test"})
 
 	fields := []string{"createUser", "updateUser", "suspendUser", "reactivateUser", "revokeUserCredential", "removeTeamMember"}
 	if len(requests) != len(fields) {

@@ -351,12 +351,12 @@ services:
 	}
 }
 
-func TestSDKNameDownloadRoutesThroughEngineToRegistrySDKRecord(t *testing.T) {
+func TestSDKNameDownloadResolvesThroughEngineBeforeRegistryDownload(t *testing.T) {
 	dir := t.TempDir()
 	var sawGraphQL, sawDownload bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/graphql":
+		case "/engine/graphql":
 			sawGraphQL = true
 			var body struct {
 				Variables map[string]any `json:"variables"`
@@ -364,10 +364,10 @@ func TestSDKNameDownloadRoutesThroughEngineToRegistrySDKRecord(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Fatalf("decode graphql request: %v", err)
 			}
-			if body.Variables["name"] != "security-sdk" || body.Variables["version"] != "1.2.0" {
-				t.Fatalf("unexpected sdkByName variables: %+v", body.Variables)
+			if body.Variables["reference"] != "security-sdk@1.2.0" || body.Variables["kind"] != "sdk" {
+				t.Fatalf("unexpected SDK reference variables: %+v", body.Variables)
 			}
-			_, _ = w.Write([]byte(`{"data":{"sdkByName":{"id":"sdk-record-123","sandbox_url":""}}}`))
+			_, _ = w.Write([]byte(`{"data":{"artifactReference":{"id":"sdk-record-123","kind":"artifact"}}}`))
 		case "/sdks/sdk-record-123/download":
 			sawDownload = true
 			w.Header().Set("Content-Type", "application/zip")

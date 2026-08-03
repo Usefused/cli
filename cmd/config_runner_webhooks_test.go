@@ -95,7 +95,7 @@ func TestPrintAppliedWebhooks_NoOutputWhenNoWebhooks(t *testing.T) {
 // by the pure unit tests above, and reused by the new `fused-cli webhook
 // apply` command).
 
-// ─── Task 8: `workspace service <slug> webhooks` visibility command ───────
+// ─── Task 8: `workspace service webhooks <slug>` visibility command ───────
 
 func TestWorkspaceServiceWebhooks_ListsRegistrationsWithReconstructedURL(t *testing.T) {
 	dir := t.TempDir()
@@ -104,7 +104,7 @@ func TestWorkspaceServiceWebhooks_ListsRegistrationsWithReconstructedURL(t *test
 	}))
 	defer server.Close()
 
-	out := runCommandInDirOutput(t, dir, server.URL, []string{"workspace", "service", "github", "webhooks"})
+	out := runCommandInDirOutput(t, dir, server.URL, []string{"workspace", "service", "webhooks", "github"})
 
 	if !strings.Contains(out, "repo-a") || !strings.Contains(out, server.URL+"/webhook/slugaaaaaaaaaaaaaaaaa-github") {
 		t.Fatalf("expected repo-a URL line, got:\n%s", out)
@@ -123,7 +123,7 @@ func handleWorkspaceWebhookListRequest(t *testing.T, w http.ResponseWriter, r *h
 	t.Helper()
 	switch r.URL.Path {
 	case "/graphql":
-		writeServiceVersionsForWebhookList(t, w, r)
+		writeServiceLookupForWebhookList(t, w, r)
 	case "/engine/graphql":
 		writeEngineWebhookListResponse(t, w, r)
 	default:
@@ -131,7 +131,7 @@ func handleWorkspaceWebhookListRequest(t *testing.T, w http.ResponseWriter, r *h
 	}
 }
 
-func writeServiceVersionsForWebhookList(t *testing.T, w http.ResponseWriter, r *http.Request) {
+func writeServiceLookupForWebhookList(t *testing.T, w http.ResponseWriter, r *http.Request) {
 	t.Helper()
 	var body struct {
 		Query     string         `json:"query"`
@@ -140,10 +140,10 @@ func writeServiceVersionsForWebhookList(t *testing.T, w http.ResponseWriter, r *
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		t.Fatalf("decode graphql body: %v", err)
 	}
-	if !strings.Contains(body.Query, "serviceVersions") {
+	if !strings.Contains(body.Query, "GetServiceInfo") {
 		t.Fatalf("unexpected graphql query: %s", body.Query)
 	}
-	_, _ = w.Write([]byte(`{"data":{"serviceVersions":[{"id":"ver-latest","service_id":"svc-github","name":"2026-07-01","status":"public","created_at":"2026-07-01T00:00:00Z"}]}}`))
+	_, _ = w.Write([]byte(`{"data":{"service":{"id":"svc-github"}}}`))
 }
 
 func writeEngineWebhookListResponse(t *testing.T, w http.ResponseWriter, r *http.Request) {
@@ -168,7 +168,7 @@ func TestWorkspaceServiceWebhooks_NoRegistrations_PrintsMessage(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/graphql":
-			_, _ = w.Write([]byte(`{"data":{"serviceVersions":[{"id":"ver-latest","service_id":"svc-github","name":"2026-07-01","status":"public","created_at":"2026-07-01T00:00:00Z"}]}}`))
+			_, _ = w.Write([]byte(`{"data":{"service":{"id":"svc-github"}}}`))
 		case r.URL.Path == "/engine/graphql":
 			body := decodeTestGraphQLBody(t, r)
 			if strings.Contains(body.Query, "workspaceServices") {
@@ -186,7 +186,7 @@ func TestWorkspaceServiceWebhooks_NoRegistrations_PrintsMessage(t *testing.T) {
 	}))
 	defer server.Close()
 
-	out := runCommandInDirOutput(t, dir, server.URL, []string{"workspace", "service", "github", "webhooks"})
+	out := runCommandInDirOutput(t, dir, server.URL, []string{"workspace", "service", "webhooks", "github"})
 	if !strings.Contains(out, "No webhook registrations for service github.") {
 		t.Fatalf("expected no-registrations message, got:\n%s", out)
 	}

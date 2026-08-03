@@ -169,24 +169,6 @@ func (c *Client) UpsertSecrets(bucketID string, secrets []SecretUpsertRequest) e
 	return nil
 }
 
-func (c *Client) ListSecrets(bucketID string) ([]SecretMetaResponse, error) {
-	if bucketID == "" {
-		return nil, fmt.Errorf("bucket_id is required for GraphQL secret listing")
-	}
-	query := `
-		query SecretMetas($bucketId: String!) {
-			secretMetas(bucket_id: $bucketId) { id service_id key_name credential_type bucket_id expires_at created_at updated_at }
-		}
-	`
-	var resp struct {
-		Secrets []SecretMetaResponse `json:"secretMetas"`
-	}
-	// Why: Secret listing returns metadata only and is a read path, so keep it
-	// on Engine GraphQL while leaving secret writes/revokes on REST.
-	err := c.EngineGraphQL(query, map[string]interface{}{"bucketId": bucketID}, &resp)
-	return resp.Secrets, err
-}
-
 func (c *Client) DeleteSecret(serviceID, keyName string, bucketID string) error {
 	u, err := url.Parse(c.BaseURL + "/workspace/secrets")
 	if err != nil {
