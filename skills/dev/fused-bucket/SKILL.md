@@ -93,6 +93,40 @@ healthy/refreshing/failing) with `connection resources` below (for *one*
 already-connected user, which provider tenants their token can reach) --
 they're different scopes of the word "connection."
 
+## Permissions and team access
+
+Bucket operations use separate permissions by lifecycle:
+
+- Bucket metadata/list/show needs `bucket.read`; reading values needs
+  `bucket.values.read`; secret listings need `credentials.metadata.read`; and
+  connection listings need `connection.read`.
+- Creating a bucket needs workspace `bucket.manage`. Changing bucket values
+  needs `bucket.manage`; changing secrets needs `credentials.manage`.
+- `connect set` needs `credentials.manage` and `service.consume`.
+- Starting a user connect session needs `connection.manage`, `bucket.use`, and
+  `service.consume`. Changing or rediscovering connection resources needs
+  `connection.manage`.
+- Publishing a Registry connection-profile baseline needs `service.manage` and
+  `credentials.manage`; setting/resetting a workspace profile needs
+  `service.manage`.
+
+Use the narrow team grants for the bucket and service involved:
+
+```shell
+fused-cli team access bucket grant <team> <bucket> use|manage
+fused-cli team access service grant <team> <service> use|manage
+fused-cli workspace access bucket grant <bucket>   # only for intended workspace-wide use
+```
+
+Bucket `use` permits selection without secret administration; bucket `manage`
+includes value, credential, and connection management. Service `use` supplies
+`service.read` and `service.consume`. On denial, stop the blocked action,
+preserve any config or connection details already prepared, and tell the user
+the missing permission and resource. Never self-grant, switch credentials,
+broaden scope, or retry with guessed authority. Do not run access-changing
+commands unless explicitly requested and authorised. Read the `fused-cli`
+skill's `reference/access-management.md` for the complete role matrix.
+
 ## Static secrets and values
 
 ```shell

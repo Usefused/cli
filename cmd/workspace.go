@@ -87,6 +87,7 @@ var workspaceServicesCmd = &cobra.Command{
 }
 
 var workspaceServicesListInteractive bool
+var workspaceServicesListQuery string
 var workspaceServicesListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List workspace services",
@@ -105,8 +106,13 @@ var workspaceServicesListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		services = filterWorkspaceServices(services, workspaceServicesListQuery)
 		if len(services) == 0 {
-			fmt.Fprintln(cmd.OutOrStdout(), "No workspace services found.")
+			if strings.TrimSpace(workspaceServicesListQuery) != "" {
+				fmt.Fprintf(cmd.OutOrStdout(), "No visible workspace services found matching %q.\n", strings.TrimSpace(workspaceServicesListQuery))
+			} else {
+				fmt.Fprintln(cmd.OutOrStdout(), "No workspace services found.")
+			}
 			return nil
 		}
 
@@ -137,6 +143,33 @@ var workspaceServicesListCmd = &cobra.Command{
 		w.Flush()
 		return nil
 	}),
+}
+
+// filterWorkspaceServices searches only the access-filtered rows returned by
+// Engine. Every whitespace-separated term must occur in the service name or
+// actionable slug, case-insensitively, so a query can combine provider and
+// product words without implying that hidden workspace services were searched.
+func filterWorkspaceServices(services []cliapi.WorkspaceService, query string) []cliapi.WorkspaceService {
+	terms := strings.Fields(strings.ToLower(strings.TrimSpace(query)))
+	if len(terms) == 0 {
+		return services
+	}
+
+	filtered := make([]cliapi.WorkspaceService, 0, len(services))
+	for _, service := range services {
+		haystack := strings.ToLower(service.ServiceName + " " + service.ServiceSlug)
+		matches := true
+		for _, term := range terms {
+			if !strings.Contains(haystack, term) {
+				matches = false
+				break
+			}
+		}
+		if matches {
+			filtered = append(filtered, service)
+		}
+	}
+	return filtered
 }
 
 // workspaceServiceSlugColumn prints what a user actually needs to act on a
@@ -770,6 +803,7 @@ func init() {
 
 	workspaceCmd.AddCommand(workspaceServicesCmd)
 	workspaceServicesListCmd.Flags().BoolVarP(&workspaceServicesListInteractive, "interactive", "i", false, "Interactive service selection")
+	workspaceServicesListCmd.Flags().StringVarP(&workspaceServicesListQuery, "q", "q", "", "Filter visible workspace services by name or slug")
 	workspaceServicesCmd.AddCommand(workspaceServicesListCmd)
 	workspaceCmd.AddCommand(workspaceServiceCmd)
 	workspaceCmd.AddCommand(workspaceHasCmd)

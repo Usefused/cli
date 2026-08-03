@@ -44,7 +44,7 @@ Always look for a suitable already-enabled service before querying the
 Registry:
 
 ```shell
-fused-cli workspace services list
+fused-cli workspace services list --q "<provider or product>"
 # Use this additional exact check when the Registry service name is known:
 fused-cli workspace has "<exact service name>"
 ```
@@ -58,8 +58,11 @@ fused-cli workspace service versions <slug>
 fused-cli workspace service operations <slug> --version <version> --q "<capability>"
 ```
 
-Do not query the Registry or try to add the service merely because the user did
-not know its slug. Use the workspace list to resolve that first.
+Workspace discovery requires `service.read` and is access-filtered. Do not
+query the Registry or try to add the service merely because the user did not
+know its slug; use the workspace search to resolve that first. If it returns no
+match, say "no suitable visible workspace service" rather than claiming the
+service is not enabled, because the caller may lack access to see it.
 
 Only when the workspace has no suitable service, search the Registry:
 
@@ -72,6 +75,10 @@ The returned `slug` is reusable in later commands. Owned services use a bare
 slug; public services owned by another provider use `@provider/slug`. If several
 results could satisfy the request, compare names/providers and ask the user
 before selecting a materially different service.
+
+Registry service search currently returns at most 20 ranked matches and has no
+pagination flag. Refine `--q` when the intended provider is not in that set;
+do not assume later pages exist.
 
 Registry discovery requires `catalogue.read`. A search result proves that the
 service is visible to the caller; it does not prove that the caller may activate
@@ -120,6 +127,14 @@ with `team access service grant`; follow `reference/access-management.md` and
 current command help. A service-specific grant alone does not supply
 `workspace.update`.
 
+Use the narrow command only as remediation for an authorised administrator;
+do not run it automatically:
+
+```shell
+fused-cli team access service grant <team> <service> manage
+fused-cli team access workspace set <team> admin
+```
+
 Inspect current `--help` before using editor commands such as `workspace service
 add`; they operate on an existing config file and may require `-f`.
 
@@ -130,6 +145,31 @@ OAuth/OIDC, mTLS, or no authentication. Reuse an appropriate existing bucket or
 create one according to `fused-bucket`. Add secret material through stdin or an
 interactive prompt, never a command argument. For OAuth/OIDC, configure the app
 and start the connect flow; pause for the user's browser consent when required.
+
+If the output will be team-owned, verify that team before planning. The team
+must appear in `eligible-owners` and have build access to every selected service
+and bucket:
+
+```shell
+fused-cli team eligible-owners
+fused-cli team build-access <team> --resource service
+fused-cli team build-access <team> --resource bucket
+fused-cli sdk plan --owner-team <team>       # or mcp/webhook plan
+```
+
+If the requested team is absent from `eligible-owners` or `build-access` shows
+a missing dependency, stop before plan. Tell the user which team and resource
+failed the preflight; do not silently switch to personal ownership or choose a
+different team.
+
+An authorised administrator can fill a missing dependency with the narrowest
+scope. These are remediation commands, not permission to change access on the
+user's behalf:
+
+```shell
+fused-cli team access service grant <team> <service> use
+fused-cli team access bucket grant <team> <bucket> use
+```
 
 Do not claim the integration is ready while required bucket values, secrets,
 connect scopes, or user connections are unresolved.
@@ -160,11 +200,22 @@ any approval/owner-team requirements; do not bypass them. After apply, confirm
 the created version is active.
 
 SDK/MCP creation and use have separate permissions from workspace activation.
-Expect the plan/apply path to require service consumption, bucket use, artifact
-creation/management, and possibly credential management. Use the human-readable
-permission denial or `required_permissions` in JSON plan output to identify the
-exact resource. Ask an access administrator to grant only that scope; do not
-broaden a team to Admin merely to consume an already-enabled service.
+A new plan requires `artifact.create`, `service.read`, and `bucket.read`; an
+existing artifact plan requires `artifact.manage` plus the dependency reads.
+Apply requires `artifact.create` for a new resource or `artifact.manage` for an
+existing one, together with `service.consume` and `bucket.use` for every
+selected dependency. Use the human-readable denial or `required_permissions`
+in JSON plan output to identify the exact resource. An authorised administrator
+can use `team access service ... use`, `team access bucket ... use`, or `team
+access artifact ... manage` as appropriate. Do not execute those grants
+automatically or broaden a team to Admin merely to consume an already-enabled
+service.
+
+On any denial, stop the blocked action, preserve the config and plan, and tell
+the user the missing permission and resource. Never self-grant, switch
+credentials, broaden scope, or retry with guessed authority. See
+`reference/access-management.md` for the full permission matrix and access
+commands.
 
 ## Completion contract
 

@@ -110,7 +110,7 @@ enabled workspace services, Registry fallback, workspace activation, operation
 selection, credentials, config authoring, and the final ready-to-use handoff.
 Do not guess service slugs or operation IDs.
 
-## Team ownership and access management
+## Permissions and team access
 
 Use `team` and `user` for RBAC, and `workspace access` when a specific bucket
 or SDK/MCP permission scope should be usable by everyone in the local workspace.
@@ -122,6 +122,14 @@ changing membership, roles, resource access, personal credentials, or resource
 ownership. Prefer human names/slugs for normal commands, and use the displayed
 full UUID when the same `name@version` exists as both an SDK and MCP server. Use `team
 eligible-owners` before planning a new SDK, MCP server, or webhook.
+
+Permission-sensitive CLI flows must follow the denial protocol in that
+reference: stop the blocked action, preserve drafts and plans, tell the user
+the missing permission and resource, and name the narrowest relevant access
+command for an authorised administrator. Never self-grant, switch credentials,
+broaden a role, or retry with guessed authority. Reading access state requires
+`access.read`; changing it requires `access.manage`, and assigning Owner also
+requires `account.manage`.
 
 ## Every config file shares this shape
 
@@ -158,6 +166,15 @@ config and receipt writes use validated same-directory atomic replacement and
 preserve an existing file's permission mode.
 
 ## Importing a provider API
+
+Registry search and import are separate permissions: `service search --q`
+requires `catalogue.read`; creating or updating a service with `import plan`,
+`import apply`, or `import docs` requires `catalogue.import`; reading an import
+session requires `catalogue.read`. A visible Registry result does not grant
+`service.manage`, `service.consume`, or workspace activation. If import is
+denied, preserve the source and plan, report the missing permission/resource,
+and follow [reference/access-management.md](reference/access-management.md);
+do not try another credential or grant access automatically.
 
 Use `import plan` / `import apply` when the source is already a machine-readable
 specification. This path is reviewed and receipt-backed: `plan` parses/diffs,

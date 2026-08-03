@@ -116,7 +116,7 @@ This list may be behind the CLI's actual flags/subcommands -- run
 ```shell
 fused-cli workspace plan
 fused-cli workspace apply
-fused-cli workspace services list
+fused-cli workspace services list [--q "<provider or product>"]
 fused-cli workspace service versions <slug>
 fused-cli workspace service operations <slug>
 fused-cli workspace service webhooks <slug>   # read-only: lists this service's kind: webhook registrations, see fused-webhook
@@ -133,28 +133,44 @@ fused-cli workspace service connect <slug> --bucket <bucket-name-or-id> --user-r
 full flow (buckets, secrets, connection resources) is documented in
 `fused-bucket`.
 
-Before adding a service, always run `workspace services list` and reuse a
-suitable already-enabled service when present. Use `workspace has "<exact
-service name>"` only as an additional exact check; it matches the name, not the
-slug. Search the Registry with `service search --q` only when the workspace has
-no suitable service.
+Before adding a service, always run `workspace services list --q <query>` and
+reuse a suitable already-enabled service when present. Workspace results
+require `service.read` and are access-filtered: no match means "no suitable
+visible service," not proof that the service is not enabled. Use `workspace
+has "<exact service name>"` only as an additional exact check; it matches the
+name, not the slug. Search the Registry with `service search --q` only when the
+workspace has no suitable visible service. Workspace `--q` filters the complete
+visible workspace list locally by service name or slug; it is not a paginated
+Registry search.
 
-## Permissions for activation
+## Permissions and team access
 
 Finding a Registry service does not imply permission to add it. Registry search
 requires `catalogue.read`; planning a workspace change requires `workspace.read`
 and `service.manage` for every changed service; applying it also requires
-`workspace.update`. Built-in Admin and Owner workspace roles provide these
+`workspace.update` and the same `service.manage`; bucket changes additionally
+require `bucket.manage`, and credential material can require
+`credentials.manage`. Built-in Admin and Owner workspace roles provide the
 activation permissions, while Builder and Viewer do not.
 
 If adding, planning, or applying reports a permission denial, stop and preserve
-the local draft. Tell the user that the service was found but could not be added,
-and report the missing permission and resource instead of retrying with another
-key or attempting to grant access. An access administrator can use `team access
-workspace set <team> admin` or an appropriate scoped service binding; read the
-`fused-cli` skill's `reference/access-management.md`. A scoped `service.manage`
-grant does not by itself provide the workspace-level `workspace.update` needed
-to apply activation.
+the local draft and plan. Tell the user that the service was found but could not
+be added, and report the missing permission and resource. Never self-grant,
+switch credentials, broaden scope, or retry with guessed authority. An
+authorised administrator can use the narrow service/bucket grant or, when the
+missing permission is workspace-level, assign a suitable workspace role:
+
+```shell
+fused-cli team access service grant <team> <service> manage
+fused-cli team access bucket grant <team> <bucket> manage
+fused-cli team access workspace set <team> admin
+```
+
+Do not run those access-changing commands unless the user explicitly asks and
+the current identity is authorised. A scoped `service.manage` grant does not by
+itself provide the workspace-level `workspace.update` needed to apply
+activation. Read the `fused-cli` skill's
+`reference/access-management.md` for the complete permission and role matrix.
 
 ## Production warning
 

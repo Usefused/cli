@@ -107,3 +107,35 @@ To look up a service's registrations later without re-running apply, use the
 read-only `fused-cli workspace service webhooks <slug>` command (see
 `fused-workspace`) -- its `SIGNATURE` column is `set`/`none` only, never the
 secret value.
+
+## Permissions and team access
+
+A new webhook plan requires `artifact.create` and `service.read`; an update
+requires `artifact.manage` and `service.read`. It also needs `bucket.read` for
+each bucket named by a secret reference. Apply requires `artifact.create` for a
+new registration bundle or `artifact.manage` for an existing one, plus
+`service.consume` for every registered service and `bucket.use` for each
+referenced secret bucket. A webhook without a secret reference has no bucket
+permission requirement.
+
+For team ownership, preflight the team and dependencies before planning:
+
+```shell
+fused-cli team eligible-owners
+fused-cli team build-access <team> --resource service
+fused-cli team build-access <team> --resource bucket
+fused-cli webhook plan --owner-team <team>
+```
+
+An authorised administrator can grant the missing dependency narrowly:
+
+```shell
+fused-cli team access service grant <team> <service> use
+fused-cli team access bucket grant <team> <bucket> use
+```
+
+On denial, stop the blocked action, preserve the config and plan, and tell the
+user the missing permission and resource. Never self-grant, switch credentials,
+broaden scope, or retry with guessed authority. Do not run access-changing
+commands unless explicitly requested and authorised. Read the `fused-cli`
+skill's `reference/access-management.md` for the complete matrix.
