@@ -227,20 +227,39 @@ type PermissionRequirement struct {
 }
 
 type apiErrorPayload struct {
-	Error   string                  `json:"error"`
+	Error   json.RawMessage         `json:"error"`
 	Missing []PermissionRequirement `json:"missing"`
+}
+
+type engineAPIError struct {
+	Code      string `json:"code"`
+	Message   string `json:"message"`
+	Category  string `json:"category"`
+	Retryable bool   `json:"retryable"`
+	Details   struct {
+		Missing []string `json:"missing"`
+	} `json:"details,omitempty"`
+	Remediation string `json:"remediation,omitempty"`
+	TraceID     string `json:"trace_id,omitempty"`
 }
 
 func formatHTTPErrorBody(status int, respBody []byte) string {
 	var payload apiErrorPayload
 	if err := json.Unmarshal(respBody, &payload); err == nil {
-		if status == http.StatusUnauthorized && payload.Error == "authentication_required" {
+		var structured engineAPIError
+		if len(payload.Error) > 0 && json.Unmarshal(payload.Error, &structured) == nil && structured.Code != "" && structured.Message != "" {
+			return formatEngineAPIError(structured)
+		}
+
+		var errorCode string
+		_ = json.Unmarshal(payload.Error, &errorCode)
+		if status == http.StatusUnauthorized && errorCode == "authentication_required" {
 			return "authentication required; provide a valid Fused credential"
 		}
-		if status == http.StatusForbidden && payload.Error == "permission_denied" {
+		if status == http.StatusForbidden && errorCode == "permission_denied" {
 			return formatPermissionDenied(payload.Missing)
 		}
-		if message := artifactOwnerHTTPError(payload.Error); message != "" {
+		if message := artifactOwnerHTTPError(errorCode); message != "" {
 			return message
 		}
 	}
@@ -248,6 +267,20 @@ func formatHTTPErrorBody(status int, respBody []byte) string {
 	// include the operation and status, so a status-based message stays useful
 	// without copying remote text into returned errors or telemetry.
 	return genericHTTPError(status)
+}
+
+func formatEngineAPIError(engineError engineAPIError) string {
+	message := engineError.Code + ": " + engineError.Message
+	if len(engineError.Details.Missing) > 0 {
+		message += " Missing: " + strings.Join(engineError.Details.Missing, ", ") + "."
+	}
+	if engineError.Remediation != "" {
+		message += " " + engineError.Remediation
+	}
+	if engineError.TraceID != "" {
+		message += " Trace: " + engineError.TraceID
+	}
+	return message
 }
 
 func artifactOwnerHTTPError(code string) string {
