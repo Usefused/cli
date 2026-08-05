@@ -132,6 +132,40 @@ services:
 	}
 }
 
+func TestJSONPlanStillWritesDefaultReceipt(t *testing.T) {
+	dir := t.TempDir()
+	writeConfigCommandFile(t, dir, ".fused/workspace.yaml", `
+apiVersion: fused/v1
+kind: workspace
+services:
+  okta:
+    service_id: "00000000-0000-0000-0000-000000000001"
+    versions: [{version: "2026-07-01"}]
+`)
+
+	oldwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldwd) })
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"plan_id":"plan-json","config_key":"workspace","source_hash":"hash","base_generation":0,"summary":{}}`))
+	}))
+	defer server.Close()
+
+	command := cmd.NewRootCommand()
+	command.SetArgs([]string{"--engine-url", server.URL, "--key", "fsk_test", "plan", "--json"})
+	if err := command.Execute(); err != nil {
+		t.Fatalf("json plan failed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".fused/.state/workspace.plan.json")); err != nil {
+		t.Fatalf("expected json plan receipt: %v", err)
+	}
+}
+
 func writeConfigCommandFile(t *testing.T, dir, rel, body string) string {
 	t.Helper()
 	path := filepath.Join(dir, rel)

@@ -67,10 +67,10 @@ func TestListArtifactsUsesEngineGraphQL(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Fatalf("decode request: %v", err)
 		}
-		if !strings.Contains(request.Query, "artifacts") || request.Variables["kind"] != "mcp" {
+		if !strings.Contains(request.Query, "artifactSnapshots") || request.Variables["kind"] != "mcp" {
 			t.Fatalf("unexpected artifact request: %#v", request)
 		}
-		_, _ = w.Write([]byte(`{"data":{"artifacts":{"total":1,"items":[{"id":"artifact-1","name":"support","version":"1.0.0","kind":"mcp","active":true,"created_at":"now"}]}}}`))
+		_, _ = w.Write([]byte(`{"data":{"artifactSnapshots":{"total":1,"items":[{"id":"artifact-1","name":"support","version":"1.0.0","kind":"mcp","active":true,"created_at":"now"}]}}}`))
 	}))
 	defer server.Close()
 

@@ -191,9 +191,6 @@ func maybeWritePlanReceipt(cfg *configfile.ParsedConfig, receipt planReceipt, op
 		}
 		return writePlanReceiptFile(opts.receiptOut, receipt)
 	}
-	if opts.jsonOut {
-		return nil
-	}
 	return writePlanReceiptFile(defaultReceiptPath(cfg.ConfigKey), receipt)
 }
 

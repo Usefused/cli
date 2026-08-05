@@ -84,7 +84,7 @@ fused-cli bucket services <bucket-name-or-id>         # per-service breakdown: s
 fused-cli bucket secrets <bucket-name-or-id>          # metadata only; never values
 fused-cli bucket values <bucket-name-or-id>
 fused-cli bucket connections <bucket-name-or-id> [--service <slug>] [--user <ref>]
-fused-cli bucket artifacts <bucket-name-or-id>
+fused-cli bucket sdks <bucket-name-or-id>
 ```
 
 Don't confuse `bucket connections <bucket-name-or-id>` (every end user who has connected

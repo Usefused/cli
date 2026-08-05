@@ -1344,20 +1344,28 @@ func (c *Client) GetSDKByName(name string, version string) (*SDKBasicDetails, er
 }
 
 type SDKSelectionDetail struct {
-	ServiceID          string   `json:"service_id"`
-	ServiceName        string   `json:"service_name"`
-	ServiceSlug        string   `json:"service_slug"`
-	ServiceProvider    string   `json:"service_provider"`
-	EndpointIDs        []string `json:"endpoint_ids"`
-	WebhookIDs         []string `json:"webhook_ids"`
-	SelectAll          bool     `json:"select_all"`
-	ServiceVersionID   string   `json:"service_version_id"`
-	ServiceVersionName string   `json:"service_version_name"`
+	ServiceID          string            `json:"service_id"`
+	ServiceName        string            `json:"service_name"`
+	ServiceSlug        string            `json:"service_slug"`
+	ServiceProvider    string            `json:"service_provider"`
+	EndpointIDs        []string          `json:"endpoint_ids"`
+	WebhookIDs         []string          `json:"webhook_ids"`
+	SelectAll          bool              `json:"select_all"`
+	WebhookSelectAll   bool              `json:"webhook_select_all"`
+	OperationNames     []string          `json:"operation_names"`
+	WebhookNames       []string          `json:"webhook_names"`
+	AuthType           string            `json:"auth_type"`
+	AuthName           string            `json:"auth_name"`
+	ConnectScopes      []string          `json:"connect_scopes"`
+	Injections         []InjectionConfig `json:"injections"`
+	ServiceVersionID   string            `json:"service_version_id"`
+	ServiceVersionName string            `json:"service_version_name"`
 }
 
 type SDKWithSelections struct {
 	ID                 string               `json:"id"`
 	Version            string               `json:"version"`
+	TargetLanguage     string               `json:"target_language"`
 	DetailedSelections []SDKSelectionDetail `json:"detailed_selections"`
 }
 
@@ -1376,6 +1384,7 @@ func (c *Client) GetSDKSelectionsByNameVersion(name string, version string) (*SD
 			sdkByName(name: $name, version: $version) {
 				id
 				version
+				target_language
 				detailed_selections {
 					service_id
 					service_name
@@ -1384,6 +1393,13 @@ func (c *Client) GetSDKSelectionsByNameVersion(name string, version string) (*SD
 					endpoint_ids
 					webhook_ids
 					select_all
+					webhook_select_all
+					operation_names
+					webhook_names
+					auth_type
+					auth_name
+					connect_scopes
+					injections { location name value mode }
 					service_version_id
 					service_version_name
 				}

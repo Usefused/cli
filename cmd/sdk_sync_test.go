@@ -107,6 +107,30 @@ func TestMergeSDKServicesFromRemote_RemoteWinsOnConflict(t *testing.T) {
 	}
 }
 
+func TestMergeSDKServicesFromRemote_RestoresPortableMetadata(t *testing.T) {
+	cfg := &configfile.SDKConfig{Services: map[string]configfile.SDKService{
+		"jira": {Version: "1.0.0", Auth: &configfile.ArtifactAuth{Type: "bearer"}},
+	}}
+	remote := []sdkSyncRemoteService{{
+		Name: "Jira", Ref: "jira", Version: "1.0.0", Operations: []string{"listIssues"},
+		Auth:       &configfile.ArtifactAuth{Type: "oauth", Name: "jiraOAuth"},
+		Connect:    &configfile.ArtifactConnect{Scopes: []string{"write:jira-work", "read:jira-work"}},
+		Injections: []configfile.InjectionConfig{{Location: "header", Name: "X-Tenant", Value: "$connection.tenant", Mode: "replace"}},
+	}}
+
+	result := mustMergeSDKServicesFromRemote(t, cfg, "1.0.0", remote)
+	service := cfg.Services["jira"]
+	if !reflect.DeepEqual(result.Updated, []string{"jira"}) || service.Auth == nil || service.Auth.Type != "oauth" || service.Auth.Name != "jiraOAuth" {
+		t.Fatalf("remote auth did not win: result=%+v service=%+v", result, service)
+	}
+	if service.Connect == nil || !reflect.DeepEqual(service.Connect.Scopes, []string{"read:jira-work", "write:jira-work"}) {
+		t.Fatalf("remote connect scopes were not restored: %+v", service.Connect)
+	}
+	if len(service.Injections) != 1 || service.Injections[0].Mode != "replace" {
+		t.Fatalf("remote injections were not restored: %+v", service.Injections)
+	}
+}
+
 // TestMergeSDKServicesFromRemote_UnchangedServiceNotReportedAsUpdated guards
 // against noisy output on a no-op re-sync.
 func TestMergeSDKServicesFromRemote_UnchangedServiceNotReportedAsUpdated(t *testing.T) {
@@ -125,8 +149,8 @@ func TestMergeSDKServicesFromRemote_UnchangedServiceNotReportedAsUpdated(t *test
 }
 
 // TestMergeSDKServicesFromRemote_UnchangedIgnoresOperationOrder confirms
-// Operations is compared as a set, not an ordered list -- sdkSelectionResources
-// gives no ordering guarantee.
+// Operations is compared as a set because Registry selection persistence gives
+// no ordering guarantee.
 func TestMergeSDKServicesFromRemote_UnchangedIgnoresOperationOrder(t *testing.T) {
 	cfg := &configfile.SDKConfig{Services: map[string]configfile.SDKService{
 		"stripe": {Version: "2026-01-01", Operations: []string{"createCharge", "listCharges"}},
@@ -401,7 +425,7 @@ func TestSDKSyncCreatesDefaultFusedConfig(t *testing.T) {
 		t.Fatalf("expected default sdk config to be created: %v", err)
 	}
 	text := string(data)
-	if !strings.Contains(text, "version: 1.0.0") || !strings.Contains(text, "kind: sdk") || !strings.Contains(text, "name: security-sdk") || !strings.Contains(text, "github-rest-api:") || !strings.Contains(text, "repos_list_for_authenticated_user") {
+	if !strings.Contains(text, "version: 1.0.0") || !strings.Contains(text, "kind: sdk") || !strings.Contains(text, "name: security-sdk") || !strings.Contains(text, "language: python") || !strings.Contains(text, "github-rest-api:") || !strings.Contains(text, "repos_list_for_authenticated_user") || !strings.Contains(text, "type: oauth") || !strings.Contains(text, "X-Tenant") {
 		t.Fatalf("unexpected sdk sync file:\n%s", text)
 	}
 }
@@ -444,9 +468,7 @@ func handleSDKSyncGraphQL(t *testing.T, w http.ResponseWriter, r *http.Request, 
 	}
 	switch {
 	case strings.Contains(body.Query, "sdkByName"):
-		_, _ = w.Write([]byte(`{"data":{"sdkByName":{"id":"sdk-record-123","version":"` + sdkVersion + `","detailed_selections":[{"service_id":"svc-github","service_name":"GitHub REST API","service_slug":"github-rest-api","service_provider":null,"endpoint_ids":["ep-1"],"webhook_ids":[],"select_all":false,"service_version_id":"sv-1","service_version_name":"1.1.4"}]}}}`))
-	case strings.Contains(body.Query, "sdkSelectionResources"):
-		_, _ = w.Write([]byte(`{"data":{"sdkSelectionResources":[{"name":"repos_list_for_authenticated_user"}]}}`))
+		_, _ = w.Write([]byte(`{"data":{"sdkByName":{"id":"sdk-record-123","version":"` + sdkVersion + `","target_language":"python","detailed_selections":[{"service_id":"svc-github","service_name":"GitHub REST API","service_slug":"github-rest-api","service_provider":null,"endpoint_ids":["ep-1"],"operation_names":["repos_list_for_authenticated_user"],"webhook_ids":[],"select_all":false,"auth_type":"oauth","auth_name":"githubOAuth","connect_scopes":["repo"],"injections":[{"location":"header","name":"X-Tenant","value":"$connection.tenant","mode":"replace"}],"service_version_id":"sv-1","service_version_name":"1.1.4"}]}}}`))
 	default:
 		t.Fatalf("unexpected graphql query %s", body.Query)
 	}
