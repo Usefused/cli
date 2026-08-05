@@ -30,10 +30,16 @@ type sdkSyncResult struct {
 // the pinned version identity already resolved to its human-readable version
 // tag (see fetchSDKSyncData).
 type sdkSyncRemoteService struct {
-	Name       string
-	Ref        string
-	Version    string
-	Operations []string
+	Name              string
+	Ref               string
+	Version           string
+	Operations        []string
+	Webhooks          []string
+	SelectAll         bool
+	WebhooksSelectAll bool
+	Auth              *configfile.ArtifactAuth
+	Connect           *configfile.ArtifactConnect
+	Injections        []configfile.InjectionConfig
 }
 
 var sdkSyncVersion bool
@@ -80,16 +86,16 @@ func mergeSDKServicesFromRemote(cfg *configfile.SDKConfig, artifactVersion strin
 		operations := append([]string{}, svc.Operations...)
 		sort.Strings(operations)
 		newEntry := configfile.SDKService{
-			Version:    svc.Version,
-			Operations: operations,
+			Version:           svc.Version,
+			Operations:        operations,
+			Webhooks:          sortedStrings(svc.Webhooks),
+			SelectAll:         svc.SelectAll,
+			WebhooksSelectAll: svc.WebhooksSelectAll,
+			Auth:              cloneArtifactAuth(svc.Auth),
+			Connect:           cloneArtifactConnect(svc.Connect),
+			Injections:        append([]configfile.InjectionConfig(nil), svc.Injections...),
 		}
 		existing, existed := cfg.Services[key]
-		if existed {
-			// Sync must not wipe out locally-authored credential bindings
-			newEntry.Auth = existing.Auth
-			newEntry.Connect = existing.Connect
-			newEntry.Injections = existing.Injections
-		}
 		cfg.Services[key] = newEntry
 		switch {
 		case !existed:
@@ -140,10 +146,60 @@ func sdkSyncServiceConfigKey(svc sdkSyncRemoteService) (string, error) {
 }
 
 // sdkServiceEqual compares the fields sync actually touches. Operations is
-// compared as a set, not an ordered list -- sdkSelectionResources gives no
-// ordering guarantee, so a pure reordering must not be reported as a change.
+// compared as a set, not an ordered list -- Registry selection persistence has
+// no ordering guarantee, so a pure reordering must not be reported as a change.
 func sdkServiceEqual(a, b configfile.SDKService) bool {
-	return a.Version == b.Version && sameStringSet(a.Operations, b.Operations)
+	return a.Version == b.Version && sameStringSet(a.Operations, b.Operations) &&
+		sameStringSet(a.Webhooks, b.Webhooks) && a.SelectAll == b.SelectAll &&
+		a.WebhooksSelectAll == b.WebhooksSelectAll && artifactAuthEqual(a.Auth, b.Auth) &&
+		artifactConnectEqual(a.Connect, b.Connect) && artifactInjectionsEqual(a.Injections, b.Injections)
+}
+
+func artifactInjectionsEqual(a, b []configfile.InjectionConfig) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func artifactAuthEqual(a, b *configfile.ArtifactAuth) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.Type == b.Type && a.Name == b.Name
+}
+
+func cloneArtifactAuth(auth *configfile.ArtifactAuth) *configfile.ArtifactAuth {
+	if auth == nil {
+		return nil
+	}
+	copy := *auth
+	return &copy
+}
+
+func cloneArtifactConnect(connect *configfile.ArtifactConnect) *configfile.ArtifactConnect {
+	if connect == nil {
+		return nil
+	}
+	return &configfile.ArtifactConnect{Scopes: sortedStrings(connect.Scopes)}
+}
+
+func artifactConnectEqual(a, b *configfile.ArtifactConnect) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return sameStringSet(a.Scopes, b.Scopes)
+}
+
+func sortedStrings(values []string) []string {
+	out := append([]string{}, values...)
+	sort.Strings(out)
+	return out
 }
 
 func resolveServiceVersionName(sel api.SDKSelectionDetail) (string, error) {
@@ -158,24 +214,19 @@ func resolveServiceVersionName(sel api.SDKSelectionDetail) (string, error) {
 }
 
 // fetchSDKSyncData is the impure orchestration layer for `sdk sync`: fetches
-// the most recently generated SDK by name, resolves each selected service's
-// persisted version tag, and enumerates each selection's operations
-// (select_all included) into concrete names.
-func fetchSDKSyncData(client *api.Client, sdkName string) (artifactVersion string, remote []sdkSyncRemoteService, err error) {
+// the most recently generated SDK by name and projects its persisted portable
+// metadata. The one GraphQL response carries every service selection, avoiding
+// a resource-name lookup for each service.
+func fetchSDKSyncData(client *api.Client, sdkName string) (artifactVersion, targetLanguage string, remote []sdkSyncRemoteService, err error) {
 	sdk, err := client.GetSDKSelectionsByName(sdkName)
 	if err != nil {
-		return "", nil, fmt.Errorf("fetching sdk %q: %w", sdkName, err)
+		return "", "", nil, fmt.Errorf("fetching sdk %q: %w", sdkName, err)
 	}
 
 	for _, sel := range sdk.DetailedSelections {
 		versionTag, err := resolveServiceVersionName(sel)
 		if err != nil {
-			return "", nil, fmt.Errorf("resolving version for service %s: %w", sel.ServiceName, err)
-		}
-
-		names, err := client.GetSDKSelectionResourceNames(sdk.ID, sel.ServiceID)
-		if err != nil {
-			return "", nil, fmt.Errorf("resolving operations for service %s: %w", sel.ServiceName, err)
+			return "", "", nil, fmt.Errorf("resolving version for service %s: %w", sel.ServiceName, err)
 		}
 
 		ref := serviceConfigRef(sel.ServiceSlug, sel.ServiceProvider)
@@ -184,14 +235,36 @@ func fetchSDKSyncData(client *api.Client, sdkName string) (artifactVersion strin
 			continue
 		}
 		remote = append(remote, sdkSyncRemoteService{
-			Name:       sel.ServiceName,
-			Ref:        ref,
-			Version:    versionTag,
-			Operations: names,
+			Name: sel.ServiceName, Ref: ref, Version: versionTag,
+			Operations: sel.OperationNames, Webhooks: sel.WebhookNames,
+			SelectAll: sel.SelectAll, WebhooksSelectAll: sel.WebhookSelectAll,
+			Auth: sdkSyncAuth(sel), Connect: sdkSyncConnect(sel), Injections: sdkSyncInjections(sel.Injections),
 		})
 	}
 
-	return sdk.Version, remote, nil
+	return sdk.Version, sdk.TargetLanguage, remote, nil
+}
+
+func sdkSyncInjections(injections []api.InjectionConfig) []configfile.InjectionConfig {
+	out := make([]configfile.InjectionConfig, len(injections))
+	for i, injection := range injections {
+		out[i] = configfile.InjectionConfig{Location: injection.Location, Name: injection.Name, Value: injection.Value, Mode: injection.Mode}
+	}
+	return out
+}
+
+func sdkSyncAuth(selection api.SDKSelectionDetail) *configfile.ArtifactAuth {
+	if strings.TrimSpace(selection.AuthType) == "" {
+		return nil
+	}
+	return &configfile.ArtifactAuth{Type: selection.AuthType, Name: selection.AuthName}
+}
+
+func sdkSyncConnect(selection api.SDKSelectionDetail) *configfile.ArtifactConnect {
+	if len(selection.ConnectScopes) == 0 {
+		return nil
+	}
+	return &configfile.ArtifactConnect{Scopes: sortedStrings(selection.ConnectScopes)}
 }
 
 var sdkSyncCmd = &cobra.Command{
@@ -212,9 +285,12 @@ selects. The local artifact version is preserved unless --sync-version is set.`,
 		if err != nil {
 			return err
 		}
-		artifactVersion, remote, err := fetchSDKSyncData(client, args[0])
+		artifactVersion, targetLanguage, remote, err := fetchSDKSyncData(client, args[0])
 		if err != nil {
 			return err
+		}
+		if strings.TrimSpace(targetLanguage) != "" {
+			cfg.Language = targetLanguage
 		}
 		result, err := mergeSDKServicesFromRemote(cfg, artifactVersion, remote, sdkSyncVersion)
 		if err != nil {

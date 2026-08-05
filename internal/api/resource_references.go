@@ -31,13 +31,13 @@ type ArtifactServiceSummary struct {
 
 func (c *Client) ListArtifacts(kind string, opts PageOptions) (*ArtifactSummaryPage, error) {
 	query := `query Artifacts($kind: String, $limit: Int!, $offset: Int!) {
-		artifacts(kind: $kind, limit: $limit, offset: $offset) {
+		artifactSnapshots(kind: $kind, limit: $limit, offset: $offset) {
 			total
 			items { id name version kind active created_at }
 		}
 	}`
 	var response struct {
-		Page ArtifactSummaryPage `json:"artifacts"`
+		Page ArtifactSummaryPage `json:"artifactSnapshots"`
 	}
 	variables := pageVars(opts)
 	variables["kind"] = kind

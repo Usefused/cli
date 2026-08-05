@@ -111,12 +111,12 @@ func TestSDKListUsesEnginePaginationAndFixedKind(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatalf("decode graphql body: %v", err)
 		}
-		if !strings.Contains(body.Query, "artifacts") {
-			t.Fatalf("expected artifacts query, got %s", body.Query)
+		if !strings.Contains(body.Query, "artifactSnapshots") {
+			t.Fatalf("expected artifact snapshots query, got %s", body.Query)
 		}
 		sawVariables = body.Variables
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"data":{"artifacts":{"total":1,"items":[{"id":"sdk-1","name":"security","version":"1.0.0","kind":"sdk","active":true,"created_at":"2026-07-21T00:00:00Z"}]}}}`))
+		w.Write([]byte(`{"data":{"artifactSnapshots":{"total":1,"items":[{"id":"sdk-1","name":"security","version":"1.0.0","kind":"sdk","active":false,"created_at":"2026-07-21T00:00:00Z"}]}}}`))
 	}))
 	defer server.Close()
 
@@ -124,7 +124,7 @@ func TestSDKListUsesEnginePaginationAndFixedKind(t *testing.T) {
 	if sawVariables["limit"] != float64(10) || sawVariables["offset"] != float64(20) || sawVariables["kind"] != "sdk" {
 		t.Fatalf("unexpected variables: %#v", sawVariables)
 	}
-	if !strings.Contains(out, "security") || !strings.Contains(out, "sdk-1") {
+	if !strings.Contains(out, "security") || !strings.Contains(out, "sdk-1") || !strings.Contains(out, "false") {
 		t.Fatalf("unexpected output: %q", out)
 	}
 }
