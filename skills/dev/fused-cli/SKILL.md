@@ -1,6 +1,6 @@
 ---
 name: fused-cli
-description: "Use this skill when the user wants to set up or operate fused-cli itself: installing it, authenticating against a Fused Engine, inspecting the current CLI identity, signing out or revoking a saved CLI login, discovering Registry services when the slug is unknown, understanding global flags, managing workspace teams or people, assigning RBAC or workspace-wide resource access, issuing personal credentials, selecting an owner team, importing API specs or docs URLs, creating an MCP server from a business goal, or choosing a domain skill. Also use it when no Engine is running yet. Trigger on 'fused-cli', 'Fused CLI setup', 'whoami', 'who am I', 'which account am I using', 'logout', 'log out', 'sign out', 'revoke CLI login', 'create an MCP', 'find a service', 'engine-url', 'api-key', 'team access', 'workspace access', 'workspace role', 'add user', 'personal credential', 'owner-team', 'required permissions', 'import docs', 'start the engine', 'FUSED_LICENSE_KEY', or connection failures. For an SDK requested inside a coding agent, use fused-build-sdk instead; never route that task through sdk prompt."
+description: "Set up and operate fused-cli: install or authenticate it, inspect identity, log out, configure Engine access, discover/import Registry services, manage teams/people/RBAC/workspace access/personal credentials, select an owner team or domain skill, start an Engine, or diagnose connection failures. Trigger on 'fused-cli', 'whoami', 'logout', 'engine-url', 'api-key', 'find a service', 'import docs', 'team access', 'workspace access', 'workspace role', 'add user', 'personal credential', 'owner-team', 'required permissions', 'FUSED_LICENSE_KEY', 'create an MCP', or no running Engine. For an SDK requested inside a coding agent, use fused-sdk and never route through sdk prompt."
 ---
 
 # fused-cli
@@ -134,9 +134,9 @@ group's `--help` output to choose the exact subcommand.
 
 ## Build an SDK or MCP from a business goal
 
-For an SDK requested inside a coding agent, use `fused-build-sdk`. It performs
-the workflow locally and must never invoke `fused-cli sdk prompt`, which starts
-a separate Fused agent. For MCP, or as a detailed manual reference, read
+For an SDK requested inside a coding agent, use `fused-sdk`. It performs the
+workflow locally and must never invoke `fused-cli sdk prompt`, which starts a
+separate Fused agent. For MCP, or as a detailed manual reference, read
 [reference/build-sdk-or-mcp.md](reference/build-sdk-or-mcp.md) and run its
 workspace-first discovery workflow. Do not guess service slugs or operation
 IDs.
