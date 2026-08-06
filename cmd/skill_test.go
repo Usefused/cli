@@ -30,7 +30,7 @@ func setTestRawContentBaseURL(t *testing.T, url string) {
 // --- skillSpec / manifest ---------------------------------------------------
 
 func TestSkillSpecByName(t *testing.T) {
-	for _, name := range []string{"fused-cli", "fused-workspace", "fused-sdk", "fused-mcp", "fused-bucket", "fused-config", "fused-webhook", "fused-notifications"} {
+	for _, name := range []string{"fused-cli", "fused-build-sdk", "fused-workspace", "fused-sdk", "fused-mcp", "fused-bucket", "fused-config", "fused-webhook", "fused-notifications"} {
 		if _, ok := skillSpecByName(name); !ok {
 			t.Errorf("expected a spec for %q", name)
 		}
@@ -99,6 +99,7 @@ func TestDevSkillsIncludePermissionAndDenialGuidance(t *testing.T) {
 		required []string
 	}{
 		{name: "fused-cli", required: []string{"catalogue.read", "catalogue.import", "access.read", "access.manage", "team access service", "team access workspace"}},
+		{name: "fused-build-sdk", required: []string{"app.create", "app.manage", "app.read", "app.tokens.manage", "service.consume", "bucket.use", "team eligible-owners", "team build-access"}},
 		{name: "fused-workspace", required: []string{"service.read", "service.manage", "workspace.update", "team access service", "team access bucket", "team access workspace"}},
 		{name: "fused-sdk", required: []string{"app.create", "app.manage", "app.read", "app.tokens.manage", "service.consume", "bucket.use", "team eligible-owners", "team build-access", "team access app"}},
 		{name: "fused-mcp", required: []string{"app.create", "app.manage", "app.read", "app.tokens.manage", "service.consume", "bucket.use", "team eligible-owners", "team build-access", "team access app"}},
@@ -140,6 +141,35 @@ func TestDevSkillsIncludePermissionAndDenialGuidance(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestFusedBuildSDKSkillKeepsIDEAgentWorkflowLocalAndCompact(t *testing.T) {
+	path := filepath.Join("..", "skills", "dev", "fused-build-sdk", "SKILL.md")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	content := string(data)
+	required := []string{
+		"Never run `fused-cli sdk prompt`",
+		"Do not delegate the work to another agent",
+		"working-facts",
+		"load every sibling skill up front",
+		"workspace services list --q",
+		"service search --q",
+		"bucket list",
+		"sdk validate -f",
+		"sdk plan -f",
+		"sdk apply -f",
+	}
+	for _, token := range required {
+		if !strings.Contains(content, token) {
+			t.Errorf("missing local SDK workflow token %q", token)
+		}
+	}
+	if words := len(strings.Fields(content)); words > 1100 {
+		t.Errorf("fused-build-sdk is too large for its routing role: %d words (limit 1100)", words)
 	}
 }
 
