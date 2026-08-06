@@ -1,13 +1,14 @@
 ---
 name: fused-sdk
-description: "Use when the user wants to generate or manage a typed SDK package from a Fused workspace using fused-cli sdk -- selecting services/operations, receiving webhook events, scoping auth, or running SDK plan/apply/validate/download/sync/token commands. Trigger on 'generate an SDK', 'fused-cli sdk', or 'kind: sdk' files. For Engine-hosted MCP runtime behavior read fused-mcp instead."
+description: "Use for the detailed shape and lifecycle of an existing Fused kind: sdk config: selecting services/operations, receiving webhook events, scoping auth, immutable versions, runtime tokens, or SDK plan/apply/validate/download/sync commands. Trigger on an existing 'kind: sdk' file, 'SDK config', 'SDK operations', 'SDK token', or an SDK lifecycle question. When a user asks a coding agent to build or generate an SDK from a business goal, use fused-build-sdk as the entry point and load this detail only if needed. Never invoke sdk prompt from an IDE-agent workflow. For Engine-hosted MCP runtime behavior read fused-mcp instead."
 ---
 
 # SDK package config
 
-If the user starts with a business goal and no existing config, first follow
-the `fused-cli` skill's `reference/build-sdk-or-mcp.md` workflow. Use this skill
-for the SDK-specific config and lifecycle once Engine setup, service discovery,
+If the user starts with a business goal and no existing config, use
+`fused-build-sdk`. It is the compact IDE-agent workflow and explicitly avoids
+`fused-cli sdk prompt`, which starts another agent. Use this skill only for
+SDK-specific config and lifecycle detail once Engine setup, service discovery,
 workspace activation, and credential requirements are understood.
 
 `kind: sdk`, managed by `fused-cli sdk ...`, declares a typed SDK package

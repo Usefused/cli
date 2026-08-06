@@ -51,6 +51,10 @@ because they are not managed CLI logins.
 ## `sdk prompt`
 Generate a brand new SDK using Fused intent AI. Automatically discovers and adds missing services to your workspace.
 
+This is the user-invoked Fused-agent path. Coding agents should use the
+`fused-build-sdk` skill and execute the deterministic SDK workflow directly,
+without invoking `sdk prompt` and starting a second agent.
+
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
 | `--name` | `-n` | Name of the generated SDK (e.g., 'stripe-sdk') | `""` |

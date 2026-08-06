@@ -1,6 +1,6 @@
 ---
 name: fused-cli
-description: "Use this skill when the user wants to set up or use fused-cli itself, or starts with a business goal and wants Fused to produce a ready SDK or MCP server: installing it, authenticating against a Fused Engine, inspecting the current CLI identity, signing out or revoking a saved CLI login, discovering Registry services when the slug is unknown, understanding global flags, managing workspace teams or people, assigning RBAC or workspace-wide resource access, issuing personal credentials, selecting an owner team, importing API specs or docs URLs, or choosing a domain skill. Also use it when no Engine is running yet. Trigger on 'fused-cli', 'Fused CLI setup', 'whoami', 'who am I', 'which account am I using', 'logout', 'log out', 'sign out', 'revoke CLI login', 'build an SDK', 'create an MCP', 'integration workflow', 'find a service', 'engine-url', 'api-key', 'team access', 'workspace access', 'workspace role', 'add user', 'personal credential', 'owner-team', 'required permissions', 'import docs', 'start the engine', 'FUSED_LICENSE_KEY', or connection failures. Read the relevant domain skill once the task concerns a specific config shape."
+description: "Use this skill when the user wants to set up or operate fused-cli itself: installing it, authenticating against a Fused Engine, inspecting the current CLI identity, signing out or revoking a saved CLI login, discovering Registry services when the slug is unknown, understanding global flags, managing workspace teams or people, assigning RBAC or workspace-wide resource access, issuing personal credentials, selecting an owner team, importing API specs or docs URLs, creating an MCP server from a business goal, or choosing a domain skill. Also use it when no Engine is running yet. Trigger on 'fused-cli', 'Fused CLI setup', 'whoami', 'who am I', 'which account am I using', 'logout', 'log out', 'sign out', 'revoke CLI login', 'create an MCP', 'find a service', 'engine-url', 'api-key', 'team access', 'workspace access', 'workspace role', 'add user', 'personal credential', 'owner-team', 'required permissions', 'import docs', 'start the engine', 'FUSED_LICENSE_KEY', or connection failures. For an SDK requested inside a coding agent, use fused-build-sdk instead; never route that task through sdk prompt."
 ---
 
 # fused-cli
@@ -134,12 +134,12 @@ group's `--help` output to choose the exact subcommand.
 
 ## Build an SDK or MCP from a business goal
 
-When the user describes what they want to accomplish rather than supplying an
-existing config, read [reference/build-sdk-or-mcp.md](reference/build-sdk-or-mcp.md)
-and run its workspace-first discovery workflow. It covers setup, reuse of
-enabled workspace services, Registry fallback, workspace activation, operation
-selection, credentials, config authoring, and the final ready-to-use handoff.
-Do not guess service slugs or operation IDs.
+For an SDK requested inside a coding agent, use `fused-build-sdk`. It performs
+the workflow locally and must never invoke `fused-cli sdk prompt`, which starts
+a separate Fused agent. For MCP, or as a detailed manual reference, read
+[reference/build-sdk-or-mcp.md](reference/build-sdk-or-mcp.md) and run its
+workspace-first discovery workflow. Do not guess service slugs or operation
+IDs.
 
 ## Permissions and team access
 
