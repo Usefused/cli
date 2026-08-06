@@ -99,7 +99,10 @@ func TestWorkspaceWebhooksAndSDKTokensUseEngineGraphQL(t *testing.T) {
 		case strings.Contains(body.Query, "workspaceWebhooks"):
 			w.Write([]byte(`{"data":{"workspaceWebhooks":[{"label":"repo","slug":"slugaaaaaaaaaaaaaaaaa","created_at":"2026-07-21T00:00:00Z"}]}}`))
 		case strings.Contains(body.Query, "sdkTokens"):
-			w.Write([]byte(`{"data":{"sdkTokens":[{"id":"tok-1","artifact_id":"sdk-1","name":"default","created_at":"2026-07-21T00:00:00Z","last_used_at":""}]}}`))
+			if !strings.Contains(body.Query, "app_family_id: $appFamilyId") {
+				t.Fatalf("sdk token query is not family scoped: %s", body.Query)
+			}
+			w.Write([]byte(`{"data":{"sdkTokens":[{"id":"tok-1","app_family_id":"family-1","name":"default","created_at":"2026-07-21T00:00:00Z","last_used_at":""}]}}`))
 		default:
 			t.Fatalf("unexpected query: %s", body.Query)
 		}
@@ -117,5 +120,33 @@ func TestWorkspaceWebhooksAndSDKTokensUseEngineGraphQL(t *testing.T) {
 		if path != "/engine/graphql" {
 			t.Fatalf("expected all reads to use /engine/graphql, paths=%#v queries=%#v", paths, queries)
 		}
+	}
+}
+
+func TestSDKBucketsUseAppFamilyScope(t *testing.T) {
+	var variables map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Query     string         `json:"query"`
+			Variables map[string]any `json:"variables"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode sdk bucket request: %v", err)
+		}
+		if !strings.Contains(body.Query, "sdkBuckets(app_family_id: $appFamilyId)") || strings.Contains(body.Query, "artifact_id") {
+			t.Fatalf("SDK bucket query is not family scoped: %s", body.Query)
+		}
+		variables = body.Variables
+		_, _ = w.Write([]byte(`{"data":{"sdkBuckets":[{"id":"bucket-1","name":"prod","is_default":false,"created_at":"2026-08-05T10:00:00Z","updated_at":"2026-08-05T10:00:00Z"}]}}`))
+	}))
+	defer server.Close()
+
+	client := api.NewClient(server.URL, "fsk_test")
+	buckets, err := client.ListSDKBuckets("family-1")
+	if err != nil || len(buckets) != 1 || buckets[0].ID != "bucket-1" {
+		t.Fatalf("ListSDKBuckets = %#v, %v", buckets, err)
+	}
+	if variables["appFamilyId"] != "family-1" {
+		t.Fatalf("SDK bucket variables = %#v", variables)
 	}
 }

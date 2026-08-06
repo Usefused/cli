@@ -50,11 +50,6 @@ const (
 	filterWebhook   configKindFilter = "webhook"
 )
 
-var (
-	sdkDownloadRetryAttempts = 10
-	sdkDownloadRetryDelay    = 500 * time.Millisecond
-)
-
 type planOptions struct {
 	filter        configKindFilter
 	jsonOut       bool
@@ -130,7 +125,7 @@ func planOneConfig(client *api.Client, cfg *configfile.ParsedConfig, engineURL, 
 		}, nil
 	case configfile.KindSDK:
 		raw, _ := json.Marshal(cfg.SDK)
-		resp, err := client.PlanSDKConfig(artifactPlanIntent(cfg, raw, ownerTeamSlug))
+		resp, err := client.PlanSDKConfig(desiredConfigPlanIntent(cfg, raw, ownerTeamSlug))
 		if err != nil {
 			return plannedConfig{}, fmt.Errorf("failed to plan SDK %s: %w", cfg.SDK.Name, err)
 		}
@@ -142,7 +137,7 @@ func planOneConfig(client *api.Client, cfg *configfile.ParsedConfig, engineURL, 
 		}, nil
 	case configfile.KindMCP:
 		raw, _ := json.Marshal(cfg.MCP)
-		resp, err := client.PlanMCPConfig(artifactPlanIntent(cfg, raw, ownerTeamSlug))
+		resp, err := client.PlanMCPConfig(desiredConfigPlanIntent(cfg, raw, ownerTeamSlug))
 		if err != nil {
 			return plannedConfig{}, fmt.Errorf("failed to plan MCP %s: %w", cfg.MCP.Name, err)
 		}
@@ -154,12 +149,12 @@ func planOneConfig(client *api.Client, cfg *configfile.ParsedConfig, engineURL, 
 		}, nil
 	case configfile.KindWebhook:
 		raw, _ := json.Marshal(cfg.Webhook)
-		resp, err := client.PlanWebhookConfig(artifactPlanIntent(cfg, raw, ownerTeamSlug))
+		resp, err := client.PlanWebhookConfig(desiredConfigPlanIntent(cfg, raw, ownerTeamSlug))
 		if err != nil {
 			return plannedConfig{}, fmt.Errorf("failed to plan webhook %s: %w", cfg.Webhook.Name, err)
 		}
 		// No notifications field -- kind: webhook never touches another
-		// artifact's state, unlike workspace/SDK/MCP applies.
+		// app's state, unlike workspace/SDK/MCP applies.
 		return plannedConfig{
 			receipt:             newPlanReceipt(resp.PlanID, cfg.ConfigKey, cfg.SourceHash, engineURL),
 			summary:             resp.Summary,
@@ -170,8 +165,8 @@ func planOneConfig(client *api.Client, cfg *configfile.ParsedConfig, engineURL, 
 	}
 }
 
-func artifactPlanIntent(cfg *configfile.ParsedConfig, raw json.RawMessage, ownerTeamSlug string) api.ArtifactPlanIntent {
-	return api.ArtifactPlanIntent{SourceHash: cfg.SourceHash, ConfigKey: cfg.ConfigKey, OwnerTeamSlug: ownerTeamSlug, Config: raw}
+func desiredConfigPlanIntent(cfg *configfile.ParsedConfig, raw json.RawMessage, ownerTeamSlug string) api.DesiredConfigPlanIntent {
+	return api.DesiredConfigPlanIntent{SourceHash: cfg.SourceHash, ConfigKey: cfg.ConfigKey, OwnerTeamSlug: ownerTeamSlug, Config: raw}
 }
 
 func newPlanReceipt(planID, configKey, sourceHash, engineURL string) planReceipt {
@@ -516,14 +511,15 @@ func applyPreparedSDK(client *api.Client, cfg *configfile.ParsedConfig, receipt 
 	if err != nil {
 		return fmt.Errorf("failed to apply SDK %s: %w", cfg.SDK.Name, err)
 	}
-	fmt.Printf("Successfully applied SDK %s (SDK ID: %s)\n", cfg.SDK.Name, resp.ArtifactID)
+	fmt.Printf("Successfully applied SDK %s\n", cfg.SDK.Name)
+	fmt.Printf("  SDK ID: %s\n  Version ID: %s\n", resp.AppFamilyID, resp.AppID)
 	if !download {
 		return nil
 	}
 	if err := waitForSDKGeneration(client, resp.JobID); err != nil {
 		return fmt.Errorf("failed to generate SDK %s: %w", cfg.SDK.Name, err)
 	}
-	return downloadSDKByID(client, resp.ArtifactID, cfg.SDK.Name, ".")
+	return downloadSDKByID(client, resp.AppID, cfg.SDK.Name, ".")
 }
 
 func applyPreparedMCP(client *api.Client, cfg *configfile.ParsedConfig, receipt planReceipt) error {
@@ -532,7 +528,7 @@ func applyPreparedMCP(client *api.Client, cfg *configfile.ParsedConfig, receipt 
 		return fmt.Errorf("failed to apply MCP %s: %w", cfg.MCP.Name, err)
 	}
 	fmt.Printf("Successfully applied MCP %s@%s\n", cfg.MCP.Name, cfg.MCP.Version)
-	fmt.Printf("  ID: %s\n  URL: %s\n", resp.MCPID, resp.MCPURL)
+	fmt.Printf("  MCP ID: %s\n  Version ID: %s\n  URL: %s\n", resp.AppFamilyID, resp.AppID, resp.MCPURL)
 	if resp.ExecutionToken != "" {
 		fmt.Printf("  Token (shown once): %s\n", resp.ExecutionToken)
 	}
@@ -554,7 +550,7 @@ func applyPreparedWebhook(client *api.Client, cfg *configfile.ParsedConfig, rece
 // (WebhookConfigRegistration) instead of workspace apply's
 // AppliedWebhookConfig -- the two shapes both carry service+slug, but come
 // from different endpoints and will keep diverging (this one has no per-call
-// Label since the whole artifact is one label -- resp.Name).
+// Label since the whole webhook configuration is one label -- resp.Name).
 func printAppliedWebhookRegistrations(baseURL, label string, registrations []api.WebhookConfigRegistration) {
 	for _, reg := range registrations {
 		fmt.Printf("  webhook %q service %q -> %s\n", label, reg.Service, strings.TrimRight(baseURL, "/")+"/webhook/"+reg.Slug+"-"+reg.Service)
@@ -684,11 +680,11 @@ func handleSDKGenerationStreamError(ch chan error, err error, ok bool) (chan err
 	return ch, err
 }
 
-func downloadSDKByID(client *api.Client, artifactID, sdkName, outDir string) error {
-	if strings.TrimSpace(artifactID) == "" {
+func downloadSDKByID(client *api.Client, appID, sdkName, outDir string) error {
+	if strings.TrimSpace(appID) == "" {
 		return fmt.Errorf("sdk ID is required for download")
 	}
-	data, err := client.DownloadSDK(artifactID)
+	data, err := client.DownloadSDK(appID)
 	if err != nil {
 		return fmt.Errorf("failed to download sdk:%s: %w", sdkName, err)
 	}
@@ -697,20 +693,6 @@ func downloadSDKByID(client *api.Client, artifactID, sdkName, outDir string) err
 		return fmt.Errorf("failed to extract sdk:%s: %w", sdkName, err)
 	}
 	fmt.Printf("Downloaded and extracted sdk:%s to %s\n", sdkName, extractDir)
-	return nil
-}
-
-func downloadSDKConfig(client *api.Client, configKey, outDir string) error {
-	data, err := downloadSDKConfigWithRetry(client, configKey)
-	if err != nil {
-		return fmt.Errorf("failed to download %s: %w", configKey, err)
-	}
-	sdkName := strings.TrimPrefix(configKey, "sdk:")
-	extractDir := filepath.Join(outDir, "fused-sdks", sdkName)
-	if err := extractSDKZip(data, extractDir); err != nil {
-		return fmt.Errorf("failed to extract %s: %w", configKey, err)
-	}
-	fmt.Printf("Downloaded and extracted %s to %s\n", configKey, extractDir)
 	return nil
 }
 
@@ -759,26 +741,6 @@ func extractSDKZip(zipData []byte, outDir string) error {
 		}
 	}
 	return nil
-}
-
-func downloadSDKConfigWithRetry(client *api.Client, configKey string) ([]byte, error) {
-	var lastErr error
-	for attempt := 1; attempt <= sdkDownloadRetryAttempts; attempt++ {
-		data, err := client.DownloadGeneratedSDK(configKey)
-		if err == nil {
-			return data, nil
-		}
-		lastErr = err
-		if !isPendingSDKDownload(err) || attempt == sdkDownloadRetryAttempts {
-			return nil, err
-		}
-		time.Sleep(sdkDownloadRetryDelay)
-	}
-	return nil, lastErr
-}
-
-func isPendingSDKDownload(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "status 404")
 }
 
 func filteredConfigs(configs []*configfile.ParsedConfig, filter configKindFilter) []*configfile.ParsedConfig {

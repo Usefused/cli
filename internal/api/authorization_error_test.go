@@ -89,12 +89,12 @@ func TestFormatHTTPAuthorizationErrors(t *testing.T) {
 	}
 }
 
-func TestArtifactOwnerErrorsUseAllowlistedProductMessages(t *testing.T) {
+func TestAppOwnerErrorsUseAllowlistedProductMessages(t *testing.T) {
 	tests := map[string]string{
-		"artifact owner is immutable":             "already has an owner",
-		"artifact owner is unavailable":           "workspace administrator",
+		"app owner is immutable":                  "already has an owner",
+		"app owner is unavailable":                "workspace administrator",
 		"owner team was not found or is archived": "active team slug",
-		"artifact owner authorization denied":     "owning team",
+		"app owner authorization denied":          "owning team",
 	}
 	for code, want := range tests {
 		message := formatHTTPErrorBody(http.StatusConflict, []byte(`{"error":`+strconv.Quote(code)+`}`))

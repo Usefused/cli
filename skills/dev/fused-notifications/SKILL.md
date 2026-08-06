@@ -15,7 +15,7 @@ inside one Engine, no `workspace_id` column anywhere in its schema). So
 "every other workspace" elsewhere in these skills always means "every other
 Engine deployment," never a second workspace living inside this one.
 
-## Two families, two triggers
+## Two notification groups, two triggers
 
 **`workspace_service_removed` / `workspace_version_removed`** -- a
 decision-audit record of something *you* just did. Created only when
@@ -102,7 +102,7 @@ system.
 
 ## Dedupe: prevents a second notification, not a repeat display
 
-Both families dedupe on their own key while a notification is still
+Both groups dedupe on their own key while a notification is still
 `pending`: `workspace_*` on `(plan_id, action_id)`, `registry_*` on the
 underlying Registry changelog row's own ID (so re-polling the same change,
 including across an Engine crash/retry, never creates a duplicate). This

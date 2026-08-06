@@ -5,10 +5,10 @@ description: "Use when the user wants to manage Fused bucket credentials using f
 
 # Buckets, secrets, and connections
 
-A bucket is the credential container a workspace service, SDK, or MCP
-artifact points at. It owns runtime credential material keyed by service --
+A bucket is the credential container a workspace service, SDK, or MCP app
+points at. It owns runtime credential material keyed by service --
 services declare what's *enabled*, buckets declare what credentials a
-selected artifact/runtime *uses*.
+selected app/runtime *uses*.
 
 A workspace commonly has more than one bucket for the same service -- e.g.
 a `staging` bucket and a `production` bucket each holding a different
@@ -38,7 +38,7 @@ cannot do is **create the bucket itself**: apply resolves each
 `buckets.<name>` key against an existing bucket by name, and if no bucket
 with that name exists yet, apply fails outright with "bucket not found" --
 it never creates one implicitly. **The only way to create a bucket is
-`fused-cli bucket create <name>`** below. Always create the
+`fused-cli bucket create <bucket-name>`** below. Always create the
 bucket first if it might not exist yet, before declaring `buckets.<name>...`
 in workspace.yaml or running any `--bucket <name>` command against it.
 
@@ -60,7 +60,7 @@ rules -- easy to conflate since they look alike:
 | Context | Form | Bucket name | Can merge with surrounding text? |
 |---|---|---|---|
 | SDK/MCP `injections[].value` (`fused-sdk`/`fused-mcp`) | `${bucket.env\|values\|secrets.<key>}` | Always that SDK or MCP server's own `bucket:` -- cannot name another | Yes (e.g. `"Bearer ${bucket.secrets.KEY}"`) |
-| `kind: webhook` `services.<slug>.secret` (`fused-webhook`) | `${bucket.<name>.env\|secret.<key>}` or `${bucket.env\|secret.<key>}` (default bucket) | Explicit (or defaults to `default`) -- webhook verification has no artifact/dispatch context to fall back on | No -- must be the entire field value |
+| `kind: webhook` `services.<slug>.secret` (`fused-webhook`) | `${bucket.<name>.env\|secret.<key>}` or `${bucket.env\|secret.<key>}` (default bucket) | Explicit (or defaults to `default`) -- webhook verification has no app/dispatch context to fall back on | No -- must be the entire field value |
 | Connection profile `${resource.*}` (`fused-config`) | `${resource.provider_resource_id\|base_url\|metadata.<key>}` | N/A -- not a bucket reference at all, resolves against the selected connection's resource | No -- must be the entire field value |
 
 `fused-cli connect set <slug>` (below) takes `client_id`/`client_secret`/
@@ -77,13 +77,13 @@ value at dispatch time.
 
 ```shell
 fused-cli bucket list                    # NAME, ID, secret count, value count
-fused-cli bucket create <name>
-fused-cli bucket delete <name>
+fused-cli bucket create <bucket-name>
+fused-cli bucket delete <bucket-name>
 fused-cli bucket show <bucket-name-or-id>             # + created_at
 fused-cli bucket services <bucket-name-or-id>         # per-service breakdown: secrets/values/connect-configs/connected-user counts
 fused-cli bucket secrets <bucket-name-or-id>          # metadata only; never values
 fused-cli bucket values <bucket-name-or-id>
-fused-cli bucket connections <bucket-name-or-id> [--service <slug>] [--user <ref>]
+fused-cli bucket connections <bucket-name-or-id> [--service <service-slug>] [--user <end-user-reference>]
 fused-cli bucket sdks <bucket-name-or-id>
 ```
 
@@ -224,7 +224,7 @@ yet for that bucket+service.
 ## Starting an OAuth/OIDC connection
 
 ```shell
-fused-cli workspace service connect <slug> --bucket <bucket-name-or-id> --user-ref <ref> [--scope read:x --scope write:y]
+fused-cli workspace service connect <service-slug> --bucket <bucket-name-or-id> --user-ref <end-user-reference> [--scope read:x --scope write:y]
 ```
 
 Omitting `--scope` requests the service's declared scope catalogue. OIDC

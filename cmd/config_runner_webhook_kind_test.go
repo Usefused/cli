@@ -34,9 +34,9 @@ func TestPlanOneConfig_Webhook(t *testing.T) {
 	client := &api.Client{BaseURL: server.URL, HTTP: server.Client()}
 	cfg := &configfile.ParsedConfig{
 		Kind: configfile.KindWebhook, ConfigKey: "webhook:team-x", SourceHash: "abc",
-		Webhook: &configfile.WebhookArtifactConfig{
+		Webhook: &configfile.WebhookConfig{
 			Name:     "team-x",
-			Services: map[string]configfile.WebhookArtifactService{"github": {Secret: "${bucket.default.secret.github_signing}"}},
+			Services: map[string]configfile.WebhookService{"github": {Secret: "${bucket.default.secret.github_signing}"}},
 		},
 	}
 
@@ -73,7 +73,7 @@ func TestApplyOneConfig_Webhook(t *testing.T) {
 	client := &api.Client{BaseURL: server.URL, HTTP: server.Client()}
 	cfg := &configfile.ParsedConfig{
 		Kind: configfile.KindWebhook, ConfigKey: "webhook:team-x", SourceHash: "abc",
-		Webhook: &configfile.WebhookArtifactConfig{Name: "team-x"},
+		Webhook: &configfile.WebhookConfig{Name: "team-x"},
 	}
 
 	out := captureStdout(t, func() {

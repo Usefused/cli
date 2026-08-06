@@ -12,10 +12,8 @@ import (
 var mcpCmd = &cobra.Command{
 	Use:   "mcp",
 	Short: "Manage deployed MCP servers",
-	Args:  cobra.ArbitraryArgs,
-	RunE: WithTelemetry("cli.mcp", func(cmd *cobra.Command, args []string) error {
-		return runMCPDynamicAction(cmd, args)
-	}),
+	Args:  cobra.NoArgs,
+	RunE:  requireSubcommand,
 }
 
 var mcpListFlags listFlags
@@ -75,62 +73,67 @@ var mcpValidateCmd = &cobra.Command{
 	}),
 }
 
-func runMCPDynamicAction(cmd *cobra.Command, args []string) error {
-	if len(args) == 0 {
-		return cmd.Help()
-	}
-	if len(args) == 1 && args[0] == "list" {
-		return runMCPList(cmd)
-	}
-	if len(args) == 2 && args[1] == "remove" {
-		return runMCPRemove(cmd, args[0])
-	}
-	return fmt.Errorf("unknown mcp command or target: %v", args)
-}
-
 func runMCPList(cmd *cobra.Command) error {
 	client, err := getAPIClient()
 	if err != nil {
 		return err
 	}
-	// MCP has its own command and response shape because its Engine-hosted URL
-	// is runtime state, not generated package metadata.
-	page, err := client.ListMCPServers(mcpListFlags.pageOptions())
+	page, err := client.ListApps("mcp", mcpListFlags.pageOptions())
 	if err != nil {
 		return err
 	}
 	writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 8, 2, ' ', 0)
-	fmt.Fprintln(writer, "NAME\tVERSION\tID\tACTIVE\tCREATED\tURL")
-	for _, server := range page.Items {
-		fmt.Fprintf(writer, "%s\t%s\t%s\t%t\t%s\t%s\n", server.Name, server.Version, server.ID, server.Active, server.CreatedAt, server.MCPURL)
+	fmt.Fprintln(writer, "NAME\tVERSION\tMCP_ID\tVERSION_ID\tSTATUS\tCREATED\tURL")
+	for _, app := range page.Items {
+		// The runtime URL is Engine-local and deterministic for an exact app ID.
+		mcpURL := strings.TrimSuffix(client.BaseURL, "/") + "/mcp/" + app.AppID + "/sse"
+		fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", app.Name, app.Version, app.AppFamilyID, app.AppID, app.Status, app.CreatedAt, mcpURL)
 	}
 	_ = writer.Flush()
 	printPageSummary(cmd.OutOrStdout(), page.Total, mcpListFlags)
 	return nil
 }
 
-func runMCPRemove(cmd *cobra.Command, target string) error {
+var mcpDeactivateCmd = &cobra.Command{
+	Use:   "deactivate <mcp-name@version-or-version-id>",
+	Short: "Permanently deactivate one exact MCP version",
+	Args: func(cmd *cobra.Command, args []string) error {
+		if err := cobra.ExactArgs(1)(cmd, args); err != nil {
+			return err
+		}
+		return validateExactAppReference(args[0], cmd.CommandPath())
+	},
+	RunE: WithTelemetry("cli.mcp.deactivate", func(cmd *cobra.Command, args []string) error {
+		return runMCPDeactivate(cmd, args[0])
+	}),
+}
+
+func runMCPDeactivate(cmd *cobra.Command, target string) error {
+	if err := validateExactAppReference(target, "mcp deactivate"); err != nil {
+		return err
+	}
 	client, err := getAPIClient()
 	if err != nil {
 		return err
 	}
 	// Resolve UUIDs too so the Engine verifies that the target is an MCP server;
 	// otherwise a valid SDK UUID could cross the product boundary.
-	id, err := client.ResolveMCPReference(strings.TrimSpace(target))
+	mcpName, mcpVersion := parseSDKDownloadName(strings.TrimSpace(target))
+	id, err := client.ResolveMCPAppReference(mcpName, mcpVersion)
 	if err != nil {
 		return fmt.Errorf("resolve MCP server %q: %w", target, err)
 	}
-	if err := client.DeactivateSDK(id); err != nil {
-		return fmt.Errorf("remove MCP server: %w", err)
+	if err := client.DeactivateApp(id); err != nil {
+		return fmt.Errorf("deactivate MCP server: %w", err)
 	}
-	recordAppliedChange(cmd.Context(), "mcp.remove", "mcp_server")
-	fmt.Fprintf(cmd.OutOrStdout(), "Removed MCP server %s.\n", target)
+	recordAppliedChange(cmd.Context(), "mcp.deactivate", "mcp_server")
+	fmt.Fprintf(cmd.OutOrStdout(), "Deactivated MCP server %s.\n", target)
 	return nil
 }
 
 func init() {
 	RootCmd.AddCommand(mcpCmd)
-	mcpCmd.AddCommand(mcpListCmd, mcpPlanCmd, mcpApplyCmd, mcpValidateCmd)
+	mcpCmd.AddCommand(mcpListCmd, mcpPlanCmd, mcpApplyCmd, mcpValidateCmd, mcpDeactivateCmd)
 	addListFlags(mcpListCmd, &mcpListFlags)
 	mcpPlanCmd.Flags().BoolVar(&mcpPlanJSON, "json", false, "Print plan result JSON")
 	mcpPlanCmd.Flags().StringVar(&mcpPlanReceiptOut, "receipt-out", "", "Write the plan receipt to this path")

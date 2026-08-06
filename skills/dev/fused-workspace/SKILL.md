@@ -47,7 +47,7 @@ parse outright.
 `service_config`/`secrets` -- **it cannot create the bucket itself.** Apply
 resolves `<bucket-name>` against a bucket that must already exist and fails
 with "bucket not found" if it doesn't; it never creates one implicitly. Run
-`fused-cli bucket create <name>` first (see `fused-bucket`) for any bucket
+`fused-cli bucket create <bucket-name>` first (see `fused-bucket`) for any bucket
 name you're about to reference here.
 
 There is no `runtime_config` field on a workspace service anymore -- it was
@@ -126,7 +126,7 @@ fused-cli workspace service deprecate <slug> --at <date> --reason "..."
 fused-cli workspace service version add <slug> <v|latest>
 fused-cli workspace service version delete <slug> <v> [--force]
 fused-cli workspace service version deprecate <slug> <v> --at <date> [--reason "..."]
-fused-cli workspace service connect <slug> --bucket <bucket-name-or-id> --user-ref <ref> [--scope ...]
+fused-cli workspace service connect <service-slug> --bucket <bucket-name-or-id> --user-ref <end-user-reference> [--scope ...]
 ```
 
 `connect` starts an OAuth/OIDC session for one user against a bucket -- the

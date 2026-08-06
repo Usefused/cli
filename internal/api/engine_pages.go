@@ -53,22 +53,22 @@ type BucketSDKSummaryPageResponse struct {
 }
 
 type AuthConnectionResponse struct {
-	ID                  string   `json:"id"`
-	BucketID            string   `json:"bucket_id"`
-	ServiceID           string   `json:"service_id"`
-	EndUserRef          string   `json:"end_user_ref"`
-	AuthType            string   `json:"auth_type"`
-	TokenType           string   `json:"token_type"`
-	Scopes              []string `json:"scopes"`
-	ExpiresAt           string   `json:"expires_at"`
-	LastUsedAt          string   `json:"last_used_at"`
-	RefreshState        string   `json:"refresh_state"`
-	LastFailureCode     string   `json:"last_failure_code"`
-	LastFailureAt       string   `json:"last_failure_at"`
-	LastFailureTraceID  string   `json:"last_failure_trace_id"`
-	CreatedAt           string   `json:"created_at"`
-	UpdatedAt           string   `json:"updated_at"`
-	CreatedByArtifactID string   `json:"created_by_artifact_id"`
+	ID                 string   `json:"id"`
+	BucketID           string   `json:"bucket_id"`
+	ServiceID          string   `json:"service_id"`
+	EndUserRef         string   `json:"end_user_ref"`
+	AuthType           string   `json:"auth_type"`
+	TokenType          string   `json:"token_type"`
+	Scopes             []string `json:"scopes"`
+	ExpiresAt          string   `json:"expires_at"`
+	LastUsedAt         string   `json:"last_used_at"`
+	RefreshState       string   `json:"refresh_state"`
+	LastFailureCode    string   `json:"last_failure_code"`
+	LastFailureAt      string   `json:"last_failure_at"`
+	LastFailureTraceID string   `json:"last_failure_trace_id"`
+	CreatedAt          string   `json:"created_at"`
+	UpdatedAt          string   `json:"updated_at"`
+	CreatedByAppID     string   `json:"created_by_app_id"`
 }
 
 type AuthConnectionPageResponse struct {
@@ -83,21 +83,6 @@ type BucketResponse struct {
 	IsDefault   bool   `json:"is_default"`
 	CreatedAt   string `json:"created_at"`
 	UpdatedAt   string `json:"updated_at"`
-}
-
-type MCPServerResponse struct {
-	ID            string `json:"id"`
-	Name          string `json:"name"`
-	Version       string `json:"version"`
-	MCPURL        string `json:"mcp_url"`
-	Active        bool   `json:"active"`
-	DeactivatedAt string `json:"deactivated_at"`
-	CreatedAt     string `json:"created_at"`
-}
-
-type MCPServerPageResponse struct {
-	Items []MCPServerResponse `json:"items"`
-	Total int                 `json:"total"`
 }
 
 func (c *Client) ListBucketSummariesPage(opts PageOptions) (*BucketSummaryPageResponse, error) {
@@ -168,7 +153,7 @@ func (c *Client) ListAuthConnectionPage(bucketID string, serviceID string, endUs
 		query AuthConnectionPage($bucketId: String!, $serviceId: String, $endUserRef: String, $limit: Int!, $offset: Int!) {
 			authConnectionPage(bucket_id: $bucketId, service_id: $serviceId, end_user_ref: $endUserRef, limit: $limit, offset: $offset) {
 				total
-				items { id bucket_id service_id end_user_ref auth_type token_type scopes expires_at last_used_at refresh_state last_failure_code last_failure_at last_failure_trace_id created_at updated_at created_by_artifact_id }
+				items { id bucket_id service_id end_user_ref auth_type token_type scopes expires_at last_used_at refresh_state last_failure_code last_failure_at last_failure_trace_id created_at updated_at created_by_app_id }
 			}
 		}
 	`
@@ -214,31 +199,17 @@ func (c *Client) ListBucketSDKPage(bucketID string, opts PageOptions) (*BucketSD
 	return &resp.Page, err
 }
 
-func (c *Client) ListSDKBuckets(artifactID string) ([]BucketResponse, error) {
+func (c *Client) ListSDKBuckets(appFamilyID string) ([]BucketResponse, error) {
 	query := `
-		query SDKBuckets($artifactId: String!) {
-			sdkBuckets(artifact_id: $artifactId) { id workspace_id name is_default created_at updated_at }
+		query SDKBuckets($appFamilyId: String!) {
+			sdkBuckets(app_family_id: $appFamilyId) { id workspace_id name is_default created_at updated_at }
 		}
 	`
 	var resp struct {
 		Buckets []BucketResponse `json:"sdkBuckets"`
 	}
-	err := c.EngineGraphQL(query, map[string]interface{}{"artifactId": artifactID}, &resp)
+	err := c.EngineGraphQL(query, map[string]interface{}{"appFamilyId": appFamilyID}, &resp)
 	return resp.Buckets, err
-}
-
-func (c *Client) ListMCPServers(opts PageOptions) (*MCPServerPageResponse, error) {
-	query := `query MCPServers($limit: Int!, $offset: Int!) {
-		mcpServers(limit: $limit, offset: $offset) {
-			total
-			items { id name version mcp_url active deactivated_at created_at }
-		}
-	}`
-	var response struct {
-		Page MCPServerPageResponse `json:"mcpServers"`
-	}
-	err := c.EngineGraphQL(query, pageVars(opts), &response)
-	return &response.Page, err
 }
 
 func pageVars(opts PageOptions) map[string]interface{} {

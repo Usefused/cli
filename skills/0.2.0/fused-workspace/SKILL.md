@@ -94,16 +94,16 @@ This list may be behind the CLI's actual flags/subcommands -- run
 fused-cli workspace plan
 fused-cli workspace apply
 fused-cli workspace services list
-fused-cli workspace service <slug> versions
-fused-cli workspace service <slug> operations
-fused-cli workspace service <slug> webhooks   # read-only: lists this service's kind: webhook registrations, see fused-webhook
-fused-cli workspace service <slug> add --version <v>
-fused-cli workspace service <slug> remove [--force]
-fused-cli workspace service <slug> deprecate --effective-at <date> --reason "..."
-fused-cli workspace service <slug> version add <v|latest>
-fused-cli workspace service <slug> version remove <v> [--version-force]
-fused-cli workspace service <slug> version deprecate <v>
-fused-cli workspace service <slug> connect --bucket <name> --user-ref <ref> [--scope ...]
+fused-cli workspace service versions <service-slug>
+fused-cli workspace service operations <service-slug>
+fused-cli workspace service webhooks <service-slug>
+fused-cli workspace service add <service-slug> --version <version>
+fused-cli workspace service delete <service-slug> [--force]
+fused-cli workspace service deprecate <service-slug> --at <RFC3339> --reason "..."
+fused-cli workspace service version add <service-slug> <version|latest>
+fused-cli workspace service version delete <service-slug> <version> [--force]
+fused-cli workspace service version deprecate <service-slug> <version> --at <RFC3339>
+fused-cli workspace service connect <service-slug> --bucket <bucket-name-or-id> --user-ref <end-user-reference> [--scope ...]
 ```
 
 `connect` starts an OAuth/OIDC session for one user against a bucket -- the

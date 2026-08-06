@@ -11,6 +11,7 @@ var validateCmd = &cobra.Command{
 	Use:   "validate",
 	Short: "Validate Fused configurations",
 	Long:  `Validates the syntax and references for all Fused configurations in the target directory or file.`,
+	Args:  cobra.NoArgs,
 	RunE: WithTelemetry("cli.validate", func(cmd *cobra.Command, args []string) error {
 		run, err := configfile.LoadRun(effectiveConfigFile())
 		if err != nil {

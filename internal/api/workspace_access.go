@@ -52,12 +52,12 @@ func (c *Client) RevokeWorkspaceBucketAccess(bucketID string) (*WorkspaceShareMu
 	return c.mutateWorkspaceShare("revokeWorkspaceBucketAccess", "bucket_id", bucketID)
 }
 
-func (c *Client) GrantWorkspaceArtifactAccess(artifactID string) (*WorkspaceShareMutationPayload, error) {
-	return c.mutateWorkspaceShare("grantWorkspaceArtifactAccess", "artifact_id", artifactID)
+func (c *Client) GrantWorkspaceAppAccess(appFamilyID string) (*WorkspaceShareMutationPayload, error) {
+	return c.mutateWorkspaceShare("grantWorkspaceAppAccess", "app_family_id", appFamilyID)
 }
 
-func (c *Client) RevokeWorkspaceArtifactAccess(artifactID string) (*WorkspaceShareMutationPayload, error) {
-	return c.mutateWorkspaceShare("revokeWorkspaceArtifactAccess", "artifact_id", artifactID)
+func (c *Client) RevokeWorkspaceAppAccess(appFamilyID string) (*WorkspaceShareMutationPayload, error) {
+	return c.mutateWorkspaceShare("revokeWorkspaceAppAccess", "app_family_id", appFamilyID)
 }
 
 func (c *Client) mutateWorkspaceShare(field, argument, resourceID string) (*WorkspaceShareMutationPayload, error) {

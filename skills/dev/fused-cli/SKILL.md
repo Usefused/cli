@@ -49,24 +49,35 @@ actually reachable.
 
 Every command that talks to an Engine needs two things. The Engine URL resolves
 as flag -> environment -> local config -> error. The credential resolves as
-flag -> `FUSED_API_KEY` -> `FUSED_LICENSE_KEY` -> local config -> error.
+flag -> saved login/local config -> `FUSED_API_KEY` -> `FUSED_LICENSE_KEY` ->
+error.
 
 - Engine URL: `--engine-url` flag, `FUSED_ENGINE_URL` env var, or
   `fused-cli config set engine-url <url>`
-- Credential: `--key` flag, `FUSED_API_KEY` personal/service credential,
-  `FUSED_LICENSE_KEY` bootstrap Owner credential, or `fused-cli config set
-  api-key <key>`. `FUSED_API_KEY` deliberately wins when both variables exist.
+- Credential: `--key` flag, a credential saved by `fused-cli login` or
+  `fused-cli config set api-key <key>`, `FUSED_API_KEY` personal/service
+  fallback, or `FUSED_LICENSE_KEY` bootstrap Owner fallback.
 
 ```shell
-fused-cli config set engine-url https://engine.example.com
-fused-cli config set api-key <key>
+fused-cli --engine-url https://engine.example.com login
 fused-cli config get engine-url
 fused-cli config list
 fused-cli config reset      # deletes the local config file entirely
 ```
 
-The local config file only stores `engine-url` and `api-key` -- no other key
-is valid.
+`login` always opens the selected Engine's sign-in page. Choose managed Fused
+Auth (email, social, or enterprise SSO) or enter an existing Engine API key in
+that page. The CLI locally generates the resulting `fsk_` credential, while the
+Engine stores only its hash and binds it to the authenticated Engine subject;
+the browser never receives the generated credential. Use `--no-browser` to
+print the URL for an interactive remote/headless session. `--no-input` and
+`CI=true` reject browser login; automation should continue using `--key`,
+`FUSED_API_KEY`, or `FUSED_LICENSE_KEY`.
+
+The local config stores `engine-url`, `api-key`, and, for Engine-issued managed
+CLI credentials, `api-key-expires-at`. A saved key takes precedence over
+ambient credential variables; use `--key` for an intentional one-command
+override.
 
 ## Global flags
 
@@ -76,7 +87,7 @@ is valid.
 - `--no-input` -- fail with remediation rather than opening a prompt;
   `CI=true` enables this automatically
 - `--timeout <duration>` -- bound Engine requests (default `30s`)
-- `--request-id <id>` -- attach a non-secret audit correlation ID to every
+- `--request-id <request-id>` -- attach a non-secret audit correlation ID to every
   Engine request
 - `--readme` -- print the full CLI reference and exit
 - `--version`
@@ -101,6 +112,14 @@ you need the whole surface rather than one subcommand. Treat a command list
 in any of these skills as a starting point for what's likely available, not
 the final word on exact syntax.
 
+Command grammar is action-first after each resource group because every action
+is a real Cobra subcommand. For example, use `sdk service add <service-slug>`,
+`sdk operation remove <service-slug> <operation-id...>`, `sdk token generate
+<sdk-name-or-id> <token-name>`, and `mcp deactivate <mcp-name@version>`.
+Running a group without an
+action or passing an unexpected positional argument is an error; use the
+group's `--help` output to choose the exact subcommand.
+
 ## Build an SDK or MCP from a business goal
 
 When the user describes what they want to accomplish rather than supplying an
@@ -114,13 +133,15 @@ Do not guess service slugs or operation IDs.
 
 Use `team` and `user` for RBAC, and `workspace access` when a specific bucket
 or SDK/MCP permission scope should be usable by everyone in the local workspace.
-The access commands still call that shared Engine resource `artifact`; this is
-an internal RBAC label, not a claim that MCP produces a downloadable artifact. These are
-immediate access-management commands, not config-file fields. Read
+The access commands use the shared Engine `app` resource. Generic app-access
+commands require the `SDK_ID` or `MCP_ID` shown by list commands; SDK-specific
+commands may resolve an SDK name because the kind is already explicit. These
+are immediate
+access-management commands, not config-file fields. Read
 [reference/access-management.md](reference/access-management.md) before
 changing membership, roles, resource access, personal credentials, or resource
-ownership. Prefer human names/slugs for normal commands, and use the displayed
-full UUID when the same `name@version` exists as both an SDK and MCP server. Use `team
+ownership. Prefer human names/slugs for kind-specific commands and use the
+displayed `SDK_ID` or `MCP_ID` for generic app access. Use `team
 eligible-owners` before planning a new SDK, MCP server, or webhook.
 
 Permission-sensitive CLI flows must follow the denial protocol in that

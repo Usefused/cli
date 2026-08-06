@@ -67,15 +67,18 @@ Head over to the [Releases](https://github.com/Usefused/cli/releases) page and d
 
 ## Configuration
 
-The `fused-cli` requires an **Engine credential** and an **Engine URL** to connect to the Fused data plane. A small workspace can use its `FUSED_LICENSE_KEY` as the bootstrap Owner credential; workspaces that add people can use a personal key through `FUSED_API_KEY` instead. If you do not have an Engine running yet, install or run one from the [Fused Engine releases](https://github.com/Usefused/engine/releases).
+The `fused-cli` requires an **Engine credential** and an **Engine URL** to connect to the Fused data plane. A small workspace can use its `FUSED_LICENSE_KEY` as the bootstrap Owner credential; workspaces that add people can sign in through their Engine and receive an individually attributable CLI credential. If you do not have an Engine running yet, install or run one from the [Fused Engine releases](https://github.com/Usefused/engine/releases).
 
 ```bash
-# Set the URL for your Fused Engine
-fused-cli config set engine-url "http://localhost:8081"
-
-# Set the key the Engine should use to authenticate CLI requests
-fused-cli config set api-key "<provided-by-fused>"
+# Open the Engine login page and choose managed sign-in or an existing API Key
+fused-cli --engine-url "http://localhost:8081" login
 ```
+
+The CLI generates the resulting `fsk_` key locally; the Engine stores only its
+hash and binds it to the subject authenticated in the browser. Use
+`--no-browser` to print the approval URL for an interactive remote/headless
+session. Automation should keep using `--key`, `FUSED_API_KEY`, or
+`FUSED_LICENSE_KEY`; browser login is rejected with `--no-input` or `CI=true`.
 
 To view your current configuration, run:
 ```bash
@@ -91,11 +94,12 @@ fused-cli workspace services list
 ### Resolution Order
 The CLI resolves configuration in the following order (highest precedence first):
 1. **Command Line Flags**: `--key` and `--engine-url`
-2. **Personal/service credential**: `FUSED_API_KEY`
-3. **Bootstrap Owner credential**: `FUSED_LICENSE_KEY`
-4. **Config File**: Set via `fused-cli config set` (stored in `~/.config/fused/config.json`)
+2. **Saved login/config credential**: created by `fused-cli login` or `fused-cli config set api-key`
+3. **Personal/service credential fallback**: `FUSED_API_KEY`
+4. **Bootstrap Owner credential fallback**: `FUSED_LICENSE_KEY`
 
-`FUSED_API_KEY` deliberately wins when both credential variables are set, allowing an operator to use an individually attributable personal key without removing the Engine's Registry license from their environment.
+The saved login deliberately wins over ambient environment variables so an
+individually attributable user credential remains active after login.
 
 ### Automation-safe execution
 
@@ -210,12 +214,12 @@ services:
 The `operations` values are OpenAPI `operationId`s for the selected service version. To browse available operations and add several at once:
 
 ```bash
-fused-cli sdk service okta add -f .fused/sdks/my-sdk.yaml --version 2026-07-09
+fused-cli sdk service add okta -f .fused/sdks/my-sdk.yaml --version 2026-07-09
 fused-cli workspace service operations okta --version 2026-07-09
-fused-cli sdk service okta add listLogEvents getUser -f .fused/sdks/my-sdk.yaml
+fused-cli sdk operation add okta listLogEvents getUser -f .fused/sdks/my-sdk.yaml
 ```
 
-`sdk service <slug> add --version` creates or updates the service entry; the config becomes valid once that service has at least one operationId.
+`sdk service add <slug> --version` creates or updates the service entry; the config becomes valid once that service has at least one operationId.
 
 ### Defining a Workspace Configuration
 

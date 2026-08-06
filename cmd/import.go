@@ -19,6 +19,8 @@ describes (no endpoint-picking prompt). Mirrors this CLI's plan/apply shape:
 "import plan" computes what would change and who else relies on the version
 being touched; "import apply" commits it. OpenAPI, AsyncAPI, Postman Collection,
 GraphQL SDL, and introspectable GraphQL endpoints are detected automatically.`,
+	Args: cobra.NoArgs,
+	RunE: requireSubcommand,
 }
 
 var (
@@ -77,8 +79,9 @@ var importApplyCmd = &cobra.Command{
 	Short: "Apply a previously planned spec import",
 	Long: `Commits the plan produced by "import plan": a new service is created live
 immediately; an existing provider version is replaced by a new internal
-revision, while a different provider version is created alongside it. Defaults
+	revision, while a different provider version is created alongside it. Defaults
 to the most recent local plan receipt.`,
+	Args: cobra.NoArgs,
 	RunE: WithTelemetry("cli.import.apply", func(cmd *cobra.Command, args []string) error {
 		return runImportApply(cmd, importSpecApplyOptions{
 			planID:      importApplyPlanID,

@@ -47,7 +47,7 @@ parse outright.
 `service_config`/`secrets` -- **it cannot create the bucket itself.** Apply
 resolves `<bucket-name>` against a bucket that must already exist and fails
 with "bucket not found" if it doesn't; it never creates one implicitly. Run
-`fused-cli bucket <name> create` first (see `fused-bucket`) for any bucket
+`fused-cli bucket create <bucket-name>` first (see `fused-bucket`) for any bucket
 name you're about to reference here.
 
 There is no `runtime_config` field on a workspace service anymore -- it was
@@ -117,16 +117,16 @@ This list may be behind the CLI's actual flags/subcommands -- run
 fused-cli workspace plan
 fused-cli workspace apply
 fused-cli workspace services list
-fused-cli workspace service <slug> versions
-fused-cli workspace service <slug> operations
-fused-cli workspace service <slug> webhooks   # read-only: lists this service's kind: webhook registrations, see fused-webhook
-fused-cli workspace service <slug> add --version <v>
-fused-cli workspace service <slug> remove [--force]
-fused-cli workspace service <slug> deprecate --effective-at <date> --reason "..."
-fused-cli workspace service <slug> version add <v|latest>
-fused-cli workspace service <slug> version remove <v> [--version-force]
-fused-cli workspace service <slug> version deprecate <v>
-fused-cli workspace service <slug> connect --bucket <name> --user-ref <ref> [--scope ...]
+fused-cli workspace service versions <service-slug>
+fused-cli workspace service operations <service-slug>
+fused-cli workspace service webhooks <service-slug>
+fused-cli workspace service add <service-slug> --version <version>
+fused-cli workspace service delete <service-slug> [--force]
+fused-cli workspace service deprecate <service-slug> --at <RFC3339> --reason "..."
+fused-cli workspace service version add <service-slug> <version|latest>
+fused-cli workspace service version delete <service-slug> <version> [--force]
+fused-cli workspace service version deprecate <service-slug> <version> --at <RFC3339>
+fused-cli workspace service connect <service-slug> --bucket <bucket-name-or-id> --user-ref <end-user-reference> [--scope ...]
 ```
 
 `connect` starts an OAuth/OIDC session for one user against a bucket -- the

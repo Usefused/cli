@@ -52,14 +52,14 @@ fused-cli mcp plan
 fused-cli mcp apply
 fused-cli mcp validate
 fused-cli mcp list
-fused-cli mcp <name> remove
+fused-cli mcp deactivate <mcp-name@version-or-version-id>
 ```
 
 `mcp apply` doesn't just validate config -- it stands up (or updates) a
 persistent, named Engine-hosted server with its own URL, which stays live
-until explicitly removed. `mcp list` shows each one's name, version, ID,
+until explicitly deactivated. `mcp list` shows each one's name, version, ID,
 whether it's active, when it was created, and that URL -- that URL is what
-you hand to an MCP client's SSE connection (see below). Removing one is
+you hand to an MCP client's SSE connection (see below). Deactivating one is
 immediate and not gated behind the same SDK-config blocker `fused-workspace`
 describes for removing a workspace service.
 

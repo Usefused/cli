@@ -9,7 +9,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var teamMemberCmd = &cobra.Command{Use: "member", Short: "Manage team members"}
+var teamMemberCmd = commandGroup("member", "Manage team members")
 var teamMemberListFlags listFlags
 var teamMemberListCmd = &cobra.Command{
 	Use: "list <team-slug-or-id>", Short: "List team members", Args: cobra.ExactArgs(1),

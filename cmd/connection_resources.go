@@ -10,11 +10,15 @@ import (
 var workspaceConnectionCmd = &cobra.Command{
 	Use:   "connection",
 	Short: "Manage connected user resources",
+	Args:  cobra.NoArgs,
+	RunE:  requireSubcommand,
 }
 
 var workspaceConnectionResourcesCmd = &cobra.Command{
 	Use:   "resources",
 	Short: "Inspect and select provider resources",
+	Args:  cobra.NoArgs,
+	RunE:  requireSubcommand,
 }
 
 var workspaceConnectionResourcesListCmd = &cobra.Command{

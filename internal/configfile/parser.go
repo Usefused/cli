@@ -38,16 +38,16 @@ func loadFusedDirectory() (*Run, error) {
 	if err := appendWorkspaceConfig(run, fusedDir); err != nil {
 		return nil, err
 	}
-	if err := appendArtifactConfigs(run, filepath.Join(fusedDir, "sdks"), KindSDK); err != nil {
+	if err := appendDesiredConfigs(run, filepath.Join(fusedDir, "sdks"), KindSDK); err != nil {
 		return nil, err
 	}
-	if err := appendArtifactConfigs(run, filepath.Join(fusedDir, "mcps"), KindMCP); err != nil {
+	if err := appendDesiredConfigs(run, filepath.Join(fusedDir, "mcps"), KindMCP); err != nil {
 		return nil, err
 	}
-	if err := appendArtifactConfigs(run, filepath.Join(fusedDir, "webhooks"), KindWebhook); err != nil {
+	if err := appendDesiredConfigs(run, filepath.Join(fusedDir, "webhooks"), KindWebhook); err != nil {
 		return nil, err
 	}
-	return run, rejectDuplicateArtifactIdentities(run.Configs)
+	return run, rejectDuplicateConfigIdentities(run.Configs)
 }
 
 func ensureFusedDirectory(fusedDir string) error {
@@ -80,18 +80,18 @@ func appendWorkspaceConfig(run *Run, fusedDir string) error {
 	return nil
 }
 
-// appendArtifactConfigs discovers one kind-specific directory without letting
+// appendDesiredConfigs discovers one kind-specific directory without letting
 // a misplaced document silently run through a different command surface.
-func appendArtifactConfigs(run *Run, configDir string, expectedKind ConfigKind) error {
+func appendDesiredConfigs(run *Run, configDir string, expectedKind ConfigKind) error {
 	if _, err := os.Stat(configDir); err != nil {
 		return nil
 	}
 	return filepath.WalkDir(configDir, func(p string, d fs.DirEntry, err error) error {
-		return appendArtifactConfig(run, p, d, err, expectedKind)
+		return appendDesiredConfig(run, p, d, err, expectedKind)
 	})
 }
 
-func appendArtifactConfig(run *Run, p string, d fs.DirEntry, walkErr error, expectedKind ConfigKind) error {
+func appendDesiredConfig(run *Run, p string, d fs.DirEntry, walkErr error, expectedKind ConfigKind) error {
 	if walkErr != nil || d.IsDir() || !isYAMLFile(d.Name()) {
 		return walkErr
 	}
@@ -110,16 +110,16 @@ func isYAMLFile(name string) bool {
 	return strings.HasSuffix(name, ".yaml") || strings.HasSuffix(name, ".yml")
 }
 
-// rejectDuplicateArtifactIdentities allows independently versioned releases
-// while rejecting two files that declare the same immutable artifact identity.
-func rejectDuplicateArtifactIdentities(configs []*ParsedConfig) error {
+// rejectDuplicateConfigIdentities allows independently versioned apps while
+// ensuring one desired-state file owns each immutable app or webhook identity.
+func rejectDuplicateConfigIdentities(configs []*ParsedConfig) error {
 	seenKeys := make(map[string]string)
 	for _, cfg := range configs {
 		if cfg.Kind != KindSDK && cfg.Kind != KindMCP && cfg.Kind != KindWebhook {
 			continue
 		}
 		if existingPath, ok := seenKeys[cfg.ConfigKey]; ok {
-			return fmt.Errorf("duplicate artifact identity %q found in %s and %s", cfg.ConfigKey, existingPath, cfg.Path)
+			return fmt.Errorf("duplicate config identity %q found in %s and %s", cfg.ConfigKey, existingPath, cfg.Path)
 		}
 		seenKeys[cfg.ConfigKey] = cfg.Path
 	}
@@ -180,28 +180,28 @@ func parseTypedConfig(data []byte, kind ConfigKind, parsed *ParsedConfig) error 
 		parsed.Workspace = &wsConfig
 		parsed.ConfigKey = "workspace"
 	case KindSDK:
-		// Artifact config keys include version so plan/apply receipts cannot
-		// accidentally cross artifact releases with the same human-readable name.
+		// App config keys include version so plan/apply receipts cannot cross
+		// immutable releases that share a human-readable family name.
 		var sdkConfig SDKConfig
 		if err := strictUnmarshal(data, &sdkConfig); err != nil {
 			return fmt.Errorf("failed to parse sdk config: %w", err)
 		}
 		parsed.SDK = &sdkConfig
-		parsed.ConfigKey = artifactConfigKey(KindSDK, sdkConfig.Name, sdkConfig.Version)
+		parsed.ConfigKey = appConfigKey(KindSDK, sdkConfig.Name, sdkConfig.Version)
 	case KindMCP:
-		// MCP and SDK share the artifact shape but keep distinct key prefixes so
+		// MCP and SDK share the app shape but keep distinct key prefixes so
 		// Engine can route each desired state to its own executor without legacy targets.
 		var mcpConfig MCPConfig
 		if err := strictUnmarshal(data, &mcpConfig); err != nil {
 			return fmt.Errorf("failed to parse mcp config: %w", err)
 		}
 		parsed.MCP = &mcpConfig
-		parsed.ConfigKey = artifactConfigKey(KindMCP, mcpConfig.Name, mcpConfig.Version)
+		parsed.ConfigKey = appConfigKey(KindMCP, mcpConfig.Name, mcpConfig.Version)
 	case KindWebhook:
 		// kind: webhook has no version -- unlike SDK/MCP it's not an
 		// immutable release, it's a continuously-reconciled registration
 		// bundle (like kind: workspace), so its config key is just its name.
-		var webhookConfig WebhookArtifactConfig
+		var webhookConfig WebhookConfig
 		if err := strictUnmarshal(data, &webhookConfig); err != nil {
 			return fmt.Errorf("failed to parse webhook config: %w", err)
 		}
@@ -232,7 +232,7 @@ func validateConfig(parsed *ParsedConfig) error {
 // validateWorkspaceRuntimeConfig already uses for the (now deprecated)
 // RuntimeConfig.Webhooks path -- kind: webhook's Secret field is the exact
 // same "${bucket.<name>.secret.<key>}" reference, just relocated.
-func validateWebhookConfig(cfg *WebhookArtifactConfig) error {
+func validateWebhookConfig(cfg *WebhookConfig) error {
 	if strings.TrimSpace(cfg.Name) == "" {
 		return fmt.Errorf("webhook config requires a name")
 	}
@@ -254,23 +254,23 @@ func validateSDKConfig(cfg *SDKConfig) error {
 	if cfg.Name == "" {
 		return fmt.Errorf("sdk config requires a name")
 	}
-	if err := validateArtifactConfig(cfg, KindSDK); err != nil {
+	if err := validateAppConfig(cfg, KindSDK); err != nil {
 		return err
 	}
 	return nil
 }
 
-// validateMCPConfig reuses the artifact rules while preserving MCP-specific
+// validateMCPConfig reuses the app rules while preserving MCP-specific
 // language and webhook restrictions.
-func validateMCPConfig(cfg *MCPConfig) error { return validateArtifactConfig(cfg, KindMCP) }
+func validateMCPConfig(cfg *MCPConfig) error { return validateAppConfig(cfg, KindMCP) }
 
-// validateArtifactConfig centralizes shared identity, selection, and auth
+// validateAppConfig centralizes shared identity, selection, and auth
 // policy checks so SDK and MCP files cannot drift.
-func validateArtifactConfig(cfg *ArtifactConfig, kind ConfigKind) error {
+func validateAppConfig(cfg *AppConfig, kind ConfigKind) error {
 	if cfg.Name == "" {
 		return fmt.Errorf("%s config requires a name", kind)
 	}
-	if !artifactVersionPattern.MatchString(cfg.Version) {
+	if !appVersionPattern.MatchString(cfg.Version) {
 		return fmt.Errorf("%s config requires a SemVer-compatible version", kind)
 	}
 	if kind == KindSDK && !isSDKLanguage(cfg.Language) {
@@ -282,10 +282,10 @@ func validateArtifactConfig(cfg *ArtifactConfig, kind ConfigKind) error {
 	if len(cfg.Services) == 0 {
 		return fmt.Errorf("%s config requires at least one service", kind)
 	}
-	return validateArtifactServices(cfg.Services, kind, cfg.WebhookAttachment)
+	return validateAppServices(cfg.Services, kind, cfg.WebhookAttachment)
 }
 
-// validateArtifactServices keeps per-service rules separate from artifact
+// validateAppServices keeps per-service rules separate from app
 // identity rules because MCP and SDK share services but diverge on webhooks.
 //
 // The existing "mcp service cannot select webhooks" restriction predates
@@ -295,7 +295,7 @@ func validateArtifactConfig(cfg *ArtifactConfig, kind ConfigKind) error {
 // an equivalent place to deliver webhook events at all. Confirm with the
 // original author's intent before allowing kind: mcp to set
 // webhook_attachment or per-service Webhooks/WebhooksSelectAll.
-func validateArtifactServices(services map[string]SDKService, kind ConfigKind, webhookAttachment string) error {
+func validateAppServices(services map[string]SDKService, kind ConfigKind, webhookAttachment string) error {
 	for svcName, svc := range services {
 		if err := validateSDKService(svcName, svc); err != nil {
 			return err
@@ -304,22 +304,22 @@ func validateArtifactServices(services map[string]SDKService, kind ConfigKind, w
 			return fmt.Errorf("mcp service %q cannot select webhooks", svcName)
 		}
 		if (len(svc.Webhooks) > 0 || svc.WebhooksSelectAll) && strings.TrimSpace(webhookAttachment) == "" {
-			return fmt.Errorf("%s service %q selects webhook events but the artifact has no webhook_attachment", kind, svcName)
+			return fmt.Errorf("%s service %q selects webhook events but the app has no webhook_attachment", kind, svcName)
 		}
 	}
 	return nil
 }
 
-var artifactVersionPattern = regexp.MustCompile(`^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$`)
+var appVersionPattern = regexp.MustCompile(`^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$`)
 
 // isSDKLanguage limits package generation to emitters the Registry owns.
 func isSDKLanguage(language string) bool {
 	return language == "typescript" || language == "go" || language == "python"
 }
 
-// artifactConfigKey includes version because artifact releases are immutable
+// appConfigKey includes version because app releases are immutable
 // desired-state identities rather than revisions of one mutable row.
-func artifactConfigKey(kind ConfigKind, name, version string) string {
+func appConfigKey(kind ConfigKind, name, version string) string {
 	return fmt.Sprintf("%s:%s:%s", kind, name, version)
 }
 
@@ -338,15 +338,15 @@ func validateSDKService(name string, svc SDKService) error {
 	if svc.Auth != nil && strings.TrimSpace(svc.Auth.Type) == "" {
 		return fmt.Errorf("sdk service %q auth requires type", name)
 	}
-	if svc.Auth != nil && !isArtifactAuthType(svc.Auth.Type) {
+	if svc.Auth != nil && !isAppAuthType(svc.Auth.Type) {
 		return fmt.Errorf("sdk service %q auth type must be one of basic, bearer, api_key, oauth, oidc, or mtls", name)
 	}
 	return nil
 }
 
-// isArtifactAuthType mirrors Engine validation using the public Fused auth
+// isAppAuthType mirrors Engine validation using the public Fused auth
 // vocabulary rather than raw OpenAPI scheme shapes.
-func isArtifactAuthType(value string) bool {
+func isAppAuthType(value string) bool {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "basic", "bearer", "api_key", "oauth", "oidc", "mtls":
 		return true
@@ -476,6 +476,9 @@ func validateWorkspaceExecutionPolicy(name, version string, policy *ExecutionPol
 	if err != nil {
 		return workspaceExecutionPolicyValidationError(name, version, err.Error())
 	}
+	if err := validateWorkspaceExecutionPolicyTimeout(policy.TimeoutMs); err != nil {
+		return workspaceExecutionPolicyValidationError(name, version, err.Error())
+	}
 	if policy.Reset {
 		if err := validateWorkspaceExecutionPolicyReset(policy, retry); err != nil {
 			return workspaceExecutionPolicyValidationError(name, version, err.Error())
@@ -490,12 +493,27 @@ func validateWorkspaceExecutionPolicy(name, version string, policy *ExecutionPol
 	// Registry, so requiring rate_limit/retry here rejected the CLI's own
 	// sync output). Still reject a genuinely empty block -- one with none of
 	// the configurable fields set -- since that's never a meaningful policy.
-	if policy.RateLimit == nil && retry == nil && policy.Pagination == nil &&
-		policy.BaseURL == nil && policy.EventExtractionPath == nil && policy.IncomingWebhookConfig == nil {
+	if workspaceExecutionPolicyEmpty(policy, retry) {
 		return workspaceExecutionPolicyValidationError(name, version,
-			"requires at least one of rate_limit, retry, pagination, base_url, event_extraction_path, or incoming_webhook_config")
+			"requires at least one of rate_limit, retry, timeout_ms, pagination, base_url, event_extraction_path, or incoming_webhook_config")
 	}
 	return nil
+}
+
+func workspaceExecutionPolicyEmpty(policy *ExecutionPolicy, retry *RetryConfig) bool {
+	// A small presence scan keeps validation maintainable as independent policy
+	// fields are added without turning the caller into a high-complexity guard.
+	present := []bool{
+		policy.RateLimit != nil, retry != nil, policy.TimeoutMs != nil, policy.Pagination != nil,
+		policy.BaseURL != nil, policy.EventExtractionPath != nil,
+		policy.IncomingWebhookConfig != nil,
+	}
+	for _, configured := range present {
+		if configured {
+			return false
+		}
+	}
+	return true
 }
 
 func workspaceExecutionPolicyRetry(policy *ExecutionPolicy) (*RetryConfig, error) {
@@ -509,10 +527,19 @@ func workspaceExecutionPolicyRetry(policy *ExecutionPolicy) (*RetryConfig, error
 }
 
 func validateWorkspaceExecutionPolicyReset(policy *ExecutionPolicy, retry *RetryConfig) error {
-	if policy.Public != nil || policy.RateLimit != nil || retry != nil {
-		return fmt.Errorf("reset cannot include public, rate_limit, or retry")
+	if policy.Public != nil || !workspaceExecutionPolicyEmpty(policy, retry) {
+		return fmt.Errorf("reset cannot include other execution policy fields")
 	}
 	return nil
+}
+
+const maxWorkspaceExecutionTimeoutMs = 24 * 60 * 60 * 1000
+
+func validateWorkspaceExecutionPolicyTimeout(timeoutMs *int) error {
+	if timeoutMs == nil || (*timeoutMs >= 1 && *timeoutMs <= maxWorkspaceExecutionTimeoutMs) {
+		return nil
+	}
+	return fmt.Errorf("timeout_ms must be between 1 and %d", maxWorkspaceExecutionTimeoutMs)
 }
 
 func workspaceExecutionPolicyValidationError(name, version, message string) error {
@@ -832,7 +859,7 @@ func IsEnvironmentReference(value string) bool {
 }
 
 // envRefName accepts only whole-value env refs, not interpolation, so plan
-// artifacts keep a clear "this value comes from local env" shape.
+// documents keep a clear "this value comes from local env" shape.
 func envRefName(value string) string {
 	value = strings.TrimSpace(value)
 	if strings.HasPrefix(value, "${") && strings.HasSuffix(value, "}") {

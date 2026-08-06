@@ -554,6 +554,7 @@ func TestMergeWorkspaceServicesFromRemote_WritesPublicOnlyForOwnedServices(t *te
 // execution_policy.public: true, with the actual values preserved so a
 // subsequent `fused apply` is a no-op rather than wiping the Registry policy.
 func TestMergeWorkspaceServicesFromRemote_WritesExecutionPolicyForOwnedServiceWithRegistryPolicy(t *testing.T) {
+	timeoutMs := 45000
 	cfg := &configfile.WorkspaceConfig{Services: map[string]configfile.WorkspaceService{}}
 	remote := []api.WorkspaceService{
 		{ServiceName: "stripe", ServiceID: "svc-owned", Version: "2026-01-01"},
@@ -564,6 +565,7 @@ func TestMergeWorkspaceServicesFromRemote_WritesExecutionPolicyForOwnedServiceWi
 			ServiceID: "svc-owned", Slug: "stripe", IsOwner: true, IsPublic: true,
 			RateLimit:   &api.ServiceRateLimit{Strategy: "fixed_window", RequestsPerSecond: 10, RequestsPerMinute: 300},
 			RetryConfig: &api.ServiceRetryConfig{Strategy: "exponential_backoff", MaxRetries: 3, BackoffMs: 500},
+			TimeoutMs:   &timeoutMs,
 		},
 		"svc-foreign": {
 			ServiceID: "svc-foreign", Slug: "billing", Provider: &api.ServiceProviderIdentity{Handle: "acme"}, IsOwner: false,
@@ -584,6 +586,9 @@ func TestMergeWorkspaceServicesFromRemote_WritesExecutionPolicyForOwnedServiceWi
 	}
 	if owned.ExecutionPolicy.Retry == nil || owned.ExecutionPolicy.Retry.MaxRetries != 3 {
 		t.Fatalf("expected retry values to round-trip, got %#v", owned.ExecutionPolicy.Retry)
+	}
+	if owned.ExecutionPolicy.TimeoutMs == nil || *owned.ExecutionPolicy.TimeoutMs != timeoutMs {
+		t.Fatalf("expected timeout_ms to round-trip, got %v", owned.ExecutionPolicy.TimeoutMs)
 	}
 	foreign := cfg.Services["@acme/billing"]
 	if foreign.ExecutionPolicy != nil {

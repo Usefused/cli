@@ -80,31 +80,33 @@ func TestGetEngineURL_UnsetReturnsError(t *testing.T) {
 func TestGetAPIKey_ResolutionOrder(t *testing.T) {
 	cmd.EngineURL = ""
 	cmd.APIKey = ""
-	// 1. Config fallback
+	// 1. Environment license fallback.
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	_ = config.Set("api-key", "test-config-key")
 	t.Setenv("FUSED_API_KEY", "")
-	t.Setenv("FUSED_LICENSE_KEY", "")
-
-	if key := cmd.GetAPIKey(); key != "test-config-key" {
-		t.Errorf("expected test-config-key, got %s", key)
-	}
-
-	// 2. The bootstrap Owner license overrides a persisted key.
 	t.Setenv("FUSED_LICENSE_KEY", "test-license-key")
 	if key := cmd.GetAPIKey(); key != "test-license-key" {
 		t.Errorf("expected test-license-key, got %s", key)
 	}
 
-	// 3. A personal/service credential overrides the bootstrap license.
+	// 2. A personal/service environment credential overrides the license.
 	t.Setenv("FUSED_API_KEY", "test-personal-key")
 	if key := cmd.GetAPIKey(); key != "test-personal-key" {
 		t.Errorf("expected test-personal-key, got %s", key)
 	}
 
-	// 4. An explicit flag overrides every environment source.
+	// 3. A saved login/config credential overrides both environment fallbacks.
+	if err := config.Set("api-key", "test-config-key"); err != nil {
+		t.Fatalf("set config key: %v", err)
+	}
+	if key := cmd.GetAPIKey(); key != "test-config-key" {
+		t.Errorf("expected test-config-key, got %s", key)
+	}
+
+	// 4. An explicit flag overrides every persisted or environment source.
 	cmd.RootCmd.SetArgs([]string{"--key", "test-flag-key", "config", "list"})
-	cmd.RootCmd.Execute()
+	if err := cmd.RootCmd.Execute(); err != nil {
+		t.Fatalf("execute command: %v", err)
+	}
 	if key := cmd.GetAPIKey(); key != "test-flag-key" {
 		t.Errorf("expected test-flag-key, got %s", key)
 	}

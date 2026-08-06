@@ -29,15 +29,15 @@ Three related but distinct things, all under a bucket's
   `auth_type: oauth` or `oidc` are valid here — `basic`/`api_key`/`bearer`/
   `mtls` credentials don't have a browser consent step, so they only ever go
   through `auth` above. `client_secret` must be `${bucket.secret.<key>}` —
-  set the value once as a bucket secret (`fused-cli secret <service-slug>
-  set` -- see `fused-bucket`) and reference it here; Engine resolves it
+  set the value once as a bucket secret (`fused-cli secret set <service-slug>`
+  -- see `fused-bucket`) and reference it here; Engine resolves it
   server-side at apply time against this connect config's own bucket, the
   same as `auth` credentials, so nothing needs to be re-supplied on every
   apply. The named-bucket form (`${bucket.<name>.secret.<key>}`) is rejected
   here -- a connect config already belongs to one specific bucket, so naming
   a different one would only ever mean reading a secret out of the wrong
   bucket. Start an actual user session with `fused-cli workspace service
-  <slug> connect --user-ref <ref>` (see `fused-bucket`).
+  connect <service-slug> --user-ref <end-user-reference>` (see `fused-bucket`).
 - `profile` — the fuller `resource_discovery`/`resource_input`/`metadata`/
   `bindings` rule set below, for OAuth/OIDC services where one token can
   reach several sites/shops/portals/accounts.

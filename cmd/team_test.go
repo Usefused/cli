@@ -91,11 +91,11 @@ func TestNormalizeTeamRoles(t *testing.T) {
 	if _, err := normalizeAccessLevel("read"); err == nil {
 		t.Fatal("expected unsupported access level to fail")
 	}
-	if got, err := normalizeArtifactAccessLevel("read"); err != nil || got != "READER" {
-		t.Fatalf("normalizeArtifactAccessLevel(read) = %q, %v", got, err)
+	if got, err := normalizeAppAccessLevel("read"); err != nil || got != "READER" {
+		t.Fatalf("normalizeAppAccessLevel(read) = %q, %v", got, err)
 	}
-	if got, err := normalizeArtifactAccessLevel("use"); err != nil || got != "USER" {
-		t.Fatalf("normalizeArtifactAccessLevel(use) = %q, %v", got, err)
+	if got, err := normalizeAppAccessLevel("use"); err != nil || got != "USER" {
+		t.Fatalf("normalizeAppAccessLevel(use) = %q, %v", got, err)
 	}
 	for _, legacy := range []string{"user", "manager"} {
 		if _, err := normalizeAccessLevel(legacy); err == nil {
@@ -103,8 +103,8 @@ func TestNormalizeTeamRoles(t *testing.T) {
 		}
 	}
 	for _, legacy := range []string{"reader", "manager"} {
-		if _, err := normalizeArtifactAccessLevel(legacy); err == nil {
-			t.Errorf("legacy artifact access level %q was accepted", legacy)
+		if _, err := normalizeAppAccessLevel(legacy); err == nil {
+			t.Errorf("legacy app access level %q was accepted", legacy)
 		}
 	}
 	if _, err := normalizeSelectorResourceType("services"); err == nil {
@@ -134,7 +134,7 @@ func TestNoOpTeamAccessDoesNotEmitAppliedChangeAudit(t *testing.T) {
 	}
 }
 
-func TestTeamArtifactAccessCanShareOneArtifactWithTwoTeams(t *testing.T) {
+func TestTeamAppAccessCanShareOneFamilyWithTwoTeams(t *testing.T) {
 	requests := make([]teamCommandGraphQLRequest, 0, 2)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request teamCommandGraphQLRequest
@@ -142,38 +142,38 @@ func TestTeamArtifactAccessCanShareOneArtifactWithTwoTeams(t *testing.T) {
 			t.Fatalf("decode request: %v", err)
 		}
 		requests = append(requests, request)
-		_, _ = w.Write([]byte(`{"data":{"grantTeamArtifactAccess":{"binding":{"id":"binding-1","team_id":"team-1","role_slug":"artifact-reader","role_display_name":"Artifact reader","resource_type":"artifact","resource_id":"artifact-1","resource_display_name":"Support SDK","created_at":"now"},"authorization_revision":8,"changed":true}}}`))
+		_, _ = w.Write([]byte(`{"data":{"grantTeamAppAccess":{"binding":{"id":"binding-1","team_id":"team-1","role_slug":"app-reader","role_display_name":"App reader","resource_type":"app","resource_id":"family-1","resource_display_name":"Support SDK","created_at":"now"},"authorization_revision":8,"changed":true}}}`))
 	}))
 	defer server.Close()
 
-	runCommandInDir(t, t.TempDir(), server.URL, []string{"team", "access", "artifact", "grant", "platform", "support@1.0.0", "read"})
-	runCommandInDir(t, t.TempDir(), server.URL, []string{"team", "access", "artifact", "grant", "support", "support@1.0.0", "manage"})
+	runCommandInDir(t, t.TempDir(), server.URL, []string{"team", "access", "app", "grant", "platform", "support", "read"})
+	runCommandInDir(t, t.TempDir(), server.URL, []string{"team", "access", "app", "grant", "support", "support", "manage"})
 
 	if len(requests) != 2 {
 		t.Fatalf("request count = %d, want 2", len(requests))
 	}
-	if requests[0].Variables["teamId"] != "platform" || requests[0].Variables["resourceId"] != "support@1.0.0" || requests[0].Variables["level"] != "READER" {
+	if requests[0].Variables["teamId"] != "platform" || requests[0].Variables["resourceId"] != "support" || requests[0].Variables["level"] != "READER" {
 		t.Fatalf("first team sharing request = %#v", requests[0])
 	}
-	if requests[1].Variables["teamId"] != "support" || requests[1].Variables["resourceId"] != "support@1.0.0" || requests[1].Variables["level"] != "MANAGER" {
+	if requests[1].Variables["teamId"] != "support" || requests[1].Variables["resourceId"] != "support" || requests[1].Variables["level"] != "MANAGER" {
 		t.Fatalf("second team sharing request = %#v", requests[1])
 	}
 	for _, request := range requests {
-		if !strings.Contains(request.Query, "$level: TeamArtifactAccessLevel!") || !strings.Contains(request.Query, "grantTeamArtifactAccess") {
-			t.Fatalf("artifact sharing contract = %#v", request)
+		if !strings.Contains(request.Query, "$level: TeamAppAccessLevel!") || !strings.Contains(request.Query, "grantTeamAppAccess") || !strings.Contains(request.Query, "app_family_id") {
+			t.Fatalf("app sharing contract = %#v", request)
 		}
 	}
 }
 
-func TestTeamArtifactSharingHelpClaimsOnlyScopeBackedBuilds(t *testing.T) {
-	for _, helpText := range []string{teamArtifactAccessCmd.Short, teamArtifactGrantCmd.Short, teamArtifactRevokeCmd.Short} {
+func TestTeamAppSharingHelpClaimsOnlyScopeBackedBuilds(t *testing.T) {
+	for _, helpText := range []string{teamAppAccessCmd.Short, teamAppGrantCmd.Short, teamAppRevokeCmd.Short} {
 		help := strings.ToLower(helpText)
 		if strings.Contains(help, "webhook") {
-			t.Fatalf("artifact sharing help advertises unsupported webhook sharing: %q", helpText)
+			t.Fatalf("app sharing help advertises unsupported webhook sharing: %q", helpText)
 		}
 	}
-	if !strings.Contains(teamArtifactAccessCmd.Short, "SDK") || !strings.Contains(teamArtifactAccessCmd.Short, "MCP") {
-		t.Fatalf("artifact sharing help does not name supported build types: %q", teamArtifactAccessCmd.Short)
+	if !strings.Contains(teamAppAccessCmd.Short, "SDK") || !strings.Contains(teamAppAccessCmd.Short, "MCP") {
+		t.Fatalf("app sharing help does not name supported build types: %q", teamAppAccessCmd.Short)
 	}
 }
 
@@ -183,7 +183,7 @@ func TestTeamBuildAccessShowsOnlySelectorResults(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Fatalf("decode request: %v", err)
 		}
-		_, _ = w.Write([]byte(`{"data":{"artifactBuildSelectors":{"total":1,"items":[{"resource_type":"BUCKET","resource_id":"bucket-1","display_name":"Production"}]}}}`))
+		_, _ = w.Write([]byte(`{"data":{"appBuildSelectors":{"total":1,"items":[{"resource_type":"BUCKET","resource_id":"bucket-1","display_name":"Production"}]}}}`))
 	}))
 	defer server.Close()
 
@@ -204,7 +204,7 @@ func TestTeamEligibleOwnersUsesNarrowBuilderContract(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Fatalf("decode request: %v", err)
 		}
-		_, _ = w.Write([]byte(`{"data":{"artifactOwningTeams":{"total":1,"items":[{"id":"team-1","name":"Support","slug":"support"}]}}}`))
+		_, _ = w.Write([]byte(`{"data":{"appOwningTeams":{"total":1,"items":[{"id":"team-1","name":"Support","slug":"support"}]}}}`))
 	}))
 	defer server.Close()
 
@@ -214,7 +214,7 @@ func TestTeamEligibleOwnersUsesNarrowBuilderContract(t *testing.T) {
 			t.Errorf("output %q does not contain %q", out, want)
 		}
 	}
-	if request.Variables["search"] != "sup" || !strings.Contains(request.Query, "artifactOwningTeams") {
+	if request.Variables["search"] != "sup" || !strings.Contains(request.Query, "appOwningTeams") {
 		t.Fatalf("eligible-owner request = %#v", request)
 	}
 }
@@ -225,7 +225,7 @@ type teamCommandGraphQLRequest struct {
 }
 
 func teamMutationField(query string) string {
-	for _, field := range []string{"setTeamWorkspaceRole", "grantTeamServiceAccess", "revokeTeamBucketAccess", "grantTeamArtifactAccess", "revokeTeamArtifactAccess"} {
+	for _, field := range []string{"setTeamWorkspaceRole", "grantTeamServiceAccess", "revokeTeamBucketAccess", "grantTeamAppAccess", "revokeTeamAppAccess"} {
 		if strings.Contains(query, field+"(") {
 			return field
 		}

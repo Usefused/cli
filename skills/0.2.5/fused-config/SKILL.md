@@ -39,7 +39,7 @@ baseline), read `fused-notifications`.
 
 Never put a real credential value inline in a config file being committed to
 source control. For a static `auth` credential (token/api_key/basic/mtls),
-use a bucket secret (`fused-cli secret <service-slug> set` -- see
+use a bucket secret (`fused-cli secret set <service-slug>` -- see
 `fused-bucket`): it's resolved by the Engine itself, so it works the same
 whether `apply` runs from a laptop or CI. Binding literal values have the
 same bucket-secret path via `fused-cli value`.

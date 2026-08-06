@@ -31,14 +31,12 @@ cannot do is **create the bucket itself**: apply resolves each
 `buckets.<name>` key against an existing bucket by name, and if no bucket
 with that name exists yet, apply fails outright with "bucket not found" --
 it never creates one implicitly. **The only way to create a bucket is
-`fused-cli bucket <name> create`** below (or the interactive y/N "create it?"
-prompt `secret set`/`value set`/`connect set` show when given an unresolved
-bucket name -- not something `workspace apply` does). Always create the
+`fused-cli bucket create <bucket-name>`** below. Always create the
 bucket first if it might not exist yet, before declaring `buckets.<name>...`
 in workspace.yaml or running any `--bucket <name>` command against it.
 
 A service's OAuth/OIDC app registration (`connect`) is never a workspace.yaml
-field -- it's set only via `fused-cli connect <slug> set` below, an immediate
+field -- it's set only via `fused-cli connect set <service-slug>` below, an immediate
 admin action against its own endpoint, not something `plan`/`apply` sees or
 touches.
 
@@ -58,7 +56,7 @@ rules -- easy to conflate since they look alike:
 | `kind: webhook` `services.<slug>.secret` (`fused-webhook`) | `${bucket.<name>.env\|secret.<key>}` or `${bucket.env\|secret.<key>}` (default bucket) | Explicit (or defaults to `default`) -- webhook verification has no artifact/dispatch context to fall back on | No -- must be the entire field value |
 | Connection profile `${resource.*}` (`fused-config`) | `${resource.provider_resource_id\|base_url\|metadata.<key>}` | N/A -- not a bucket reference at all, resolves against the selected connection's resource | No -- must be the entire field value |
 
-`fused-cli connect <slug> set` (below) takes `client_id`/`client_secret`/
+`fused-cli connect set <service-slug>` (below) takes `client_id`/`client_secret`/
 `redirect_uri` as literal values only -- it's an immediate admin action, not
 a declarative field, so there is no `${bucket...}`/`$ENV` reference form for
 it to resolve.
@@ -72,16 +70,16 @@ value at dispatch time.
 
 ```shell
 fused-cli bucket list                    # NAME, ID, secret count, value count
-fused-cli bucket <name> create
-fused-cli bucket <name> show             # + created_at
-fused-cli bucket <name> services         # per-service breakdown: secrets/values/connect-configs/connected-user counts
-fused-cli bucket <name> secrets          # metadata only -- service, key name, credential type, expiry; never the value itself
-fused-cli bucket <name> values           # service, key name, location
-fused-cli bucket <name> connections [--service <slug>] [--user <ref>]  # this bucket's end-user OAuth connections: user ref, auth type, refresh state, last failure
-fused-cli bucket <name> sdks             # which SDK/MCP artifacts (and whether they're active) point at this bucket
+fused-cli bucket create <bucket-name>
+fused-cli bucket show <bucket-name-or-id>
+fused-cli bucket services <bucket-name-or-id>
+fused-cli bucket secrets <bucket-name-or-id>
+fused-cli bucket values <bucket-name-or-id>
+fused-cli bucket connections <bucket-name-or-id> [--service <service-slug>] [--user <end-user-reference>]
+fused-cli bucket sdks <bucket-name-or-id>
 ```
 
-Don't confuse `bucket <name> connections` (every end user who has connected
+Don't confuse `bucket connections <bucket-name-or-id>` (every end user who has connected
 to *any* service through this bucket, and whether their token is
 healthy/refreshing/failing) with `connection resources` below (for *one*
 already-connected user, which provider tenants their token can reach) --
@@ -90,24 +88,24 @@ they're different scopes of the word "connection."
 ## Static secrets and values
 
 ```shell
-fused-cli secret list --list-bucket <bucket>
+fused-cli secret list --bucket <bucket-name-or-id>
 # single-value scheme (api_key, bearer, oauth/oidc static token):
-fused-cli secret <service-slug> set <value> [--bucket <name>] [--type <scheme>] [--expires-at <RFC3339>] [-i]
+printf '%s' '<value>' | fused-cli secret set <service-slug> --value-stdin [--bucket <bucket-name-or-id>] [--type <auth-method>] [--expires-at <RFC3339>]
 # multi-field scheme (basic, mtls): pack fields into ONE value, joined by ';' -- never separate flags, never separate `set` calls:
-fused-cli secret <service-slug> set 'username=x;password=y' [--bucket <name>] [--type basic]
-fused-cli secret <service-slug> set 'cert=...;key=...' [--bucket <name>] [--type mtls]
-fused-cli secret <service-slug> remove <key-name> [--remove-bucket <name>]
-fused-cli value <bucket-id> set <service-slug> <location> <key-name> <value>
-fused-cli value <bucket-id> list
-fused-cli value <bucket-id> remove <service-slug> <key-name>
+printf '%s' 'username=x;password=y' | fused-cli secret set <service-slug> --value-stdin [--bucket <bucket-name-or-id>] --type basic
+printf '%s' 'cert=...;key=...' | fused-cli secret set <service-slug> --value-stdin [--bucket <bucket-name-or-id>] --type mtls
+fused-cli secret delete <service-slug> <key-name> [--bucket <bucket-name-or-id>]
+fused-cli value set <bucket-name-or-id> <service-slug> <location> <key-name> <value>
+fused-cli value list <bucket-name-or-id>
+fused-cli value delete <bucket-name-or-id> <service-slug> <key-name>
 ```
 
 **There is no `--username`/`--password`/`--cert`/`--key` flag, and `basic`/
-`mtls` are not two separate secrets.** The single positional `<value>`
-argument is *itself* the whole credential: for these two schemes it's a
+`mtls` are not two separate secrets.** The value sent through stdin is the
+whole credential: for these two schemes it's a
 `key=value;key=value` string -- semicolon-separated, quoted so the shell
 doesn't split it on the `;` -- not comma-separated, not JSON, not two
-sequential `set` calls. `-i` (interactive prompts) is the only alternative
+sequential `set` calls. `--interactive` is the only alternative
 way to supply both fields at once.
 
 `secret set` is an **upsert with no separate apply step** -- unlike
@@ -125,7 +123,7 @@ parsed out of that one `;`-delimited value, and a client cert/key pair is
 validated (matching pair, not expired) before it's ever stored.
 
 `--expires-at` is optional and purely advisory metadata (`secret list` and
-`bucket <name> secrets` flag an expired one) -- nothing auto-rotates or
+`bucket secrets <bucket-name-or-id>` flags an expired one) -- nothing auto-rotates or
 blocks requests when a secret passes its expiry.
 
 `value` stores arbitrary bucket-scoped values, including literal binding
@@ -145,8 +143,8 @@ its own storage instead).
 ## Registering a service's OAuth/OIDC app (connect)
 
 ```shell
-fused-cli connect <service-slug> set 'client_id=...;client_secret=...;redirect_uri=https://...' --bucket <name> [--type oauth|oidc]
-fused-cli connect <service-slug> set --bucket <name> -i
+printf '%s' 'client_id=...;client_secret=...;redirect_uri=https://...' | fused-cli connect set <service-slug> --value-stdin --bucket <bucket-name-or-id> [--type oauth|oidc]
+fused-cli connect set <service-slug> --bucket <bucket-name-or-id> --interactive
 ```
 
 This registers (or rotates) the app credentials a service's interactive
@@ -167,14 +165,14 @@ Engine merges an omitted field in from the existing encrypted row itself, not
 from anything the CLI resent.
 
 ```shell
-fused-cli connect <service-slug> get --bucket <name>
+fused-cli connect get <service-slug> --bucket <bucket-name-or-id>
 ```
 
 Reads back whatever the last `set` saved -- `auth_type`, `enabled`,
 `redirect_uri` in plaintext, plus `has_client_id`/`has_client_secret` as
 booleans (never the actual `client_id`/`client_secret`, same as `set`'s
 response). This is the only way to check registration state on demand:
-`bucket <name> services` shows just a connect-config count, and
+`bucket services <bucket-name-or-id>` shows just a connect-config count, and
 workspace.yaml/`workspace sync` never reflect this at all -- app
 registration was deliberately taken out of the declarative surface entirely
 (see above), so there is nothing for `plan`/`apply`/`sync` to show. `get`
@@ -184,7 +182,7 @@ yet for that bucket+service.
 ## Starting an OAuth/OIDC connection
 
 ```shell
-fused-cli workspace service <slug> connect --bucket <name> --user-ref <ref> [--scope read:x --scope write:y]
+fused-cli workspace service connect <service-slug> --bucket <bucket-name-or-id> --user-ref <end-user-reference> [--scope read:x --scope write:y]
 ```
 
 Omitting `--scope` requests the service's declared scope catalogue. OIDC

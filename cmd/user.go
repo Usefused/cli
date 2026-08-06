@@ -9,13 +9,13 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var userCmd = &cobra.Command{Use: "user", Short: "Manage workspace people and personal credentials"}
+var userCmd = commandGroup("user", "Manage workspace people and personal credentials")
 
 var userListFlags listFlags
 var userListSearch string
 var userListIncludeSuspended bool
 var userListCmd = &cobra.Command{
-	Use: "list", Short: "List people",
+	Use: "list", Short: "List people", Args: cobra.NoArgs,
 	RunE: WithTelemetry("cli.user.list", func(cmd *cobra.Command, _ []string) error {
 		client, err := getAPIClient()
 		if err != nil {
@@ -135,7 +135,7 @@ func userStatusCommand(use, short, spanName string, mutate userStatusMutation) *
 	}
 }
 
-var userCredentialCmd = &cobra.Command{Use: "credential", Short: "Issue or revoke personal credentials"}
+var userCredentialCmd = commandGroup("credential", "Issue or revoke personal credentials")
 var userCredentialName string
 var userCredentialIssueCmd = &cobra.Command{
 	Use: "issue <email-or-id>", Short: "Issue a personal credential and show it once", Args: cobra.ExactArgs(1),
@@ -162,7 +162,7 @@ var userCredentialIssueCmd = &cobra.Command{
 }
 
 var userCredentialRevokeCmd = &cobra.Command{
-	Use: "revoke <user> <credential-name-or-id>", Short: "Revoke a personal credential", Args: cobra.ExactArgs(2),
+	Use: "revoke <user-email-or-id> <credential-name-or-id>", Short: "Revoke a personal credential", Args: cobra.ExactArgs(2),
 	RunE: WithTelemetry("cli.user.credential.revoke", func(cmd *cobra.Command, args []string) error {
 		client, err := getAPIClient()
 		if err != nil {

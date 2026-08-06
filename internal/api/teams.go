@@ -176,20 +176,20 @@ func (c *Client) RevokeTeamBucketAccess(teamID, bucketID, level string) (*TeamBi
 	}, "$teamId: ID!, $resourceId: ID!, $level: TeamAccessLevel!")
 }
 
-func (c *Client) GrantTeamArtifactAccess(teamID, artifactID, level string) (*TeamBindingMutationPayload, error) {
-	return c.mutateTeamBinding("grantTeamArtifactAccess", `team_id: $teamId, artifact_id: $resourceId, level: $level`, map[string]interface{}{
+func (c *Client) GrantTeamAppAccess(teamID, appFamilyID, level string) (*TeamBindingMutationPayload, error) {
+	return c.mutateTeamBinding("grantTeamAppAccess", `team_id: $teamId, app_family_id: $resourceId, level: $level`, map[string]interface{}{
 		"teamId":     teamID,
-		"resourceId": artifactID,
+		"resourceId": appFamilyID,
 		"level":      level,
-	}, "$teamId: ID!, $resourceId: ID!, $level: TeamArtifactAccessLevel!")
+	}, "$teamId: ID!, $resourceId: ID!, $level: TeamAppAccessLevel!")
 }
 
-func (c *Client) RevokeTeamArtifactAccess(teamID, artifactID, level string) (*TeamBindingMutationPayload, error) {
-	return c.mutateTeamBinding("revokeTeamArtifactAccess", `team_id: $teamId, artifact_id: $resourceId, level: $level`, map[string]interface{}{
+func (c *Client) RevokeTeamAppAccess(teamID, appFamilyID, level string) (*TeamBindingMutationPayload, error) {
+	return c.mutateTeamBinding("revokeTeamAppAccess", `team_id: $teamId, app_family_id: $resourceId, level: $level`, map[string]interface{}{
 		"teamId":     teamID,
-		"resourceId": artifactID,
+		"resourceId": appFamilyID,
 		"level":      level,
-	}, "$teamId: ID!, $resourceId: ID!, $level: TeamArtifactAccessLevel!")
+	}, "$teamId: ID!, $resourceId: ID!, $level: TeamAppAccessLevel!")
 }
 
 func (c *Client) mutateTeamBinding(field, arguments string, variables map[string]interface{}, variableTypes string) (*TeamBindingMutationPayload, error) {

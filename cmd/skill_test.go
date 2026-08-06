@@ -100,10 +100,10 @@ func TestDevSkillsIncludePermissionAndDenialGuidance(t *testing.T) {
 	}{
 		{name: "fused-cli", required: []string{"catalogue.read", "catalogue.import", "access.read", "access.manage", "team access service", "team access workspace"}},
 		{name: "fused-workspace", required: []string{"service.read", "service.manage", "workspace.update", "team access service", "team access bucket", "team access workspace"}},
-		{name: "fused-sdk", required: []string{"artifact.create", "artifact.manage", "artifact.read", "artifact.tokens.manage", "service.consume", "bucket.use", "team eligible-owners", "team build-access", "team access artifact"}},
-		{name: "fused-mcp", required: []string{"artifact.create", "artifact.manage", "artifact.read", "artifact.tokens.manage", "service.consume", "bucket.use", "team eligible-owners", "team build-access", "team access artifact"}},
+		{name: "fused-sdk", required: []string{"app.create", "app.manage", "app.read", "app.tokens.manage", "service.consume", "bucket.use", "team eligible-owners", "team build-access", "team access app"}},
+		{name: "fused-mcp", required: []string{"app.create", "app.manage", "app.read", "app.tokens.manage", "service.consume", "bucket.use", "team eligible-owners", "team build-access", "team access app"}},
 		{name: "fused-bucket", required: []string{"bucket.read", "bucket.manage", "credentials.manage", "connection.manage", "service.consume", "team access bucket", "team access service"}},
-		{name: "fused-webhook", required: []string{"artifact.create", "artifact.manage", "service.consume", "bucket.use", "team eligible-owners", "team build-access", "team access service", "team access bucket"}},
+		{name: "fused-webhook", required: []string{"app.create", "app.manage", "service.consume", "bucket.use", "team eligible-owners", "team build-access", "team access service", "team access bucket"}},
 		{name: "fused-config", required: []string{"service.manage", "credentials.manage", "catalogue.import", "connection.manage", "team access service", "team access bucket", "team access workspace"}},
 		{name: "fused-notifications", required: []string{"workspace.read", "notification.update", "team access workspace"}},
 	}
@@ -140,6 +140,84 @@ func TestDevSkillsIncludePermissionAndDenialGuidance(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestDevAppSkillsDocumentVersionedLifecycle(t *testing.T) {
+	tests := []struct {
+		name     string
+		required []string
+	}{
+		{name: "fused-sdk", required: []string{
+			"SDK ID", "Version ID", "immutable", "app_version_immutable",
+			"FUSED_SDK_TOKEN", "cache miss", "database reset", "no SDK deprecate/deactivate command",
+		}},
+		{name: "fused-mcp", required: []string{
+			"MCP ID", "Version ID", "immutable", "app_version_immutable",
+			"hard deactivation", "tombstone", "Engine database", "reapply", "no MCP deprecate",
+		}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join("..", "skills", "dev", test.name, "SKILL.md")
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("read %s: %v", path, err)
+			}
+			content := string(data)
+			for _, required := range test.required {
+				if !strings.Contains(content, required) {
+					t.Errorf("missing app-lifecycle guidance %q", required)
+				}
+			}
+			if test.name == "fused-sdk" && strings.Contains(content, "FUSED_LICENSE_KEY") {
+				t.Error("SDK runtime guidance must not use the Engine-to-Registry License Key")
+			}
+		})
+	}
+}
+
+func TestCLISkillsUseCurrentCommandLanguage(t *testing.T) {
+	stale := []string{
+		"family",
+		"fused-cli bucket <",
+		"fused-cli secret <",
+		"fused-cli connect <",
+		"fused-cli workspace service <",
+		"sdk-name-or-family",
+		"app-family-id",
+		"operationId...",
+		"webhookId...",
+		"<service_name>",
+		"name@version-or-app-id",
+	}
+	err := filepath.WalkDir(filepath.Join("..", "skills"), func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() || filepath.Ext(path) != ".md" {
+			return nil
+		}
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		content := string(data)
+		lower := strings.ToLower(content)
+		for _, token := range stale {
+			candidate := content
+			if token == "family" {
+				candidate = lower
+			}
+			if strings.Contains(candidate, token) {
+				t.Errorf("%s contains stale or internal command language %q", path, token)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("scan CLI skills: %v", err)
 	}
 }
 
