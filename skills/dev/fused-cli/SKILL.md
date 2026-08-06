@@ -1,6 +1,6 @@
 ---
 name: fused-cli
-description: "Use this skill when the user wants to set up or use fused-cli itself, or starts with a business goal and wants Fused to produce a ready SDK or MCP server: installing it, authenticating against a Fused Engine, discovering Registry services when the slug is unknown, understanding global flags, managing workspace teams or people, assigning RBAC or workspace-wide resource access, issuing personal credentials, selecting an owner team, importing API specs or docs URLs, or choosing a domain skill. Also use it when no Engine is running yet. Trigger on 'fused-cli', 'Fused CLI setup', 'build an SDK', 'create an MCP', 'integration workflow', 'find a service', 'engine-url', 'api-key', 'team access', 'workspace access', 'workspace role', 'add user', 'personal credential', 'owner-team', 'required permissions', 'import docs', 'start the engine', 'FUSED_LICENSE_KEY', or connection failures. Read the relevant domain skill once the task concerns a specific config shape."
+description: "Use this skill when the user wants to set up or use fused-cli itself, or starts with a business goal and wants Fused to produce a ready SDK or MCP server: installing it, authenticating against a Fused Engine, inspecting the current CLI identity, signing out or revoking a saved CLI login, discovering Registry services when the slug is unknown, understanding global flags, managing workspace teams or people, assigning RBAC or workspace-wide resource access, issuing personal credentials, selecting an owner team, importing API specs or docs URLs, or choosing a domain skill. Also use it when no Engine is running yet. Trigger on 'fused-cli', 'Fused CLI setup', 'whoami', 'who am I', 'which account am I using', 'logout', 'log out', 'sign out', 'revoke CLI login', 'build an SDK', 'create an MCP', 'integration workflow', 'find a service', 'engine-url', 'api-key', 'team access', 'workspace access', 'workspace role', 'add user', 'personal credential', 'owner-team', 'required permissions', 'import docs', 'start the engine', 'FUSED_LICENSE_KEY', or connection failures. Read the relevant domain skill once the task concerns a specific config shape."
 ---
 
 # fused-cli
@@ -60,6 +60,8 @@ error.
 
 ```shell
 fused-cli --engine-url https://engine.example.com login
+fused-cli whoami
+fused-cli logout
 fused-cli config get engine-url
 fused-cli config list
 fused-cli config reset      # deletes the local config file entirely
@@ -74,10 +76,20 @@ print the URL for an interactive remote/headless session. `--no-input` and
 `CI=true` reject browser login; automation should continue using `--key`,
 `FUSED_API_KEY`, or `FUSED_LICENSE_KEY`.
 
-The local config stores `engine-url`, `api-key`, and, for Engine-issued managed
-CLI credentials, `api-key-expires-at`. A saved key takes precedence over
-ambient credential variables; use `--key` for an intentional one-command
-override.
+The local config stores `engine-url`, `api-key`, non-settable provenance
+metadata, and expiry metadata for Engine-issued managed CLI credentials. A saved key
+takes precedence over ambient credential variables; use `--key` for an
+intentional one-command override.
+
+Use `whoami` to inspect the effective credential selected by that precedence.
+It prints only non-secret identity, account/workspace, source, authentication
+method, and expiry data. Use `logout` to revoke the saved managed CLI login and
+clear its local key/expiry metadata. Logout intentionally ignores `--key` and
+credential environment overrides: revocation must target the saved credential
+at its saved Engine. It preserves `engine-url`, retains local state when remote
+revocation fails so the user can retry, and warns when `FUSED_API_KEY` or
+`FUSED_LICENSE_KEY` will continue authenticating future commands. A manually
+saved API key has no managed-login provenance and is left unchanged.
 
 ## Global flags
 

@@ -45,3 +45,14 @@ func TestLogoutCLIMapsUnauthorizedWithoutReflectingBody(t *testing.T) {
 		t.Fatalf("LogoutCLI error = %v", err)
 	}
 }
+
+func TestLogoutCLIDoesNotReflectFailedResponseBody(t *testing.T) {
+	client := NewClient("https://engine.example", "fsk_saved")
+	client.HTTP.Transport = cliLoginRoundTripper(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusServiceUnavailable, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"secret":"fsk_do_not_reflect"}`))}, nil
+	})
+	err := client.LogoutCLI()
+	if err == nil || strings.Contains(err.Error(), "fsk_do_not_reflect") {
+		t.Fatalf("LogoutCLI error = %v", err)
+	}
+}
