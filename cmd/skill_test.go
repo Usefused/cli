@@ -30,7 +30,7 @@ func setTestRawContentBaseURL(t *testing.T, url string) {
 // --- skillSpec / manifest ---------------------------------------------------
 
 func TestSkillSpecByName(t *testing.T) {
-	for _, name := range []string{"fused-cli", "fused-build-sdk", "fused-workspace", "fused-sdk", "fused-mcp", "fused-bucket", "fused-config", "fused-webhook", "fused-notifications"} {
+	for _, name := range []string{"fused-cli", "fused-workspace", "fused-sdk", "fused-mcp", "fused-bucket", "fused-config", "fused-webhook", "fused-notifications"} {
 		if _, ok := skillSpecByName(name); !ok {
 			t.Errorf("expected a spec for %q", name)
 		}
@@ -99,7 +99,6 @@ func TestDevSkillsIncludePermissionAndDenialGuidance(t *testing.T) {
 		required []string
 	}{
 		{name: "fused-cli", required: []string{"catalogue.read", "catalogue.import", "access.read", "access.manage", "team access service", "team access workspace"}},
-		{name: "fused-build-sdk", required: []string{"app.create", "app.manage", "app.read", "app.tokens.manage", "service.consume", "bucket.use", "team eligible-owners", "team build-access"}},
 		{name: "fused-workspace", required: []string{"service.read", "service.manage", "workspace.update", "team access service", "team access bucket", "team access workspace"}},
 		{name: "fused-sdk", required: []string{"app.create", "app.manage", "app.read", "app.tokens.manage", "service.consume", "bucket.use", "team eligible-owners", "team build-access", "team access app"}},
 		{name: "fused-mcp", required: []string{"app.create", "app.manage", "app.read", "app.tokens.manage", "service.consume", "bucket.use", "team eligible-owners", "team build-access", "team access app"}},
@@ -144,8 +143,8 @@ func TestDevSkillsIncludePermissionAndDenialGuidance(t *testing.T) {
 	}
 }
 
-func TestFusedBuildSDKSkillKeepsIDEAgentWorkflowLocalAndCompact(t *testing.T) {
-	path := filepath.Join("..", "skills", "dev", "fused-build-sdk", "SKILL.md")
+func TestFusedSDKSkillKeepsIDEAgentWorkflowLocalAndCompact(t *testing.T) {
+	path := filepath.Join("..", "skills", "dev", "fused-sdk", "SKILL.md")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)
@@ -156,20 +155,18 @@ func TestFusedBuildSDKSkillKeepsIDEAgentWorkflowLocalAndCompact(t *testing.T) {
 		"Do not delegate the work to another agent",
 		"working-facts",
 		"load every sibling skill up front",
-		"workspace services list --q",
-		"service search --q",
-		"bucket list",
-		"sdk validate -f",
-		"sdk plan -f",
-		"sdk apply -f",
+		"reference/build-sdk-or-mcp.md",
+		"fused-workspace",
+		"fused-bucket",
+		"fused-config",
 	}
 	for _, token := range required {
 		if !strings.Contains(content, token) {
 			t.Errorf("missing local SDK workflow token %q", token)
 		}
 	}
-	if words := len(strings.Fields(content)); words > 1100 {
-		t.Errorf("fused-build-sdk is too large for its routing role: %d words (limit 1100)", words)
+	if lines := strings.Count(content, "\n") + 1; lines > 320 {
+		t.Errorf("fused-sdk is too large for progressive loading: %d lines (limit 320)", lines)
 	}
 }
 
@@ -588,6 +585,53 @@ func TestSkillListCommand(t *testing.T) {
 		if !strings.Contains(out, name) {
 			t.Errorf("expected `skill list` output to mention %q, got:\n%s", name, out)
 		}
+	}
+}
+
+func TestSkillInstallCommand_InstallsFusedSDKForCodingAgent(t *testing.T) {
+	oldFor, oldName, oldScope, oldPath := skillInstallFor, skillInstallName, skillInstallScope, skillInstallPath
+	skillInstallFor, skillInstallName, skillInstallScope, skillInstallPath = "", "", "", ""
+	t.Cleanup(func() {
+		skillInstallFor, skillInstallName, skillInstallScope, skillInstallPath = oldFor, oldName, oldScope, oldPath
+	})
+
+	setTestVersion(t, "dev")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+	setTestRawContentBaseURL(t, srv.URL)
+
+	oldFS := EmbeddedSkillFS
+	EmbeddedSkillFS = fstest.MapFS{
+		"skills/dev/fused-sdk/SKILL.md": &fstest.MapFile{Data: []byte("---\nname: fused-sdk\ndescription: SDK workflow\n---\n\nNever run `fused-cli sdk prompt`.\n")},
+	}
+	t.Cleanup(func() { EmbeddedSkillFS = oldFS })
+
+	destination := filepath.Join(t.TempDir(), "fused-sdk")
+	var output bytes.Buffer
+	RootCmd.SetOut(&output)
+	RootCmd.SetArgs([]string{"skill", "install", "--for", "codex", "--skill", "fused-sdk", "--path", destination})
+	oldSilenceErrors, oldSilenceUsage := RootCmd.SilenceErrors, RootCmd.SilenceUsage
+	RootCmd.SilenceErrors, RootCmd.SilenceUsage = true, true
+	t.Cleanup(func() {
+		RootCmd.SetOut(nil)
+		RootCmd.SetArgs(nil)
+		RootCmd.SilenceErrors, RootCmd.SilenceUsage = oldSilenceErrors, oldSilenceUsage
+	})
+
+	if err := RootCmd.Execute(); err != nil {
+		t.Fatalf("install fused-sdk skill: %v", err)
+	}
+	installed, err := os.ReadFile(filepath.Join(destination, "SKILL.md"))
+	if err != nil {
+		t.Fatalf("read installed fused-sdk skill: %v", err)
+	}
+	if !strings.Contains(string(installed), "Never run `fused-cli sdk prompt`") {
+		t.Errorf("installed skill lost the coding-agent routing boundary: %q", installed)
+	}
+	if !strings.Contains(output.String(), "Installed fused-sdk skill for OpenAI Codex") {
+		t.Errorf("unexpected install output: %q", output.String())
 	}
 }
 

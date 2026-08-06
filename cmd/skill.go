@@ -35,14 +35,13 @@ type skillSpec struct {
 	manifest []string
 }
 
-// skillSpecs is every skill this CLI ships. fused-cli is the entry point for
-// CLI setup and access management; fused-build-sdk is the compact IDE-agent
-// workflow from a business goal to a ready SDK; fused-workspace/fused-sdk/
-// fused-mcp/fused-webhook/fused-bucket each own one config kind's commands and
-// shape; fused-config holds cross-cutting config owned by no single kind
-// (execution policy, connection profiles, and their OpenAPI/Postman
-// equivalent); fused-notifications explains plan/apply notices. Domain skills
-// link to one another instead of duplicating details.
+// skillSpecs is every skill this CLI ships. fused-cli is the entry point
+// (setup, access management, global config, and an index); fused-workspace/
+// fused-sdk/fused-mcp/fused-webhook/fused-bucket each own one config kind's
+// commands and shape; fused-config holds cross-cutting config owned by no
+// single kind (execution policy, connection profiles, and their
+// OpenAPI/Postman equivalent); fused-notifications explains plan/apply
+// notices. Domain skills link to one another instead of duplicating details.
 var skillSpecs = []skillSpec{
 	{
 		name:    "fused-cli",
@@ -51,13 +50,6 @@ var skillSpecs = []skillSpec{
 			"SKILL.md",
 			"reference/access-management.md",
 			"reference/build-sdk-or-mcp.md",
-		},
-	},
-	{
-		name:    "fused-build-sdk",
-		summary: "IDE-agent workflow from a business goal to a validated, ready-to-use SDK",
-		manifest: []string{
-			"SKILL.md",
 		},
 	},
 	{

@@ -172,9 +172,9 @@ a typed Business Capability SDK. Describe the workflow your team wants to ship,
 and Fused maps the right services and endpoints into a scoped generated package.
 
 This command is the user-invoked, Fused-agent entry point. When the business
-goal is instead given to a coding agent, install/use the `fused-build-sdk`
-skill; that agent performs the workflow directly and must not call `sdk prompt`
-or start a second agent.
+goal is instead given to a coding agent, install/use the `fused-sdk` skill;
+that agent performs the workflow directly and must not call `sdk prompt` or
+start a second agent.
 
 If your query requires services you haven't added to your workspace yet, the Copilot will automatically discover the latest stable versions from the Global Registry and safely append them to your local `.fused/workspace.yaml`.
 

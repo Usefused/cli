@@ -1,15 +1,35 @@
 ---
 name: fused-sdk
-description: "Use for the detailed shape and lifecycle of an existing Fused kind: sdk config: selecting services/operations, receiving webhook events, scoping auth, immutable versions, runtime tokens, or SDK plan/apply/validate/download/sync commands. Trigger on an existing 'kind: sdk' file, 'SDK config', 'SDK operations', 'SDK token', or an SDK lifecycle question. When a user asks a coding agent to build or generate an SDK from a business goal, use fused-build-sdk as the entry point and load this detail only if needed. Never invoke sdk prompt from an IDE-agent workflow. For Engine-hosted MCP runtime behavior read fused-mcp instead."
+description: "Build, generate, configure, or manage a typed Fused SDK directly inside a coding agent using fused-cli sdk. Use when the user gives Codex, Claude Code, Cursor, Windsurf, or Antigravity a business goal for an SDK; when editing a kind: sdk config; or when selecting operations, receiving webhooks, scoping auth, managing immutable versions/runtime tokens, or running SDK plan/apply/validate/download/sync commands. This is the coding-agent entry point: never invoke sdk prompt, because it starts a separate Fused agent. For Engine-hosted MCP runtime behavior read fused-mcp instead."
 ---
 
 # SDK package config
 
-If the user starts with a business goal and no existing config, use
-`fused-build-sdk`. It is the compact IDE-agent workflow and explicitly avoids
-`fused-cli sdk prompt`, which starts another agent. Use this skill only for
-SDK-specific config and lifecycle detail once Engine setup, service discovery,
-workspace activation, and credential requirements are understood.
+## IDE-agent workflow boundary
+
+Never run `fused-cli sdk prompt` from a coding-agent task. That command is the
+alternative user-invoked path that starts the Fused-hosted agent. Run the
+deterministic CLI workflow yourself. Do not delegate the work to another agent
+or call an AI, chat, prompt, or intent endpoint as a fallback.
+
+Maintain one compact working-facts record: CLI/Engine context, config paths,
+SDK name/version/language, exact service slugs/versions/operation IDs, bucket,
+ownership, and unresolved credential, consent, permission, or production
+decisions. Read local config first and reuse successful checks. Inspect only
+the relevant CLI `--help` branch. Do not load every sibling skill up front:
+
+- read `fused-workspace` only when service activation is required;
+- read `fused-bucket` only when credentials or OAuth are unresolved;
+- read `fused-config` only for auth, connect scopes, injections, or policy;
+- read `fused-cli` and `reference/access-management.md` only for setup or
+  permission remediation.
+
+If the user starts with a business goal and no complete config, read the
+`fused-cli` skill's `reference/build-sdk-or-mcp.md` and follow its SDK path.
+Return here once Engine setup, workspace-first service discovery, activation,
+and credential requirements are understood. Apply or download only when the
+user requested completion and no production, ownership, credential, or
+permission decision remains unresolved.
 
 `kind: sdk`, managed by `fused-cli sdk ...`, declares a typed SDK package
 generated from a bucket's already-configured services.
