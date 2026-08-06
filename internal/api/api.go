@@ -246,20 +246,7 @@ type engineAPIError struct {
 func formatHTTPErrorBody(status int, respBody []byte) string {
 	var payload apiErrorPayload
 	if err := json.Unmarshal(respBody, &payload); err == nil {
-		var structured engineAPIError
-		if len(payload.Error) > 0 && json.Unmarshal(payload.Error, &structured) == nil && structured.Code != "" && structured.Message != "" {
-			return formatEngineAPIError(structured)
-		}
-
-		var errorCode string
-		_ = json.Unmarshal(payload.Error, &errorCode)
-		if status == http.StatusUnauthorized && errorCode == "authentication_required" {
-			return "authentication required; provide a valid Fused credential"
-		}
-		if status == http.StatusForbidden && errorCode == "permission_denied" {
-			return formatPermissionDenied(payload.Missing)
-		}
-		if message := artifactOwnerHTTPError(errorCode); message != "" {
+		if message := parsedHTTPError(status, payload); message != "" {
 			return message
 		}
 	}
@@ -267,6 +254,23 @@ func formatHTTPErrorBody(status int, respBody []byte) string {
 	// include the operation and status, so a status-based message stays useful
 	// without copying remote text into returned errors or telemetry.
 	return genericHTTPError(status)
+}
+
+func parsedHTTPError(status int, payload apiErrorPayload) string {
+	var structured engineAPIError
+	if len(payload.Error) > 0 && json.Unmarshal(payload.Error, &structured) == nil && structured.Code != "" && structured.Message != "" {
+		return formatEngineAPIError(structured)
+	}
+
+	var errorCode string
+	_ = json.Unmarshal(payload.Error, &errorCode)
+	if status == http.StatusUnauthorized && errorCode == "authentication_required" {
+		return "authentication required; provide a valid Fused credential"
+	}
+	if status == http.StatusForbidden && errorCode == "permission_denied" {
+		return formatPermissionDenied(payload.Missing)
+	}
+	return appOwnerHTTPError(errorCode)
 }
 
 func formatEngineAPIError(engineError engineAPIError) string {
@@ -283,15 +287,15 @@ func formatEngineAPIError(engineError engineAPIError) string {
 	return message
 }
 
-func artifactOwnerHTTPError(code string) string {
+func appOwnerHTTPError(code string) string {
 	switch code {
-	case "artifact owner is immutable":
-		return "artifact_owner_immutable: this artifact already has an owner; omit --owner-team or use its existing team slug"
-	case "artifact owner is unavailable":
-		return "artifact_owner_unavailable: ask a workspace administrator for help"
+	case "app owner is immutable":
+		return "app_owner_immutable: this app already has an owner; omit --owner-team or use its existing team slug"
+	case "app owner is unavailable":
+		return "app_owner_unavailable: ask a workspace administrator for help"
 	case "owner team was not found or is archived":
 		return "owner_team_unavailable: choose an active team slug"
-	case "artifact owner authorization denied":
+	case "app owner authorization denied":
 		return "owner_team_access_denied: you or the owning team no longer have the required access"
 	default:
 		return ""
@@ -378,7 +382,7 @@ func (requirement PermissionRequirement) productResource() string {
 	switch resourceType {
 	case "workspace":
 		return "this workspace"
-	case "service", "bucket", "artifact":
+	case "service", "bucket", "app":
 		return "the selected " + resourceType
 	default:
 		return "the requested resource"
@@ -386,24 +390,24 @@ func (requirement PermissionRequirement) productResource() string {
 }
 
 var productPermissionActions = map[string]string{
-	"workspace.read":         "view",
-	"workspace.update":       "change",
-	"service.read":           "view",
-	"service.consume":        "use",
-	"service.manage":         "manage",
-	"bucket.read":            "view",
-	"bucket.values.read":     "view",
-	"bucket.use":             "use",
-	"bucket.manage":          "manage",
-	"artifact.read":          "view",
-	"artifact.create":        "create an SDK, MCP server, or webhook in",
-	"artifact.manage":        "manage",
-	"artifact.tokens.manage": "manage",
-	"connection.read":        "view connections in",
-	"connection.manage":      "manage connections in",
-	"access.read":            "view access activity for",
-	"audit.read":             "view access activity for",
-	"access.manage":          "manage team access for",
+	"workspace.read":     "view",
+	"workspace.update":   "change",
+	"service.read":       "view",
+	"service.consume":    "use",
+	"service.manage":     "manage",
+	"bucket.read":        "view",
+	"bucket.values.read": "view",
+	"bucket.use":         "use",
+	"bucket.manage":      "manage",
+	"app.read":           "view",
+	"app.create":         "create an SDK, MCP server, or webhook in",
+	"app.manage":         "manage",
+	"app.tokens.manage":  "manage",
+	"connection.read":    "view connections in",
+	"connection.manage":  "manage connections in",
+	"access.read":        "view access activity for",
+	"audit.read":         "view access activity for",
+	"access.manage":      "manage team access for",
 }
 
 func permissionAction(permission string) string {
@@ -508,6 +512,7 @@ type ServiceVisibility struct {
 	// execution_policy.public back into workspace.yaml.
 	RateLimit   *ServiceRateLimit   `json:"rate_limit"`
 	RetryConfig *ServiceRetryConfig `json:"retry_config"`
+	TimeoutMs   *int                `json:"timeout_ms"`
 	Pagination  *ServicePagination  `json:"pagination"`
 	// BaseURLOverride is nil unless this service's execution_policy has
 	// published a base_url override -- distinct from the general "base_url"
@@ -783,10 +788,10 @@ func (c *Client) RediscoverConnectionResources(connectionID string) ([]Connectio
 
 // StartConnectSession calls the Engine's bucket-scoped connect route so CLI
 // onboarding and scope reduction use the same policy as generated SDKs.
-func (c *Client) StartConnectSession(bucketID, serviceID, endUserRef, createdByArtifactID string, resourceInput map[string]string, scopes []string) (*ConnectSessionStartResponse, error) {
+func (c *Client) StartConnectSession(bucketID, serviceID, endUserRef, createdByAppID string, resourceInput map[string]string, scopes []string) (*ConnectSessionStartResponse, error) {
 	query := `
-		mutation StartConnectSession($bucketId: String!, $serviceId: String!, $endUserRef: String!, $createdByArtifactId: String, $resourceInput: EngineJSON, $scopes: [String!]) {
-			startConnectSession(bucket_id: $bucketId, service_id: $serviceId, end_user_ref: $endUserRef, created_by_artifact_id: $createdByArtifactId, resource_input: $resourceInput, scopes: $scopes) {
+		mutation StartConnectSession($bucketId: String!, $serviceId: String!, $endUserRef: String!, $createdByAppId: String, $resourceInput: EngineJSON, $scopes: [String!]) {
+			startConnectSession(bucket_id: $bucketId, service_id: $serviceId, end_user_ref: $endUserRef, created_by_app_id: $createdByAppId, resource_input: $resourceInput, scopes: $scopes) {
 				authorize_url
 				expires_at
 			}
@@ -797,8 +802,8 @@ func (c *Client) StartConnectSession(bucketID, serviceID, endUserRef, createdByA
 		"serviceId":  serviceID,
 		"endUserRef": endUserRef,
 	}
-	if strings.TrimSpace(createdByArtifactID) != "" {
-		vars["createdByArtifactId"] = createdByArtifactID
+	if strings.TrimSpace(createdByAppID) != "" {
+		vars["createdByAppId"] = createdByAppID
 	}
 	if len(resourceInput) > 0 {
 		vars["resourceInput"] = resourceInput
@@ -834,6 +839,7 @@ func (c *Client) ServiceVisibilities(serviceIDs []string) (map[string]ServiceVis
 				is_public
 				rate_limit { strategy requests_per_second requests_per_minute }
 				retry_config { strategy max_retries backoff_ms }
+				timeout_ms
 				pagination { type request_param response_path }
 				event_extraction_path
 				incoming_webhook_config { auth_type auth_location auth_key_name signature_header verification_headers }
@@ -866,6 +872,7 @@ type ServiceVersion struct {
 	IsPublic    bool                `json:"is_public"`
 	RateLimit   *ServiceRateLimit   `json:"rate_limit"`
 	RetryConfig *ServiceRetryConfig `json:"retry_config"`
+	TimeoutMs   *int                `json:"timeout_ms"`
 	Pagination  *ServicePagination  `json:"pagination"`
 	// BaseURLOverride mirrors ServiceVisibility.BaseURLOverride, scoped to
 	// this version.
@@ -995,6 +1002,7 @@ func (c *Client) ServiceVersions(serviceSlug string) ([]ServiceVersion, error) {
 				is_public
 				rate_limit { strategy requests_per_second requests_per_minute }
 				retry_config { strategy max_retries backoff_ms }
+				timeout_ms
 				pagination { type request_param response_path }
 				event_extraction_path
 				incoming_webhook_config { auth_type auth_location auth_key_name signature_header verification_headers }
@@ -1161,59 +1169,6 @@ func (c *Client) ParseSDKIntent(q string) (*IntentPayload, error) {
 	return &resp.ParseSDKIntent, nil
 }
 
-type SDKSelection struct {
-	ServiceID   string   `json:"service_id"`
-	EndpointIDs []string `json:"endpoint_ids"`
-}
-
-type GenerateSDKRequest struct {
-	Name           string         `json:"name"`
-	Description    string         `json:"description"`
-	Version        string         `json:"version"`
-	TargetType     string         `json:"target_type"`
-	TargetLanguage string         `json:"target_language,omitempty"`
-	Selections     []SDKSelection `json:"selections"`
-	SkipSandbox    bool           `json:"skip_sandbox"`
-	UpgradeFrom    string         `json:"upgrade_from,omitempty"`
-}
-
-type GenerateSDKResponse struct {
-	JobID string `json:"job_id"`
-}
-
-func (c *Client) GenerateSDK(reqBody GenerateSDKRequest) (*GenerateSDKResponse, error) {
-	body, err := json.Marshal(reqBody)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("POST", c.BaseURL+"/sdks/generate", bytes.NewBuffer(body))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if c.APIKey != "" {
-		req.Header.Set("x-api-key", c.APIKey)
-	}
-
-	resp, err := c.doRequest(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("failed to generate SDK (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(resp.StatusCode, respBody))
-	}
-
-	var out GenerateSDKResponse
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, err
-	}
-	return &out, nil
-}
-
 type SDKEvent struct {
 	Type          string `json:"type"`
 	Message       string `json:"message"`
@@ -1289,161 +1244,10 @@ func emitSDKEvent(line []byte, eventChan chan<- SDKEvent) {
 	}
 }
 
-type SDKDetails struct {
-	SandboxURL string `json:"sandbox_url"`
-}
+const SDKDefinitionSchemaVersion = 1
 
-type GetSDKResponse struct {
-	SDK SDKDetails `json:"sdk"`
-}
-
-func (c *Client) GetSDK(artifactID string) (*SDKDetails, error) {
-	query := `
-		query GetSDK($id: String!) {
-			sdk(id: $id) {
-				sandbox_url
-			}
-		}
-	`
-	var resp GetSDKResponse
-	err := c.GraphQL(query, map[string]interface{}{"id": artifactID}, &resp)
-	if err != nil {
-		return nil, err
-	}
-	return &resp.SDK, nil
-}
-
-type SDKBasicDetails struct {
-	ID         string `json:"id"`
-	Name       string `json:"name"`
-	Version    string `json:"version"`
-	SandboxURL string `json:"sandbox_url"`
-}
-
-type GetSDKByNameResponse struct {
-	SDK SDKBasicDetails `json:"sdkByName"`
-}
-
-func (c *Client) GetSDKByName(name string, version string) (*SDKBasicDetails, error) {
-	query := `
-		query GetSDKByName($name: String!, $version: String) {
-			sdkByName(name: $name, version: $version) {
-				id
-				name
-				version
-				sandbox_url
-			}
-		}
-	`
-	var resp GetSDKByNameResponse
-	err := c.GraphQL(query, map[string]interface{}{"name": name, "version": version}, &resp)
-	if err != nil {
-		return nil, err
-	}
-	return &resp.SDK, nil
-}
-
-type SDKSelectionDetail struct {
-	ServiceID          string            `json:"service_id"`
-	ServiceName        string            `json:"service_name"`
-	ServiceSlug        string            `json:"service_slug"`
-	ServiceProvider    string            `json:"service_provider"`
-	EndpointIDs        []string          `json:"endpoint_ids"`
-	WebhookIDs         []string          `json:"webhook_ids"`
-	SelectAll          bool              `json:"select_all"`
-	WebhookSelectAll   bool              `json:"webhook_select_all"`
-	OperationNames     []string          `json:"operation_names"`
-	WebhookNames       []string          `json:"webhook_names"`
-	AuthType           string            `json:"auth_type"`
-	AuthName           string            `json:"auth_name"`
-	ConnectScopes      []string          `json:"connect_scopes"`
-	Injections         []InjectionConfig `json:"injections"`
-	ServiceVersionID   string            `json:"service_version_id"`
-	ServiceVersionName string            `json:"service_version_name"`
-}
-
-type SDKWithSelections struct {
-	ID                 string               `json:"id"`
-	Version            string               `json:"version"`
-	TargetLanguage     string               `json:"target_language"`
-	DetailedSelections []SDKSelectionDetail `json:"detailed_selections"`
-}
-
-// GetSDKSelectionsByName fetches the most recently generated SDK with the
-// given name, including its full per-service selection detail. Used by
-// `sdk sync` to reconstruct local sdk.yaml service entries. Passing an empty
-// version to sdkByName resolves to the latest generated SDK -- there's no
-// separate "latest" query; this is the documented way to get it.
-func (c *Client) GetSDKSelectionsByName(name string) (*SDKWithSelections, error) {
-	return c.GetSDKSelectionsByNameVersion(name, "")
-}
-
-func (c *Client) GetSDKSelectionsByNameVersion(name string, version string) (*SDKWithSelections, error) {
-	query := `
-		query GetSDKSelectionsByName($name: String!, $version: String) {
-			sdkByName(name: $name, version: $version) {
-				id
-				version
-				target_language
-				detailed_selections {
-					service_id
-					service_name
-					service_slug
-					service_provider
-					endpoint_ids
-					webhook_ids
-					select_all
-					webhook_select_all
-					operation_names
-					webhook_names
-					auth_type
-					auth_name
-					connect_scopes
-					injections { location name value mode }
-					service_version_id
-					service_version_name
-				}
-			}
-		}
-	`
-	var resp struct {
-		SDK SDKWithSelections `json:"sdkByName"`
-	}
-	if err := c.GraphQL(query, map[string]interface{}{"name": name, "version": version}, &resp); err != nil {
-		return nil, err
-	}
-	return &resp.SDK, nil
-}
-
-// GetSDKSelectionResourceNames resolves a service's selection on a generated
-// SDK -- whether select_all or an explicit endpoint/webhook ID list -- into
-// the operation names `sdk sync` writes to sdk.yaml. select_all has no local
-// yaml representation, so it must always be enumerated explicitly.
-func (c *Client) GetSDKSelectionResourceNames(artifactID, serviceID string) ([]string, error) {
-	query := `
-		query GetSDKSelectionResourceNames($artifactId: String!, $serviceId: String!) {
-			sdkSelectionResources(artifactId: $artifactId, serviceId: $serviceId) {
-				name
-			}
-		}
-	`
-	var resp struct {
-		Resources []struct {
-			Name string `json:"name"`
-		} `json:"sdkSelectionResources"`
-	}
-	if err := c.GraphQL(query, map[string]interface{}{"artifactId": artifactID, "serviceId": serviceID}, &resp); err != nil {
-		return nil, err
-	}
-	names := make([]string, 0, len(resp.Resources))
-	for _, r := range resp.Resources {
-		names = append(names, r.Name)
-	}
-	return names, nil
-}
-
-func (c *Client) DownloadSDK(artifactID string) ([]byte, error) {
-	req, err := http.NewRequest("GET", c.BaseURL+"/sdks/"+artifactID+"/download", nil)
+func (c *Client) DownloadSDK(appID string) ([]byte, error) {
+	req, err := http.NewRequest("GET", c.BaseURL+"/sdks/"+appID+"/download", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1541,37 +1345,37 @@ type AppliedWebhookConfig struct {
 	Slug       string `json:"slug"`
 }
 
-type ArtifactPlanIntent struct {
+type DesiredConfigPlanIntent struct {
 	SourceHash    string
 	ConfigKey     string
 	OwnerTeamSlug string
 	Config        json.RawMessage
 }
 
-// PlanSDKConfig sends native SDK desired state through the shared artifact
+// PlanSDKConfig sends native SDK desired state through the shared app
 // plan client while preserving the SDK-specific Engine route.
-func (c *Client) PlanSDKConfig(intent ArtifactPlanIntent) (*SDKConfigPlanResponse, error) {
-	return c.planArtifactConfig("sdk", intent)
+func (c *Client) PlanSDKConfig(intent DesiredConfigPlanIntent) (*SDKConfigPlanResponse, error) {
+	return c.planDesiredConfig("sdk", intent)
 }
 
 // PlanMCPConfig plans an Engine runtime without invoking Registry generation.
-func (c *Client) PlanMCPConfig(intent ArtifactPlanIntent) (*SDKConfigPlanResponse, error) {
-	return c.planArtifactConfig("mcp", intent)
+func (c *Client) PlanMCPConfig(intent DesiredConfigPlanIntent) (*SDKConfigPlanResponse, error) {
+	return c.planDesiredConfig("mcp", intent)
 }
 
-// PlanWebhookConfig plans a kind: webhook artifact through the same shared
+// PlanWebhookConfig plans a kind: webhook config through the same shared
 // route pattern SDK/MCP use ("/webhook-config/plan"). The response has no
 // notifications field (only workspace/SDK/MCP applies can affect other
-// artifacts) -- SDKConfigPlanResponse.Notifications just decodes to its zero
+// apps) -- SDKConfigPlanResponse.Notifications just decodes to its zero
 // value, same as reusing this helper already does for any response shape
 // that omits a field the shared struct declares.
-func (c *Client) PlanWebhookConfig(intent ArtifactPlanIntent) (*SDKConfigPlanResponse, error) {
-	return c.planArtifactConfig("webhook", intent)
+func (c *Client) PlanWebhookConfig(intent DesiredConfigPlanIntent) (*SDKConfigPlanResponse, error) {
+	return c.planDesiredConfig("webhook", intent)
 }
 
-// planArtifactConfig keeps SDK and MCP command behavior identical while the
+// planDesiredConfig keeps SDK and MCP command behavior identical while the
 // Engine routes each kind to its distinct executor.
-func (c *Client) planArtifactConfig(kind string, intent ArtifactPlanIntent) (*SDKConfigPlanResponse, error) {
+func (c *Client) planDesiredConfig(kind string, intent DesiredConfigPlanIntent) (*SDKConfigPlanResponse, error) {
 	reqBody := map[string]interface{}{
 		"source_hash": intent.SourceHash,
 		"config_key":  intent.ConfigKey,
@@ -1653,17 +1457,19 @@ func (c *Client) PlanWorkspaceConfig(sourceHash, configKey string, config json.R
 }
 
 type SDKConfigApplyResponse struct {
-	Status     string `json:"status"`
-	PlanID     string `json:"plan_id"`
-	ArtifactID string `json:"artifact_id"`
-	JobID      string `json:"job_id"`
+	Status      string `json:"status"`
+	PlanID      string `json:"plan_id"`
+	AppFamilyID string `json:"app_family_id"`
+	AppID       string `json:"app_id"`
+	JobID       string `json:"job_id"`
 }
 
 type MCPConfigApplyResponse struct {
 	Status         string `json:"status"`
 	PlanID         string `json:"plan_id"`
 	ConfigKey      string `json:"config_key"`
-	MCPID          string `json:"artifact_id"`
+	AppFamilyID    string `json:"app_family_id"`
+	AppID          string `json:"app_id"`
 	MCPURL         string `json:"mcp_url"`
 	ExecutionToken string `json:"execution_token"`
 }
@@ -1754,7 +1560,7 @@ func (c *Client) ApplyMCPConfig(planID, sourceHash string) (*MCPConfigApplyRespo
 	return &out, nil
 }
 
-// ApplyWebhookConfig reconciles a kind: webhook artifact's registrations.
+// ApplyWebhookConfig reconciles a kind: webhook config's registrations.
 // Unlike SDK/MCP there is no generated package or token -- the response is
 // just the set of (service, slug) rows the Engine just wrote.
 func (c *Client) ApplyWebhookConfig(planID, sourceHash string) (*WebhookConfigApplyResponse, error) {
@@ -2025,31 +1831,8 @@ func (c *Client) ApplySpecImport(planID, sourceHash string) (*SpecImportApplyRes
 	return &out, nil
 }
 
-func (c *Client) DownloadGeneratedSDK(configKey string) ([]byte, error) {
-	req, err := http.NewRequest("GET", c.BaseURL+"/sdk-config/"+configKey+"/download", nil)
-	if err != nil {
-		return nil, err
-	}
-	if c.APIKey != "" {
-		req.Header.Set("x-api-key", c.APIKey)
-	}
-
-	resp, err := c.doRequest(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("download generated SDK failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(resp.StatusCode, respBody))
-	}
-
-	return io.ReadAll(resp.Body)
-}
-
-func (c *Client) DeactivateSDK(artifactID string) error {
-	req, err := http.NewRequest(http.MethodPost, c.BaseURL+"/sdk-config/"+artifactID+"/deactivate", nil)
+func (c *Client) DeactivateApp(appID string) error {
+	req, err := http.NewRequest(http.MethodDelete, c.BaseURL+"/apps/"+appID+"/", nil)
 	if err != nil {
 		return err
 	}

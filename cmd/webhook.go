@@ -8,9 +8,9 @@ import (
 	"github.com/Usefused/cli/internal/configfile"
 )
 
-// webhookCmd remains separate from artifact because kind: webhook
+// webhookCmd remains separate from apps because kind: webhook
 // has no operations/webhooks-selection surface of its own (that lives on
-// whichever kind: sdk/kind: mcp artifact declares webhook_attachment) and no
+// whichever kind: sdk/kind: mcp app declares webhook_attachment) and no
 // generated package or deployed runtime -- it only reconciles rows in
 // fused_workspace_webhooks, so plan/apply/validate is the whole surface. See
 // plans/plan-webhook-kind.md's CLI section.
@@ -18,11 +18,8 @@ var webhookCmd = &cobra.Command{
 	Use:   "webhook",
 	Short: "Manage Fused webhook registration configuration",
 	Long:  `Manage kind: webhook config files (named bundles of webhook ingress registrations spanning one or more services) and plan/apply their changes.`,
-	Args:  cobra.ArbitraryArgs,
-	// Why: Write to OTEL to audit user/agent-triggered mutative execution.
-	RunE: WithTelemetry("cli.webhook", func(cmd *cobra.Command, args []string) error {
-		return cmd.Help()
-	}),
+	Args:  cobra.NoArgs,
+	RunE:  requireSubcommand,
 }
 
 var webhookPlanJSON bool

@@ -20,7 +20,7 @@ name: my-sdk
 version: "1.0.0"
 language: typescript
 bucket: default
-webhook_attachment: my-webhooks             # optional -- names a kind: webhook artifact, see fused-webhook
+webhook_attachment: my-webhooks             # optional -- names a kind: webhook config, see fused-webhook
 services:
   <service-slug>:
     version: "v1"
@@ -37,7 +37,7 @@ services:
 `injections[].value` tags always resolve against *this SDK's own* `bucket:` -- there's no way to name a different bucket here, unlike `kind: webhook`'s `${bucket.<name>.secret.<key>}` (see `fused-webhook`). A value can also merge a tag with surrounding text (e.g. `"Bearer ${bucket.secrets.API_KEY}"`), which a webhook's secret field cannot. Writing a webhook-style named-bucket reference here (e.g. `${bucket.prod.secrets.API_KEY}`) is rejected at dispatch time with an explicit error naming the unsupported reference, rather than one of the three ambient forms above.
 
 `webhooks`/`webhooks_select_all` only make sense once a `kind: webhook`
-artifact exists and is named via top-level `webhook_attachment` -- this
+config exists and is named via top-level `webhook_attachment` -- this
 registers *which events* this SDK receives, not the webhook registration
 itself (that's `fused-webhook`). Setting either without `webhook_attachment`
 is rejected at plan time.
@@ -68,13 +68,18 @@ This list may be behind the CLI's actual flags/subcommands -- run
 fused-cli sdk plan
 fused-cli sdk apply
 fused-cli sdk validate
-fused-cli sdk download [sdk-name[@version]]
-fused-cli sdk sync <sdk-name> [--sync-version]
-fused-cli sdk token <sdk-name[@version]> generate|list|revoke <name>
-fused-cli sdk service <slug> add
-fused-cli sdk service <slug> remove
-fused-cli sdk operation <slug> add|remove
-fused-cli sdk webhook <slug> add|remove
+fused-cli sdk download <sdk-name@version-or-version-id>
+fused-cli sdk sync <sdk-name>
+fused-cli sdk show <sdk-name@version-or-version-id>
+fused-cli sdk services <sdk-name@version-or-version-id>
+fused-cli sdk buckets <sdk-name-or-id>
+fused-cli sdk token generate <sdk-name-or-id> <token-name>
+fused-cli sdk token list <sdk-name-or-id>
+fused-cli sdk token revoke <sdk-name-or-id> <token-name-or-id>
+fused-cli sdk service add <service-slug>
+fused-cli sdk service remove <service-slug>
+fused-cli sdk operation add|remove <service-slug> <operation-id...>
+fused-cli sdk webhook add|remove <service-slug> <webhook-id...>
 ```
 
 `sdk token` manages named, revocable API tokens for calling an already
@@ -85,12 +90,12 @@ once, so capture it immediately.
 
 ## Permissions and team access
 
-A new SDK plan requires `artifact.create`, `service.read`, and `bucket.read`.
-Planning an update requires `artifact.manage` plus the dependency reads. Apply
-requires `artifact.create` for a new SDK or `artifact.manage` for an existing
+A new SDK plan requires `app.create`, `service.read`, and `bucket.read`.
+Planning an update requires `app.manage` plus the dependency reads. Apply
+requires `app.create` for a new SDK or `app.manage` for an existing
 one, together with `service.consume` for every selected service and `bucket.use`
-for the selected bucket. Download requires `artifact.read`; `sdk token`
-generate/list/revoke requires `artifact.tokens.manage`.
+for the selected bucket. Download requires `app.read`; `sdk token`
+generate/list/revoke requires `app.tokens.manage`.
 
 For team ownership, preflight the owner and every dependency before planning:
 
@@ -106,10 +111,10 @@ An authorised administrator can grant only the missing scope:
 ```shell
 fused-cli team access service grant <team> <service> use
 fused-cli team access bucket grant <team> <bucket> use
-fused-cli team access artifact grant <team> <sdk> read|use|manage
+fused-cli team access app grant <team-slug-or-id> <sdk-id> read|use|manage
 ```
 
-Use `workspace access bucket grant` or `workspace access artifact grant` only
+Use `workspace access bucket grant` or `workspace access app grant` only
 when bounded use is intentionally workspace-wide. On denial, stop the blocked
 action, preserve the config and plan, and tell the user the missing permission
 and resource. Never self-grant, switch credentials, broaden scope, or retry
@@ -118,20 +123,25 @@ requests it and the caller is authorised. Read the `fused-cli` skill's
 `reference/access-management.md` for the full matrix.
 
 SDK ownership does not have to match its audience. The owning person or team
-keeps management authority, while `fused-cli workspace access artifact grant
-<sdk-name[@version]>` grants bounded workspace-wide use through the Engine's
-shared RBAC resource. This does not replace
+keeps management authority, while `fused-cli workspace access app grant
+<sdk-id>` grants bounded workspace-wide use across every SDK version. This does
+not replace
 the generated SDK's runtime token or reveal it; token issuance/revocation stays
 with SDK managers. Likewise, a platform-owned bucket shared with
 `workspace access bucket grant <bucket-name>` can be selected by any eligible
 owning team without granting those teams secret management.
 
-`sdk sync` full-mirrors the most recently generated SDK's actual
-service/operation selections back into this file: anything the remote SDK
-no longer selects is removed locally, not just flagged, and the remote's
-values win on any conflict. The top-level `version` field is treated as
-identity, not state, so sync leaves it alone by default -- pass
-`--sync-version` to explicitly bump it to match the generated SDK.
+`sdk sync` full-mirrors the exact Engine app version declared by the local
+SDK config back into that file. Anything the Engine app no longer selects is
+removed locally, not just flagged, and Engine values win on any conflict.
+There is no implicit latest lookup or sync-time version upgrade; change the
+config's `version`, then plan and apply that exact version deliberately.
+
+An SDK definition created before portable selection metadata was versioned
+cannot be synced safely: its auth choice, narrowed connect scopes, or injection
+expressions may have been discarded. The CLI rejects that definition before
+writing the local file. Use the original config to publish a new SDK version,
+then retry `sdk sync`; do not infer missing security policy from endpoint IDs.
 
 Generated SDK calls only ever carry Fused selectors (`endUserRef`,
 `authType`, `resourceId`) -- never a raw provider token, API key, or

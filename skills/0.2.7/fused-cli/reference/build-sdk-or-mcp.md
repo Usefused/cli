@@ -176,17 +176,17 @@ connect scopes, or user connections are unresolved.
 
 ## 6. Author and apply the selected output
 
-For an SDK, create `.fused/sdks/<name>.yaml` using `fused-sdk`, then run:
+For an SDK, create `.fused/sdks/<sdk-name>.yaml` using `fused-sdk`, then run:
 
 ```shell
 fused-cli sdk validate
 fused-cli sdk plan
 fused-cli sdk apply --download
 # Or download an already-generated version:
-fused-cli sdk download <name>@<version>
+fused-cli sdk download <sdk-name>@<version>
 ```
 
-For MCP, create `.fused/mcps/<name>.yaml` using `fused-mcp`, then run:
+For MCP, create `.fused/mcps/<mcp-name>.yaml` using `fused-mcp`, then run:
 
 ```shell
 fused-cli mcp validate
@@ -200,14 +200,14 @@ any approval/owner-team requirements; do not bypass them. After apply, confirm
 the created version is active.
 
 SDK/MCP creation and use have separate permissions from workspace activation.
-A new plan requires `artifact.create`, `service.read`, and `bucket.read`; an
-existing artifact plan requires `artifact.manage` plus the dependency reads.
-Apply requires `artifact.create` for a new resource or `artifact.manage` for an
+A new plan requires `app.create`, `service.read`, and `bucket.read`; an
+existing app plan requires `app.manage` plus the dependency reads.
+Apply requires `app.create` for a new resource or `app.manage` for an
 existing one, together with `service.consume` and `bucket.use` for every
 selected dependency. Use the human-readable denial or `required_permissions`
 in JSON plan output to identify the exact resource. An authorised administrator
 can use `team access service ... use`, `team access bucket ... use`, or `team
-access artifact ... manage` as appropriate. Do not execute those grants
+access app ... manage` as appropriate. Do not execute those grants
 automatically or broaden a team to Admin merely to consume an already-enabled
 service.
 

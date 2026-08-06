@@ -189,7 +189,7 @@ func workspaceServiceSlugColumn(service cliapi.WorkspaceService) string {
 }
 
 var workspaceHasCmd = &cobra.Command{
-	Use:   "has <service_name>",
+	Use:   "has <service-name>",
 	Short: "Check if a service is available in the workspace",
 	Args:  cobra.ExactArgs(1),
 	RunE: WithTelemetry("cli.workspace.has", func(cmd *cobra.Command, args []string) error {
@@ -538,9 +538,13 @@ func runWorkspaceServiceConnect(cmd *cobra.Command, serviceSlug string) error {
 	}
 	sdkID := strings.TrimSpace(workspaceServiceConnectSDKReference)
 	if sdkID != "" {
-		// Engine resolves names and UUIDs so an MCP runtime ID cannot be used in
-		// this SDK-only audit attribution field.
-		sdkID, err = client.ResolveSDKReference(sdkID)
+		if err := validateExactAppReference(sdkID, "workspace service connect --sdk"); err != nil {
+			return err
+		}
+		// Exact version resolution prevents audit attribution from drifting when
+		// another version is published under the same SDK family.
+		sdkName, sdkVersion := parseSDKDownloadName(sdkID)
+		sdkID, err = client.ResolveSDKAppReference(sdkName, sdkVersion)
 		if err != nil {
 			return err
 		}
@@ -820,7 +824,7 @@ func init() {
 
 	workspaceServiceConnectCmd.Flags().StringVar(&workspaceServiceConnectBucket, "bucket", "", "Workspace bucket name or UUID (required)")
 	workspaceServiceConnectCmd.Flags().StringVar(&workspaceServiceConnectUserRef, "user-ref", "", "Stable user reference (required)")
-	workspaceServiceConnectCmd.Flags().StringVar(&workspaceServiceConnectSDKReference, "sdk", "", "Optional SDK name or full UUID for audit attribution")
+	workspaceServiceConnectCmd.Flags().StringVar(&workspaceServiceConnectSDKReference, "sdk", "", "Optional SDK name@version or app UUID for audit attribution")
 	workspaceServiceConnectCmd.Flags().StringSliceVar(&workspaceServiceConnectResourceInput, "resource-input", nil, "Tenant input as key=value; repeat for multiple declared fields")
 	workspaceServiceConnectCmd.Flags().StringArrayVar(&workspaceServiceConnectScopes, "scope", nil, "OAuth/OIDC scope to request; repeat to reduce provider consent")
 

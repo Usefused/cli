@@ -15,17 +15,13 @@ import (
 // sdkSyncResult summarizes what mergeSDKServicesFromRemote did, so the
 // command can report a diff without re-deriving it itself.
 type sdkSyncResult struct {
-	ArtifactVersionFrom string
-	ArtifactVersionTo   string
-	RemoteVersion       string
-	SyncVersion         bool
-	Added               []string
-	Updated             []string
-	Removed             []string
+	Added   []string
+	Updated []string
+	Removed []string
 }
 
 // sdkSyncRemoteService is the fully-resolved remote view of one service's
-// selection on the most recently generated SDK -- select_all vs. explicit
+// selection on one exact SDK app version -- select_all vs. explicit
 // endpoint/webhook IDs already collapsed into concrete operation names, and
 // the pinned version identity already resolved to its human-readable version
 // tag (see fetchSDKSyncData).
@@ -37,32 +33,23 @@ type sdkSyncRemoteService struct {
 	Webhooks          []string
 	SelectAll         bool
 	WebhooksSelectAll bool
-	Auth              *configfile.ArtifactAuth
-	Connect           *configfile.ArtifactConnect
+	Auth              *configfile.AppAuth
+	Connect           *configfile.AppConnect
 	Injections        []configfile.InjectionConfig
 }
 
-var sdkSyncVersion bool
-
 // mergeSDKServicesFromRemote is Task 4's core logic for `sdk sync`
-// (engine_workspace_registration_plan.md): full-mirrors the most recently
-// generated remote SDK's selections into cfg.Services -- every service the
-// remote SDK currently selects is added or updated locally with the
-// Registry's resolved data winning on any conflict, and any local service
-// entry the remote SDK no longer selects is removed, not just flagged. The
-// artifact version is identity-bearing, so sync only changes it when the caller
-// explicitly opts in with --sync-version. Pure and side-effect-free
-// (no file or network I/O) so it's directly testable, mirroring
+// (engine_workspace_registration_plan.md): full-mirrors one exact Engine app
+// version's selections into cfg.Services. Pure and side-effect-free (no file
+// or network I/O) so it is directly testable, mirroring
 // mergeWorkspaceServicesFromRemote's structure (workspace_sync.go).
-func mergeSDKServicesFromRemote(cfg *configfile.SDKConfig, artifactVersion string, remote []sdkSyncRemoteService, syncVersion bool) (sdkSyncResult, error) {
+func mergeSDKServicesFromRemote(cfg *configfile.SDKConfig, appVersion string, remote []sdkSyncRemoteService) (sdkSyncResult, error) {
 	if cfg.Services == nil {
 		cfg.Services = map[string]configfile.SDKService{}
 	}
-	result := newSDKSyncResult(cfg.Version, artifactVersion, syncVersion)
-	if syncVersion {
-		// The top-level version is part of the config identity, so default sync
-		// preserves it and only changes it after an explicit operator choice.
-		cfg.Version = artifactVersion
+	result := sdkSyncResult{}
+	if cfg.Version != appVersion {
+		return result, fmt.Errorf("resolved SDK version %q does not match local config version %q", appVersion, cfg.Version)
 	}
 	remoteByName, err := sdkSyncRemoteByName(remote)
 	if err != nil {
@@ -91,8 +78,8 @@ func mergeSDKServicesFromRemote(cfg *configfile.SDKConfig, artifactVersion strin
 			Webhooks:          sortedStrings(svc.Webhooks),
 			SelectAll:         svc.SelectAll,
 			WebhooksSelectAll: svc.WebhooksSelectAll,
-			Auth:              cloneArtifactAuth(svc.Auth),
-			Connect:           cloneArtifactConnect(svc.Connect),
+			Auth:              cloneAppAuth(svc.Auth),
+			Connect:           cloneAppConnect(svc.Connect),
 			Injections:        append([]configfile.InjectionConfig(nil), svc.Injections...),
 		}
 		existing, existed := cfg.Services[key]
@@ -109,19 +96,6 @@ func mergeSDKServicesFromRemote(cfg *configfile.SDKConfig, artifactVersion strin
 	sort.Strings(result.Updated)
 	sort.Strings(result.Removed)
 	return result, nil
-}
-
-func newSDKSyncResult(localVersion, remoteVersion string, syncVersion bool) sdkSyncResult {
-	result := sdkSyncResult{
-		ArtifactVersionFrom: localVersion,
-		ArtifactVersionTo:   localVersion,
-		RemoteVersion:       remoteVersion,
-		SyncVersion:         syncVersion,
-	}
-	if syncVersion {
-		result.ArtifactVersionTo = remoteVersion
-	}
-	return result
 }
 
 func sdkSyncRemoteByName(remote []sdkSyncRemoteService) (map[string]sdkSyncRemoteService, error) {
@@ -146,16 +120,16 @@ func sdkSyncServiceConfigKey(svc sdkSyncRemoteService) (string, error) {
 }
 
 // sdkServiceEqual compares the fields sync actually touches. Operations is
-// compared as a set, not an ordered list -- Registry selection persistence has
+// compared as a set, not an ordered list -- Engine selection persistence has
 // no ordering guarantee, so a pure reordering must not be reported as a change.
 func sdkServiceEqual(a, b configfile.SDKService) bool {
 	return a.Version == b.Version && sameStringSet(a.Operations, b.Operations) &&
 		sameStringSet(a.Webhooks, b.Webhooks) && a.SelectAll == b.SelectAll &&
-		a.WebhooksSelectAll == b.WebhooksSelectAll && artifactAuthEqual(a.Auth, b.Auth) &&
-		artifactConnectEqual(a.Connect, b.Connect) && artifactInjectionsEqual(a.Injections, b.Injections)
+		a.WebhooksSelectAll == b.WebhooksSelectAll && appAuthEqual(a.Auth, b.Auth) &&
+		appConnectEqual(a.Connect, b.Connect) && appInjectionsEqual(a.Injections, b.Injections)
 }
 
-func artifactInjectionsEqual(a, b []configfile.InjectionConfig) bool {
+func appInjectionsEqual(a, b []configfile.InjectionConfig) bool {
 	if len(a) != len(b) {
 		return false
 	}
@@ -167,14 +141,14 @@ func artifactInjectionsEqual(a, b []configfile.InjectionConfig) bool {
 	return true
 }
 
-func artifactAuthEqual(a, b *configfile.ArtifactAuth) bool {
+func appAuthEqual(a, b *configfile.AppAuth) bool {
 	if a == nil || b == nil {
 		return a == b
 	}
 	return a.Type == b.Type && a.Name == b.Name
 }
 
-func cloneArtifactAuth(auth *configfile.ArtifactAuth) *configfile.ArtifactAuth {
+func cloneAppAuth(auth *configfile.AppAuth) *configfile.AppAuth {
 	if auth == nil {
 		return nil
 	}
@@ -182,14 +156,14 @@ func cloneArtifactAuth(auth *configfile.ArtifactAuth) *configfile.ArtifactAuth {
 	return &copy
 }
 
-func cloneArtifactConnect(connect *configfile.ArtifactConnect) *configfile.ArtifactConnect {
+func cloneAppConnect(connect *configfile.AppConnect) *configfile.AppConnect {
 	if connect == nil {
 		return nil
 	}
-	return &configfile.ArtifactConnect{Scopes: sortedStrings(connect.Scopes)}
+	return &configfile.AppConnect{Scopes: sortedStrings(connect.Scopes)}
 }
 
-func artifactConnectEqual(a, b *configfile.ArtifactConnect) bool {
+func appConnectEqual(a, b *configfile.AppConnect) bool {
 	if a == nil || b == nil {
 		return a == b
 	}
@@ -202,47 +176,61 @@ func sortedStrings(values []string) []string {
 	return out
 }
 
-func resolveServiceVersionName(sel api.SDKSelectionDetail) (string, error) {
-	if strings.TrimSpace(sel.ServiceVersionID) == "" {
-		return "", fmt.Errorf("missing service_version_id")
-	}
-	name := strings.TrimSpace(sel.ServiceVersionName)
-	if name == "" {
-		return "", fmt.Errorf("missing service_version_name for service_version_id %s", sel.ServiceVersionID)
-	}
-	return name, nil
-}
-
-// fetchSDKSyncData is the impure orchestration layer for `sdk sync`: fetches
-// the most recently generated SDK by name and projects its persisted portable
-// metadata. The one GraphQL response carries every service selection, avoiding
-// a resource-name lookup for each service.
-func fetchSDKSyncData(client *api.Client, sdkName string) (artifactVersion, targetLanguage string, remote []sdkSyncRemoteService, err error) {
-	sdk, err := client.GetSDKSelectionsByName(sdkName)
+// fetchSDKSyncData joins two bounded Engine catalogue reads by service ID. The
+// app carries the immutable selection policy while appServices carries the
+// local human-readable service metadata; neither query depends on selection
+// count and Registry archives are not involved.
+func fetchSDKSyncData(client *api.Client, sdkName, sdkVersion string) (appVersion, targetLanguage string, remote []sdkSyncRemoteService, err error) {
+	appID, err := client.ResolveSDKAppReference(sdkName, sdkVersion)
 	if err != nil {
-		return "", "", nil, fmt.Errorf("fetching sdk %q: %w", sdkName, err)
+		return "", "", nil, fmt.Errorf("resolving sdk %q version %q: %w", sdkName, sdkVersion, err)
+	}
+	app, err := client.GetApp(appID)
+	if err != nil {
+		return "", "", nil, fmt.Errorf("fetching sdk %q version %q: %w", sdkName, sdkVersion, err)
+	}
+	services, err := client.ListAppServices(appID)
+	if err != nil {
+		return "", "", nil, fmt.Errorf("fetching services for sdk %q version %q: %w", sdkName, sdkVersion, err)
+	}
+	servicesByID := make(map[string]api.AppServiceSummary, len(services))
+	for _, service := range services {
+		servicesByID[service.ServiceID] = service
 	}
 
-	for _, sel := range sdk.DetailedSelections {
-		versionTag, err := resolveServiceVersionName(sel)
-		if err != nil {
-			return "", "", nil, fmt.Errorf("resolving version for service %s: %w", sel.ServiceName, err)
+	for _, sel := range app.Selections {
+		if err := validateSDKSyncDefinition(sdkName, sel); err != nil {
+			return "", "", nil, err
 		}
-
-		ref := serviceConfigRef(sel.ServiceSlug, sel.ServiceProvider)
+		service, ok := servicesByID[sel.ServiceID]
+		if !ok {
+			return "", "", nil, fmt.Errorf("sdk sync missing service metadata for service %s", sel.ServiceID)
+		}
+		ref := strings.TrimSpace(service.ServiceSlug)
 		if ref == "" {
-			fmt.Fprintf(os.Stderr, "Warning: skipping remote service %q because it is missing a slug\n", sel.ServiceName)
+			fmt.Fprintf(os.Stderr, "Warning: skipping remote service %q because it is missing a slug\n", service.ServiceName)
 			continue
 		}
 		remote = append(remote, sdkSyncRemoteService{
-			Name: sel.ServiceName, Ref: ref, Version: versionTag,
+			Name: service.ServiceName, Ref: ref, Version: service.Version,
 			Operations: sel.OperationNames, Webhooks: sel.WebhookNames,
 			SelectAll: sel.SelectAll, WebhooksSelectAll: sel.WebhookSelectAll,
 			Auth: sdkSyncAuth(sel), Connect: sdkSyncConnect(sel), Injections: sdkSyncInjections(sel.Injections),
 		})
 	}
 
-	return sdk.Version, sdk.TargetLanguage, remote, nil
+	return app.Version, app.TargetLanguage, remote, nil
+}
+
+func validateSDKSyncDefinition(sdkName string, selection api.AppSelection) error {
+	if selection.DefinitionSchemaVersion >= api.SDKDefinitionSchemaVersion {
+		return nil
+	}
+	// An unversioned row may have discarded security policy, so recovering
+	// operation names alone cannot make a trustworthy config. Re-applying the
+	// original declaration is the only migration that preserves auth, consent
+	// ceilings, and injections.
+	return fmt.Errorf("sdk %q requires definition refresh before sync; run `fused-cli sdk plan` and `fused-cli sdk apply` from its original config, then retry sync", sdkName)
 }
 
 func sdkSyncInjections(injections []api.InjectionConfig) []configfile.InjectionConfig {
@@ -253,28 +241,32 @@ func sdkSyncInjections(injections []api.InjectionConfig) []configfile.InjectionC
 	return out
 }
 
-func sdkSyncAuth(selection api.SDKSelectionDetail) *configfile.ArtifactAuth {
+func sdkSyncAuth(selection api.AppSelection) *configfile.AppAuth {
 	if strings.TrimSpace(selection.AuthType) == "" {
 		return nil
 	}
-	return &configfile.ArtifactAuth{Type: selection.AuthType, Name: selection.AuthName}
+	return &configfile.AppAuth{Type: selection.AuthType, Name: selection.AuthName}
 }
 
-func sdkSyncConnect(selection api.SDKSelectionDetail) *configfile.ArtifactConnect {
+func sdkSyncConnect(selection api.AppSelection) *configfile.AppConnect {
 	if len(selection.ConnectScopes) == 0 {
 		return nil
 	}
-	return &configfile.ArtifactConnect{Scopes: sortedStrings(selection.ConnectScopes)}
+	return &configfile.AppConnect{Scopes: sortedStrings(selection.ConnectScopes)}
 }
 
 var sdkSyncCmd = &cobra.Command{
-	Use:   "sync <name>",
-	Short: "Full-mirror the local SDK config from the most recently generated remote SDK",
+	Use:   "sync <sdk-name>",
+	Short: "Full-mirror the local SDK config from its exact Engine app version",
 	Long: `Overwrites the local SDK config's services with the selections on the most
-recently generated remote SDK of the given name: adds or updates every
-selected service (the Registry's resolved version and operations win on any
+recently applied Engine app version declared by the local config: adds or updates every
+selected service (the Engine's resolved version and operations win on any
 conflict) and removes any local service entry the remote SDK no longer
-selects. The local artifact version is preserved unless --sync-version is set.`,
+selects. No implicit latest version is selected.
+
+Definitions created before portable selection metadata was versioned are
+rejected before this command writes the config. Re-apply the original SDK
+declaration to refresh that same app version, then retry sync.`,
 	Args: cobra.ExactArgs(1),
 	RunE: WithTelemetry("cli.sdk.sync", func(cmd *cobra.Command, args []string) error {
 		path, cfg, err := loadSDKConfigForSync(ConfigFile, args[0])
@@ -285,14 +277,14 @@ selects. The local artifact version is preserved unless --sync-version is set.`,
 		if err != nil {
 			return err
 		}
-		artifactVersion, targetLanguage, remote, err := fetchSDKSyncData(client, args[0])
+		appVersion, targetLanguage, remote, err := fetchSDKSyncData(client, args[0], cfg.Version)
 		if err != nil {
 			return err
 		}
 		if strings.TrimSpace(targetLanguage) != "" {
 			cfg.Language = targetLanguage
 		}
-		result, err := mergeSDKServicesFromRemote(cfg, artifactVersion, remote, sdkSyncVersion)
+		result, err := mergeSDKServicesFromRemote(cfg, appVersion, remote)
 		if err != nil {
 			return err
 		}
@@ -305,11 +297,6 @@ selects. The local artifact version is preserved unless --sync-version is set.`,
 }
 
 func printSDKSyncResult(cmd *cobra.Command, result sdkSyncResult) {
-	if result.ArtifactVersionFrom != result.ArtifactVersionTo {
-		fmt.Fprintf(cmd.OutOrStdout(), "~ version: %s -> %s\n", result.ArtifactVersionFrom, result.ArtifactVersionTo)
-	} else if result.RemoteVersion != "" && result.RemoteVersion != result.ArtifactVersionFrom {
-		fmt.Fprintf(cmd.OutOrStdout(), "remote SDK version is %s; local config version remains %s (use --sync-version to update it)\n", result.RemoteVersion, result.ArtifactVersionFrom)
-	}
 	if len(result.Added) == 0 && len(result.Updated) == 0 && len(result.Removed) == 0 {
 		fmt.Fprintln(cmd.OutOrStdout(), "SDK config already in sync.")
 		return
@@ -326,6 +313,5 @@ func printSDKSyncResult(cmd *cobra.Command, result sdkSyncResult) {
 }
 
 func init() {
-	sdkSyncCmd.Flags().BoolVar(&sdkSyncVersion, "sync-version", false, "Update the local SDK artifact version to match the remote SDK")
 	sdkCmd.AddCommand(sdkSyncCmd)
 }

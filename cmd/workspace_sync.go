@@ -530,13 +530,14 @@ func mapExecWebhookConfig(w *api.ServiceIncomingWebhookConfig) *configfile.Webho
 // rate_limit/retry/pagination/webhook_config instead of the service-wide
 // defaults.
 func workspaceVersionExecutionPolicyFromRemote(v api.ServiceVersion) *configfile.ExecutionPolicy {
-	if v.RateLimit == nil && v.RetryConfig == nil && v.Pagination == nil && v.IncomingWebhookConfig == nil && v.BaseURLOverride == nil {
+	if v.RateLimit == nil && v.RetryConfig == nil && v.TimeoutMs == nil && v.Pagination == nil && v.IncomingWebhookConfig == nil && v.BaseURLOverride == nil {
 		return nil
 	}
 	return &configfile.ExecutionPolicy{
 		Public:                boolPtr(true),
 		RateLimit:             mapExecRateLimit(v.RateLimit),
 		Retry:                 mapExecRetry(v.RetryConfig),
+		TimeoutMs:             v.TimeoutMs,
 		Pagination:            mapExecPagination(v.Pagination),
 		BaseURL:               v.BaseURLOverride,
 		EventExtractionPath:   v.EventExtractionPath,
@@ -552,13 +553,14 @@ func workspaceVersionExecutionPolicyFromRemote(v api.ServiceVersion) *configfile
 // Returns nil when the Registry has no policy set for this service, leaving
 // any local execution_policy untouched via workspaceServiceWithLocalState.
 func workspaceExecutionPolicyFromRemote(vis api.ServiceVisibility) *configfile.ExecutionPolicy {
-	if vis.RateLimit == nil && vis.RetryConfig == nil && vis.Pagination == nil && vis.IncomingWebhookConfig == nil && vis.BaseURLOverride == nil {
+	if vis.RateLimit == nil && vis.RetryConfig == nil && vis.TimeoutMs == nil && vis.Pagination == nil && vis.IncomingWebhookConfig == nil && vis.BaseURLOverride == nil {
 		return nil
 	}
 	return &configfile.ExecutionPolicy{
 		Public:                boolPtr(true),
 		RateLimit:             mapExecRateLimit(vis.RateLimit),
 		Retry:                 mapExecRetry(vis.RetryConfig),
+		TimeoutMs:             vis.TimeoutMs,
 		Pagination:            mapExecPagination(vis.Pagination),
 		BaseURL:               vis.BaseURLOverride,
 		EventExtractionPath:   vis.EventExtractionPath,
@@ -636,6 +638,7 @@ var workspaceSyncCmd = &cobra.Command{
 enabled remotely: adds or updates every remote workspace service (the
 Engine's data wins on any conflict) and removes any local service entry
 	that's no longer enabled remotely.`,
+	Args: cobra.NoArgs,
 	RunE: WithTelemetry("cli.workspace.sync", func(cmd *cobra.Command, args []string) error {
 		client, err := getAPIClient()
 		if err != nil {

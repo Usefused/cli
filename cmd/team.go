@@ -12,6 +12,8 @@ import (
 var teamCmd = &cobra.Command{
 	Use:   "team",
 	Short: "Manage workspace teams and their access",
+	Args:  cobra.NoArgs,
+	RunE:  requireSubcommand,
 }
 
 var teamListFlags listFlags
@@ -20,6 +22,7 @@ var teamListIncludeArchived bool
 var teamListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List teams",
+	Args:  cobra.NoArgs,
 	RunE: WithTelemetry("cli.team.list", func(cmd *cobra.Command, _ []string) error {
 		client, err := getAPIClient()
 		if err != nil {
@@ -62,12 +65,13 @@ var teamEligibleOwnerSearch string
 var teamEligibleOwnersCmd = &cobra.Command{
 	Use:   "eligible-owners",
 	Short: "List teams you can choose to own a new SDK, MCP server, or webhook",
+	Args:  cobra.NoArgs,
 	RunE: WithTelemetry("cli.team.eligible_owners", func(cmd *cobra.Command, _ []string) error {
 		client, err := getAPIClient()
 		if err != nil {
 			return err
 		}
-		page, err := client.ListArtifactOwningTeams(teamEligibleOwnerSearch, teamEligibleOwnerFlags.pageOptions())
+		page, err := client.ListAppOwningTeams(teamEligibleOwnerSearch, teamEligibleOwnerFlags.pageOptions())
 		if err != nil {
 			return err
 		}
@@ -75,7 +79,7 @@ var teamEligibleOwnersCmd = &cobra.Command{
 			fmt.Fprintln(cmd.OutOrStdout(), "No eligible owning teams found. Join an active team or ask an access administrator to add you.")
 			return nil
 		}
-		printArtifactOwningTeams(cmd, page.Items)
+		printAppOwningTeams(cmd, page.Items)
 		printPageSummary(cmd.OutOrStdout(), page.Total, teamEligibleOwnerFlags)
 		return nil
 	}),
@@ -84,7 +88,7 @@ var teamEligibleOwnersCmd = &cobra.Command{
 var teamCreateSlug string
 var teamCreateDescription string
 var teamCreateCmd = &cobra.Command{
-	Use:   "create <name>",
+	Use:   "create <team-name>",
 	Short: "Create a team",
 	Args:  cobra.ExactArgs(1),
 	RunE: WithTelemetry("cli.team.create", func(cmd *cobra.Command, args []string) error {
@@ -140,7 +144,7 @@ var teamUpdateCmd = &cobra.Command{
 
 var teamArchiveCmd = &cobra.Command{
 	Use:   "archive <team-slug-or-id>",
-	Short: "Archive a team that has no remaining bindings or owned artifacts",
+	Short: "Archive a team that has no remaining bindings or owned apps",
 	Args:  cobra.ExactArgs(1),
 	RunE: WithTelemetry("cli.team.archive", func(cmd *cobra.Command, args []string) error {
 		client, err := getAPIClient()
@@ -177,7 +181,7 @@ var teamBuildAccessCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		page, err := client.ListArtifactBuildSelectors(args[0], resourceType, teamBuildAccessSearch, teamBuildAccessFlags.pageOptions())
+		page, err := client.ListAppBuildSelectors(args[0], resourceType, teamBuildAccessSearch, teamBuildAccessFlags.pageOptions())
 		if err != nil {
 			return err
 		}
@@ -185,14 +189,14 @@ var teamBuildAccessCmd = &cobra.Command{
 			fmt.Fprintf(cmd.OutOrStdout(), "No %s available to both you and this team.\n", strings.ToLower(resourceType)+"s")
 			return nil
 		}
-		printArtifactBuildSelectors(cmd, page.Items)
+		printAppBuildSelectors(cmd, page.Items)
 		printPageSummary(cmd.OutOrStdout(), page.Total, teamBuildAccessFlags)
 		return nil
 	}),
 }
 
-var teamAccessCmd = &cobra.Command{Use: "access", Short: "Manage a team's workspace and resource access"}
-var teamWorkspaceAccessCmd = &cobra.Command{Use: "workspace", Short: "Manage workspace roles"}
+var teamAccessCmd = commandGroup("access", "Manage a team's workspace and resource access")
+var teamWorkspaceAccessCmd = commandGroup("workspace", "Manage workspace roles")
 var teamWorkspaceSetCmd = &cobra.Command{
 	Use:   "set <team-slug-or-id> <owner|admin|builder|viewer>",
 	Short: "Set a team's workspace role",
@@ -235,15 +239,15 @@ var teamWorkspaceClearCmd = &cobra.Command{
 	}),
 }
 
-var teamServiceAccessCmd = &cobra.Command{Use: "service", Short: "Manage service access"}
+var teamServiceAccessCmd = commandGroup("service", "Manage service access")
 var teamServiceGrantCmd = resourceAccessCommand("grant <team-slug-or-id> <service-slug-or-id> <use|manage>", "Grant service access", "cli.team.access.service.grant", grantTeamServiceAccess)
 var teamServiceRevokeCmd = resourceAccessCommand("revoke <team-slug-or-id> <service-slug-or-id> <use|manage>", "Revoke service access", "cli.team.access.service.revoke", revokeTeamServiceAccess)
-var teamBucketAccessCmd = &cobra.Command{Use: "bucket", Short: "Manage bucket access"}
+var teamBucketAccessCmd = commandGroup("bucket", "Manage bucket access")
 var teamBucketGrantCmd = resourceAccessCommand("grant <team-slug-or-id> <bucket-name-or-id> <use|manage>", "Grant bucket access", "cli.team.access.bucket.grant", grantTeamBucketAccess)
 var teamBucketRevokeCmd = resourceAccessCommand("revoke <team-slug-or-id> <bucket-name-or-id> <use|manage>", "Revoke bucket access", "cli.team.access.bucket.revoke", revokeTeamBucketAccess)
-var teamArtifactAccessCmd = &cobra.Command{Use: "artifact", Short: "Share SDKs and MCP servers with a team"}
-var teamArtifactGrantCmd = artifactAccessCommand("grant <team-slug-or-id> <artifact-name[@version]-or-id> <read|use|manage>", "Grant SDK or MCP server access", "cli.team.access.artifact.grant", grantTeamArtifactAccess)
-var teamArtifactRevokeCmd = artifactAccessCommand("revoke <team-slug-or-id> <artifact-name[@version]-or-id> <read|use|manage>", "Revoke SDK or MCP server access", "cli.team.access.artifact.revoke", revokeTeamArtifactAccess)
+var teamAppAccessCmd = commandGroup("app", "Share SDKs and MCP servers with a team")
+var teamAppGrantCmd = appAccessCommand("grant <team-slug-or-id> <sdk-or-mcp-id> <read|use|manage>", "Grant SDK or MCP server access", "cli.team.access.app.grant", grantTeamAppAccess)
+var teamAppRevokeCmd = appAccessCommand("revoke <team-slug-or-id> <sdk-or-mcp-id> <read|use|manage>", "Revoke SDK or MCP server access", "cli.team.access.app.revoke", revokeTeamAppAccess)
 
 type resourceAccessMutation func(*cliapi.Client, string, string, string) (*cliapi.TeamBindingMutationPayload, error)
 
@@ -251,8 +255,8 @@ func resourceAccessCommand(use, short, spanName string, mutate resourceAccessMut
 	return teamAccessCommand(use, short, spanName, normalizeAccessLevel, mutate)
 }
 
-func artifactAccessCommand(use, short, spanName string, mutate resourceAccessMutation) *cobra.Command {
-	return teamAccessCommand(use, short, spanName, normalizeArtifactAccessLevel, mutate)
+func appAccessCommand(use, short, spanName string, mutate resourceAccessMutation) *cobra.Command {
+	return teamAccessCommand(use, short, spanName, normalizeAppAccessLevel, mutate)
 }
 
 type accessLevelNormalizer func(string) (string, error)
@@ -296,12 +300,12 @@ func revokeTeamBucketAccess(client *cliapi.Client, teamID, resourceID, level str
 	return client.RevokeTeamBucketAccess(teamID, resourceID, level)
 }
 
-func grantTeamArtifactAccess(client *cliapi.Client, teamID, resourceID, level string) (*cliapi.TeamBindingMutationPayload, error) {
-	return client.GrantTeamArtifactAccess(teamID, resourceID, level)
+func grantTeamAppAccess(client *cliapi.Client, teamID, resourceID, level string) (*cliapi.TeamBindingMutationPayload, error) {
+	return client.GrantTeamAppAccess(teamID, resourceID, level)
 }
 
-func revokeTeamArtifactAccess(client *cliapi.Client, teamID, resourceID, level string) (*cliapi.TeamBindingMutationPayload, error) {
-	return client.RevokeTeamArtifactAccess(teamID, resourceID, level)
+func revokeTeamAppAccess(client *cliapi.Client, teamID, resourceID, level string) (*cliapi.TeamBindingMutationPayload, error) {
+	return client.RevokeTeamAppAccess(teamID, resourceID, level)
 }
 
 func teamUpdateInput(cmd *cobra.Command) (cliapi.UpdateTeamInput, error) {
@@ -346,7 +350,7 @@ func normalizeAccessLevel(value string) (string, error) {
 	}
 }
 
-func normalizeArtifactAccessLevel(value string) (string, error) {
+func normalizeAppAccessLevel(value string) (string, error) {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "read":
 		return "READER", nil
@@ -355,7 +359,7 @@ func normalizeArtifactAccessLevel(value string) (string, error) {
 	case "manage":
 		return "MANAGER", nil
 	default:
-		return "", fmt.Errorf("artifact access level must be read, use, or manage")
+		return "", fmt.Errorf("app access level must be read, use, or manage")
 	}
 }
 
@@ -370,7 +374,7 @@ func normalizeSelectorResourceType(value string) (string, error) {
 	}
 }
 
-func printArtifactBuildSelectors(cmd *cobra.Command, selectors []cliapi.ArtifactBuildSelector) {
+func printAppBuildSelectors(cmd *cobra.Command, selectors []cliapi.AppBuildSelector) {
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 8, 2, ' ', 0)
 	fmt.Fprintln(w, "TYPE\tNAME\tRESOURCE_ID")
 	for _, selector := range selectors {
@@ -388,7 +392,7 @@ func printTeams(cmd *cobra.Command, teams []cliapi.Team) {
 	_ = w.Flush()
 }
 
-func printArtifactOwningTeams(cmd *cobra.Command, teams []cliapi.ArtifactOwningTeam) {
+func printAppOwningTeams(cmd *cobra.Command, teams []cliapi.AppOwningTeam) {
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 8, 2, ' ', 0)
 	fmt.Fprintln(w, "NAME\tSLUG\tTEAM_ID")
 	for _, team := range teams {
@@ -431,9 +435,9 @@ func init() {
 	addListFlags(teamBuildAccessCmd, &teamBuildAccessFlags)
 	teamBuildAccessCmd.Flags().StringVar(&teamBuildAccessResource, "resource", "service", "Resource to list: service or bucket")
 	teamBuildAccessCmd.Flags().StringVar(&teamBuildAccessSearch, "search", "", "Search available resource names")
-	teamAccessCmd.AddCommand(teamWorkspaceAccessCmd, teamServiceAccessCmd, teamBucketAccessCmd, teamArtifactAccessCmd)
+	teamAccessCmd.AddCommand(teamWorkspaceAccessCmd, teamServiceAccessCmd, teamBucketAccessCmd, teamAppAccessCmd)
 	teamWorkspaceAccessCmd.AddCommand(teamWorkspaceSetCmd, teamWorkspaceClearCmd)
 	teamServiceAccessCmd.AddCommand(teamServiceGrantCmd, teamServiceRevokeCmd)
 	teamBucketAccessCmd.AddCommand(teamBucketGrantCmd, teamBucketRevokeCmd)
-	teamArtifactAccessCmd.AddCommand(teamArtifactGrantCmd, teamArtifactRevokeCmd)
+	teamAppAccessCmd.AddCommand(teamAppGrantCmd, teamAppRevokeCmd)
 }

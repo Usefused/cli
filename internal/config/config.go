@@ -8,8 +8,9 @@
 //	~/.config/fused/config.json          (macOS/Linux fallback)
 //	%APPDATA%\fused\config.json          (Windows)
 //
-// Resolution order per value: CLI flag > env var > config file > error.
-// This keeps per-run overrides possible while making setup a one-time step.
+// Engine URLs resolve as CLI flag > env var > config file. Credentials resolve
+// as CLI flag > saved config/login > API-key env > license env. This keeps
+// per-run overrides possible while preserving an explicit user login.
 package config
 
 import (
@@ -17,6 +18,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 // Config holds the persisted CLI configuration.
@@ -26,10 +28,21 @@ type Config struct {
 	// Set with: fused-cli config set engine-url http://localhost:8080
 	EngineURL string `json:"engine_url,omitempty"`
 
-	// APIKey is the Fused API key (FUSED_API_KEY).
-	// Set with: fused-cli config set api-key sk-...
+	// APIKey is the saved Engine credential created by login or config set.
+	// Set manually with: fused-cli config set api-key fsk_...
 	APIKey string `json:"api_key,omitempty"`
+
+	// APIKeyExpiresAt is set only for Engine-issued managed CLI credentials.
+	// Static and bootstrap keys intentionally remain valid without this field.
+	APIKeyExpiresAt string `json:"api_key_expires_at,omitempty"`
+
+	// CredentialID and CredentialSource are server-issued login provenance.
+	// They are intentionally not exposed through `config set`.
+	CredentialID     string `json:"credential_id,omitempty"`
+	CredentialSource string `json:"credential_source,omitempty"`
 }
+
+const ManagedCLILoginSource = "managed_cli_login"
 
 // ErrNotConfigured is returned when a required value is absent from all
 // resolution sources (flag, env, config file). Callers should surface the
@@ -38,7 +51,7 @@ var ErrNotConfigured = errors.New("not configured")
 
 // KnownKeys lists all settable config keys in the order shown by `config list`.
 // This is the authoritative source of truth for key validation.
-var KnownKeys = []string{"engine-url", "api-key"}
+var KnownKeys = []string{"engine-url", "api-key", "api-key-expires-at"}
 
 // Path returns the OS-appropriate path to the Fused config file.
 // It honours $XDG_CONFIG_HOME, falling back to ~/.config on Unix.
@@ -116,6 +129,13 @@ func Set(key, value string) error {
 		cfg.EngineURL = value
 	case "api-key":
 		cfg.APIKey = value
+		// A manually supplied key must not inherit managed-login provenance from
+		// the credential it replaces, or logout could revoke the wrong identity.
+		cfg.APIKeyExpiresAt = ""
+		cfg.CredentialID = ""
+		cfg.CredentialSource = ""
+	case "api-key-expires-at":
+		cfg.APIKeyExpiresAt = value
 	default:
 		return unknownKeyError(key)
 	}
@@ -145,6 +165,8 @@ func (c *Config) get(key string) (string, error) {
 		return c.EngineURL, nil
 	case "api-key":
 		return c.APIKey, nil
+	case "api-key-expires-at":
+		return c.APIKeyExpiresAt, nil
 	default:
 		return "", unknownKeyError(key)
 	}
@@ -159,5 +181,38 @@ func unknownKeyError(key string) error {
 type UnknownKeyError struct{ Key string }
 
 func (e *UnknownKeyError) Error() string {
-	return "unknown config key: " + e.Key + "\nValid keys: engine-url, api-key"
+	return "unknown config key: " + e.Key + "\nValid keys: engine-url, api-key, api-key-expires-at"
+}
+
+// SaveLogin writes all login state in one atomic rename so a crash cannot pair
+// a new credential with an old Engine URL or omit its expiry metadata.
+func SaveLogin(engineURL, apiKey, credentialID string, expiresAt time.Time) error {
+	cfg, err := Load()
+	if err != nil {
+		return err
+	}
+	cfg.EngineURL = engineURL
+	cfg.APIKey = apiKey
+	cfg.APIKeyExpiresAt = expiresAt.UTC().Format(time.RFC3339)
+	cfg.CredentialID = credentialID
+	cfg.CredentialSource = ManagedCLILoginSource
+	return Save(cfg)
+}
+
+// ClearCredential removes only the locally saved credential state. The Engine
+// URL remains because signing out should not make the selected Engine unknown.
+func ClearCredential() (bool, error) {
+	cfg, err := Load()
+	if err != nil {
+		return false, err
+	}
+	changed := cfg.APIKey != "" || cfg.APIKeyExpiresAt != ""
+	if !changed {
+		return false, nil
+	}
+	cfg.APIKey = ""
+	cfg.APIKeyExpiresAt = ""
+	cfg.CredentialID = ""
+	cfg.CredentialSource = ""
+	return true, Save(cfg)
 }

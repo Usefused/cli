@@ -15,13 +15,14 @@ import (
 var description string
 
 var sdkName string
-var artifactVersion string
+var appVersion string
 var targetLanguage string
 var autoYes bool
 
 var promptCmd = &cobra.Command{
 	Use:   "prompt",
 	Short: "Use AI to prompt and generate a new SDK config",
+	Args:  cobra.NoArgs,
 	RunE: WithTelemetry("cli.sdk.prompt", func(cmd *cobra.Command, args []string) error {
 		if !autoYes {
 			if err := requireInteractive("pass --yes to accept the generated SDK selection without prompts"); err != nil {
@@ -34,7 +35,7 @@ var promptCmd = &cobra.Command{
 
 func init() {
 	promptCmd.Flags().StringVarP(&sdkName, "name", "n", "", "Name of the generated SDK (e.g., 'stripe-sdk')")
-	promptCmd.Flags().StringVarP(&artifactVersion, "version", "v", "1.0.0", "Version of the generated SDK")
+	promptCmd.Flags().StringVarP(&appVersion, "version", "v", "1.0.0", "Version of the generated SDK")
 	promptCmd.Flags().StringVarP(&targetLanguage, "language", "l", "typescript", "Target language for the SDK (e.g., 'typescript', 'python')")
 	promptCmd.Flags().BoolVarP(&autoYes, "yes", "y", false, "Skip interactive menu and automatically proceed")
 	promptCmd.Flags().StringVarP(&description, "description", "d", "", "Description of the SDK to create (e.g. 'Create a stripe and plunk sdk')")
@@ -231,9 +232,9 @@ func promptSDKConfig(cart map[string]api.Integration, wsServices map[string]api.
 			Kind:       configfile.KindSDK,
 		},
 		Name:     sdkName,
-		Version:  artifactVersion,
+		Version:  appVersion,
 		Language: targetLanguage,
-		Services: make(map[string]configfile.ArtifactService),
+		Services: make(map[string]configfile.AppService),
 	}
 
 	for _, ep := range cart {
@@ -245,7 +246,7 @@ func promptSDKConfig(cart map[string]api.Integration, wsServices map[string]api.
 func addPromptSDKOperation(cfg *configfile.SDKConfig, service api.WorkspaceService, operation string) {
 	serviceCfg, exists := cfg.Services[service.ServiceSlug]
 	if !exists {
-		serviceCfg = configfile.ArtifactService{Version: service.Version, Operations: []string{}}
+		serviceCfg = configfile.AppService{Version: service.Version, Operations: []string{}}
 	}
 	for _, existing := range serviceCfg.Operations {
 		if existing == operation {

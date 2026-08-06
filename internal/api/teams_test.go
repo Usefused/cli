@@ -88,9 +88,9 @@ func TestTeamClientUsesExactMutationContract(t *testing.T) {
 	requireTeamClientNoError(t, err)
 	_, err = client.RevokeTeamBucketAccess("team-1", "bucket-1", "MANAGER")
 	requireTeamClientNoError(t, err)
-	_, err = client.GrantTeamArtifactAccess("team-1", "artifact-1", "READER")
+	_, err = client.GrantTeamAppAccess("team-1", "family-1", "READER")
 	requireTeamClientNoError(t, err)
-	_, err = client.RevokeTeamArtifactAccess("team-1", "artifact-1", "MANAGER")
+	_, err = client.RevokeTeamAppAccess("team-1", "family-1", "MANAGER")
 	requireTeamClientNoError(t, err)
 
 	wants := []struct {
@@ -106,8 +106,8 @@ func TestTeamClientUsesExactMutationContract(t *testing.T) {
 		{"revokeTeamServiceAccess", []string{"$level: TeamAccessLevel!", "service_id: $resourceId", "level: $level"}},
 		{"grantTeamBucketAccess", []string{"$level: TeamAccessLevel!", "bucket_id: $resourceId", "level: $level"}},
 		{"revokeTeamBucketAccess", []string{"$level: TeamAccessLevel!", "bucket_id: $resourceId", "level: $level"}},
-		{"grantTeamArtifactAccess", []string{"$level: TeamArtifactAccessLevel!", "artifact_id: $resourceId", "level: $level"}},
-		{"revokeTeamArtifactAccess", []string{"$level: TeamArtifactAccessLevel!", "artifact_id: $resourceId", "level: $level"}},
+		{"grantTeamAppAccess", []string{"$level: TeamAppAccessLevel!", "app_family_id: $resourceId", "level: $level"}},
+		{"revokeTeamAppAccess", []string{"$level: TeamAppAccessLevel!", "app_family_id: $resourceId", "level: $level"}},
 	}
 	if len(requests) != len(wants) {
 		t.Fatalf("request count = %d, want %d", len(requests), len(wants))
@@ -131,7 +131,7 @@ func mutationField(query string) string {
 	for _, field := range []string{
 		"createTeam", "updateTeam", "archiveTeam", "setTeamWorkspaceRole",
 		"grantTeamServiceAccess", "revokeTeamServiceAccess", "grantTeamBucketAccess", "revokeTeamBucketAccess",
-		"grantTeamArtifactAccess", "revokeTeamArtifactAccess",
+		"grantTeamAppAccess", "revokeTeamAppAccess",
 	} {
 		if strings.Contains(query, field+"(") {
 			return field

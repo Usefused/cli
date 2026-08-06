@@ -23,14 +23,14 @@ func TestWorkspaceAccessCommandsExposeBoundedUseWithoutTeamIdentity(t *testing.T
 		case strings.Contains(request.Query, "grantWorkspaceBucketAccess("):
 			_, _ = w.Write([]byte(`{"data":{"grantWorkspaceBucketAccess":{"share":null,"authorization_revision":8,"changed":true}}}`))
 		default:
-			_, _ = w.Write([]byte(`{"data":{"revokeWorkspaceArtifactAccess":{"share":null,"authorization_revision":9,"changed":true}}}`))
+			_, _ = w.Write([]byte(`{"data":{"revokeWorkspaceAppAccess":{"share":null,"authorization_revision":9,"changed":true}}}`))
 		}
 	}))
 	defer server.Close()
 
 	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"workspace", "access", "list", "--resource", "bucket"})
 	runCommandInDir(t, t.TempDir(), server.URL, []string{"workspace", "access", "bucket", "grant", "company"})
-	runCommandInDir(t, t.TempDir(), server.URL, []string{"workspace", "access", "artifact", "revoke", "support-sdk@1.2.0"})
+	runCommandInDir(t, t.TempDir(), server.URL, []string{"workspace", "access", "app", "revoke", "support-sdk"})
 
 	if !strings.Contains(out, "company") || !strings.Contains(out, "use") {
 		t.Fatalf("workspace access output = %q", out)
@@ -43,16 +43,16 @@ func TestWorkspaceAccessCommandsExposeBoundedUseWithoutTeamIdentity(t *testing.T
 			t.Fatalf("workspace access must not ask callers to act as a team: %#v", request)
 		}
 	}
-	if requests[1].Variables["resourceId"] != "company" || requests[2].Variables["resourceId"] != "support-sdk@1.2.0" {
+	if requests[1].Variables["resourceId"] != "company" || requests[2].Variables["resourceId"] != "support-sdk" {
 		t.Fatalf("human resource references were not forwarded: %#v", requests)
 	}
 }
 
 func TestNormalizeWorkspaceShareResourceRejectsBroadOrLegacyValues(t *testing.T) {
-	if got, err := normalizeWorkspaceShareResource("artifact"); err != nil || got != "ARTIFACT" {
-		t.Fatalf("artifact resource = %q, %v", got, err)
+	if got, err := normalizeWorkspaceShareResource("app"); err != nil || got != "APP" {
+		t.Fatalf("app resource = %q, %v", got, err)
 	}
-	for _, invalid := range []string{"service", "workspace", "buckets"} {
+	for _, invalid := range []string{"service", "workspace", "buckets", "artifact"} {
 		if _, err := normalizeWorkspaceShareResource(invalid); err == nil {
 			t.Fatalf("resource %q unexpectedly accepted", invalid)
 		}

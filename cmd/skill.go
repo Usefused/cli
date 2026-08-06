@@ -139,6 +139,8 @@ Content is fetched from this build's own version folder published on GitHub,
 falling back to the copy embedded in this binary if any file fails to fetch,
 so a skill-only content fix can ship without a new CLI release -- and an
 install is never a mismatched mix of fetched and embedded content.`,
+	Args: cobra.NoArgs,
+	RunE: requireSubcommand,
 }
 
 var skillInstallFor string
@@ -333,17 +335,19 @@ func splitSkillFrontmatter(content string) (description string, body string) {
 var skillListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List every fused-cli skill",
-	Run: func(cmd *cobra.Command, args []string) {
+	Args:  cobra.NoArgs,
+	RunE: WithTelemetry("cli.skill.list", func(cmd *cobra.Command, _ []string) error {
 		w := cmd.OutOrStdout()
 		for _, name := range sortedSkillSpecNames() {
 			spec, _ := skillSpecByName(name)
 			fmt.Fprintf(w, "%-16s %s\n", spec.name, spec.summary)
 		}
-	},
+		return nil
+	}),
 }
 
 var skillPrintCmd = &cobra.Command{
-	Use:   "print [file]",
+	Use:   "print [skill-file]",
 	Short: "Print a fused-cli skill's content to stdout (default: SKILL.md)",
 	Long: fmt.Sprintf(`Print a fused-cli skill's content to stdout.
 
@@ -353,7 +357,7 @@ file's relative path to print that instead. Use --skill to pick which skill
 
 Available skills: %s`, strings.Join(sortedSkillSpecNames(), ", ")),
 	Args: cobra.MaximumNArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
+	RunE: WithTelemetry("cli.skill.print", func(cmd *cobra.Command, args []string) error {
 		spec, ok := skillSpecByName(skillPrintName)
 		if !ok {
 			return fmt.Errorf("unknown --skill %q; available: %s", skillPrintName, strings.Join(sortedSkillSpecNames(), ", "))
@@ -372,11 +376,11 @@ Available skills: %s`, strings.Join(sortedSkillSpecNames(), ", ")),
 		}
 		fmt.Fprint(cmd.OutOrStdout(), content)
 		return nil
-	},
+	}),
 }
 
 var skillInstallCmd = &cobra.Command{
-	Use:   "install --for <agent>",
+	Use:   "install --for <agent-name>",
 	Short: `Write fused-cli skill(s) into a target agent's skills/rules directory (e.g. --for claude)`,
 	Long: `Write fused-cli skill(s) into a target agent's skills/rules directory.
 
@@ -385,6 +389,7 @@ just one. --path (an explicit destination) requires --skill, since it names
 a single location and there's no single sensible place to put every skill.`,
 	// Why: Write to OTEL to audit user/agent-triggered writes into another
 	// tool's config directory, same as other mutating commands.
+	Args: cobra.NoArgs,
 	RunE: WithTelemetry("cli.skill.install", func(cmd *cobra.Command, args []string) error {
 		target, ok := skillTargets()[skillInstallFor]
 		if !ok {
@@ -415,11 +420,13 @@ a single location and there's no single sensible place to put every skill.`,
 				if err := installFlatSkill(cmd, target, spec, files, source); err != nil {
 					return err
 				}
+				recordAppliedChange(cmd.Context(), cmd.CommandPath(), "agent_skill")
 				continue
 			}
 			if err := installDirectorySkill(cmd, target, spec, files, source); err != nil {
 				return err
 			}
+			recordAppliedChange(cmd.Context(), cmd.CommandPath(), "agent_skill")
 		}
 		return nil
 	}),

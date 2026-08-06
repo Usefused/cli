@@ -28,13 +28,13 @@ type WorkspaceConfig struct {
 
 // WorkspaceBucket owns runtime credential material keyed by service. Services
 // declare what is enabled; buckets declare which credentials a selected
-// artifact/runtime should use for those enabled services.
+// app/runtime should use for those enabled services.
 type WorkspaceBucket struct {
 	ServiceConfig map[string]BucketServiceConfig `yaml:"service_config,omitempty" json:"service_config,omitempty"`
 	// Secrets are generic, bucket-scoped named secrets -- not tied to any one
 	// service, unlike ServiceConfig -- resolved at verification/dispatch time
 	// via an explicit bucket.<bucket-name>.secret.<key-name> reference rather
-	// than ambient SDK/artifact context (see
+	// than ambient SDK/app context (see
 	// plans/plan-service-config-restructure.md item 4). Motivated by webhook
 	// signing secrets needing to be shared across multiple SDKs/registrations,
 	// but deliberately general-purpose. Values require $ENV references, same
@@ -115,6 +115,7 @@ type ExecutionPolicy struct {
 	RateLimit   *RateLimitConfig `yaml:"rate_limit,omitempty" json:"rate_limit,omitempty"`
 	Retry       *RetryConfig     `yaml:"retry,omitempty" json:"retry,omitempty"`
 	RetryConfig *RetryConfig     `yaml:"retry_config,omitempty" json:"retry_config,omitempty"`
+	TimeoutMs   *int             `yaml:"timeout_ms,omitempty" json:"timeout_ms,omitempty"`
 	// Pagination moved under execution_policy from the now-deleted
 	// runtime_config.pagination (see plans/plan-service-config-restructure.md
 	// item 1) -- one value per service/version, sharing this same Public flag
@@ -214,26 +215,25 @@ type ConnectMaterial struct {
 	BindingValues map[string]string
 }
 
-// WebhookArtifactConfig is kind: webhook -- a named, team-owned bundle of
+// WebhookConfig is kind: webhook -- a named, team-owned bundle of
 // webhook ingress registrations that can span multiple services, with its
 // own independent plan/apply lifecycle (see plans/plan-webhook-kind.md).
 // Name is the registration identity: the (service, Name) pair is what
 // fused_workspace_webhooks is keyed on now, replacing the old free-form
 // per-service label RuntimeConfig.Webhooks used. Name must be globally
-// unique per (service) across every kind: webhook artifact in the account
-// -- a second artifact trying to claim a (service, Name) pair another
-// artifact already owns is a plan-time conflict, not a silent overwrite.
-type WebhookArtifactConfig struct {
+// unique per (service) across every kind: webhook config in the account.
+// A second config cannot silently claim a registration another config owns.
+type WebhookConfig struct {
 	BaseConfig `yaml:",inline"`
-	Name       string                            `yaml:"name" json:"name"`
-	Services   map[string]WebhookArtifactService `yaml:"services" json:"services"`
+	Name       string                    `yaml:"name" json:"name"`
+	Services   map[string]WebhookService `yaml:"services" json:"services"`
 }
 
-// WebhookArtifactService is one service's registration within a kind:
-// webhook artifact -- just the signing secret reference, since the
-// artifact's own Name (not a per-service label) is the registration's
+// WebhookService is one service's registration within a kind:
+// webhook config -- just the signing secret reference, since the config's
+// own Name (not a per-service label) is the registration's
 // identity now.
-type WebhookArtifactService struct {
+type WebhookService struct {
 	Secret string `yaml:"secret,omitempty" json:"secret,omitempty"`
 }
 
@@ -246,55 +246,55 @@ type WorkspaceDeprecationDirective struct {
 	Reason      string `yaml:"reason,omitempty" json:"reason,omitempty"`
 }
 
-// ArtifactConfig carries the shared, versioned declaration for generated SDKs
+// AppConfig carries the shared, versioned declaration for generated SDKs
 // and Engine-projected MCP servers. Keeping selection shape shared prevents
 // their plan results from drifting while their executors remain distinct.
-type ArtifactConfig struct {
+type AppConfig struct {
 	BaseConfig `yaml:",inline"`
 	Name       string `yaml:"name" json:"name"`
 	Version    string `yaml:"version" json:"version"`
 	Language   string `yaml:"language,omitempty" json:"language,omitempty"`
 	Bucket     string `yaml:"bucket,omitempty" json:"bucket,omitempty"`
-	// WebhookAttachment names one kind: webhook artifact (its own top-level
+	// WebhookAttachment names one kind: webhook config (its own top-level
 	// `name:`) this SDK/MCP wants webhook delivery from. Deliberately a
-	// single scalar, not a list, and hoisted here at the artifact's top
-	// level rather than nested per-service -- one webhook artifact can
-	// itself span multiple services (see WebhookArtifactConfig), so pinning
+	// single scalar, not a list, and hoisted here at the app's top
+	// level rather than nested per-service -- one webhook config can
+	// itself span multiple services (see WebhookConfig), so pinning
 	// the attachment here once covers every service below that the attached
-	// artifact also registers, instead of repeating the same name under
-	// each service. Only one attachment is supported per SDK/MCP artifact
+	// webhook config also registers, instead of repeating the same name under
+	// each service. Only one attachment is supported per SDK/MCP app
 	// until multiple bucket attachments exist (plans/deferred-work.md).
-	// Per-service ArtifactService.Webhooks/WebhooksSelectAll then scope
-	// which events, from this one attached artifact, actually get
+	// Per-service AppService.Webhooks/WebhooksSelectAll then scope
+	// which events, from this one attached webhook config, actually get
 	// delivered/generated for each service.
-	WebhookAttachment string                     `yaml:"webhook_attachment,omitempty" json:"webhook_attachment,omitempty"`
-	Services          map[string]ArtifactService `yaml:"services" json:"services"`
+	WebhookAttachment string                `yaml:"webhook_attachment,omitempty" json:"webhook_attachment,omitempty"`
+	Services          map[string]AppService `yaml:"services" json:"services"`
 }
 
-type SDKConfig = ArtifactConfig
-type MCPConfig = ArtifactConfig
+type SDKConfig = AppConfig
+type MCPConfig = AppConfig
 
-// ArtifactService represents the requested immutable provider version and
-// selected surface shared by SDK and MCP artifact declarations.
+// AppService represents the requested immutable provider version and
+// selected surface shared by SDK and MCP app declarations.
 //
 // Webhooks/WebhooksSelectAll are the delivery/codegen surface for whatever
-// kind: webhook artifact this service's owning ArtifactConfig attaches via
-// WebhookAttachment (see ArtifactConfig.WebhookAttachment's doc comment) --
+// kind: webhook config this service's owning AppConfig attaches via
+// WebhookAttachment (see AppConfig.WebhookAttachment's doc comment) --
 // they select *which events* to receive/generate typed methods for, never
-// which webhook artifact. An empty/omitted Webhooks list means no events at
+// which webhook config. An empty/omitted Webhooks list means no events at
 // all (explicit opt-in), mirroring how Operations requires SelectAll rather
 // than an implicit "all" default; WebhooksSelectAll is the equivalent
 // explicit "give me every event" escape hatch for Webhooks, kept as its own
 // field rather than overloading SelectAll since Operations/Webhooks are
 // independent selections.
-type ArtifactService struct {
+type AppService struct {
 	Version           string            `yaml:"version" json:"version"`
 	Operations        []string          `yaml:"operations" json:"operations"`
 	Webhooks          []string          `yaml:"webhooks,omitempty" json:"webhooks,omitempty"`
 	WebhooksSelectAll bool              `yaml:"webhooks_select_all,omitempty" json:"webhooks_select_all,omitempty"`
 	SelectAll         bool              `yaml:"select_all,omitempty" json:"select_all,omitempty"`
-	Auth              *ArtifactAuth     `yaml:"auth,omitempty" json:"auth,omitempty"`
-	Connect           *ArtifactConnect  `yaml:"connect,omitempty" json:"connect,omitempty"`
+	Auth              *AppAuth          `yaml:"auth,omitempty" json:"auth,omitempty"`
+	Connect           *AppConnect       `yaml:"connect,omitempty" json:"connect,omitempty"`
 	Injections        []InjectionConfig `yaml:"injections,omitempty" json:"injections,omitempty"`
 }
 
@@ -308,20 +308,20 @@ type InjectionConfig struct {
 	Mode     string `yaml:"mode,omitempty" json:"mode,omitempty"`
 }
 
-// ArtifactAuth selects a Registry-declared scheme; credential material stays
-// in the bucket or user connection and is never accepted in artifact config.
-type ArtifactAuth struct {
+// AppAuth selects a Registry-declared scheme; credential material stays
+// in the bucket or user connection and is never accepted in app config.
+type AppAuth struct {
 	Type string `yaml:"type" json:"type"`
 	Name string `yaml:"name,omitempty" json:"name,omitempty"`
 }
 
-// ArtifactConnect narrows OAuth/OIDC consent without carrying tokens or
+// AppConnect narrows OAuth/OIDC consent without carrying tokens or
 // provider application secrets in source control.
-type ArtifactConnect struct {
+type AppConnect struct {
 	Scopes []string `yaml:"scopes,omitempty" json:"scopes,omitempty"`
 }
 
-type SDKService = ArtifactService
+type SDKService = AppService
 
 // ParsedConfig is a container for the parsed configuration.
 type ParsedConfig struct {
@@ -332,7 +332,7 @@ type ParsedConfig struct {
 	Workspace  *WorkspaceConfig
 	SDK        *SDKConfig
 	MCP        *MCPConfig
-	Webhook    *WebhookArtifactConfig
+	Webhook    *WebhookConfig
 }
 
 // Run represents a set of parsed configs loaded for a CLI execution.

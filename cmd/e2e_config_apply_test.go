@@ -100,5 +100,5 @@ func writeE2ESDKApplyResponse(t *testing.T, w http.ResponseWriter, r *http.Reque
 	if body["plan_id"] != "plan-sdk-123" {
 		t.Fatalf("unexpected plan id in apply: %v", body["plan_id"])
 	}
-	_, _ = w.Write([]byte(`{"status":"applied","plan_id":"plan-sdk-123","artifact_id":"sdk-id-123","job_id":"job-sdk-123"}`))
+	_, _ = w.Write([]byte(`{"status":"applied","plan_id":"plan-sdk-123","app_family_id":"family-sdk-123","app_id":"sdk-id-123","job_id":"job-sdk-123"}`))
 }

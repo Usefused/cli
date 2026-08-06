@@ -4,131 +4,97 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Usefused/cli/internal/api"
 	"github.com/spf13/cobra"
 )
 
-var sdkTokenCmd = &cobra.Command{
-	Use:   "token <sdk-name-or-id> [generate|list|revoke] [args...]",
-	Short: "Manage SDK execution tokens",
-	Args:  validateSDKTokenArgs,
-	// Why: Write to OTEL to audit user/agent-triggered mutative execution.
-	RunE: WithTelemetry("cli.sdk.token", func(cmd *cobra.Command, args []string) error {
-		return runSDKTokenAction(cmd, args)
+var sdkTokenCmd = commandGroup("token", "Manage SDK execution tokens")
+
+var sdkTokenGenerateCmd = &cobra.Command{
+	Use:   "generate <sdk-name-or-id> <token-name>",
+	Short: "Generate an execution token shared by all versions of an SDK",
+	Args:  cobra.ExactArgs(2),
+	RunE: WithTelemetry("cli.sdk.token.generate", func(cmd *cobra.Command, args []string) error {
+		return runSDKTokenGenerate(cmd, args[0], args[1])
 	}),
-	ValidArgsFunction: completeSDKTokenArgs,
 }
 
-func validateSDKTokenArgs(cmd *cobra.Command, args []string) error {
-	if len(args) == 0 {
-		return nil
+var sdkTokenListCmd = &cobra.Command{
+	Use:   "list <sdk-name-or-id>",
+	Short: "List execution tokens shared by all versions of an SDK",
+	Args:  cobra.ExactArgs(1),
+	RunE: WithTelemetry("cli.sdk.token.list", func(cmd *cobra.Command, args []string) error {
+		return runSDKTokenList(cmd, args[0])
+	}),
+}
+
+var sdkTokenRevokeCmd = &cobra.Command{
+	Use:   "revoke <sdk-name-or-id> <token-name-or-id>",
+	Short: "Revoke an execution token shared by all versions of an SDK",
+	Args:  cobra.ExactArgs(2),
+	RunE: WithTelemetry("cli.sdk.token.revoke", func(cmd *cobra.Command, args []string) error {
+		return runSDKTokenRevoke(cmd, args[0], args[1])
+	}),
+}
+
+func runSDKTokenGenerate(cmd *cobra.Command, target, name string) error {
+	client, appFamilyID, err := sdkFamilyClient(target)
+	if err != nil {
+		return err
 	}
-	if len(args) < 2 {
-		return fmt.Errorf("sdk token action is required (e.g. generate, list, revoke)")
+	result, err := client.GenerateSDKToken(appFamilyID, name)
+	if err != nil {
+		return err
 	}
-	action := args[1]
-	// Keep argument arity data-driven so adding another token action does not
-	// duplicate branching between validation and execution.
-	expectedArgs, supported := map[string]int{"generate": 1, "list": 0, "revoke": 1}[action]
-	if !supported {
-		return fmt.Errorf("unknown sdk token action %q", action)
+	recordAppliedChange(cmd.Context(), cmd.CommandPath(), "sdk_token")
+	fmt.Fprintf(cmd.OutOrStdout(), "Token generated: %s\n", result.Token)
+	fmt.Fprintln(cmd.OutOrStdout(), "Make sure to copy it now; it won't be shown again.")
+	return nil
+}
+
+func runSDKTokenList(cmd *cobra.Command, target string) error {
+	client, appFamilyID, err := sdkFamilyClient(target)
+	if err != nil {
+		return err
 	}
-	if len(args)-2 != expectedArgs {
-		return fmt.Errorf("%s accepts exactly %d args after action", action, expectedArgs)
+	tokens, err := client.ListSDKTokens(appFamilyID)
+	if err != nil {
+		return err
+	}
+	for _, token := range tokens {
+		fmt.Fprintf(cmd.OutOrStdout(), "ID: %s, Name: %s, Created: %s\n", token.ID, token.Name, token.CreatedAt.Format("2006-01-02 15:04:05"))
 	}
 	return nil
 }
 
-func runSDKTokenAction(cmd *cobra.Command, args []string) error {
-	if len(args) == 0 {
-		return cmd.Help()
-	}
-
-	client, err := getAPIClient()
+func runSDKTokenRevoke(cmd *cobra.Command, target, name string) error {
+	client, appFamilyID, err := sdkFamilyClient(target)
 	if err != nil {
 		return err
 	}
-	// Resolve UUIDs too so token management cannot target an MCP server through
-	// the shared Engine permission repository.
-	sdkID, err := client.ResolveSDKReference(strings.TrimSpace(args[0]))
-	if err != nil {
+	if err := client.RevokeSDKToken(appFamilyID, name); err != nil {
 		return err
 	}
-	action := args[1]
-
-	switch action {
-	case "generate":
-		name := args[2]
-		return runSDKTokenGenerate(cmd, sdkID, name)
-	case "list":
-		return runSDKTokenList(cmd, sdkID)
-	case "revoke":
-		name := args[2]
-		return runSDKTokenRevoke(cmd, sdkID, name)
-	default:
-		return fmt.Errorf("unknown action %s", action)
-	}
-}
-
-func runSDKTokenGenerate(cmd *cobra.Command, artifactID, name string) error {
-	client, err := getAPIClient()
-	if err != nil {
-		return err
-	}
-	res, err := client.GenerateSDKToken(artifactID, name)
-	if err != nil {
-		return err
-	}
-	fmt.Printf("Token generated: %s\n", res.Token)
-	fmt.Printf("Make sure to copy it now, it won't be shown again.\n")
+	recordAppliedChange(cmd.Context(), cmd.CommandPath(), "sdk_token")
+	fmt.Fprintf(cmd.OutOrStdout(), "Token %q revoked successfully.\n", name)
 	return nil
 }
 
-func runSDKTokenList(cmd *cobra.Command, artifactID string) error {
+func sdkFamilyClient(target string) (*api.Client, string, error) {
 	client, err := getAPIClient()
 	if err != nil {
-		return err
+		return nil, "", err
 	}
-	tokens, err := client.ListSDKTokens(artifactID)
+	// Resolve UUIDs through the SDK-kind boundary so an MCP family can never be
+	// targeted by a syntactically valid token command.
+	appFamilyID, err := client.ResolveSDKFamilyReference(strings.TrimSpace(target))
 	if err != nil {
-		return err
+		return nil, "", err
 	}
-	for _, t := range tokens {
-		fmt.Printf("ID: %s, Name: %s, Created: %s\n", t.ID, t.Name, t.CreatedAt.Format("2006-01-02 15:04:05"))
-	}
-	return nil
-}
-
-func runSDKTokenRevoke(cmd *cobra.Command, artifactID, name string) error {
-	client, err := getAPIClient()
-	if err != nil {
-		return err
-	}
-	err = client.RevokeSDKToken(artifactID, name)
-	if err != nil {
-		return err
-	}
-	fmt.Printf("Token '%s' revoked successfully.\n", name)
-	return nil
-}
-
-func completeSDKTokenArgs(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-	if len(args) == 0 {
-		// Provide suggestions for SDK IDs if possible, otherwise no completions
-		return nil, cobra.ShellCompDirectiveNoFileComp
-	}
-	if len(args) == 1 {
-		actions := []string{"generate", "list", "revoke"}
-		var matches []string
-		for _, a := range actions {
-			if strings.HasPrefix(a, toComplete) {
-				matches = append(matches, a)
-			}
-		}
-		return matches, cobra.ShellCompDirectiveNoFileComp
-	}
-	return nil, cobra.ShellCompDirectiveNoFileComp
+	return client, appFamilyID, nil
 }
 
 func init() {
 	sdkCmd.AddCommand(sdkTokenCmd)
+	sdkTokenCmd.AddCommand(sdkTokenGenerateCmd, sdkTokenListCmd, sdkTokenRevokeCmd)
 }

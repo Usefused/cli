@@ -24,7 +24,7 @@ Built-in workspace roles are broad defaults:
 - Owner has every permission.
 - Admin has every operational permission except `account.manage` and
   `billing.manage`.
-- Builder has `workspace.read`, `artifact.create`, `catalogue.read`,
+- Builder has `workspace.read`, `app.create`, `catalogue.read`,
   `account.read`, `billing.read`, and `notification.update`.
 - Viewer has `workspace.read`, `catalogue.read`, `account.read`, and
   `billing.read`.
@@ -36,8 +36,8 @@ Resource roles add narrower access:
 - Bucket `use` includes `bucket.read` and `bucket.use`; `manage` also includes
   `bucket.manage`, `bucket.values.read`, `credentials.metadata.read`,
   `credentials.manage`, `connection.read`, and `connection.manage`.
-- Artifact roles are cumulative: `read`, `use`, then `manage`; `manage` also
-  includes `artifact.tokens.manage`.
+- SDK/MCP roles are cumulative: `read`, `use`, then `manage`; `manage` also
+  includes `app.tokens.manage`.
 
 Workspace service lists and searches are access-filtered. If a service is
 absent, do not claim it is disabled until an authorised caller confirms that;
@@ -56,12 +56,12 @@ most 20 ranked matches and has no next-page flag.
 | Workspace service list/search | `service.read` for each returned service |
 | Workspace service plan | `workspace.read` and `service.manage` for every changed service; `bucket.manage` for bucket changes |
 | Workspace service apply | `workspace.update` plus the plan's `service.manage`/`bucket.manage` requirements; credential material can also require `credentials.manage` |
-| New SDK/MCP/webhook plan | `artifact.create`, `service.read`, and `bucket.read` for selected dependencies |
-| Existing SDK/MCP/webhook plan | `artifact.manage`, `service.read`, and `bucket.read` |
-| SDK/MCP/webhook apply | `artifact.create` for new or `artifact.manage` for existing resources, plus `service.consume` and `bucket.use` for selected/referenced dependencies |
-| SDK download / MCP list | `artifact.read` |
-| SDK/MCP execution-token management | `artifact.tokens.manage` |
-| MCP remove | `artifact.manage` |
+| New SDK/MCP/webhook plan | `app.create`, `service.read`, and `bucket.read` for selected dependencies |
+| Existing SDK/MCP/webhook plan | `app.manage`, `service.read`, and `bucket.read` |
+| SDK/MCP/webhook apply | `app.create` for new or `app.manage` for existing resources, plus `service.consume` and `bucket.use` for selected/referenced dependencies |
+| SDK download / MCP list | `app.read` |
+| SDK/MCP execution-token management | `app.tokens.manage` |
+| MCP remove | `app.manage` |
 | Bucket queries | `bucket.read`; values need `bucket.values.read`; secret metadata needs `credentials.metadata.read`; connections need `connection.read` |
 | Bucket/value/secret mutations | Workspace `bucket.manage` to create; `bucket.manage` for values; `credentials.manage` for secrets |
 | Connect app registration | `credentials.manage` and `service.consume` |
@@ -133,8 +133,8 @@ fused-cli team access service grant platform github use
 fused-cli team access service revoke platform github use
 fused-cli team access bucket grant platform company-credentials manage
 fused-cli team access bucket revoke platform company-credentials manage
-fused-cli team access artifact grant platform support-sdk use
-fused-cli team access artifact revoke platform support-sdk use
+fused-cli team access app grant platform <sdk-or-mcp-id> use
+fused-cli team access app revoke platform <sdk-or-mcp-id> use
 ```
 
 Use only the canonical values exposed by command help:
@@ -156,19 +156,22 @@ servers, and webhook registrations.
 
 ## Share a resource across the workspace
 
-Use this only for a bucket or SDK/MCP permission scope intended for everyone in
-the local workspace. The CLI calls the latter `artifact` because that is the
-Engine's shared RBAC resource type; SDK and MCP lifecycle commands remain
-separate. There is no team ID and no selectable access level: workspace access
-always means bounded `use`, while the owning person or team keeps management of
-configuration, secrets, and tokens.
+Use this only for a bucket, SDK, or MCP server intended for everyone in the
+local workspace. SDK and MCP lifecycle commands remain separate. There is no
+team ID and no selectable access level: workspace access always means bounded
+`use`, while the owning person or team keeps management of configuration,
+secrets, and tokens.
+
+Generic `team/workspace access app` mutations require the `SDK_ID` or `MCP_ID`
+shown by the corresponding list command. This avoids ambiguity when an SDK and
+MCP server share a name.
 
 ```shell
-fused-cli workspace access list [--resource bucket|artifact]
+fused-cli workspace access list [--resource bucket|app]
 fused-cli workspace access bucket grant company-credentials
 fused-cli workspace access bucket revoke company-credentials
-fused-cli workspace access artifact grant support-sdk
-fused-cli workspace access artifact revoke support-sdk
+fused-cli workspace access app grant <sdk-or-mcp-id>
+fused-cli workspace access app revoke <sdk-or-mcp-id>
 ```
 
 A workspace-shared bucket is eligible when any team builds an SDK or deploys an MCP server, so a
@@ -176,8 +179,8 @@ platform team can maintain one company credential container without granting
 every application team `bucket.manage`. A workspace-shared SDK/MCP scope is
 visible and usable workspace-wide, but runtime calls still authenticate with
 the SDK or MCP server's own token; sharing does not print, mint, or distribute
-that token. If an SDK and MCP server share the same `name@version`, use the full
-UUID shown by `sdk list` or `mcp list` for these generic access commands.
+that token. These generic access commands require the stable SDK or MCP ID,
+which also avoids ambiguity when an SDK and MCP server share a display name.
 
 Use `team access ...` instead when only selected teams need the resource or
 when a team needs management rights.
@@ -222,7 +225,7 @@ narrowest matching scope rather than changing the team's workspace role:
 ```shell
 fused-cli team access service grant <team-slug> <service> use
 fused-cli team access bucket grant <team-slug> <bucket> use
-fused-cli team access artifact grant <team-slug> <sdk-or-mcp> read|use|manage
+fused-cli team access app grant <team-slug> <sdk-or-mcp-id> read|use|manage
 ```
 
 ## When permission is denied
@@ -232,7 +235,7 @@ already produced. Tell the user:
 
 1. which action was blocked;
 2. the missing permission named by Fused;
-3. the service, bucket, artifact, workspace, or account resource it applies to;
+3. the service, bucket, app, workspace, or account resource it applies to;
 4. the narrowest relevant team/workspace command an authorised administrator
    could use, when one exists.
 

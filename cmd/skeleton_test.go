@@ -104,13 +104,13 @@ func TestWorkspaceServiceVersionsCmdSkeleton(t *testing.T) {
 }
 
 func TestSdkAddOperationCmdSkeleton(t *testing.T) {
-	RootCmd.SetArgs([]string{"sdk", "operation", "okta", "add", "listLogEvents", "--interactive", "--apply", "--download"})
+	RootCmd.SetArgs([]string{"sdk", "operation", "add", "okta", "listLogEvents", "--interactive", "--apply", "--download"})
 
-	origRunE := sdkOperationCmd.RunE
-	defer func() { sdkOperationCmd.RunE = origRunE }()
+	origRunE := sdkAddOperationCmd.RunE
+	defer func() { sdkAddOperationCmd.RunE = origRunE }()
 
-	sdkOperationCmd.RunE = func(cmd *cobra.Command, args []string) error {
-		if len(args) != 3 || args[0] != "okta" || args[1] != "add" || args[2] != "listLogEvents" {
+	sdkAddOperationCmd.RunE = func(cmd *cobra.Command, args []string) error {
+		if len(args) != 2 || args[0] != "okta" || args[1] != "listLogEvents" {
 			t.Errorf("expected args 'okta listLogEvents', got %v", args)
 		}
 		if !sdkAddOperationInteractive {
@@ -132,24 +132,18 @@ func TestSdkAddOperationCmdSkeleton(t *testing.T) {
 	}
 }
 
-func TestSdkServiceDynamicAddCmdSkeleton(t *testing.T) {
-	RootCmd.SetArgs([]string{"sdk", "service", "okta", "add", "listLogEvents", "--interactive", "--apply", "--download"})
+func TestSDKServiceAddCmdSkeleton(t *testing.T) {
+	RootCmd.SetArgs([]string{"sdk", "service", "add", "okta", "--version", "2026-07-01"})
 
-	origRunE := sdkServiceCmd.RunE
-	defer func() { sdkServiceCmd.RunE = origRunE }()
+	origRunE := sdkAddServiceCmd.RunE
+	defer func() { sdkAddServiceCmd.RunE = origRunE }()
 
-	sdkServiceCmd.RunE = func(cmd *cobra.Command, args []string) error {
-		if len(args) != 3 || args[0] != "okta" || args[1] != "add" || args[2] != "listLogEvents" {
-			t.Errorf("expected args 'okta add listLogEvents', got %v", args)
+	sdkAddServiceCmd.RunE = func(cmd *cobra.Command, args []string) error {
+		if len(args) != 1 || args[0] != "okta" {
+			t.Errorf("expected arg 'okta', got %v", args)
 		}
-		if !sdkServiceActionInteractive {
-			t.Error("expected interactive flag to be true")
-		}
-		if !sdkServiceActionApply {
-			t.Error("expected apply flag to be true")
-		}
-		if !sdkServiceActionDownload {
-			t.Error("expected download flag to be true")
+		if sdkAddServiceVersion != "2026-07-01" {
+			t.Errorf("expected service version flag, got %q", sdkAddServiceVersion)
 		}
 		return nil
 	}
@@ -157,7 +151,7 @@ func TestSdkServiceDynamicAddCmdSkeleton(t *testing.T) {
 	out := new(bytes.Buffer)
 	RootCmd.SetOut(out)
 	if err := RootCmd.Execute(); err != nil {
-		t.Fatalf("unexpected error executing sdk service dynamic add: %v", err)
+		t.Fatalf("unexpected error executing sdk service add: %v", err)
 	}
 }
 

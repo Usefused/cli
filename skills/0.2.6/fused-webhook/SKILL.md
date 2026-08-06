@@ -104,6 +104,6 @@ fused-cli webhook validate
 
 `apply` prints each registration's URL as `<engine-url>/webhook/<slug>-<service>`.
 To look up a service's registrations later without re-running apply, use the
-read-only `fused-cli workspace service <slug> webhooks` command (see
+read-only `fused-cli workspace service webhooks <service-slug>` command (see
 `fused-workspace`) -- its `SIGNATURE` column is `set`/`none` only, never the
 secret value.

@@ -65,11 +65,13 @@ fused-cli sdk apply
 fused-cli sdk validate
 fused-cli sdk download
 fused-cli sdk sync [--sync-version]
-fused-cli sdk token <sdk-id> generate|list|revoke <name>
-fused-cli sdk service <slug> add
-fused-cli sdk service <slug> remove
-fused-cli sdk service <slug> operation add|remove
-fused-cli sdk service <slug> webhook add|remove
+fused-cli sdk token generate <sdk-name-or-id> <token-name>
+fused-cli sdk token list <sdk-name-or-id>
+fused-cli sdk token revoke <sdk-name-or-id> <token-name-or-id>
+fused-cli sdk service add <slug>
+fused-cli sdk service remove <slug>
+fused-cli sdk operation add|remove <service-slug> <operation-id...>
+fused-cli sdk webhook add|remove <service-slug> <webhook-id...>
 ```
 
 `sdk token` manages named, revocable API tokens for calling an already

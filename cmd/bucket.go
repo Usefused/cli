@@ -27,8 +27,8 @@ var bucketSDKsFlags listFlags
 var bucketConnectionsService string
 var bucketConnectionsUser string
 
-var bucketCreateCmd = newBucketCommand("create <name>", "Create a bucket", "cli.bucket.create", runBucketCreate)
-var bucketDeleteCmd = newBucketCommand("delete <name>", "Delete a bucket", "cli.bucket.delete", runBucketDelete)
+var bucketCreateCmd = newBucketCommand("create <bucket-name>", "Create a bucket", "cli.bucket.create", runBucketCreate)
+var bucketDeleteCmd = newBucketCommand("delete <bucket-name>", "Delete a bucket", "cli.bucket.delete", runBucketDelete)
 var bucketShowCmd = newBucketCommand("show <bucket-name-or-id>", "Show a bucket", "cli.bucket.show", runBucketShow)
 var bucketServicesCmd = newBucketCommand("services <bucket-name-or-id>", "List services represented in a bucket", "cli.bucket.services", runBucketServices)
 var bucketSecretsCmd = newBucketCommand("secrets <bucket-name-or-id>", "List secret metadata in a bucket", "cli.bucket.secrets", runBucketSecrets)

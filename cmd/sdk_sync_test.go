@@ -16,7 +16,10 @@ import (
 
 func mustMergeSDKServicesFromRemote(t *testing.T, cfg *configfile.SDKConfig, sdkVersion string, remote []sdkSyncRemoteService) sdkSyncResult {
 	t.Helper()
-	result, err := mergeSDKServicesFromRemote(cfg, sdkVersion, remote, false)
+	if cfg.Version == "" {
+		cfg.Version = sdkVersion
+	}
+	result, err := mergeSDKServicesFromRemote(cfg, sdkVersion, remote)
 	if err != nil {
 		t.Fatalf("mergeSDKServicesFromRemote: %v", err)
 	}
@@ -26,7 +29,7 @@ func mustMergeSDKServicesFromRemote(t *testing.T, cfg *configfile.SDKConfig, sdk
 // TestMergeSDKServicesFromRemote_AddsNewRemoteService is Task 4c's core AC
 // (engine_workspace_registration_plan.md): a service present in the most
 // recently generated remote SDK but absent locally gets added, with the
-// Registry's resolved data (version tag + enumerated operations) as the
+// Engine's resolved data (version tag + enumerated operations) as the
 // source of truth.
 func TestMergeSDKServicesFromRemote_AddsNewRemoteService(t *testing.T) {
 	cfg := &configfile.SDKConfig{Services: map[string]configfile.SDKService{}}
@@ -75,10 +78,10 @@ func TestMergeSDKServicesFromRemote_UsesSlugRefAsConfigKey(t *testing.T) {
 }
 
 func TestMergeSDKServicesFromRemote_RejectsMissingSlugRef(t *testing.T) {
-	cfg := &configfile.SDKConfig{Services: map[string]configfile.SDKService{}}
+	cfg := &configfile.SDKConfig{Version: "1.0.0", Services: map[string]configfile.SDKService{}}
 	remote := []sdkSyncRemoteService{{Name: "GitHub REST API", Version: "1.1.4"}}
 
-	_, err := mergeSDKServicesFromRemote(cfg, "1.0.0", remote, false)
+	_, err := mergeSDKServicesFromRemote(cfg, "1.0.0", remote)
 
 	if err == nil || !strings.Contains(err.Error(), "missing service slug") {
 		t.Fatalf("expected missing slug error, got %v", err)
@@ -109,12 +112,12 @@ func TestMergeSDKServicesFromRemote_RemoteWinsOnConflict(t *testing.T) {
 
 func TestMergeSDKServicesFromRemote_RestoresPortableMetadata(t *testing.T) {
 	cfg := &configfile.SDKConfig{Services: map[string]configfile.SDKService{
-		"jira": {Version: "1.0.0", Auth: &configfile.ArtifactAuth{Type: "bearer"}},
+		"jira": {Version: "1.0.0", Auth: &configfile.AppAuth{Type: "bearer"}},
 	}}
 	remote := []sdkSyncRemoteService{{
 		Name: "Jira", Ref: "jira", Version: "1.0.0", Operations: []string{"listIssues"},
-		Auth:       &configfile.ArtifactAuth{Type: "oauth", Name: "jiraOAuth"},
-		Connect:    &configfile.ArtifactConnect{Scopes: []string{"write:jira-work", "read:jira-work"}},
+		Auth:       &configfile.AppAuth{Type: "oauth", Name: "jiraOAuth"},
+		Connect:    &configfile.AppConnect{Scopes: []string{"write:jira-work", "read:jira-work"}},
 		Injections: []configfile.InjectionConfig{{Location: "header", Name: "X-Tenant", Value: "$connection.tenant", Mode: "replace"}},
 	}}
 
@@ -149,7 +152,7 @@ func TestMergeSDKServicesFromRemote_UnchangedServiceNotReportedAsUpdated(t *test
 }
 
 // TestMergeSDKServicesFromRemote_UnchangedIgnoresOperationOrder confirms
-// Operations is compared as a set because Registry selection persistence gives
+// Operations is compared as a set because Engine selection persistence gives
 // no ordering guarantee.
 func TestMergeSDKServicesFromRemote_UnchangedIgnoresOperationOrder(t *testing.T) {
 	cfg := &configfile.SDKConfig{Services: map[string]configfile.SDKService{
@@ -197,7 +200,7 @@ func TestMergeSDKServicesFromRemote_RemovesLocalEntryNoLongerInRemote(t *testing
 }
 
 // TestMergeSDKServicesFromRemote_EmptyRemoteRemovesEverything covers the
-// edge case of an SDK whose latest generation has no selections left.
+// edge case of an exact SDK app version with no selections left.
 func TestMergeSDKServicesFromRemote_EmptyRemoteRemovesEverything(t *testing.T) {
 	cfg := &configfile.SDKConfig{Services: map[string]configfile.SDKService{
 		"stripe": {Version: "2026-01-01", Operations: []string{"createCharge"}},
@@ -231,32 +234,12 @@ func TestMergeSDKServicesFromRemote_NilServicesMapInitialized(t *testing.T) {
 	}
 }
 
-func TestMergeSDKServicesFromRemote_PreservesArtifactVersionByDefault(t *testing.T) {
+func TestMergeSDKServicesFromRemote_RejectsDifferentAppVersion(t *testing.T) {
 	cfg := &configfile.SDKConfig{Version: "1.1.0", Services: map[string]configfile.SDKService{}}
 
-	result := mustMergeSDKServicesFromRemote(t, cfg, "1.2.0", nil)
-
-	if cfg.Version != "1.1.0" {
-		t.Errorf("expected cfg.Version to stay 1.1.0, got %s", cfg.Version)
-	}
-	if result.RemoteVersion != "1.2.0" || result.ArtifactVersionTo != "1.1.0" {
-		t.Errorf("expected remote version to be reported without changing local version, got %+v", result)
-	}
-}
-
-func TestMergeSDKServicesFromRemote_SyncVersionBumpsArtifactVersion(t *testing.T) {
-	cfg := &configfile.SDKConfig{Version: "1.1.0", Services: map[string]configfile.SDKService{}}
-
-	result, err := mergeSDKServicesFromRemote(cfg, "1.2.0", nil, true)
-	if err != nil {
-		t.Fatalf("mergeSDKServicesFromRemote: %v", err)
-	}
-
-	if cfg.Version != "1.2.0" {
-		t.Errorf("expected cfg.Version to be bumped to 1.2.0, got %s", cfg.Version)
-	}
-	if result.ArtifactVersionFrom != "1.1.0" || result.ArtifactVersionTo != "1.2.0" {
-		t.Errorf("expected artifact version change to be recorded, got %+v", result)
+	_, err := mergeSDKServicesFromRemote(cfg, "1.2.0", nil)
+	if err == nil || !strings.Contains(err.Error(), "does not match local config version") {
+		t.Fatalf("expected exact app version mismatch, got %v", err)
 	}
 }
 
@@ -280,34 +263,13 @@ func TestSDKServiceEqual(t *testing.T) {
 	}
 }
 
-func TestResolveServiceVersionName_ReturnsPersistedName(t *testing.T) {
-	got, err := resolveServiceVersionName(api.SDKSelectionDetail{
-		ServiceVersionID:   "v-1",
-		ServiceVersionName: "2025-01-01",
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+func TestValidateSDKSyncDefinitionRejectsHistoricalSelection(t *testing.T) {
+	err := validateSDKSyncDefinition("security-sdk", api.AppSelection{})
+	if err == nil || !strings.Contains(err.Error(), "requires definition refresh") || !strings.Contains(err.Error(), "sdk plan") {
+		t.Fatalf("expected actionable definition refresh error, got %v", err)
 	}
-	if got != "2025-01-01" {
-		t.Errorf("expected 2025-01-01, got %s", got)
-	}
-}
-
-func TestResolveServiceVersionName_MissingIDReturnsError(t *testing.T) {
-	_, err := resolveServiceVersionName(api.SDKSelectionDetail{
-		ServiceVersionName: "2025-01-01",
-	})
-	if err == nil {
-		t.Fatal("expected an error for a selection without service_version_id")
-	}
-}
-
-func TestResolveServiceVersionName_MissingNameReturnsError(t *testing.T) {
-	_, err := resolveServiceVersionName(api.SDKSelectionDetail{
-		ServiceVersionID: "v-1",
-	})
-	if err == nil {
-		t.Fatal("expected an error for a selection without service_version_name")
+	if err := validateSDKSyncDefinition("security-sdk", api.AppSelection{DefinitionSchemaVersion: api.SDKDefinitionSchemaVersion}); err != nil {
+		t.Fatalf("current definition was rejected: %v", err)
 	}
 }
 
@@ -320,12 +282,19 @@ func TestValidateSDKDownloadArgs_RejectsMalformedVersionSuffix(t *testing.T) {
 	}
 }
 
-func TestResolveSDKDownloadConfigKeys_UsesExplicitName(t *testing.T) {
-	targets, err := resolveSDKDownloadTargets([]string{"security-sdk"}, "")
+func TestResolveSDKDownloadTargets_RejectsFamilyNameWithoutVersion(t *testing.T) {
+	if _, err := resolveSDKDownloadTargets([]string{"security-sdk"}, ""); err == nil {
+		t.Fatal("expected a family name without an exact version to be rejected")
+	}
+}
+
+func TestResolveSDKDownloadTargets_AcceptsExactAppUUID(t *testing.T) {
+	const appID = "b531e354-126b-458f-920a-2d5aa987bbc3"
+	targets, err := resolveSDKDownloadTargets([]string{appID}, "")
 	if err != nil {
 		t.Fatalf("resolveSDKDownloadTargets failed: %v", err)
 	}
-	if len(targets) != 1 || targets[0].Name != "security-sdk" || targets[0].Version != "" {
+	if len(targets) != 1 || targets[0].Name != appID || targets[0].Version != "" {
 		t.Fatalf("unexpected download targets: %+v", targets)
 	}
 }
@@ -375,7 +344,7 @@ services:
 	}
 }
 
-func TestSDKNameDownloadResolvesThroughEngineBeforeRegistryDownload(t *testing.T) {
+func TestSDKNameDownloadResolvesExactEngineAppBeforeDownload(t *testing.T) {
 	dir := t.TempDir()
 	var sawGraphQL, sawDownload bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -388,10 +357,10 @@ func TestSDKNameDownloadResolvesThroughEngineBeforeRegistryDownload(t *testing.T
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Fatalf("decode graphql request: %v", err)
 			}
-			if body.Variables["reference"] != "security-sdk@1.2.0" || body.Variables["kind"] != "sdk" {
+			if body.Variables["reference"] != "security-sdk" || body.Variables["version"] != "1.2.0" || body.Variables["kind"] != "sdk" {
 				t.Fatalf("unexpected SDK reference variables: %+v", body.Variables)
 			}
-			_, _ = w.Write([]byte(`{"data":{"artifactReference":{"id":"sdk-record-123","kind":"artifact"}}}`))
+			_, _ = w.Write([]byte(`{"data":{"appReference":{"id":"sdk-record-123","kind":"app"}}}`))
 		case "/sdks/sdk-record-123/download":
 			sawDownload = true
 			w.Header().Set("Content-Type", "application/zip")
@@ -402,7 +371,7 @@ func TestSDKNameDownloadResolvesThroughEngineBeforeRegistryDownload(t *testing.T
 	}))
 	defer server.Close()
 
-	runCommandInDir(t, dir, server.URL, []string{"sdk", "security-sdk@1.2.0", "download"})
+	runCommandInDir(t, dir, server.URL, []string{"sdk", "download", "security-sdk@1.2.0"})
 
 	if !sawGraphQL || !sawDownload {
 		t.Fatalf("expected graphql and download requests, saw graphql=%v download=%v", sawGraphQL, sawDownload)
@@ -413,9 +382,8 @@ func TestSDKNameDownloadResolvesThroughEngineBeforeRegistryDownload(t *testing.T
 }
 
 func TestSDKSyncCreatesDefaultFusedConfig(t *testing.T) {
-	sdkSyncVersion = false
 	dir := t.TempDir()
-	server := newSDKSyncServer(t, "1.2.0")
+	server := newSDKSyncServer(t, "1.0.0")
 	defer server.Close()
 
 	runCommandInDir(t, dir, server.URL, []string{"sdk", "sync", "security-sdk"})
@@ -430,21 +398,64 @@ func TestSDKSyncCreatesDefaultFusedConfig(t *testing.T) {
 	}
 }
 
-func TestSDKSyncVersionFlagUpdatesArtifactVersion(t *testing.T) {
-	sdkSyncVersion = false
-	t.Cleanup(func() { sdkSyncVersion = false })
+func TestSDKSyncDoesNotOfferImplicitVersionUpgrade(t *testing.T) {
 	dir := t.TempDir()
-	server := newSDKSyncServer(t, "1.2.0")
+	server := newSDKSyncServer(t, "1.0.0")
 	defer server.Close()
 
-	runCommandInDir(t, dir, server.URL, []string{"sdk", "sync", "security-sdk", "--sync-version"})
-
-	data, err := os.ReadFile(filepath.Join(dir, ".fused", "sdks", "security-sdk.yaml"))
-	if err != nil {
-		t.Fatalf("expected default sdk config to be created: %v", err)
+	message := runCommandInDirExpectError(t, dir, server.URL, []string{"sdk", "sync", "security-sdk", "--sync-version"})
+	if !strings.Contains(message, "unknown flag") {
+		t.Fatalf("expected removed implicit upgrade flag to be rejected, got %q", message)
 	}
-	if text := string(data); !strings.Contains(text, "version: 1.2.0") {
-		t.Fatalf("expected --sync-version to update artifact version:\n%s", text)
+}
+
+func TestSDKSyncHistoricalDefinitionDoesNotOverwriteConfig(t *testing.T) {
+	dir := t.TempDir()
+	path := writeSprintConfig(t, dir, "security.yaml", `
+apiVersion: fused/v1
+kind: sdk
+name: security-sdk
+version: "1.0.0"
+language: typescript
+services:
+  github:
+    version: "1.1.4"
+    operations: ["known_operation"]
+`)
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Query string `json:"query"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		switch {
+		case strings.Contains(body.Query, "appReference"):
+			_, _ = w.Write([]byte(`{"data":{"appReference":{"id":"app-1","kind":"app"}}}`))
+		case strings.Contains(body.Query, "query App("):
+			_, _ = w.Write([]byte(`{"data":{"app":{"app_family_id":"family-1","app_id":"app-1","name":"security-sdk","version":"1.0.0","kind":"sdk","status":"active","created_at":"now","target_language":"python","selections":[{"service_id":"svc-github","service_version_id":"sv-1","definition_schema_version":0,"endpoint_ids":[],"operation_names":[],"webhook_ids":[],"webhook_names":[],"select_all":false,"webhook_select_all":false,"connect_scopes":[],"injections":[]}]}}}`))
+		case strings.Contains(body.Query, "appServices"):
+			_, _ = w.Write([]byte(`{"data":{"appServices":[{"service_id":"svc-github","service_slug":"github","service_name":"GitHub","version":"1.1.4","select_all":false,"endpoint_count":0,"webhook_count":0}]}}`))
+		default:
+			t.Fatalf("unexpected query %s", body.Query)
+		}
+	}))
+	defer server.Close()
+
+	message := runCommandInDirExpectError(t, dir, server.URL, []string{"sdk", "sync", "security-sdk", "-f", path})
+	if !strings.Contains(message, "requires definition refresh") {
+		t.Fatalf("expected definition refresh guidance, got %q", message)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(before, after) {
+		t.Fatalf("historical sync modified the existing config:\nbefore:\n%s\nafter:\n%s", before, after)
 	}
 }
 
@@ -457,7 +468,7 @@ func newSDKSyncServer(t *testing.T, sdkVersion string) *httptest.Server {
 
 func handleSDKSyncGraphQL(t *testing.T, w http.ResponseWriter, r *http.Request, sdkVersion string) {
 	t.Helper()
-	if r.URL.Path != "/graphql" {
+	if r.URL.Path != "/engine/graphql" {
 		t.Fatalf("unexpected path %s", r.URL.Path)
 	}
 	var body struct {
@@ -467,8 +478,12 @@ func handleSDKSyncGraphQL(t *testing.T, w http.ResponseWriter, r *http.Request, 
 		t.Fatalf("decode graphql request: %v", err)
 	}
 	switch {
-	case strings.Contains(body.Query, "sdkByName"):
-		_, _ = w.Write([]byte(`{"data":{"sdkByName":{"id":"sdk-record-123","version":"` + sdkVersion + `","target_language":"python","detailed_selections":[{"service_id":"svc-github","service_name":"GitHub REST API","service_slug":"github-rest-api","service_provider":null,"endpoint_ids":["ep-1"],"operation_names":["repos_list_for_authenticated_user"],"webhook_ids":[],"select_all":false,"auth_type":"oauth","auth_name":"githubOAuth","connect_scopes":["repo"],"injections":[{"location":"header","name":"X-Tenant","value":"$connection.tenant","mode":"replace"}],"service_version_id":"sv-1","service_version_name":"1.1.4"}]}}}`))
+	case strings.Contains(body.Query, "appReference"):
+		_, _ = w.Write([]byte(`{"data":{"appReference":{"id":"app-1","kind":"app"}}}`))
+	case strings.Contains(body.Query, "query App("):
+		_, _ = w.Write([]byte(`{"data":{"app":{"app_family_id":"family-1","app_id":"app-1","name":"security-sdk","version":"` + sdkVersion + `","kind":"sdk","status":"active","created_at":"now","target_language":"python","selections":[{"service_id":"svc-github","service_version_id":"sv-1","definition_schema_version":1,"endpoint_ids":["ep-1"],"operation_names":["repos_list_for_authenticated_user"],"webhook_ids":[],"webhook_names":[],"select_all":false,"webhook_select_all":false,"auth_type":"oauth","auth_name":"githubOAuth","connect_scopes":["repo"],"injections":[{"location":"header","name":"X-Tenant","value":"$connection.tenant","mode":"replace"}]}]}}}`))
+	case strings.Contains(body.Query, "appServices"):
+		_, _ = w.Write([]byte(`{"data":{"appServices":[{"service_id":"svc-github","service_slug":"github-rest-api","service_name":"GitHub REST API","version":"1.1.4","select_all":false,"endpoint_count":1,"webhook_count":0}]}}`))
 	default:
 		t.Fatalf("unexpected graphql query %s", body.Query)
 	}

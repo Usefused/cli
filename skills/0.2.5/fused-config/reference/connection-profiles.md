@@ -30,19 +30,20 @@ Three related but distinct things, all under a bucket's
   don't have a browser consent step, so they only ever go through `auth`
   above.
 
-  Registered via `fused-cli connect <service-slug> set` only (see
+  Registered via `fused-cli connect set <service-slug>` only (see
   `fused-bucket`) — there is no workspace.yaml field for it. This registers
   the app registration directly against the Engine admin endpoint — no
   plan/apply, immediate effect, the same "upsert with no separate apply
   step" category as `secret set`/`value set`. It is also *not* the same
   storage as `auth`'s bucket secrets: `auth` credentials and `connect`'s
   client_id/client_secret used to be reachable through the same `fused-cli
-  secret <service-slug> set` command and the same derived key, which meant a
+  secret set <service-slug>` command and the same derived key, which meant a
   static credential and an app registration could silently overwrite each
   other if both were ever configured for the same service+bucket. `connect
   set` writes to its own dedicated storage instead, so that collision cannot
-  happen. It also supports partial updates — e.g. `fused-cli connect jira set
-  'redirect_uri=https://...'` rotates only `redirect_uri` without resupplying
+  happen. It also supports partial updates — for example, pipe
+  `redirect_uri=https://...` to `fused-cli connect set jira --value-stdin` to
+  rotate only `redirect_uri` without resupplying
   `client_id`/`client_secret`, since the admin API never returns decrypted
   values for a caller to resend anyway. A declarative workspace.yaml
   `connect:` block used to exist alongside this command but was removed —
@@ -52,8 +53,8 @@ Three related but distinct things, all under a bucket's
   workspace.yaml is meant to avoid.
 
   Registering the app is separate from any one user connecting: start an
-  actual user session with `fused-cli workspace service <slug> connect
-  --user-ref <ref>` (see `fused-bucket`).
+  actual user session with `fused-cli workspace service connect <service-slug>
+  --user-ref <end-user-reference>` (see `fused-bucket`).
 - `profile` — the fuller `resource_discovery`/`resource_input`/`metadata`/
   `bindings` rule set below, for OAuth/OIDC services where one token can
   reach several sites/shops/portals/accounts.

@@ -22,7 +22,7 @@ func TestWorkspaceAccessClientUsesExactGraphQLContract(t *testing.T) {
 			return
 		}
 		field := "grantWorkspaceBucketAccess"
-		for _, candidate := range []string{"revokeWorkspaceBucketAccess", "grantWorkspaceArtifactAccess", "revokeWorkspaceArtifactAccess"} {
+		for _, candidate := range []string{"revokeWorkspaceBucketAccess", "grantWorkspaceAppAccess", "revokeWorkspaceAppAccess"} {
 			if strings.Contains(request.Query, candidate+"(") {
 				field = candidate
 			}
@@ -38,8 +38,8 @@ func TestWorkspaceAccessClientUsesExactGraphQLContract(t *testing.T) {
 	mutations := []func() error{
 		func() error { _, err := client.GrantWorkspaceBucketAccess("bucket-1"); return err },
 		func() error { _, err := client.RevokeWorkspaceBucketAccess("bucket-1"); return err },
-		func() error { _, err := client.GrantWorkspaceArtifactAccess("artifact-1"); return err },
-		func() error { _, err := client.RevokeWorkspaceArtifactAccess("artifact-1"); return err },
+		func() error { _, err := client.GrantWorkspaceAppAccess("family-1"); return err },
+		func() error { _, err := client.RevokeWorkspaceAppAccess("family-1"); return err },
 	}
 	for _, mutate := range mutations {
 		if err := mutate(); err != nil {
@@ -49,10 +49,13 @@ func TestWorkspaceAccessClientUsesExactGraphQLContract(t *testing.T) {
 	if len(requests) != 5 || requests[0].Variables["resourceType"] != "BUCKET" || requests[0].Variables["limit"] != float64(5) {
 		t.Fatalf("workspace requests = %#v", requests)
 	}
-	for index, expected := range []string{"grantWorkspaceBucketAccess", "revokeWorkspaceBucketAccess", "grantWorkspaceArtifactAccess", "revokeWorkspaceArtifactAccess"} {
+	for index, expected := range []string{"grantWorkspaceBucketAccess", "revokeWorkspaceBucketAccess", "grantWorkspaceAppAccess", "revokeWorkspaceAppAccess"} {
 		request := requests[index+1]
 		if !strings.Contains(request.Query, expected+"(") || request.Variables["resourceId"] == "" {
 			t.Fatalf("request %d = %#v", index+1, request)
+		}
+		if index >= 2 && !strings.Contains(request.Query, "app_family_id: $resourceId") {
+			t.Fatalf("app family request %d = %#v", index+1, request)
 		}
 	}
 }

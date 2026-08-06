@@ -84,7 +84,7 @@ services:
 			}
 			_, _ = w.Write([]byte(`{"plan_id":"plan-mcp","config_key":"mcp:github-agent:1.0.0","source_hash":"` + sourceHash + `","summary":{}}`))
 		case "/mcp-config/apply":
-			_, _ = w.Write([]byte(`{"status":"applied","plan_id":"plan-mcp","config_key":"mcp:github-agent:1.0.0","artifact_id":"runtime-1","mcp_url":"https://engine.example/mcp/runtime-1/sse","execution_token":"shown-once"}`))
+			_, _ = w.Write([]byte(`{"status":"applied","plan_id":"plan-mcp","config_key":"mcp:github-agent:1.0.0","app_family_id":"family-1","app_id":"runtime-1","mcp_url":"https://engine.example/mcp/runtime-1/sse","execution_token":"shown-once"}`))
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
@@ -488,7 +488,7 @@ services:
     version: "2026-07-01"
     operations: ["listLogEvents"]
 `)
-	runCommandInDir(t, dir, "", []string{"sdk", "service", "okta", "add", "getUser", "listGroups", "-f", path})
+	runCommandInDir(t, dir, "", []string{"sdk", "operation", "add", "okta", "getUser", "listGroups", "-f", path})
 	afterAdd, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -497,7 +497,7 @@ services:
 		t.Fatalf("expected getUser and listGroups in YAML:\n%s", string(afterAdd))
 	}
 
-	runCommandInDir(t, dir, "", []string{"sdk", "service", "okta", "remove", "listLogEvents", "getUser", "-f", path})
+	runCommandInDir(t, dir, "", []string{"sdk", "operation", "remove", "okta", "listLogEvents", "getUser", "-f", path})
 	afterRemove, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -523,7 +523,7 @@ services:
     version: "2026-07-01"
     operations: ["listLogEvents"]
 `)
-	runCommandInDir(t, dir, "", []string{"sdk", "service", "github", "add", "-f", path, "--version", "2026-06-15"})
+	runCommandInDir(t, dir, "", []string{"sdk", "service", "add", "github", "-f", path, "--version", "2026-06-15"})
 
 	after, err := os.ReadFile(path)
 	if err != nil {
@@ -533,7 +533,7 @@ services:
 		t.Fatalf("expected github service in YAML:\n%s", string(after))
 	}
 
-	runCommandInDir(t, dir, "", []string{"sdk", "service", "github", "remove", "-f", path})
+	runCommandInDir(t, dir, "", []string{"sdk", "service", "remove", "github", "-f", path})
 	afterRemove, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -543,24 +543,11 @@ services:
 	}
 }
 
-func TestSDKServiceActionCompletionAfterSlug(t *testing.T) {
-	got, directive := completeSDKServiceArgs(sdkServiceCmd, []string{"okta"}, "ad")
-	if directive != cobra.ShellCompDirectiveNoFileComp {
-		t.Fatalf("expected no-file completion directive, got %v", directive)
-	}
-	if len(got) != 1 || got[0] != "add" {
-		t.Fatalf("expected add completion after slug, got %#v", got)
-	}
-}
-
-func TestSDKServiceSlugHelpShowsReadableActions(t *testing.T) {
+func TestSDKServiceHelpShowsExplicitActions(t *testing.T) {
 	dir := t.TempDir()
-	out := runCommandInDirOutput(t, dir, "", []string{"sdk", "service", "okta", "--help"})
-	if !strings.Contains(out, "service <service-slug> [add|remove] [operationId...]") {
-		t.Fatalf("expected readable sdk service use in help, got %q", out)
-	}
+	out := runCommandInDirOutput(t, dir, "", []string{"sdk", "service", "--help"})
 	if !strings.Contains(out, "add") || !strings.Contains(out, "remove") {
-		t.Fatalf("expected sdk service actions in help, got %q", out)
+		t.Fatalf("expected explicit sdk service subcommands in help, got %q", out)
 	}
 }
 
@@ -1030,7 +1017,7 @@ services:
 	sdkInput = strings.NewReader("all\n")
 	t.Cleanup(func() { sdkInput = oldInput })
 
-	runCommandInDir(t, dir, server.URL, []string{"sdk", "service", "", "add", "--interactive", "-f", path})
+	runCommandInDir(t, dir, server.URL, []string{"sdk", "operation", "add", "", "--interactive", "-f", path})
 	if sawVersion != "2026-07-01" {
 		t.Fatalf("expected versioned endpoint search, got %q", sawVersion)
 	}
@@ -1077,7 +1064,7 @@ services:
 	sdkInput = strings.NewReader("2\n1-2\n")
 	t.Cleanup(func() { sdkInput = oldInput })
 
-	runCommandInDir(t, dir, server.URL, []string{"sdk", "service", "", "add", "--interactive", "-f", path})
+	runCommandInDir(t, dir, server.URL, []string{"sdk", "operation", "add", "", "--interactive", "-f", path})
 	after, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)

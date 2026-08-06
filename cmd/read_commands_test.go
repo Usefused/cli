@@ -111,12 +111,12 @@ func TestSDKListUsesEnginePaginationAndFixedKind(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatalf("decode graphql body: %v", err)
 		}
-		if !strings.Contains(body.Query, "artifactSnapshots") {
-			t.Fatalf("expected artifact snapshots query, got %s", body.Query)
+		if !strings.Contains(body.Query, "apps(kind: $kind") {
+			t.Fatalf("expected apps query, got %s", body.Query)
 		}
 		sawVariables = body.Variables
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"data":{"artifactSnapshots":{"total":1,"items":[{"id":"sdk-1","name":"security","version":"1.0.0","kind":"sdk","active":false,"created_at":"2026-07-21T00:00:00Z"}]}}}`))
+		w.Write([]byte(`{"data":{"apps":{"total":1,"items":[{"app_family_id":"family-1","app_id":"sdk-1","name":"security","version":"1.0.0","kind":"sdk","status":"inactive","created_at":"2026-07-21T00:00:00Z","selections":[]}]}}}`))
 	}))
 	defer server.Close()
 
@@ -124,7 +124,8 @@ func TestSDKListUsesEnginePaginationAndFixedKind(t *testing.T) {
 	if sawVariables["limit"] != float64(10) || sawVariables["offset"] != float64(20) || sawVariables["kind"] != "sdk" {
 		t.Fatalf("unexpected variables: %#v", sawVariables)
 	}
-	if !strings.Contains(out, "security") || !strings.Contains(out, "sdk-1") || !strings.Contains(out, "false") {
+	if !strings.Contains(out, "security") || !strings.Contains(out, "sdk-1") || !strings.Contains(out, "family-1") ||
+		!strings.Contains(out, "SDK_ID") || !strings.Contains(out, "VERSION_ID") || !strings.Contains(out, "inactive") {
 		t.Fatalf("unexpected output: %q", out)
 	}
 }
@@ -138,16 +139,54 @@ func TestSDKServicesUsesKindScopedHumanReferenceAtEngineBoundary(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatalf("decode graphql body: %v", err)
 		}
-		if body.Variables["reference"] != "support@2.0.0" || body.Variables["kind"] != "sdk" {
-			t.Fatalf("unexpected SDK reference: %#v", body.Variables)
+		if strings.Contains(body.Query, "appReference") {
+			if body.Variables["reference"] != "support" || body.Variables["version"] != "2.0.0" || body.Variables["kind"] != "sdk" {
+				t.Fatalf("unexpected SDK reference: %#v", body.Variables)
+			}
+			_, _ = w.Write([]byte(`{"data":{"appReference":{"id":"app-1","kind":"app"}}}`))
+			return
 		}
-		_, _ = w.Write([]byte(`{"data":{"artifactServices":[{"service_id":"service-1","service_slug":"github","service_name":"GitHub","version":"v1","select_all":false,"endpoint_count":2,"webhook_count":1}]}}`))
+		if body.Variables["appId"] != "app-1" || !strings.Contains(body.Query, "appServices") {
+			t.Fatalf("unexpected app services request: %#v", body)
+		}
+		_, _ = w.Write([]byte(`{"data":{"appServices":[{"service_id":"service-1","service_slug":"github","service_name":"GitHub","version":"v1","select_all":false,"endpoint_count":2,"webhook_count":1}]}}`))
 	}))
 	defer server.Close()
 
-	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"sdk", "support@2.0.0", "services"})
+	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"sdk", "services", "support@2.0.0"})
 	if !strings.Contains(out, "github") || !strings.Contains(out, "service-1") || !strings.Contains(out, "2") {
 		t.Fatalf("unexpected SDK services output: %q", out)
+	}
+}
+
+func TestSDKShowUsesPublicIDLabels(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Query     string         `json:"query"`
+			Variables map[string]any `json:"variables"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode graphql body: %v", err)
+		}
+		if strings.Contains(body.Query, "appReference") {
+			_, _ = w.Write([]byte(`{"data":{"appReference":{"id":"version-1","kind":"app"}}}`))
+			return
+		}
+		if body.Variables["appId"] != "version-1" {
+			t.Fatalf("unexpected SDK version lookup: %#v", body.Variables)
+		}
+		_, _ = w.Write([]byte(`{"data":{"app":{"app_family_id":"sdk-1","app_id":"version-1","name":"security","version":"1.0.0","kind":"sdk","status":"active","created_at":"now","selections":[]}}}`))
+	}))
+	defer server.Close()
+
+	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"sdk", "show", "security@1.0.0"})
+	for _, expected := range []string{"sdk_id:\tsdk-1", "version_id:\tversion-1"} {
+		if !strings.Contains(out, expected) {
+			t.Fatalf("SDK show output %q is missing %q", out, expected)
+		}
+	}
+	if strings.Contains(out, "family_id") {
+		t.Fatalf("SDK show exposes internal family terminology: %q", out)
 	}
 }
 
@@ -161,24 +200,25 @@ func TestMCPListUsesEnginePaginationAndFixedKind(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatalf("decode graphql body: %v", err)
 		}
-		if !strings.Contains(body.Query, "mcpServers") {
-			t.Fatalf("expected MCP server query, got %s", body.Query)
+		if !strings.Contains(body.Query, "apps(kind: $kind") {
+			t.Fatalf("expected MCP apps query, got %s", body.Query)
 		}
 		sawVariables = body.Variables
-		_, _ = w.Write([]byte(`{"data":{"mcpServers":{"total":1,"items":[{"id":"mcp-1","name":"support","version":"1.0.0","mcp_url":"https://engine.test/mcp/mcp-1","active":true,"created_at":"now"}]}}}`))
+		_, _ = w.Write([]byte(`{"data":{"apps":{"total":1,"items":[{"app_family_id":"family-1","app_id":"mcp-1","name":"support","version":"1.0.0","kind":"mcp","status":"active","created_at":"now","selections":[]}]}}}`))
 	}))
 	defer server.Close()
 
 	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"mcp", "list", "--limit", "5", "--offset", "10"})
-	if _, hasKind := sawVariables["kind"]; hasKind || sawVariables["limit"] != float64(5) || sawVariables["offset"] != float64(10) {
+	if sawVariables["kind"] != "mcp" || sawVariables["limit"] != float64(5) || sawVariables["offset"] != float64(10) {
 		t.Fatalf("unexpected MCP list variables: %#v", sawVariables)
 	}
-	if !strings.Contains(out, "support") || !strings.Contains(out, "mcp-1") || !strings.Contains(out, "https://engine.test/mcp/mcp-1") {
+	if !strings.Contains(out, "support") || !strings.Contains(out, "mcp-1") || !strings.Contains(out, "family-1") ||
+		!strings.Contains(out, "MCP_ID") || !strings.Contains(out, "VERSION_ID") || !strings.Contains(out, "/mcp/mcp-1/sse") {
 		t.Fatalf("unexpected MCP list output: %q", out)
 	}
 }
 
-func TestMCPRemoveResolvesOnlyMCPNames(t *testing.T) {
+func TestMCPDeactivateResolvesOnlyMCPNames(t *testing.T) {
 	var sawResolution, sawDeactivate bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -189,12 +229,15 @@ func TestMCPRemoveResolvesOnlyMCPNames(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Fatalf("decode MCP reference request: %v", err)
 			}
-			if body.Variables["reference"] != "support@1.0.0" || body.Variables["kind"] != "mcp" {
+			if body.Variables["reference"] != "support" || body.Variables["version"] != "1.0.0" || body.Variables["kind"] != "mcp" {
 				t.Fatalf("unexpected MCP reference variables: %#v", body.Variables)
 			}
 			sawResolution = true
-			_, _ = w.Write([]byte(`{"data":{"artifactReference":{"id":"mcp-1","kind":"artifact"}}}`))
-		case "/sdk-config/mcp-1/deactivate":
+			_, _ = w.Write([]byte(`{"data":{"appReference":{"id":"mcp-1","kind":"app"}}}`))
+		case "/apps/mcp-1/":
+			if r.Method != http.MethodDelete {
+				t.Fatalf("unexpected MCP deactivate method: %s", r.Method)
+			}
 			sawDeactivate = true
 			w.WriteHeader(http.StatusNoContent)
 		default:
@@ -203,8 +246,8 @@ func TestMCPRemoveResolvesOnlyMCPNames(t *testing.T) {
 	}))
 	defer server.Close()
 
-	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"mcp", "support@1.0.0", "remove"})
-	if !sawResolution || !sawDeactivate || !strings.Contains(out, "Removed MCP server") {
-		t.Fatalf("MCP remove = resolution:%t deactivate:%t output:%q", sawResolution, sawDeactivate, out)
+	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"mcp", "deactivate", "support@1.0.0"})
+	if !sawResolution || !sawDeactivate || !strings.Contains(out, "Deactivated MCP server") {
+		t.Fatalf("MCP deactivate = resolution:%t deactivate:%t output:%q", sawResolution, sawDeactivate, out)
 	}
 }

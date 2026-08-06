@@ -8,7 +8,7 @@ All commands support the following global flags:
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
-| `--key` | | Engine credential (overrides config, `FUSED_API_KEY`, and `FUSED_LICENSE_KEY`) | `""` |
+| `--key` | | Engine credential (overrides saved login, `FUSED_API_KEY`, and `FUSED_LICENSE_KEY`) | `""` |
 | `--engine-url` | | Fused Engine URL (overrides config & `FUSED_ENGINE_URL`) | `""` |
 | `--file` | `-f` | Path to a Fused config file (disables `.fused/` discovery) | `""` |
 | `--no-input` | | Fail instead of prompting; also enabled by `CI=true` | `false` |
@@ -20,6 +20,17 @@ All Engine requests have a finite timeout and are cancelled when the CLI
 receives SIGINT or SIGTERM. `CI=true` and `FUSED_NO_UPDATE_CHECK=1` disable
 release update checks. A command that would prompt fails with remediation when
 `--no-input` or `CI=true` is active.
+
+## `login`
+
+Open the selected Engine's sign-in page and save a subject-scoped CLI
+credential after browser approval. The page supports managed Fused Auth and an
+existing Engine API key. The generated credential never passes through the
+browser and is not printed.
+
+| Argument | Short | Description | Default |
+|----------|-------|-------------|---------|
+| `--no-browser` | | Print the sign-in URL instead of opening a browser | `false` |
 
 ## `sdk prompt`
 Generate a brand new SDK using Fused intent AI. Automatically discovers and adds missing services to your workspace.
@@ -98,7 +109,7 @@ List secret metadata in a specific bucket. Secret values are never read back.
 ## `secret delete <service-slug> <key-name>`
 Delete a workspace secret. Use `--bucket <bucket-name-or-id>` for an override secret.
 
-## `bucket create <name>`
+## `bucket create <bucket-name>`
 Create a new bucket for storing overrides and secrets.
 
 ## `bucket list`
@@ -146,15 +157,16 @@ List connected users in a bucket. Filters are sent to Engine GraphQL.
 | `--limit` | | Maximum rows to read | `20` |
 | `--offset` | | Rows to skip before reading | `0` |
 
-## `bucket artifacts <bucket-name-or-id>`
-List SDK or MCP scopes linked to a bucket.
+## `bucket sdks <bucket-name-or-id>`
+List SDKs linked to a bucket. Each relationship applies to every version of
+the SDK.
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
 | `--limit` | | Maximum rows to read | `20` |
 | `--offset` | | Rows to skip before reading | `0` |
 
-## `bucket delete <name>`
+## `bucket delete <bucket-name>`
 Delete a workspace bucket.
 
 ## `connect set <service-slug>`
@@ -193,9 +205,11 @@ Delete a non-secret value from a bucket.
 
 ## Teams and access
 
-Commands accept team slugs and user email addresses. Bucket names, workspace
-service slugs, and artifact names are accepted at their respective resource
-boundaries. A full UUID remains available for automation and recovery. List
+Commands accept team slugs and user email addresses. Bucket names and workspace
+service slugs are accepted at their respective resource boundaries. App access
+mutations require the `SDK_ID` or `MCP_ID` displayed by list commands because
+the generic `app` command cannot infer SDK versus MCP from a potentially shared
+name. Kind-specific SDK/MCP commands can resolve names safely. List
 operations are paginated by the Engine; use `--limit` and `--offset` rather
 than fetching an entire workspace into the CLI.
 
@@ -207,13 +221,13 @@ List active teams. Use `--search <text>` to search names and slugs and
 `--include-archived` to include archived teams.
 
 ### `team show <team-slug-or-id>`
-Show a team and its workspace, service, bucket, and artifact bindings.
+Show a team and its workspace, service, bucket, SDK, and MCP bindings.
 
 ### `team eligible-owners`
 List active teams the current caller can select as the owner of a new SDK, MCP
 server, or webhook. Supports `--search`, `--limit`, and `--offset`.
 
-### `team create <name>`
+### `team create <team-name>`
 Create a team. Optional flags are `--slug` and `--description`.
 
 ### `team update <team-slug-or-id>`
@@ -221,7 +235,7 @@ Update a team with one or more of `--name`, `--slug`, or `--description`.
 Pass an empty `--description` value to clear it.
 
 ### `team archive <team-slug-or-id>`
-Archive a team after its bindings and owned artifacts have been removed or
+Archive a team after its bindings and owned apps have been removed or
 transferred.
 
 ### `team member list <team-slug-or-id>`
@@ -247,11 +261,9 @@ Grant or revoke `use` or `manage` access to a service.
 ### `team access bucket grant|revoke <team-slug-or-id> <bucket-name-or-id> <level>`
 Grant or revoke `use` or `manage` access to a bucket.
 
-### `team access artifact grant|revoke <team-slug-or-id> <artifact-name[@version]-or-id> <level>`
-Grant or revoke `read`, `use`, or `manage` on the shared RBAC resource used by
-an SDK or MCP server. `artifact` remains the internal permission-resource name;
-MCP management itself lives under `mcp`. Use `name@version` for an exact version.
-If an SDK and MCP server share that identity, use the displayed full UUID.
+### `team access app grant|revoke <team-slug-or-id> <sdk-or-mcp-id> <level>`
+Grant or revoke `read`, `use`, or `manage` for an SDK or MCP server. The ID is
+shown as `SDK_ID` or `MCP_ID`, and the grant applies to every version.
 
 ### `team build-access <team-slug-or-id>`
 List services or buckets available to both the current caller and the team.
@@ -305,62 +317,65 @@ Apply an SDK generation plan or deploy an MCP server plan.
 | `--receipt` | | Read a specific plan receipt | `""` |
 
 ## `sdk sync`
-Full-mirror a local SDK config from the most recently generated remote SDK with the given name.
+Full-mirror a local SDK config from the exact Engine app version declared in that file. There is no implicit latest lookup or sync-time version upgrade.
 
-Usage: `fused-cli sdk sync <name> -f .fused/sdks/<name>.yaml`
+Usage: `fused-cli sdk sync <sdk-name> -f .fused/sdks/<sdk-name>.yaml`
 
 ## `sdk validate` / `mcp validate`
 Validate only the matching SDK or MCP configuration files. Inherits global flags.
 
 ## `sdk list` / `mcp list`
 List generated SDKs or deployed MCP servers. The kind is fixed by the command.
+`SDK_ID` or `MCP_ID` remains stable across versions; `VERSION_ID` identifies
+one exact immutable version.
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
 | `--limit` | | Maximum rows to read | `20` |
 | `--offset` | | Rows to skip before reading | `0` |
 
-## `sdk <name[@version]> show`
-Show the SDK ID, version, and active state from the Engine.
+## `sdk show <sdk-name@version-or-version-id>`
+Show one exact SDK version from the Engine.
 
-## `sdk <name[@version]> services`
-List services selected by an SDK from its Engine scope.
+## `sdk services <sdk-name@version-or-version-id>`
+List services selected by one exact SDK version.
 
-## `sdk <name[@version]> buckets`
-List credential buckets linked to an SDK scope.
+## `sdk buckets <sdk-name-or-id>`
+List credential buckets shared by all versions of an SDK.
 
-## `sdk <name[@version]> tokens`
-List runtime tokens for an SDK.
+## `sdk token list <sdk-name-or-id>`
+List runtime tokens shared by every active or deprecated version of an SDK.
 
-## `mcp <name[@version]> remove`
-Deactivate an MCP server. Use a plain name for its latest active version or
-`name@version` for an exact version.
+## `mcp deactivate <mcp-name@version-or-version-id>`
+Deactivate exactly one MCP server version. Human-readable references must use
+`name@version`; a version ID can identify the version directly. There is no
+implicit latest version.
 
-## `sdk <sdk-name> download`
-Download generated SDK code from Registry records through the Engine. Pass an
-SDK name for the latest generated version, or use `name@version` for an exact version.
+## `sdk download <sdk-name@version-or-version-id>`
+Download one exact generated SDK version through the Engine. Human-readable
+references must use `name@version`; a version ID can identify the version
+directly. There is no implicit latest version.
 
 ```bash
-fused-cli sdk security-sdk download
-fused-cli sdk security-sdk@1.2.0 download
+fused-cli sdk download security-sdk@1.2.0
 ```
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
 | `--out` | `-o` | Output directory for the SDK | `"."` |
 
-## `sdk service <service-slug> add`
+## `sdk service add <service-slug>`
 Add a service to an SDK configuration.
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
 | `--version` | | Specific version to use for the service | `""` |
 
-## `sdk service <service-slug> remove`
+## `sdk service remove <service-slug>`
 Remove a service from an SDK configuration. Inherits global flags.
 
-## `sdk service <service-slug> add <operationId...>`
-Add one or more operationIds to an existing service in an SDK configuration.
+## `sdk operation add <service-slug> [operation-id...]`
+Add OpenAPI operation IDs to an existing SDK configuration.
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
@@ -368,29 +383,25 @@ Add one or more operationIds to an existing service in an SDK configuration.
 | `--apply` | | Apply changes after adding operation | `false` |
 | `--download` | | Download SDK after apply (implies `--apply`) | `false` |
 
-## `sdk service <service-slug> remove <operationId...>`
-Remove one or more operationIds from an existing service in an SDK configuration. Inherits global flags.
+## `sdk operation remove <service-slug> <operation-id...>`
+Remove OpenAPI operation IDs from an existing SDK configuration. Inherits global flags.
 
-## `sdk operation <service-slug> add [operationId...]`
-Add operationIds to an existing SDK configuration.
+## `sdk token generate <sdk-name-or-id> <token-name>`
+Generate a named execution token that works across every active or deprecated
+version of the SDK.
 
-| Argument | Short | Description | Default |
-|----------|-------|-------------|---------|
-| `--interactive` | `-i` | Interactive operation selection | `false` |
-| `--apply` | | Apply changes after adding operation | `false` |
-| `--download` | | Download SDK after apply (implies `--apply`) | `false` |
-
-## `sdk operation <service-slug> remove <operationId...>`
-Remove operationIds from an existing SDK configuration. Inherits global flags.
-
-## `sdk token <sdk-name-or-id> generate <token-name>`
-Generate an execution token for an SDK.
-
-## `sdk token <sdk-name-or-id> list`
+## `sdk token list <sdk-name-or-id>`
 List active execution tokens for an SDK.
 
-## `sdk token <sdk-name-or-id> revoke <token-name>`
-Revoke an SDK execution token.
+## `sdk token revoke <sdk-name-or-id> <token-name-or-id>`
+Revoke an SDK execution token by its label or ID.
+
+## `sdk webhook add <service-slug> [webhook-id...]`
+Add webhooks to an existing SDK configuration. Use `--interactive` to select
+webhooks when IDs are omitted.
+
+## `sdk webhook remove <service-slug> <webhook-id...>`
+Remove webhooks from an existing SDK configuration.
 
 ## `webhook plan`
 Preview changes for webhook registration configurations.
@@ -440,25 +451,26 @@ workspace and filter it locally.
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
-| `--resource` | | Filter by `bucket` or `artifact` | `""` |
+| `--resource` | | Filter by `bucket` or `app` | `""` |
 | `--limit` | | Maximum rows to return | `20` |
 | `--offset` | | Rows to skip before reading | `0` |
 
 ## `workspace access bucket grant <bucket-name-or-id>`
-Grant every authenticated workspace member and eligible artifact-owning team
+Grant every authenticated workspace member and eligible app-owning team
 bounded use of a bucket. Ownership and secret, value, connection, and bucket
 management remain unchanged.
 
 ## `workspace access bucket revoke <bucket-name-or-id>`
 Remove workspace-wide bucket use. Owner and explicit team bindings remain.
 
-## `workspace access artifact grant <artifact-name[@version]-or-id>`
-Grant bounded workspace-wide read/use of an SDK or MCP server's internal RBAC
-scope. This does not grant lifecycle or token management and does not replace
-its runtime token.
+## `workspace access app grant <sdk-or-mcp-id>`
+Grant bounded workspace-wide read/use of an SDK or MCP server. Use the
+`SDK_ID` or `MCP_ID` shown by the list command. The grant applies to every
+version. It does not grant lifecycle or token
+management and does not replace the runtime token.
 
-## `workspace access artifact revoke <artifact-name[@version]-or-id>`
-Remove workspace-wide artifact use. Owner and explicit team bindings remain.
+## `workspace access app revoke <sdk-or-mcp-id>`
+Remove workspace-wide SDK or MCP use. Owner and explicit team bindings remain.
 
 ## `workspace services list`
 List workspace services along with their enabled versions.
@@ -469,7 +481,7 @@ List workspace services along with their enabled versions.
 
 ## `workspace has`
 Check if a specific service is available in the workspace and output its enabled versions.
-Usage: `fused-cli workspace has <service_name>`
+Usage: `fused-cli workspace has <service-name>`
 
 ## `workspace service add <service-slug>`
 Add a service to your Workspace configuration.
@@ -518,7 +530,7 @@ Start an OAuth/OIDC connection session for an end user.
 |----------|-------|-------------|---------|
 | `--bucket` | | Workspace bucket name or full UUID (required) | `""` |
 | `--user-ref` | | Stable end-user reference (required) | `""` |
-| `--artifact` | | Optional artifact name or full UUID for audit attribution | `""` |
+| `--sdk` | | Optional exact SDK `name@version` or app UUID for audit attribution | `""` |
 | `--resource-input` | | Tenant input as `key=value`; repeatable | |
 | `--scope` | | OAuth/OIDC scope; repeatable | |
 

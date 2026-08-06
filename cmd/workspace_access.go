@@ -12,6 +12,8 @@ import (
 var workspaceAccessCmd = &cobra.Command{
 	Use:   "access",
 	Short: "Share selected buckets, SDKs, and MCP servers across the workspace",
+	Args:  cobra.NoArgs,
+	RunE:  requireSubcommand,
 }
 
 var workspaceAccessListFlags listFlags
@@ -19,6 +21,7 @@ var workspaceAccessListResource string
 var workspaceAccessListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List workspace-wide resource access",
+	Args:  cobra.NoArgs,
 	RunE: WithTelemetry("cli.workspace.access.list", func(cmd *cobra.Command, _ []string) error {
 		resourceType, err := normalizeWorkspaceShareResource(workspaceAccessListResource)
 		if err != nil {
@@ -42,12 +45,12 @@ var workspaceAccessListCmd = &cobra.Command{
 	}),
 }
 
-var workspaceBucketAccessCmd = &cobra.Command{Use: "bucket", Short: "Share a bucket for workspace-wide use"}
+var workspaceBucketAccessCmd = commandGroup("bucket", "Share a bucket for workspace-wide use")
 var workspaceBucketAccessGrantCmd = workspaceShareCommand("grant <bucket-name-or-id>", "Share a bucket for workspace-wide use", "cli.workspace.access.bucket.grant", grantWorkspaceBucketAccess)
 var workspaceBucketAccessRevokeCmd = workspaceShareCommand("revoke <bucket-name-or-id>", "Stop workspace-wide bucket use", "cli.workspace.access.bucket.revoke", revokeWorkspaceBucketAccess)
-var workspaceArtifactAccessCmd = &cobra.Command{Use: "artifact", Short: "Share an SDK or MCP server across the workspace"}
-var workspaceArtifactAccessGrantCmd = workspaceShareCommand("grant <artifact-name[@version]-or-id>", "Share an SDK or MCP server for workspace-wide use", "cli.workspace.access.artifact.grant", grantWorkspaceArtifactAccess)
-var workspaceArtifactAccessRevokeCmd = workspaceShareCommand("revoke <artifact-name[@version]-or-id>", "Stop workspace-wide SDK or MCP server use", "cli.workspace.access.artifact.revoke", revokeWorkspaceArtifactAccess)
+var workspaceAppAccessCmd = commandGroup("app", "Share an SDK or MCP server across the workspace")
+var workspaceAppAccessGrantCmd = workspaceShareCommand("grant <sdk-or-mcp-id>", "Share all versions of an SDK or MCP server across the workspace", "cli.workspace.access.app.grant", grantWorkspaceAppAccess)
+var workspaceAppAccessRevokeCmd = workspaceShareCommand("revoke <sdk-or-mcp-id>", "Stop workspace-wide use of all versions of an SDK or MCP server", "cli.workspace.access.app.revoke", revokeWorkspaceAppAccess)
 
 type workspaceShareMutation func(*cliapi.Client, string) (*cliapi.WorkspaceShareMutationPayload, error)
 
@@ -78,12 +81,12 @@ func revokeWorkspaceBucketAccess(client *cliapi.Client, id string) (*cliapi.Work
 	return client.RevokeWorkspaceBucketAccess(id)
 }
 
-func grantWorkspaceArtifactAccess(client *cliapi.Client, id string) (*cliapi.WorkspaceShareMutationPayload, error) {
-	return client.GrantWorkspaceArtifactAccess(id)
+func grantWorkspaceAppAccess(client *cliapi.Client, id string) (*cliapi.WorkspaceShareMutationPayload, error) {
+	return client.GrantWorkspaceAppAccess(id)
 }
 
-func revokeWorkspaceArtifactAccess(client *cliapi.Client, id string) (*cliapi.WorkspaceShareMutationPayload, error) {
-	return client.RevokeWorkspaceArtifactAccess(id)
+func revokeWorkspaceAppAccess(client *cliapi.Client, id string) (*cliapi.WorkspaceShareMutationPayload, error) {
+	return client.RevokeWorkspaceAppAccess(id)
 }
 
 func normalizeWorkspaceShareResource(value string) (string, error) {
@@ -92,10 +95,10 @@ func normalizeWorkspaceShareResource(value string) (string, error) {
 		return "", nil
 	case "bucket":
 		return "BUCKET", nil
-	case "artifact":
-		return "ARTIFACT", nil
+	case "app":
+		return "APP", nil
 	default:
-		return "", fmt.Errorf("resource must be bucket or artifact")
+		return "", fmt.Errorf("resource must be bucket or app")
 	}
 }
 
@@ -110,9 +113,9 @@ func printWorkspaceShares(cmd *cobra.Command, shares []cliapi.WorkspaceShare) {
 
 func init() {
 	workspaceCmd.AddCommand(workspaceAccessCmd)
-	workspaceAccessCmd.AddCommand(workspaceAccessListCmd, workspaceBucketAccessCmd, workspaceArtifactAccessCmd)
+	workspaceAccessCmd.AddCommand(workspaceAccessListCmd, workspaceBucketAccessCmd, workspaceAppAccessCmd)
 	workspaceBucketAccessCmd.AddCommand(workspaceBucketAccessGrantCmd, workspaceBucketAccessRevokeCmd)
-	workspaceArtifactAccessCmd.AddCommand(workspaceArtifactAccessGrantCmd, workspaceArtifactAccessRevokeCmd)
-	workspaceAccessListCmd.Flags().StringVar(&workspaceAccessListResource, "resource", "", "Filter by bucket or artifact")
+	workspaceAppAccessCmd.AddCommand(workspaceAppAccessGrantCmd, workspaceAppAccessRevokeCmd)
+	workspaceAccessListCmd.Flags().StringVar(&workspaceAccessListResource, "resource", "", "Filter by bucket or app")
 	addListFlags(workspaceAccessListCmd, &workspaceAccessListFlags)
 }

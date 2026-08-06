@@ -38,6 +38,7 @@ var importDocsCmd = &cobra.Command{
 same agent-backed flow as the web UI. By default every discovered endpoint is
 selected. Use --review to deselect noise interactively, or --select for a
 non-interactive partial import.`,
+	Args: cobra.NoArgs,
 	RunE: WithTelemetry("cli.import.docs", func(cmd *cobra.Command, args []string) error {
 		return runImportDocs(cmd, importDocsOptions{
 			name:             importDocsName,

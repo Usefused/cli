@@ -27,6 +27,17 @@ func TestCanonicalCommandParentsRequireAction(t *testing.T) {
 		{name: "workspace services", args: []string{"workspace", "services"}},
 		{name: "workspace service", args: []string{"workspace", "service"}},
 		{name: "workspace service version", args: []string{"workspace", "service", "version"}},
+		{name: "config", args: []string{"config"}},
+		{name: "import", args: []string{"import"}},
+		{name: "mcp", args: []string{"mcp"}},
+		{name: "sdk", args: []string{"sdk"}},
+		{name: "sdk operation", args: []string{"sdk", "operation"}},
+		{name: "sdk service", args: []string{"sdk", "service"}},
+		{name: "sdk token", args: []string{"sdk", "token"}},
+		{name: "sdk webhook", args: []string{"sdk", "webhook"}},
+		{name: "skill", args: []string{"skill"}},
+		{name: "team", args: []string{"team"}},
+		{name: "user", args: []string{"user"}},
 	}
 	for _, parent := range parents {
 		t.Run(parent.name, func(t *testing.T) {
@@ -36,6 +47,52 @@ func TestCanonicalCommandParentsRequireAction(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCommandTreeUsesCanonicalCobraExecutionContract(t *testing.T) {
+	var walk func(*cobra.Command)
+	walk = func(command *cobra.Command) {
+		for _, child := range command.Commands() {
+			// Cobra owns these generated help/completion commands; the contract
+			// below applies to Fused commands registered by this package.
+			if child.Name() == "help" || child.Name() == "completion" {
+				continue
+			}
+			if child.Run != nil {
+				t.Errorf("%s uses Run; executable commands must return errors through RunE", child.CommandPath())
+			}
+			if child.Args == nil {
+				t.Errorf("%s does not declare positional argument validation", child.CommandPath())
+			}
+			if len(child.Commands()) > 0 && child.RunE == nil {
+				t.Errorf("%s is a command group without requireSubcommand behavior", child.CommandPath())
+			}
+			walk(child)
+		}
+	}
+	walk(RootCmd)
+}
+
+func TestCommandUsageUsesConcreteArgumentNames(t *testing.T) {
+	ambiguous := []string{"family", "<name>", "<user>", "<ref>", "service_name", "operationId", "webhookId", "app-id"}
+	var walk func(*cobra.Command)
+	walk = func(command *cobra.Command) {
+		for _, child := range command.Commands() {
+			if child.Use != strings.ToLower(child.Use) {
+				t.Errorf("%s usage must use lowercase kebab-case argument names: %q", child.CommandPath(), child.Use)
+			}
+			if strings.Contains(child.Use, "_") {
+				t.Errorf("%s usage must use kebab-case, not underscores: %q", child.CommandPath(), child.Use)
+			}
+			for _, placeholder := range ambiguous {
+				if strings.Contains(child.Use, placeholder) {
+					t.Errorf("%s exposes ambiguous argument %q in usage %q", child.CommandPath(), placeholder, child.Use)
+				}
+			}
+			walk(child)
+		}
+	}
+	walk(RootCmd)
 }
 
 func TestSDKAndMCPHaveDistinctManagementRoots(t *testing.T) {
@@ -69,6 +126,13 @@ func TestCanonicalCommandsRejectSupersededForms(t *testing.T) {
 		{name: "workspace service noun first", args: []string{"workspace", "service", "github", "show"}},
 		{name: "workspace service remove", args: []string{"workspace", "service", "remove", "github"}},
 		{name: "workspace version remove", args: []string{"workspace", "service", "version", "remove", "github", "v1"}},
+		{name: "sdk noun-first show", args: []string{"sdk", "security@1.0.0", "show"}},
+		{name: "sdk noun-first download", args: []string{"sdk", "security@1.0.0", "download"}},
+		{name: "sdk service noun-first", args: []string{"sdk", "service", "github", "add"}},
+		{name: "sdk operation noun-first", args: []string{"sdk", "operation", "github", "add", "listUsers"}},
+		{name: "sdk token noun-first", args: []string{"sdk", "token", "security", "list"}},
+		{name: "sdk webhook noun-first", args: []string{"sdk", "webhook", "github", "add", "push"}},
+		{name: "mcp noun-first remove", args: []string{"mcp", "support@1.0.0", "remove"}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

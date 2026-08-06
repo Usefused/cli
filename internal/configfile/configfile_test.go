@@ -143,6 +143,37 @@ services:
 	}
 }
 
+func TestWorkspaceExecutionPolicyTimeoutValidation(t *testing.T) {
+	valid := writeFile(t, t.TempDir(), "workspace.yaml", `
+apiVersion: fused/v1
+kind: workspace
+services:
+  stripe:
+    execution_policy:
+      timeout_ms: 45000
+`)
+	parsed, err := configfile.ParseFile(valid)
+	if err != nil {
+		t.Fatalf("valid timeout_ms: %v", err)
+	}
+	timeoutMs := parsed.Workspace.Services["stripe"].ExecutionPolicy.TimeoutMs
+	if timeoutMs == nil || *timeoutMs != 45000 {
+		t.Fatalf("timeout_ms = %v, want 45000", timeoutMs)
+	}
+
+	invalid := writeFile(t, t.TempDir(), "workspace.yaml", `
+apiVersion: fused/v1
+kind: workspace
+services:
+  stripe:
+    execution_policy:
+      timeout_ms: 0
+`)
+	if _, err := configfile.ParseFile(invalid); err == nil || !strings.Contains(err.Error(), "timeout_ms") {
+		t.Fatalf("invalid timeout error = %v", err)
+	}
+}
+
 // TestWorkspaceBucketSecrets_RejectsLiteralValue pins
 // plans/plan-service-config-restructure.md item 4's core safety property:
 // buckets.<name>.secrets.<key> must be a $ENV reference, never a literal, the
@@ -358,7 +389,6 @@ services:
 	}
 }
 
-
 func TestLoadRun_DiscoversFusedFolderInOrder(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, ".fused/workspace.yaml", `
@@ -402,7 +432,7 @@ services:
 	}
 }
 
-func TestLoadRun_RejectsDuplicateArtifactIdentities(t *testing.T) {
+func TestLoadRun_RejectsDuplicateConfigIdentities(t *testing.T) {
 	dir := t.TempDir()
 	writeSDK(t, dir, ".fused/sdks/one.yaml", "security")
 	writeSDK(t, dir, ".fused/sdks/two.yaml", "security")
@@ -417,8 +447,8 @@ func TestLoadRun_RejectsDuplicateArtifactIdentities(t *testing.T) {
 	}
 
 	_, err = configfile.LoadRun("")
-	if err == nil || !strings.Contains(err.Error(), "duplicate artifact identity") {
-		t.Fatalf("expected duplicate artifact identity error, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "duplicate config identity") {
+		t.Fatalf("expected duplicate config identity error, got %v", err)
 	}
 }
 
@@ -557,7 +587,7 @@ func writeFile(t *testing.T, dir, rel, body string) string {
 	return path
 }
 
-func TestParseRejectsRetiredArtifactFields(t *testing.T) {
+func TestParseRejectsRetiredAppFields(t *testing.T) {
 	for name, body := range map[string]string{
 		"numeric version": "kind: sdk\nversion: 1\nname: reader\nsdkVersion: 1.0.0\nlanguage: typescript\nservices: {}\n",
 		"sdkVersion":      "apiVersion: fused/v1\nkind: sdk\nname: reader\nversion: 1.0.0\nsdkVersion: 1.0.0\nlanguage: typescript\nservices: {}\n",

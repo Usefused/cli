@@ -53,7 +53,7 @@ Three related but distinct things, all under a bucket's
 
   Registering the app is separate from any one user connecting: start an
   actual user session with `fused-cli workspace service connect <slug>
-  --user-ref <ref>` (see `fused-bucket`).
+  --user-ref <end-user-reference>` (see `fused-bucket`).
 - `profile` — the fuller `resource_discovery`/`resource_input`/`metadata`/
   `bindings` rule set below, for OAuth/OIDC services where one token can
   reach several sites/shops/portals/accounts.

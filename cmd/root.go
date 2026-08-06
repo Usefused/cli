@@ -93,7 +93,7 @@ func Execute() {
 }
 
 func init() {
-	RootCmd.PersistentFlags().StringVar(&APIKey, "key", "", "Engine credential (overrides config, FUSED_API_KEY & FUSED_LICENSE_KEY)")
+	RootCmd.PersistentFlags().StringVar(&APIKey, "key", "", "Engine credential (overrides saved login, FUSED_API_KEY & FUSED_LICENSE_KEY)")
 	RootCmd.PersistentFlags().StringVar(&EngineURL, "engine-url", "", "Fused Engine URL (overrides config & FUSED_ENGINE_URL)")
 	RootCmd.PersistentFlags().StringVarP(&ConfigFile, "file", "f", "", "Path to a Fused config file (disables .fused/ discovery)")
 	RootCmd.PersistentFlags().BoolVar(&NoInput, "no-input", false, "Fail instead of prompting for input (also enabled by CI=true)")
@@ -161,24 +161,34 @@ func GetEngineURL() (string, error) {
 }
 
 // GetAPIKey resolves the local Engine control credential.
-// Resolution order: flag -> personal/service env -> license env -> config.
+// Resolution order: flag -> saved login/config -> API key env -> license env.
 func GetAPIKey() string {
+	return resolveAPIKey().value
+}
+
+type resolvedCredential struct {
+	value  string
+	source string
+}
+
+func resolveAPIKey() resolvedCredential {
 	if APIKey != "" {
-		return APIKey
+		return resolvedCredential{value: APIKey, source: "--key"}
+	}
+	// A browser login is an explicit local user choice. Prefer its attributable
+	// credential over ambient shell variables that may exist only for setup.
+	if cfgVal, err := config.Get("api-key"); err == nil && cfgVal != "" {
+		return resolvedCredential{value: cfgVal, source: "saved login/config"}
 	}
 	if env := os.Getenv("FUSED_API_KEY"); env != "" {
-		return env
+		return resolvedCredential{value: env, source: "FUSED_API_KEY"}
 	}
-	// The workspace license is also the bootstrap Owner credential. Keep it
-	// below FUSED_API_KEY so operators can adopt personal credentials without
-	// having to remove the server-side Registry credential from their shell.
+	// The workspace license remains a bootstrap fallback for machines that have
+	// not established an attributable CLI login yet.
 	if env := os.Getenv("FUSED_LICENSE_KEY"); env != "" {
-		return env
+		return resolvedCredential{value: env, source: "FUSED_LICENSE_KEY"}
 	}
-	if cfgVal, err := config.Get("api-key"); err == nil && cfgVal != "" {
-		return cfgVal
-	}
-	return ""
+	return resolvedCredential{}
 }
 
 // getAPIClient returns an initialized API client.

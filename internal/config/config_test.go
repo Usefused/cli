@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/Usefused/cli/internal/config"
 )
@@ -20,6 +21,52 @@ func TestLoad_FileNotFound(t *testing.T) {
 	}
 	if cfg.EngineURL != "" || cfg.APIKey != "" {
 		t.Errorf("expected empty config on first run, got: %+v", cfg)
+	}
+}
+
+func TestSaveLoginPersistsCredentialAndExpiryAtomically(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	expiresAt := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
+	if err := config.SaveLogin("https://engine.example", "fsk_secret", "credential-1", expiresAt); err != nil {
+		t.Fatalf("SaveLogin: %v", err)
+	}
+	cfg, err := config.Load()
+	if err != nil || cfg.EngineURL != "https://engine.example" || cfg.APIKey != "fsk_secret" || cfg.APIKeyExpiresAt != expiresAt.Format(time.RFC3339) || cfg.CredentialID != "credential-1" || cfg.CredentialSource != config.ManagedCLILoginSource {
+		t.Fatalf("saved login = %#v, %v", cfg, err)
+	}
+}
+
+func TestClearCredentialPreservesEngineURL(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	expiresAt := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
+	if err := config.SaveLogin("https://engine.example", "fsk_secret", "credential-1", expiresAt); err != nil {
+		t.Fatalf("SaveLogin: %v", err)
+	}
+	changed, err := config.ClearCredential()
+	cfg, loadErr := config.Load()
+	if err != nil || loadErr != nil || !changed {
+		t.Fatalf("ClearCredential = %v, %v; load = %v", changed, err, loadErr)
+	}
+	if cfg.EngineURL != "https://engine.example" || cfg.APIKey != "" || cfg.APIKeyExpiresAt != "" || cfg.CredentialID != "" || cfg.CredentialSource != "" {
+		t.Fatalf("config after logout = %#v", cfg)
+	}
+	changed, err = config.ClearCredential()
+	if err != nil || changed {
+		t.Fatalf("idempotent ClearCredential = %v, %v", changed, err)
+	}
+}
+
+func TestSetAPIKeyClearsManagedLoginProvenance(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	if err := config.SaveLogin("https://engine.example", "fsk_old", "credential-1", time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("SaveLogin: %v", err)
+	}
+	if err := config.Set("api-key", "fsk_manual"); err != nil {
+		t.Fatalf("Set api-key: %v", err)
+	}
+	cfg, err := config.Load()
+	if err != nil || cfg.APIKey != "fsk_manual" || cfg.APIKeyExpiresAt != "" || cfg.CredentialID != "" || cfg.CredentialSource != "" {
+		t.Fatalf("manual credential config = %#v, %v", cfg, err)
 	}
 }
 

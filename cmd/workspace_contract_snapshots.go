@@ -11,6 +11,7 @@ var workspaceRefreshMissingContractsLimit int
 var workspaceRefreshMissingContractsCmd = &cobra.Command{
 	Use:   "refresh-missing-contracts",
 	Short: "Backfill missing runtime contracts for activated workspace services",
+	Args:  cobra.NoArgs,
 	RunE: WithTelemetry("cli.workspace.services.refresh_missing_contracts", func(cmd *cobra.Command, args []string) error {
 		return runWorkspaceRefreshMissingContracts(cmd)
 	}),

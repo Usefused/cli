@@ -41,7 +41,7 @@ sync-freezing behavior described there is the same struct shared with SDK).
 A service's `webhooks`/`webhooks_select_all` are rejected outright on an MCP
 config (both CLI-side and Engine-side) -- this predates `webhook_attachment`
 and hasn't been revisited since (see the doc comment on
-`validateArtifactServices` in `cli/internal/configfile/parser.go` if you need
+`validateAppServices` in `cli/internal/configfile/parser.go` if you need
 to check whether that's changed). Setting top-level `webhook_attachment`
 alone, with no service selecting webhooks, is accepted but has no effect.
 Treat webhook delivery as an SDK-only surface today (see `fused-webhook`).
@@ -57,26 +57,26 @@ fused-cli mcp plan
 fused-cli mcp apply
 fused-cli mcp validate
 fused-cli mcp list
-fused-cli mcp <name[@version]> remove
+fused-cli mcp deactivate <mcp-name@version-or-version-id>
 ```
 
 `mcp apply` doesn't just validate config -- it stands up (or updates) a
 persistent, named Engine-hosted server with its own URL, which stays live
-until explicitly removed. `mcp list` shows each server's name, version, ID,
+until explicitly deactivated. `mcp list` shows each server's name, version, ID,
 and active state. The server URL is what
-you hand to an MCP client's SSE connection (see below). Removing one is
+you hand to an MCP client's SSE connection (see below). Deactivating one is
 immediate and not gated behind the same SDK-config blocker `fused-workspace`
 describes for removing a workspace service.
 
 ## Permissions and team access
 
-A new MCP plan requires `artifact.create`, `service.read`, and `bucket.read`.
-Planning an update requires `artifact.manage` plus the dependency reads. Apply
-requires `artifact.create` for a new server or `artifact.manage` for an existing
+A new MCP plan requires `app.create`, `service.read`, and `bucket.read`.
+Planning an update requires `app.manage` plus the dependency reads. Apply
+requires `app.create` for a new server or `app.manage` for an existing
 one, together with `service.consume` for every selected service and `bucket.use`
-for its bucket. `mcp list` requires `artifact.read`, removal requires
-`artifact.manage`, and any execution-token management surface requires
-`artifact.tokens.manage`.
+for its bucket. `mcp list` requires `app.read`, deactivation requires
+`app.manage`, and any execution-token management surface requires
+`app.tokens.manage`.
 
 For team ownership, preflight the owner and dependencies before planning:
 
@@ -92,10 +92,10 @@ An authorised administrator can grant only the missing scope:
 ```shell
 fused-cli team access service grant <team> <service> use
 fused-cli team access bucket grant <team> <bucket> use
-fused-cli team access artifact grant <team> <mcp-server> read|use|manage
+fused-cli team access app grant <team-slug-or-id> <mcp-id> read|use|manage
 ```
 
-Use workspace-wide bucket/artifact grants only when that audience is intended.
+Use workspace-wide bucket/app grants only when that audience is intended.
 On denial, stop the blocked action, preserve the config and plan, and tell the
 user the missing permission and resource. Never self-grant, switch credentials,
 broaden scope, or retry with guessed authority. Do not run access commands
@@ -103,9 +103,9 @@ unless explicitly requested and authorised. Read the `fused-cli` skill's
 `reference/access-management.md` for the full matrix.
 
 The owning person or team retains management even when the MCP server is offered
-to the whole company. `fused-cli workspace access artifact grant
-<mcp-name[@version]>` adds bounded workspace-wide use through the Engine's
-shared RBAC resource without granting token or lifecycle management;
+to the whole company. `fused-cli workspace access app grant <mcp-id>`
+adds bounded workspace-wide use across every MCP version
+without granting token or lifecycle management;
 the MCP execution token below is still required at runtime. A platform-owned
 bucket can be made selectable by every eligible owning team with `workspace
 access bucket grant <bucket-name>` while its secrets remain platform-managed.

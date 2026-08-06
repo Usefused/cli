@@ -52,16 +52,16 @@ at apply time.
 
 ```shell
 fused-cli bucket list                    # NAME, ID, secret count, value count
-fused-cli bucket <name> create
-fused-cli bucket <name> show             # + created_at
-fused-cli bucket <name> services         # per-service breakdown: secrets/values/connect-configs/connected-user counts
-fused-cli bucket <name> secrets          # metadata only -- service, key name, credential type, expiry; never the value itself
-fused-cli bucket <name> values           # service, key name, location
-fused-cli bucket <name> connections [--service <slug>] [--user <ref>]  # this bucket's end-user OAuth connections: user ref, auth type, refresh state, last failure
-fused-cli bucket <name> sdks             # which SDK/MCP artifacts (and whether they're active) point at this bucket
+fused-cli bucket create <bucket-name>
+fused-cli bucket show <bucket-name-or-id>
+fused-cli bucket services <bucket-name-or-id>
+fused-cli bucket secrets <bucket-name-or-id>
+fused-cli bucket values <bucket-name-or-id>
+fused-cli bucket connections <bucket-name-or-id> [--service <service-slug>] [--user <end-user-reference>]
+fused-cli bucket sdks <bucket-name-or-id>
 ```
 
-Don't confuse `bucket <name> connections` (every end user who has connected
+Don't confuse `bucket connections <bucket-name-or-id>` (every end user who has connected
 to *any* service through this bucket, and whether their token is
 healthy/refreshing/failing) with `connection resources` below (for *one*
 already-connected user, which provider tenants their token can reach) --
@@ -70,24 +70,24 @@ they're different scopes of the word "connection."
 ## Static secrets and values
 
 ```shell
-fused-cli secret list --list-bucket <bucket>
+fused-cli secret list --bucket <bucket-name-or-id>
 # single-value scheme (api_key, bearer, oauth/oidc static token):
-fused-cli secret <service-slug> set <value> [--bucket <name>] [--type <scheme>] [--expires-at <RFC3339>] [-i]
+printf '%s' '<value>' | fused-cli secret set <service-slug> --value-stdin [--bucket <bucket-name-or-id>] [--type <auth-method>] [--expires-at <RFC3339>]
 # multi-field scheme (basic, mtls): pack fields into ONE value, joined by ';' -- never separate flags, never separate `set` calls:
-fused-cli secret <service-slug> set 'username=x;password=y' [--bucket <name>] [--type basic]
-fused-cli secret <service-slug> set 'cert=...;key=...' [--bucket <name>] [--type mtls]
-fused-cli secret <service-slug> remove <key-name> [--remove-bucket <name>]
-fused-cli value <bucket-id> set <service-slug> <location> <key-name> <value>
-fused-cli value <bucket-id> list
-fused-cli value <bucket-id> remove <service-slug> <key-name>
+printf '%s' 'username=x;password=y' | fused-cli secret set <service-slug> --value-stdin [--bucket <bucket-name-or-id>] --type basic
+printf '%s' 'cert=...;key=...' | fused-cli secret set <service-slug> --value-stdin [--bucket <bucket-name-or-id>] --type mtls
+fused-cli secret delete <service-slug> <key-name> [--bucket <bucket-name-or-id>]
+fused-cli value set <bucket-name-or-id> <service-slug> <location> <key-name> <value>
+fused-cli value list <bucket-name-or-id>
+fused-cli value delete <bucket-name-or-id> <service-slug> <key-name>
 ```
 
 **There is no `--username`/`--password`/`--cert`/`--key` flag, and `basic`/
-`mtls` are not two separate secrets.** The single positional `<value>`
-argument is *itself* the whole credential: for these two schemes it's a
+`mtls` are not two separate secrets.** The value sent through stdin is the
+whole credential: for these two schemes it's a
 `key=value;key=value` string -- semicolon-separated, quoted so the shell
 doesn't split it on the `;` -- not comma-separated, not JSON, not two
-sequential `set` calls. `-i` (interactive prompts) is the only alternative
+sequential `set` calls. `--interactive` is the only alternative
 way to supply both fields at once.
 
 `secret set` is an **upsert with no separate apply step** -- unlike
@@ -105,7 +105,7 @@ parsed out of that one `;`-delimited value, and a client cert/key pair is
 validated (matching pair, not expired) before it's ever stored.
 
 `--expires-at` is optional and purely advisory metadata (`secret list` and
-`bucket <name> secrets` flag an expired one) -- nothing auto-rotates or
+`bucket secrets <bucket-name-or-id>` flags an expired one) -- nothing auto-rotates or
 blocks requests when a secret passes its expiry.
 
 `value` stores arbitrary bucket-scoped values, including literal binding
@@ -121,7 +121,7 @@ config's own bucket -- see `fused-config`).
 ## Starting an OAuth/OIDC connection
 
 ```shell
-fused-cli workspace service <slug> connect --bucket <name> --user-ref <ref> [--scope read:x --scope write:y]
+fused-cli workspace service connect <service-slug> --bucket <bucket-name-or-id> --user-ref <end-user-reference> [--scope read:x --scope write:y]
 ```
 
 Omitting `--scope` requests the service's declared scope catalogue. OIDC
