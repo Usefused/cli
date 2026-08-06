@@ -32,6 +32,22 @@ browser and is not printed.
 |----------|-------|-------------|---------|
 | `--no-browser` | | Print the sign-in URL instead of opening a browser | `false` |
 
+## `whoami`
+
+Show the non-secret Engine identity used by the effective credential. The
+command follows normal `--key` / saved config / environment resolution and
+prints identity, account, workspace, credential source, authentication method,
+and expiry when reported.
+
+## `logout`
+
+Revoke an Engine-issued managed CLI login and remove its saved local
+credential. Logout deliberately uses the saved Engine URL and saved credential,
+not `--key` or environment overrides. A failed remote revocation preserves the
+local login for retry; an already-inactive login is cleared locally. The saved
+`engine-url` remains configured. Manually saved API keys are left unchanged
+because they are not managed CLI logins.
+
 ## `sdk prompt`
 Generate a brand new SDK using Fused intent AI. Automatically discovers and adds missing services to your workspace.
 

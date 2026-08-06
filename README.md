@@ -80,6 +80,22 @@ hash and binds it to the subject authenticated in the browser. Use
 session. Automation should keep using `--key`, `FUSED_API_KEY`, or
 `FUSED_LICENSE_KEY`; browser login is rejected with `--no-input` or `CI=true`.
 
+Inspect the effective credential without revealing it, then revoke a saved
+managed CLI login when finished:
+
+```bash
+fused-cli whoami
+fused-cli logout
+```
+
+`whoami` follows the normal credential resolution order and prints the Engine,
+subject, account, workspace, authentication source, and expiry. `logout`
+always targets the saved login and its saved Engine, even when flags or
+environment variables are present. It removes only the saved credential and
+expiry metadata, preserving `engine-url`. If `FUSED_API_KEY` or
+`FUSED_LICENSE_KEY` remains set, the CLI warns that subsequent commands can
+still authenticate through the environment.
+
 To view your current configuration, run:
 ```bash
 fused-cli config list
