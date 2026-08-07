@@ -11,6 +11,8 @@ import (
 
 	"github.com/Usefused/cli/internal/api"
 	"github.com/spf13/cobra"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // defaultImportReceiptPath is deliberately a single fixed path, not one keyed
@@ -24,6 +26,7 @@ type importSpecPlanOptions struct {
 	slug    string
 	url     string
 	version string
+	target  string
 	// isPublic is nil when --public was not passed at all, distinct from an
 	// explicit --public=false -- see import.go's flag registration.
 	isPublic   *bool
@@ -55,6 +58,9 @@ func runImportPlan(cmd *cobra.Command, specArg string, opts importSpecPlanOption
 	if err != nil {
 		return err
 	}
+	trace.SpanFromContext(cmd.Context()).SetAttributes(
+		attribute.String("target_type", displayImportTarget(req.TargetType)),
+	)
 	client, err := getAPIClient()
 	if err != nil {
 		return err
@@ -62,6 +68,11 @@ func runImportPlan(cmd *cobra.Command, specArg string, opts importSpecPlanOption
 	resp, err := client.PlanSpecImport(req)
 	if err != nil {
 		return err
+	}
+	// Why: older Registries already honor target_type but do not echo it.
+	// Preserve the reviewed request scope in CLI/JSON output during rollout.
+	if strings.TrimSpace(resp.TargetType) == "" {
+		resp.TargetType = displayImportTarget(req.TargetType)
 	}
 
 	if err := maybeWriteImportPlanReceipt(newImportPlanReceipt(resp), opts); err != nil {
@@ -79,12 +90,17 @@ func runImportPlan(cmd *cobra.Command, specArg string, opts importSpecPlanOption
 // import) or source_content (a local file the Registry can't reach itself).
 func buildSpecImportRequest(specArg string, opts importSpecPlanOptions) (api.SpecImportPlanRequest, error) {
 	slug := strings.TrimSpace(opts.slug)
+	targetType, err := normalizeImportTarget(opts.target)
 	req := api.SpecImportPlanRequest{
-		Name:     opts.name,
-		Slug:     slug,
-		Version:  strings.TrimSpace(opts.version),
-		IsPublic: opts.isPublic,
-		Category: opts.category,
+		Name:       opts.name,
+		Slug:       slug,
+		Version:    strings.TrimSpace(opts.version),
+		IsPublic:   opts.isPublic,
+		TargetType: targetType,
+		Category:   opts.category,
+	}
+	if err != nil {
+		return req, err
 	}
 	if slug == "" {
 		return req, errors.New("--slug is required")
@@ -112,6 +128,20 @@ func buildSpecImportRequest(specArg string, opts importSpecPlanOptions) (api.Spe
 	}
 	req.SourceContent = string(data)
 	return req, nil
+}
+
+func normalizeImportTarget(value string) (string, error) {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	switch normalized {
+	case "", "all":
+		// Why: omitted target_type is the established wire representation for
+		// importing both endpoints and webhooks, so keep old servers compatible.
+		return "", nil
+	case "endpoints", "webhooks":
+		return normalized, nil
+	default:
+		return "", errors.New("--target must be one of: all, endpoints, webhooks")
+	}
 }
 
 func isURL(s string) bool {
@@ -143,7 +173,7 @@ func maybeWriteImportPlanReceipt(receipt importPlanReceipt, opts importSpecPlanO
 }
 
 func printImportPlanSummary(out io.Writer, resp *api.SpecImportPlanResponse) {
-	fmt.Fprintf(out, "Plan %s for %q (slug: %s, version: %s) -- plan ID: %s\n", resp.Action, resp.Name, resp.Slug, resp.TargetVersion, resp.PlanID)
+	fmt.Fprintf(out, "Plan %s for %q (slug: %s, version: %s, target: %s) -- plan ID: %s\n", resp.Action, resp.Name, resp.Slug, resp.TargetVersion, displayImportTarget(resp.TargetType), resp.PlanID)
 	fmt.Fprintf(out, "Diff: %d added, %d changed, %d removed\n", resp.Diff.Added, resp.Diff.Changed, resp.Diff.Removed)
 	for _, name := range resp.Diff.ChangedNames {
 		fmt.Fprintf(out, "  ~ %s\n", name)
@@ -153,6 +183,13 @@ func printImportPlanSummary(out io.Writer, resp *api.SpecImportPlanResponse) {
 	}
 	printImportUsageWarning(out, resp.Usage)
 	fmt.Fprintf(out, "Run `fused-cli import apply` to commit this plan.\n")
+}
+
+func displayImportTarget(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "all"
+	}
+	return value
 }
 
 // printImportUsageWarning names which SDKs/workspaces are pinned to the

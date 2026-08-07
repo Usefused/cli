@@ -583,6 +583,7 @@ Usage: `fused-cli import plan [spec-path]` or `fused-cli import plan --url <http
 | `--slug` | | Account-scoped service slug to create or update (required) | `""` |
 | `--url` | | Import from an online HTTP(S) source | `""` |
 | `--version` | | Provider version when the source does not declare one | `""` |
+| `--target` | | Contract content to import: `all`, `endpoints`, or `webhooks` | `"all"` |
 | `--public` | | Mark a new service public | `false` |
 | `--category` | | Category for a new service | `""` |
 | `--receipt-out` | | Write the plan receipt to a specific path | `""` |
