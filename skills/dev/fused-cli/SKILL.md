@@ -214,13 +214,20 @@ specification. This path is reviewed and receipt-backed: `plan` parses/diffs,
 then `apply` commits the exact planned source.
 
 ```shell
-fused-cli import plan ./openapi.yaml --name "Billing API" --slug billing-api
+fused-cli import plan ./openapi.yaml --name "Billing API" --slug billing-api \
+  --target endpoints
 fused-cli import apply
 
 fused-cli import plan --url https://developer.example.com/asyncapi.yaml \
   --name "Events API" --slug events-api
 fused-cli import apply
 ```
+
+Set `--target all|endpoints|webhooks` explicitly when the user's requested
+contract scope is known; it defaults to `all`. The plan persists that choice,
+so apply uses the reviewed scope without another selection step. Never infer
+`webhooks` merely because the source is AsyncAPI: use the user's intended
+runtime contract.
 
 Supported spec inputs are OpenAPI, AsyncAPI, Postman Collection, WSDL, GraphQL
 SDL, and introspectable GraphQL endpoints. `--url` is still a spec URL here:

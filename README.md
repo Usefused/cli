@@ -192,8 +192,8 @@ MCP servers use their own `mcp plan` and `mcp apply` deployment flow.
 Use `import plan` / `import apply` when the source is already a supported API specification (OpenAPI, AsyncAPI, Postman Collection, or GraphQL SDL/introspectable endpoint) -- the non-interactive path for teams adding their own internal service to Fused, e.g. from a CI step. The Registry auto-detects the source format; no `--format` flag is required.
 
 ```bash
-# Plan a local file. Slug is required for both create and update plans.
-fused-cli import plan ./openapi.json --name "Internal Billing API" --slug billing-api
+# Plan endpoint-only import from a local file. Slug is required for create/update.
+fused-cli import plan ./openapi.json --name "Internal Billing API" --slug billing-api --target endpoints
 fused-cli import apply
 
 # Import an online source with --url; format is auto-detected. Versionless
@@ -204,6 +204,10 @@ fused-cli import plan --url https://developer.example.com/asyncapi.yaml --name "
 # imports every one it finds. --review or --select narrows that down.
 fused-cli import docs --url https://docs.example.com/api --name "Docs API" --slug docs-api --version 1.0
 ```
+
+`--target` accepts `all`, `endpoints`, or `webhooks` and defaults to `all`.
+The selected target is stored in the plan, so `import apply` commits exactly
+the contract scope that was reviewed.
 
 `--slug` is required and is resolved within the caller's Registry account. An existing match updates that service; an unknown slug creates one. The provider-declared version is authoritative -- importing the same version creates a new internal revision, importing a different version creates that provider version -- and if a generated SDK or workspace uses the version being changed, `import plan` reports that usage without blocking apply. When apply runs, Engine also best-effort registers the service in its sole workspace; a workspace failure there is logged and traced without affecting the successful Registry apply response, so use the explicit `workspace service add` flow if that automatic registration fails.
 

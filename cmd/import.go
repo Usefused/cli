@@ -8,14 +8,14 @@ import (
 // "Non-Interactive Multi-Format Spec Import via CLI"). Unlike plan/apply
 // above (which discover .fused/ config files), import takes a spec directly
 // -- there's no declarative config file to point at, since the spec IS the
-// input, and it always imports everything the spec describes (no
-// endpoint-picking prompt).
+// input. The caller selects all, endpoints, or webhooks explicitly rather
+// than entering an endpoint-picking prompt.
 var importCmd = &cobra.Command{
 	Use:   "import",
 	Short: "Import a supported API specification into the Registry",
 	Long: `Import a spec as a Fused service without the conversational import agent --
 suitable for a local run or a CI step. Always imports everything the spec
-describes (no endpoint-picking prompt). Mirrors this CLI's plan/apply shape:
+describes within --target (no endpoint-picking prompt). Mirrors this CLI's plan/apply shape:
 "import plan" computes what would change and who else relies on the version
 being touched; "import apply" commits it. OpenAPI, AsyncAPI, Postman Collection,
 GraphQL SDL, and introspectable GraphQL endpoints are detected automatically.`,
@@ -28,6 +28,7 @@ var (
 	importPlanSlug       string
 	importPlanURL        string
 	importPlanVersion    string
+	importPlanTarget     string
 	importPlanPublic     bool
 	importPlanCategory   string
 	importPlanReceiptOut string
@@ -60,6 +61,7 @@ written except the plan record itself.`,
 			slug:       importPlanSlug,
 			url:        importPlanURL,
 			version:    importPlanVersion,
+			target:     importPlanTarget,
 			isPublic:   isPublic,
 			category:   importPlanCategory,
 			receiptOut: importPlanReceiptOut,
@@ -100,6 +102,7 @@ func init() {
 	importPlanCmd.MarkFlagRequired("slug")
 	importPlanCmd.Flags().StringVar(&importPlanURL, "url", "", "Import from an online http(s) source")
 	importPlanCmd.Flags().StringVar(&importPlanVersion, "version", "", "Provider version when the source does not declare one")
+	importPlanCmd.Flags().StringVar(&importPlanTarget, "target", "all", "Contract content to import: all, endpoints, or webhooks")
 	importPlanCmd.Flags().BoolVar(&importPlanPublic, "public", false, "Registry visibility: for a brand-new service, marks the service (and its first version) public -- default private if omitted. For a new version of an existing service, stages just that version's visibility -- default public (matching prior versions) if omitted, so existing automation that never passes this flag is unaffected.")
 	importPlanCmd.Flags().StringVar(&importPlanCategory, "category", "", "Category for a new service")
 	importPlanCmd.Flags().StringVar(&importPlanReceiptOut, "receipt-out", "", "Write the plan receipt to a specific path")

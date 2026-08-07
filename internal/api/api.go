@@ -1737,6 +1737,7 @@ type SpecImportPlanResponse struct {
 	Name          string           `json:"name"`
 	IsNewService  bool             `json:"is_new_service"`
 	TargetVersion string           `json:"target_version"`
+	TargetType    string           `json:"target_type"`
 	Action        string           `json:"action"`
 	Diff          SpecImportDiff   `json:"diff"`
 	Usage         *SpecImportUsage `json:"usage,omitempty"`

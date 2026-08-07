@@ -10,31 +10,26 @@ import (
 	"testing"
 )
 
-// TestImportPlanWritesReceiptAndPostsSpecContent covers Task 6's CLI test
-// requirement: a local spec file is read and sent as source_content, the
-// request reaches /integrations/import/plan with the right headers, and the
-// plan receipt is written for a later "import apply" to pick up.
-func TestImportPlanWritesReceiptAndPostsSpecContent(t *testing.T) {
-	dir := t.TempDir()
-	specPath := filepath.Join(dir, "widgets.json")
-	if err := os.WriteFile(specPath, []byte(`{"openapi":"3.0.0","info":{"title":"Widgets","version":"1.0"},"paths":{}}`), 0644); err != nil {
-		t.Fatal(err)
-	}
+type importPlanRequestCapture struct {
+	saw        bool
+	authHeader string
+	body       map[string]any
+}
 
-	var sawPlan bool
-	var authHeader string
-	var decoded map[string]any
+func newImportPlanTestServer(t *testing.T) (*httptest.Server, *importPlanRequestCapture) {
+	t.Helper()
+	capture := &importPlanRequestCapture{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/integrations/import/plan" {
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
-		sawPlan = true
-		authHeader = r.Header.Get("x-api-key")
-		if err := json.NewDecoder(r.Body).Decode(&decoded); err != nil {
+		capture.saw = true
+		capture.authHeader = r.Header.Get("x-api-key")
+		if err := json.NewDecoder(r.Body).Decode(&capture.body); err != nil {
 			t.Fatalf("decode body: %v", err)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{
+		_, _ = w.Write([]byte(`{
 			"plan_id": "plan-1",
 			"source_hash": "hash-1",
 			"service_id": "",
@@ -46,28 +41,58 @@ func TestImportPlanWritesReceiptAndPostsSpecContent(t *testing.T) {
 			"diff": {"added": 1, "changed": 0, "removed": 0}
 		}`))
 	}))
-	defer server.Close()
+	return server, capture
+}
 
-	out := runCommandInDirOutput(t, dir, server.URL, []string{"import", "plan", specPath, "--name", "Widgets", "--slug", "widgets"})
-
-	if !sawPlan {
+func assertImportPlanRequest(t *testing.T, capture *importPlanRequestCapture) {
+	t.Helper()
+	if !capture.saw {
 		t.Fatal("expected a request to /integrations/import/plan")
 	}
-	if authHeader != "fsk_test" {
-		t.Errorf("expected api key header, got %q", authHeader)
+	if capture.authHeader != "fsk_test" {
+		t.Errorf("expected api key header, got %q", capture.authHeader)
 	}
-	if decoded["name"] != "Widgets" || decoded["slug"] != "widgets" {
-		t.Errorf("unexpected request body %#v", decoded)
+	if capture.body["name"] != "Widgets" || capture.body["slug"] != "widgets" {
+		t.Errorf("unexpected request body %#v", capture.body)
 	}
-	if decoded["source_content"] == "" || decoded["source_content"] == nil {
+	if capture.body["source_content"] == "" || capture.body["source_content"] == nil {
 		t.Error("expected the local spec file's content to be sent as source_content")
 	}
+	if capture.body["target_type"] != "endpoints" {
+		t.Errorf("expected endpoint target in request, got %#v", capture.body["target_type"])
+	}
+}
+
+func assertImportPlanOutput(t *testing.T, out string) {
+	t.Helper()
 	if !strings.Contains(out, "create_service") || !strings.Contains(out, "plan-1") {
 		t.Errorf("expected a new-service summary naming the plan ID, got %q", out)
+	}
+	if !strings.Contains(out, "target: endpoints") {
+		t.Errorf("expected the plan summary to confirm target scope, got %q", out)
 	}
 	if !strings.Contains(out, "Run `fused-cli import apply`") {
 		t.Errorf("expected the summary to name the installed CLI binary, got %q", out)
 	}
+}
+
+// TestImportPlanWritesReceiptAndPostsSpecContent covers Task 6's CLI test
+// requirement: a local spec file is read and sent as source_content, the
+// request reaches /integrations/import/plan with the right headers, and the
+// plan receipt is written for a later "import apply" to pick up.
+func TestImportPlanWritesReceiptAndPostsSpecContent(t *testing.T) {
+	dir := t.TempDir()
+	specPath := filepath.Join(dir, "widgets.json")
+	if err := os.WriteFile(specPath, []byte(`{"openapi":"3.0.0","info":{"title":"Widgets","version":"1.0"},"paths":{}}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	server, capture := newImportPlanTestServer(t)
+	defer server.Close()
+
+	out := runCommandInDirOutput(t, dir, server.URL, []string{"import", "plan", specPath, "--name", "Widgets", "--slug", "widgets", "--target", "endpoints"})
+	assertImportPlanRequest(t, capture)
+	assertImportPlanOutput(t, out)
 
 	receiptPath := filepath.Join(dir, ".fused/.state/import.plan.json")
 	data, err := os.ReadFile(receiptPath)
@@ -81,6 +106,31 @@ func TestImportPlanWritesReceiptAndPostsSpecContent(t *testing.T) {
 	if receipt.PlanID != "plan-1" || receipt.SourceHash != "hash-1" {
 		t.Errorf("unexpected receipt %+v", receipt)
 	}
+}
+
+type importApplyRequestCapture struct {
+	saw  bool
+	body map[string]string
+}
+
+func newImportApplyTestServer(t *testing.T) (*httptest.Server, *importApplyRequestCapture) {
+	t.Helper()
+	capture := &importApplyRequestCapture{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/integrations/import/plan" {
+			t.Fatal("apply must not re-plan when a receipt exists")
+		}
+		if r.URL.Path != "/integrations/import/apply" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		capture.saw = true
+		if err := json.NewDecoder(r.Body).Decode(&capture.body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"applied","plan_id":"plan-3","service_id":"svc-1","is_new_service":false,"action":"update_version","version":"2026-07-14","revision":2}`))
+	}))
+	return server, capture
 }
 
 func TestBuildSpecImportRequestRequiresSlug(t *testing.T) {
@@ -104,6 +154,40 @@ func TestBuildSpecImportRequestUsesURLFlagAndExplicitVersion(t *testing.T) {
 	}
 	if req.SourceURL != "https://example.test/asyncapi.yaml" || req.Version != "2026-07" || req.SourceContent != "" {
 		t.Fatalf("unexpected URL import request: %+v", req)
+	}
+}
+
+func TestBuildSpecImportRequestNormalizesAndValidatesTarget(t *testing.T) {
+	tests := []struct {
+		name   string
+		target string
+		want   string
+		bad    bool
+	}{
+		{name: "omitted means all"},
+		{name: "all uses backward compatible wire value", target: " ALL "},
+		{name: "endpoints", target: "endpoints", want: "endpoints"},
+		{name: "webhooks", target: "webhooks", want: "webhooks"},
+		{name: "invalid", target: "schemas", bad: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			req, err := buildSpecImportRequest("", importSpecPlanOptions{
+				name: "Events", slug: "events", url: "https://example.test/asyncapi.yaml", target: test.target,
+			})
+			if test.bad {
+				if err == nil || !strings.Contains(err.Error(), "--target") {
+					t.Fatalf("expected target validation error, got %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if req.TargetType != test.want {
+				t.Errorf("target_type = %q, want %q", req.TargetType, test.want)
+			}
+		})
 	}
 }
 
@@ -161,22 +245,7 @@ func TestImportPlanPrintsUsageWarningWhenNonEmpty(t *testing.T) {
 // the receipt file, never re-plan.
 func TestImportApplyUsesReceiptWithoutReplanning(t *testing.T) {
 	dir := t.TempDir()
-	var sawApply bool
-	var decoded map[string]string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/integrations/import/plan" {
-			t.Fatal("apply must not re-plan when a receipt exists")
-		}
-		if r.URL.Path != "/integrations/import/apply" {
-			t.Fatalf("unexpected path %s", r.URL.Path)
-		}
-		sawApply = true
-		if err := json.NewDecoder(r.Body).Decode(&decoded); err != nil {
-			t.Fatalf("decode body: %v", err)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"status":"applied","plan_id":"plan-3","service_id":"svc-1","is_new_service":false,"action":"update_version","version":"2026-07-14","revision":2}`))
-	}))
+	server, capture := newImportApplyTestServer(t)
 	defer server.Close()
 	receiptPath := filepath.Join(dir, ".fused/.state/import.plan.json")
 	if err := os.MkdirAll(filepath.Dir(receiptPath), 0755); err != nil {
@@ -190,11 +259,11 @@ func TestImportApplyUsesReceiptWithoutReplanning(t *testing.T) {
 
 	out := runCommandInDirOutput(t, dir, server.URL, []string{"import", "apply"})
 
-	if !sawApply {
+	if !capture.saw {
 		t.Fatal("expected a request to /integrations/import/apply")
 	}
-	if decoded["plan_id"] != "plan-3" || decoded["source_hash"] != "hash-3" {
-		t.Errorf("expected plan_id/source_hash from the receipt, got %#v", decoded)
+	if capture.body["plan_id"] != "plan-3" || capture.body["source_hash"] != "hash-3" {
+		t.Errorf("expected plan_id/source_hash from the receipt, got %#v", capture.body)
 	}
 	if !strings.Contains(out, "svc-1") || !strings.Contains(out, "2026-07-14") {
 		t.Errorf("expected apply result naming service/version, got %q", out)

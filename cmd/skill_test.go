@@ -93,6 +93,19 @@ func TestFusedCLISkillShipsBuildWorkflowReference(t *testing.T) {
 	t.Fatalf("fused-cli manifest does not include build workflow reference: %v", spec.manifest)
 }
 
+func TestFusedCLISkillDocumentsImportTargetScope(t *testing.T) {
+	path := filepath.Join("..", "skills", "dev", "fused-cli", "SKILL.md")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	for _, token := range []string{"--target all|endpoints|webhooks", "defaults to `all`", "plan persists that choice"} {
+		if !strings.Contains(string(data), token) {
+			t.Errorf("fused-cli skill missing import target guidance %q", token)
+		}
+	}
+}
+
 func TestDevSkillsIncludePermissionAndDenialGuidance(t *testing.T) {
 	tests := []struct {
 		name     string
