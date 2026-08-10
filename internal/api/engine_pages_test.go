@@ -82,7 +82,7 @@ func TestSearchEndpointsPageSendsLimitOffset(t *testing.T) {
 	}
 }
 
-func TestWorkspaceWebhooksAndSDKTokensUseEngineGraphQL(t *testing.T) {
+func TestWorkspaceWebhooksAndAppTokensUseEngineGraphQL(t *testing.T) {
 	var paths []string
 	var queries []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -98,11 +98,11 @@ func TestWorkspaceWebhooksAndSDKTokensUseEngineGraphQL(t *testing.T) {
 		switch {
 		case strings.Contains(body.Query, "workspaceWebhooks"):
 			w.Write([]byte(`{"data":{"workspaceWebhooks":[{"label":"repo","slug":"slugaaaaaaaaaaaaaaaaa","created_at":"2026-07-21T00:00:00Z"}]}}`))
-		case strings.Contains(body.Query, "sdkTokens"):
+		case strings.Contains(body.Query, "appTokens"):
 			if !strings.Contains(body.Query, "app_family_id: $appFamilyId") {
-				t.Fatalf("sdk token query is not family scoped: %s", body.Query)
+				t.Fatalf("app token query is not family scoped: %s", body.Query)
 			}
-			w.Write([]byte(`{"data":{"sdkTokens":[{"id":"tok-1","app_family_id":"family-1","name":"default","created_at":"2026-07-21T00:00:00Z","last_used_at":""}]}}`))
+			w.Write([]byte(`{"data":{"appTokens":[{"id":"tok-1","app_family_id":"family-1","name":"agent","allow":["issues.list"],"expires_at":"2026-07-21T01:00:00Z","created_at":"2026-07-21T00:00:00Z","last_used_at":""}]}}`))
 		default:
 			t.Fatalf("unexpected query: %s", body.Query)
 		}
@@ -113,8 +113,8 @@ func TestWorkspaceWebhooksAndSDKTokensUseEngineGraphQL(t *testing.T) {
 	if webhooks, err := client.ListWorkspaceWebhooks("svc-1"); err != nil || len(webhooks) != 1 {
 		t.Fatalf("ListWorkspaceWebhooks = %#v, %v", webhooks, err)
 	}
-	if tokens, err := client.ListSDKTokens("sdk-1"); err != nil || len(tokens) != 1 || tokens[0].LastUsedAt != nil {
-		t.Fatalf("ListSDKTokens = %#v, %v", tokens, err)
+	if tokens, err := client.ListAppTokens("family-1"); err != nil || len(tokens) != 1 || tokens[0].LastUsedAt != nil || tokens[0].ExpiresAt == nil {
+		t.Fatalf("ListAppTokens = %#v, %v", tokens, err)
 	}
 	for _, path := range paths {
 		if path != "/engine/graphql" {

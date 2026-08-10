@@ -11,6 +11,27 @@ bucket's `service_config.<slug>.connect`, an SDK/MCP service's `auth`/
 `connect` scoping) and, for connection profiles, can also be declared
 directly in the source OpenAPI/Postman document at import time.
 
+A provider document may retain a protocol-relative server such as
+`//tenant.example.com`; Registry preserves it as source metadata, while Engine
+requires an absolute workspace `base_url` override or trusted forced
+`${resource.base_url}` binding before execution. Engine never guesses the
+missing scheme.
+
+Provider documentation and similarly named vendor extensions are evidence,
+not executable policy. During curation, prefer standard OpenAPI security and
+server fields, then translate only verified behavior that OpenAPI cannot
+express into the exact `x-fused-rate-limit`, `x-fused-retry`,
+`x-fused-pagination`, or `x-fused-connect` contract. Registry deliberately
+keeps keys such as `x-retry` or `x-provider-pagination` inert so ambiguous
+provider metadata cannot silently change Engine behavior.
+
+Keep a structured evidence manifest beside each curated service. For OAuth,
+rate-limit, retry, pagination, and routing decisions, retain the official URL,
+page heading or source-spec pointer, curated target, documented facts, and the
+mapping decision. Mark omitted executable policies explicitly and distinguish
+provider limits from Fused-selected safety bounds; a bare link in research
+notes is not enough to reproduce or review the configuration.
+
 **For exact flags and subcommand syntax, always run `fused-cli <command>
 --help` (or `fused-cli --readme` for the full CLI reference) rather than
 guessing** — these files only cover the *shape* of each config domain so you

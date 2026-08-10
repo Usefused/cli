@@ -16,10 +16,29 @@ never supplies a password. Likewise, `servers[].variables` preserves each
 variable's optional default, enum, and required flag. Do not add these fields
 to bucket auth material or normalize them in CLI config; Registry validates the
 contract and Engine resolves credentials and connection routing at execution.
+Provider documents may also retain a protocol-relative server such as
+`//tenant.example.com`; that remains source metadata until an absolute HTTPS
+workspace override or trusted forced `${resource.base_url}` binding resolves
+it. Engine never guesses the missing scheme.
 When workspace bucket auth selects a type with several named schemes, carry
 both `auth_type` and the exact `auth_name`; never choose the first scheme in
 that type. The same identity rule applies to version connection-profile
 attachments and to `secret set --type ... --auth-name ...`.
+
+Provider documentation and similarly named vendor extensions are evidence,
+not executable policy. During curation, prefer standard OpenAPI security and
+server fields, then translate only verified behavior that OpenAPI cannot
+express into the exact `x-fused-rate-limit`, `x-fused-retry`,
+`x-fused-pagination`, or `x-fused-connect` contract. Registry deliberately
+keeps keys such as `x-retry` or `x-provider-pagination` inert so ambiguous
+provider metadata cannot silently change Engine behavior.
+
+Keep a structured evidence manifest beside each curated service. For OAuth,
+rate-limit, retry, pagination, and routing decisions, retain the official URL,
+page heading or source-spec pointer, curated target, documented facts, and the
+mapping decision. Mark omitted executable policies explicitly and distinguish
+provider limits from Fused-selected safety bounds; a bare link in research
+notes is not enough to reproduce or review the configuration.
 
 These two configs aren't owned by workspace, SDK, MCP, or bucket alone --
 they nest inside all of them (a workspace service's `execution_policy`, a
