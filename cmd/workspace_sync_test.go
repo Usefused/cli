@@ -12,6 +12,7 @@ import (
 
 	"github.com/Usefused/cli/internal/api"
 	"github.com/Usefused/cli/internal/configfile"
+	"github.com/Usefused/cli/internal/ratelimitpolicy"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
@@ -22,6 +23,14 @@ func remoteVersions(values ...string) []api.WorkspaceServiceVersion {
 		out[i] = api.WorkspaceServiceVersion{Version: value}
 	}
 	return out
+}
+
+func testRateLimit(limit int64) *ratelimitpolicy.Config {
+	return &ratelimitpolicy.Config{Version: ratelimitpolicy.Version, Policies: []ratelimitpolicy.Policy{{
+		Name: "requests", Unit: "requests", Scope: "service_version", DefaultCost: 1,
+		OperationCosts: map[string]int64{}, Algorithm: "fixed_window",
+		FixedWindow: &ratelimitpolicy.FixedWindow{Limit: limit, DurationMs: 60_000},
+	}}}
 }
 
 // remoteVersionsWithIDs creates explicit version identity pairs so sync tests
@@ -175,7 +184,12 @@ func TestMergeWorkspaceConnectConfigsFromRemoteWritesProfilesWithoutBucketMateri
 	}
 	profile := map[string]interface{}{
 		"auth_type": "oauth",
-		"bindings":  []interface{}{map[string]interface{}{"value": "${resource.base_url}", "location": "base_url", "mode": "force"}},
+		"resource_input": map[string]interface{}{
+			"fields":            []interface{}{map[string]interface{}{"name": "your-domain", "required": true}},
+			"base_url_template": "https://{your-domain}.atlassian.net",
+			"allowed_hosts":     []interface{}{"*.atlassian.net"},
+		},
+		"bindings": []interface{}{map[string]interface{}{"value": "${resource.base_url}", "location": "base_url", "mode": "force"}},
 	}
 	remote := []api.WorkspaceConnectConfig{{
 		BucketID: "bucket-1", BucketName: "customer-accounts", ServiceID: service.ServiceID,
@@ -563,7 +577,7 @@ func TestMergeWorkspaceServicesFromRemote_WritesExecutionPolicyForOwnedServiceWi
 	visibility := map[string]api.ServiceVisibility{
 		"svc-owned": {
 			ServiceID: "svc-owned", Slug: "stripe", IsOwner: true, IsPublic: true,
-			RateLimit:   &api.ServiceRateLimit{Strategy: "fixed_window", RequestsPerSecond: 10, RequestsPerMinute: 300},
+			RateLimit:   testRateLimit(300),
 			RetryConfig: &api.ServiceRetryConfig{Strategy: "exponential_backoff", MaxRetries: 3, BackoffMs: 500},
 			TimeoutMs:   &timeoutMs,
 		},
@@ -571,7 +585,7 @@ func TestMergeWorkspaceServicesFromRemote_WritesExecutionPolicyForOwnedServiceWi
 			ServiceID: "svc-foreign", Slug: "billing", Provider: &api.ServiceProviderIdentity{Handle: "acme"}, IsOwner: false,
 			// A foreign service should never surface its owner's execution
 			// policy back into this workspace's config even if present.
-			RateLimit: &api.ServiceRateLimit{Strategy: "fixed_window", RequestsPerSecond: 5},
+			RateLimit: testRateLimit(5),
 		},
 	}
 
@@ -581,7 +595,7 @@ func TestMergeWorkspaceServicesFromRemote_WritesExecutionPolicyForOwnedServiceWi
 	if owned.ExecutionPolicy == nil || owned.ExecutionPolicy.Public == nil || !*owned.ExecutionPolicy.Public {
 		t.Fatalf("expected owned service execution_policy.public=true, got %#v", owned.ExecutionPolicy)
 	}
-	if owned.ExecutionPolicy.RateLimit == nil || owned.ExecutionPolicy.RateLimit.RequestsPerSecond != 10 {
+	if got := owned.ExecutionPolicy.RateLimit; got == nil || got.Policies[0].FixedWindow.Limit != 300 {
 		t.Fatalf("expected rate limit values to round-trip, got %#v", owned.ExecutionPolicy.RateLimit)
 	}
 	if owned.ExecutionPolicy.Retry == nil || owned.ExecutionPolicy.Retry.MaxRetries != 3 {
@@ -606,7 +620,14 @@ func TestMergeWorkspaceServicesFromRemote_WritesPaginationForOwnedService(t *tes
 	visibility := map[string]api.ServiceVisibility{
 		"svc-owned": {
 			ServiceID: "svc-owned", Slug: "stripe", IsOwner: true, IsPublic: true,
-			Pagination: &api.ServicePagination{Type: "cursor", RequestParam: "after", ResponsePath: "page.next"},
+			Pagination: &api.ServicePagination{
+				Version: 2, Type: "cursor", ItemsPath: "data",
+				Cursor: &api.ServicePaginationCursor{
+					Request: api.ServicePaginationRequestTarget{Location: "query", Name: "after"},
+					Next:    api.ServicePaginationValueSource{Location: "body", Path: "page.next", ValueType: "string"},
+				},
+				Limits: api.ServicePaginationLimits{MaxPages: 100, MaxItems: 100000, MaxBytes: 104857600, MaxDurationMs: 300000},
+			},
 		},
 	}
 
@@ -617,7 +638,8 @@ func TestMergeWorkspaceServicesFromRemote_WritesPaginationForOwnedService(t *tes
 		t.Fatalf("expected owned service execution_policy.public=true, got %#v", owned.ExecutionPolicy)
 	}
 	if owned.ExecutionPolicy.Pagination == nil || owned.ExecutionPolicy.Pagination.Type != "cursor" ||
-		owned.ExecutionPolicy.Pagination.RequestParam != "after" || owned.ExecutionPolicy.Pagination.ResponsePath != "page.next" {
+		owned.ExecutionPolicy.Pagination.Cursor == nil || owned.ExecutionPolicy.Pagination.Cursor.Request.Name != "after" ||
+		owned.ExecutionPolicy.Pagination.Cursor.Next.Path != "page.next" {
 		t.Fatalf("expected pagination values to round-trip, got %#v", owned.ExecutionPolicy.Pagination)
 	}
 }
@@ -660,14 +682,28 @@ func TestMergeWorkspaceServicesFromRemote_WritesVersionPoliciesForOwnedService(t
 		{ServiceName: "@acme/billing", ServiceID: "svc-foreign", Version: "2026-02-01"},
 	}
 	visibility := map[string]api.ServiceVisibility{
-		"svc-owned":   {ServiceID: "svc-owned", Slug: "stripe", IsOwner: true, IsPublic: true},
+		"svc-owned": {
+			ServiceID: "svc-owned", Slug: "stripe", IsOwner: true, IsPublic: true,
+			Pagination: &api.ServicePagination{
+				Version: 2, Type: "cursor", ItemsPath: "items",
+				Cursor: &api.ServicePaginationCursor{
+					Request: api.ServicePaginationRequestTarget{Location: "query", Name: "cursor"},
+					Next:    api.ServicePaginationValueSource{Location: "body", Path: "next", ValueType: "string"},
+				},
+				Limits: api.ServicePaginationLimits{MaxPages: 100},
+			},
+		},
 		"svc-foreign": {ServiceID: "svc-foreign", Slug: "billing", Provider: &api.ServiceProviderIdentity{Handle: "acme"}, IsOwner: false, IsPublic: true},
 	}
 	versionsByServiceID := map[string][]api.ServiceVersion{
 		"svc-owned": {
 			{Name: "2026-01-01", IsPublic: true},
 			{Name: "2025-12-01", IsPublic: false},
-			{Name: "2025-11-01", IsPublic: true, RateLimit: &api.ServiceRateLimit{Strategy: "fixed_window", RequestsPerSecond: 5, RequestsPerMinute: 200}},
+			{Name: "2025-11-01", IsPublic: true, RateLimit: testRateLimit(200), Pagination: &api.ServicePagination{
+				Version: 2, Type: "next_url", ItemsPath: "values",
+				NextURL: &api.ServicePaginationNextURL{Next: api.ServicePaginationValueSource{Location: "link", Relation: "next", ValueType: "string"}},
+				Limits:  api.ServicePaginationLimits{MaxPages: 25},
+			}},
 		},
 		// A foreign service's version data should never surface into this
 		// workspace's config even if the fetch somehow returned it.
@@ -679,6 +715,9 @@ func TestMergeWorkspaceServicesFromRemote_WritesVersionPoliciesForOwnedService(t
 	}
 
 	owned := cfg.Services["stripe"]
+	if owned.ExecutionPolicy == nil || owned.ExecutionPolicy.Pagination == nil || owned.ExecutionPolicy.Pagination.Cursor == nil {
+		t.Fatalf("expected service-default cursor pagination to round-trip, got %#v", owned.ExecutionPolicy)
+	}
 	if len(owned.Versions) != 3 {
 		t.Fatalf("expected 3 enabled versions, got %#v", owned.Versions)
 	}
@@ -689,8 +728,11 @@ func TestMergeWorkspaceServicesFromRemote_WritesVersionPoliciesForOwnedService(t
 	if v, ok := byVersion["2025-12-01"]; !ok || v.Public == nil || *v.Public {
 		t.Fatalf("expected 2025-12-01 public=false to round-trip, got %#v", byVersion["2025-12-01"])
 	}
-	if v, ok := byVersion["2025-11-01"]; !ok || v.ExecutionPolicy == nil || v.ExecutionPolicy.RateLimit == nil || v.ExecutionPolicy.RateLimit.RequestsPerSecond != 5 {
+	if v, ok := byVersion["2025-11-01"]; !ok || v.ExecutionPolicy == nil || v.ExecutionPolicy.RateLimit == nil || v.ExecutionPolicy.RateLimit.Policies[0].FixedWindow.Limit != 200 {
 		t.Fatalf("expected 2025-11-01 execution policy to round-trip, got %#v", byVersion["2025-11-01"])
+	}
+	if got := byVersion["2025-11-01"].ExecutionPolicy.Pagination; got == nil || got.NextURL == nil || got.Type != "next_url" {
+		t.Fatalf("expected version next-url pagination to remain distinct from the service default, got %#v", got)
 	}
 	if v, ok := byVersion["2026-01-01"]; ok && (v.Public != nil || v.ExecutionPolicy != nil) {
 		t.Fatalf("expected default-public version with no policy to have no override, got %#v", byVersion["2026-01-01"])
@@ -717,7 +759,7 @@ func TestMergeWorkspaceServicesFromRemote_WritesVersionPoliciesForOwnedService(t
 // while ExecutionPolicy still carries forward from local independently,
 // proving the fields are no longer bundled together.
 func TestMergeWorkspaceServicesFromRemote_VersionPublicNeverStaleFromLocal(t *testing.T) {
-	localExecutionPolicy := &configfile.ExecutionPolicy{RateLimit: &configfile.RateLimitConfig{Strategy: "fixed_window", RequestsPerSecond: 9}}
+	localExecutionPolicy := &configfile.ExecutionPolicy{RateLimit: testRateLimit(9)}
 	cfg := &configfile.WorkspaceConfig{Services: map[string]configfile.WorkspaceService{
 		"stripe": {
 			ServiceID: "svc-owned",
@@ -750,7 +792,7 @@ func TestMergeWorkspaceServicesFromRemote_VersionPublicNeverStaleFromLocal(t *te
 	if got.Public != nil {
 		t.Fatalf("expected stale local public:false to be dropped in favor of fresh Registry truth, got %#v", got.Public)
 	}
-	if got.ExecutionPolicy == nil || got.ExecutionPolicy.RateLimit == nil || got.ExecutionPolicy.RateLimit.RequestsPerSecond != 9 {
+	if got.ExecutionPolicy == nil || got.ExecutionPolicy.RateLimit == nil || got.ExecutionPolicy.RateLimit.Policies[0].FixedWindow.Limit != 9 {
 		t.Fatalf("expected local-only execution policy to still carry forward independently, got %#v", got.ExecutionPolicy)
 	}
 }

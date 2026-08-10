@@ -13,11 +13,11 @@ import (
 // TestSelectConnectAuthType_AutoSelectsSoleCandidate covers the common case:
 // a service declaring exactly one oauth/oidc scheme needs no --type at all.
 func TestSelectConnectAuthType_AutoSelectsSoleCandidate(t *testing.T) {
-	connectSetType = ""
+	connectSetType, connectSetAuthName = "", ""
 	info := &api.ServiceInfo{AuthConfigs: []api.AuthConfig{{Name: "oauth", Type: "oauth2"}}}
-	authType, err := selectConnectAuthType(info, "jira")
-	if err != nil || authType != "oauth" {
-		t.Fatalf("expected auto-selected oauth, got %q err=%v", authType, err)
+	authType, authName, err := selectConnectAuthType(info, "jira")
+	if err != nil || authType != "oauth" || authName != "oauth" {
+		t.Fatalf("expected auto-selected oauth scheme, got %q/%q err=%v", authType, authName, err)
 	}
 }
 
@@ -25,9 +25,9 @@ func TestSelectConnectAuthType_AutoSelectsSoleCandidate(t *testing.T) {
 // documented rule that connect only supports oauth/oidc -- basic/api_key/
 // bearer/mtls have no browser consent step (see fused-config).
 func TestSelectConnectAuthType_RejectsServiceWithNoInteractiveScheme(t *testing.T) {
-	connectSetType = ""
+	connectSetType, connectSetAuthName = "", ""
 	info := &api.ServiceInfo{AuthConfigs: []api.AuthConfig{{Name: "apiKey", Type: "apiKey"}}}
-	if _, err := selectConnectAuthType(info, "stripe"); err == nil {
+	if _, _, err := selectConnectAuthType(info, "stripe"); err == nil {
 		t.Fatal("expected error for a service with no oauth/oidc scheme")
 	}
 }
@@ -35,20 +35,38 @@ func TestSelectConnectAuthType_RejectsServiceWithNoInteractiveScheme(t *testing.
 // TestSelectConnectAuthType_RequiresTypeFlagWhenAmbiguous mirrors secret.go's
 // existing --type disambiguation for a service offering both oauth and oidc.
 func TestSelectConnectAuthType_RequiresTypeFlagWhenAmbiguous(t *testing.T) {
-	connectSetType = ""
+	connectSetType, connectSetAuthName = "", ""
 	info := &api.ServiceInfo{AuthConfigs: []api.AuthConfig{
 		{Name: "oauth", Type: "oauth2"},
 		{Name: "oidc", Type: "openidconnect"},
 	}}
-	if _, err := selectConnectAuthType(info, "acme"); err == nil {
+	if _, _, err := selectConnectAuthType(info, "acme"); err == nil {
 		t.Fatal("expected ambiguity error without --type")
 	}
 
 	connectSetType = "oidc"
-	t.Cleanup(func() { connectSetType = "" })
-	authType, err := selectConnectAuthType(info, "acme")
-	if err != nil || authType != "oidc" {
-		t.Fatalf("expected --type to select oidc, got %q err=%v", authType, err)
+	t.Cleanup(func() { connectSetType, connectSetAuthName = "", "" })
+	authType, authName, err := selectConnectAuthType(info, "acme")
+	if err != nil || authType != "oidc" || authName != "oidc" {
+		t.Fatalf("expected --type to select oidc, got %q/%q err=%v", authType, authName, err)
+	}
+}
+
+func TestSelectConnectAuthTypeRequiresExactNameForTwoOAuthSchemes(t *testing.T) {
+	connectSetType, connectSetAuthName = "oauth", ""
+	t.Cleanup(func() { connectSetType, connectSetAuthName = "", "" })
+	info := &api.ServiceInfo{AuthConfigs: []api.AuthConfig{
+		{Name: "adminOAuth", Type: "oauth2"},
+		{Name: "userOAuth", Type: "oauth2"},
+	}}
+
+	if _, _, err := selectConnectAuthType(info, "acme"); err == nil || !strings.Contains(err.Error(), "--auth-name") {
+		t.Fatalf("expected same-type ambiguity error, got %v", err)
+	}
+	connectSetAuthName = "userOAuth"
+	authType, authName, err := selectConnectAuthType(info, "acme")
+	if err != nil || authType != "oauth" || authName != "userOAuth" {
+		t.Fatalf("expected exact OAuth scheme, got %q/%q err=%v", authType, authName, err)
 	}
 }
 
@@ -58,12 +76,15 @@ func TestSelectConnectAuthType_RequiresTypeFlagWhenAmbiguous(t *testing.T) {
 // Engine), not a zero-value empty string (which Engine rejects as "blanked
 // out").
 func TestConnectFieldsFromInline_OnlySendsProvidedKeys(t *testing.T) {
-	req := connectFieldsFromInline("oauth", "redirect_uri=https://engine.example.com/connect/callback")
+	req := connectFieldsFromInline("oauth", "jiraOAuth", "redirect_uri=https://engine.example.com/connect/callback")
 	if req.AuthType == nil || *req.AuthType != "oauth" {
 		t.Fatalf("expected auth_type to always be set, got %#v", req.AuthType)
 	}
 	if req.ClientID != nil || req.ClientSecret != nil {
 		t.Fatalf("expected client_id/client_secret to stay nil when not provided, got id=%v secret=%v", req.ClientID, req.ClientSecret)
+	}
+	if req.AuthName == nil || *req.AuthName != "jiraOAuth" {
+		t.Fatalf("expected auth_name to always be set, got %#v", req.AuthName)
 	}
 	if req.RedirectURI == nil || *req.RedirectURI != "https://engine.example.com/connect/callback" {
 		t.Fatalf("expected redirect_uri to be set, got %#v", req.RedirectURI)
@@ -75,7 +96,7 @@ func TestConnectFieldsFromInline_OnlySendsProvidedKeys(t *testing.T) {
 // becomes an explicit empty-string pointer, which is what lets Engine tell
 // "leave unchanged" apart from "caller tried to blank this out".
 func TestConnectFieldsFromInline_BlankValueIsExplicit(t *testing.T) {
-	req := connectFieldsFromInline("oauth", "client_secret=")
+	req := connectFieldsFromInline("oauth", "jiraOAuth", "client_secret=")
 	if req.ClientSecret == nil || *req.ClientSecret != "" {
 		t.Fatalf("expected an explicit empty client_secret pointer, got %#v", req.ClientSecret)
 	}
@@ -85,9 +106,11 @@ func TestConnectFieldsFromInline_BlankValueIsExplicit(t *testing.T) {
 // line should fail on before ever reaching the network.
 func TestValidateConnectArgs(t *testing.T) {
 	connectSetInteractive, connectSetValueStdin = false, false
+	connectSetType, connectSetAuthName = "", ""
 	t.Cleanup(func() {
 		connectSetInteractive = false
 		connectSetValueStdin = false
+		connectSetType, connectSetAuthName = "", ""
 	})
 
 	if err := validateConnectSetArgs(connectSetCmd, []string{"jira"}); err == nil {
@@ -100,6 +123,11 @@ func TestValidateConnectArgs(t *testing.T) {
 	if err := validateConnectSetArgs(connectSetCmd, []string{"jira", "client_id=x"}); err == nil {
 		t.Fatal("connect config values in argv must be rejected")
 	}
+	connectSetType, connectSetAuthName = "", "jiraOAuth"
+	if err := validateConnectSetArgs(connectSetCmd, []string{"jira"}); err == nil || !strings.Contains(err.Error(), "--auth-name requires --type") {
+		t.Fatalf("expected auth-name/type validation, got %v", err)
+	}
+	connectSetType, connectSetAuthName = "", ""
 	connectSetInteractive, connectSetValueStdin = true, false
 	if err := validateConnectSetArgs(connectSetCmd, []string{"jira"}); err != nil {
 		t.Fatalf("expected interactive form to pass, got %v", err)
@@ -113,10 +141,12 @@ func TestValidateConnectArgs(t *testing.T) {
 // just that the local struct-building helpers look right in isolation.
 func TestConnectSet_CreateThenPartialUpdate(t *testing.T) {
 	connectSetType = ""
+	connectSetAuthName = ""
 	connectSetInteractive = false
 	connectSetValueStdin = true
 	t.Cleanup(func() {
 		connectSetValueStdin = false
+		connectSetAuthName = ""
 		RootCmd.SetIn(nil)
 	})
 	var requests []map[string]any
@@ -130,7 +160,7 @@ func TestConnectSet_CreateThenPartialUpdate(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
 			"id":"cfg-1","bucket_id":"bucket-1","service_id":"svc-jira",
-			"auth_type":"oauth","enabled":true,
+			"auth_type":"oauth","auth_name":"oauth","enabled":true,
 			"redirect_uri":"https://engine.example.com/connect/callback",
 			"has_client_id":true,"has_client_secret":true,
 			"created_at":"2026-07-21T00:00:00Z","updated_at":"2026-07-21T00:00:00Z"
@@ -155,7 +185,7 @@ func TestConnectSet_CreateThenPartialUpdate(t *testing.T) {
 	}
 	create, update := requests[0], requests[1]
 
-	for _, key := range []string{"auth_type", "client_id", "client_secret", "redirect_uri"} {
+	for _, key := range []string{"auth_type", "auth_name", "client_id", "client_secret", "redirect_uri"} {
 		if _, ok := create[key]; !ok {
 			t.Fatalf("expected create request to include %q, got %#v", key, create)
 		}
@@ -213,7 +243,7 @@ func TestConnectGet_ReturnsExistingConfig(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
 			"id":"cfg-1","bucket_id":"bucket-1","service_id":"svc-jira",
-			"auth_type":"oauth","enabled":true,
+			"auth_type":"oauth","auth_name":"oauth","enabled":true,
 			"redirect_uri":"https://engine.example.com/connect/callback",
 			"has_client_id":true,"has_client_secret":true,
 			"created_at":"2026-07-21T00:00:00Z","updated_at":"2026-07-21T00:00:00Z"
@@ -224,7 +254,7 @@ func TestConnectGet_ReturnsExistingConfig(t *testing.T) {
 	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{
 		"connect", "get", "jira", "--bucket", "11111111-1111-4111-8111-111111111111",
 	})
-	if !strings.Contains(out, "auth_type=oauth") || !strings.Contains(out, "has_client_secret=true") {
+	if !strings.Contains(out, "auth_type=oauth") || !strings.Contains(out, "auth_name=oauth") || !strings.Contains(out, "has_client_secret=true") {
 		t.Fatalf("expected connect config fields in output, got %q", out)
 	}
 }

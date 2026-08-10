@@ -145,6 +145,11 @@ access bucket grant <bucket-name>` while its secrets remain platform-managed.
 
 ## Calling the running MCP
 
+Pagination is inherited automatically from the selected endpoint and its
+effective service-version policy. Do not add pagination fields to MCP config or
+tool schemas. Engine performs the provider requests and streams each successful
+page as a separate execution chunk.
+
 Neither the tool schema nor its `call()` function accepts provider tokens,
 API keys, auth scheme names, or Fused user selectors as parameters -- those
 are configured once on the MCP client connection, not per call:
@@ -154,6 +159,13 @@ Authorization: Bearer <one-time MCP execution token>
 X-Fused-End-User-Ref: user_123
 X-Fused-Resource-ID: <optional Fused connection-resource UUID>
 ```
+
+Provider arguments come from the imported canonical request schema. Map-valued
+objects retain their `additional_properties` value schema, so validate each map
+entry rather than treating the object as untyped. Pass resource-name path values
+normally: when an imported contract marks slash-preserving expansion, Engine
+preserves embedded `/` separators and still escapes unsafe segment characters.
+Do not pre-encode the value in the MCP call.
 
 `X-Fused-End-User-Ref` is required only for connected OAuth/OIDC calls.
 `X-Fused-Resource-ID` is required when that connection has multiple

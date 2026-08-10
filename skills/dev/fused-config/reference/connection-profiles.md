@@ -12,7 +12,11 @@ Three related but distinct things, all under a bucket's
 `service_config.<slug>` (see `fused-bucket`):
 
 - `auth` (`AuthConfig`) — a static credential the Engine attaches to every
-  call for this service. Which fields it needs depends on `auth_type`:
+  call for this service. `auth_type` selects the public credential type; optional
+  `auth_name` selects the exact Registry-declared scheme when the provider has
+  more than one scheme of that type. Never omit `auth_name` in that case,
+  because choosing the first same-type scheme is intentionally unsupported.
+  Which credential fields it needs depends on `auth_type`:
 
   | `auth_type` | required fields |
   |---|---|
@@ -67,6 +71,7 @@ per-context set.
 
 ```yaml
 auth_type: oauth
+auth_name: primaryOAuth # required when another named OAuth scheme exists
 resource_discovery:
   operation_id: getAccessibleResources
   server: api
@@ -146,7 +151,7 @@ Three provenances, matched to who can set them:
 - `workspace` — defined inline in a workspace config for one bucket. Never
   stored in the Registry — lives only as an Engine-side "override" layer,
   alongside any Registry-sourced "baseline" for the same
-  service/version/auth_type. An override takes precedence over a baseline
+  service/version/auth_type/auth_name identity. An override takes precedence over a baseline
   when both exist.
 
 There is no `public`/`visibility`/`provenance`/`scope`/owner field settable
@@ -167,8 +172,9 @@ fields from a file is non-destructive; detaching is always explicit via
 `profile_mode: detach`, which can't be combined with `profile`/`profile_id`.
 
 Registry-level baseline publish: `fused-cli connection-profile set
-<service-ref> --version <v> --auth-type <type> --file <path>` (owner/curator
+<service-ref> --version <v> --auth-type <type> --auth-name <name> --file <path>`
+(`--auth-name` is required when the type is ambiguous; owner/curator
 only — see `fused-bucket`). Every other workspace (a separate Engine
-deployment) still on the `baseline` layer for that service/version/auth_type
+deployment) still on the `baseline` layer for that exact auth identity
 gets a `registry_connection_profile_changed` notification the next time
 Engine's background poller checks — see `fused-notifications`.

@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/Usefused/cli/internal/api"
 )
 
 // newServiceInfoTestServer serves a fixed GetServiceInfo GraphQL response for
@@ -74,6 +76,44 @@ func TestServiceShow_QualifiesSlugForNonOwnedService(t *testing.T) {
 	out := runCommandInDirOutput(t, dir, server.URL, []string{"service", "show", "@acme/plunk"})
 	if !strings.Contains(out, "slug:\t@acme/plunk\n") {
 		t.Fatalf("expected provider-qualified slug in output, got %q", out)
+	}
+}
+
+func TestServiceShow_PrintsServerVariablesAndBasicPasswordMode(t *testing.T) {
+	server := newServiceInfoTestServer(t, `{
+		"id":"svc-1","name":"Confluence","slug":"confluence","base_url":"https://{your-domain}.atlassian.net",
+		"provider":null,"is_owner":true,
+		"servers":[{"url":"https://{your-domain}.atlassian.net","description":"tenant","variables":[
+			{"name":"your-domain","enum":["example","sandbox"],"required":true},
+			{"name":"api-version","default":"v2","required":false}
+		]}],
+		"auth_configs":[{"name":"basicAuth","type":"http","scheme":"basic","basic_password_mode":"empty"}]
+	}`)
+	defer server.Close()
+
+	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"service", "show", "confluence"})
+	for _, want := range []string{
+		"variable:\tyour-domain\trequired: true\tenum: example,sandbox",
+		"variable:\tapi-version\trequired: false\tdefault: v2",
+		"basicAuth (type: http, scheme: basic, basic_password_mode: empty)",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("service output missing %q: %q", want, out)
+		}
+	}
+}
+
+func TestFormatSecurityRequirementsPreservesAlternativeAndSchemeOrder(t *testing.T) {
+	requirements := api.SecurityRequirements{
+		{Schemes: []api.SecurityRequirement{
+			{Scheme: "wiseOAuth", Scopes: []string{"transfers:read", "transfers:write"}},
+			{Scheme: "wiseMTLS", Scopes: []string{}},
+		}},
+		{Schemes: []api.SecurityRequirement{{Scheme: "chargebeeBasic", Scopes: []string{}}}},
+		{Schemes: []api.SecurityRequirement{}},
+	}
+	if got, want := formatSecurityRequirements(requirements), "wiseOAuth[transfers:read,transfers:write] + wiseMTLS OR chargebeeBasic OR anonymous"; got != want {
+		t.Fatalf("security requirements = %q, want %q", got, want)
 	}
 }
 

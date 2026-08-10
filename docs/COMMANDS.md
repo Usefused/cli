@@ -12,7 +12,7 @@ All commands support the following global flags:
 | `--engine-url` | | Fused Engine URL (overrides config & `FUSED_ENGINE_URL`) | `""` |
 | `--file` | `-f` | Path to a Fused config file (disables `.fused/` discovery) | `""` |
 | `--no-input` | | Fail instead of prompting; also enabled by `CI=true` | `false` |
-| `--timeout` | | Maximum duration for an Engine request | `30s` |
+| `--timeout` | | Maximum duration for an Engine request | `1m0s` |
 | `--request-id` | | Attach an audit correlation ID to every Engine request | `""` |
 | `--readme` | | Print the full CLI reference (this file plus the README) and exit | `false` |
 
@@ -93,7 +93,10 @@ Set authentication credentials for a workspace service. Choose exactly one
 input mode: `--interactive` for protected prompts or `--value-stdin` for
 automation. Credential values are rejected in argv so they cannot leak through
 shell history or process listings.
-If the service supports multiple authentication methods, use `--type` to specify the method, or use `--interactive` to select from a menu.
+If the service supports multiple authentication families, use `--type` to
+specify the family. If that family has multiple named schemes, also pass the
+exact `--auth-name`; the CLI never silently chooses the first same-family
+scheme. Interactive mode selects the exact scheme directly.
 
 > **`basic`/`mtls` credentials are ONE value, not two.** There is no
 > `--username`/`--password`/`--cert`/`--key` flag and no separate `set` call
@@ -107,13 +110,14 @@ If the service supports multiple authentication methods, use `--type` to specify
 
 > **Recommended Pattern:** Pipe API keys, tokens, and service credentials to `fused-cli secret set <service-slug> --value-stdin`. Add `--bucket <bucket-name>` for a bucket override. This stores secrets securely in Fused's encrypted vault.
 
-> **Tip:** To see the available authentication methods (and their logical names for the `--type` flag) for a service, run `fused-cli service show <service-slug>`.
+> **Tip:** To see available authentication families and their exact scheme names, run `fused-cli service show <service-slug>`.
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
 | `--interactive` | `-i` | Force interactive mode to select the authentication method | `false` |
 | `--value-stdin` | | Read the credential value from stdin | `false` |
-| `--type` | | Specify the logical authentication method name (e.g., bearerAuth) | `""` |
+| `--type` | | Authentication family (for example `bearer`, `api_key`, or `oauth`) | `""` |
+| `--auth-name` | | Exact Registry auth scheme name; required when the selected family has multiple schemes | `""` |
 | `--bucket` | | Bucket name or full UUID; omit to use the default bucket | `""` |
 | `--expires-at` | | RFC3339 expiry timestamp (e.g. 2026-12-31T23:59:59Z) | `""` |
 
@@ -203,12 +207,13 @@ Or use `--interactive` to be prompted per field. Values in argv are rejected.
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
 | `--bucket` | | Bucket name or full UUID to register this connect config against (required) | `""` |
-| `--type` | | Disambiguate when a service declares both `oauth` and `oidc` | `""` |
+| `--type` | | Connect authentication type (`oauth` or `oidc`) | `""` |
+| `--auth-name` | | Exact Registry auth scheme name; required when the selected type has multiple schemes | `""` |
 | `--interactive` | `-i` | Prompt per field instead of parsing an inline value | `false` |
 | `--value-stdin` | | Read registration fields from stdin | `false` |
 
 ## `connect get <service-slug>`
-Read back a bucket's registered OAuth/OIDC app: `auth_type`, `enabled`, `redirect_uri` in plaintext, plus `has_client_id`/`has_client_secret` as booleans -- never the decrypted `client_id`/`client_secret`. This is the only way to check registration state on demand: `bucket services <bucket-name-or-id>` shows just a count, and neither `workspace.yaml` nor `workspace sync` reflect this at all. Fails with a clear error, not a raw 404, when nothing has been registered yet.
+Read back a bucket's registered OAuth/OIDC app: `auth_type`, `auth_name`, `enabled`, `redirect_uri` in plaintext, plus `has_client_id`/`has_client_secret` as booleans -- never the decrypted `client_id`/`client_secret`. This is the only way to check registration state on demand: `bucket services <bucket-name-or-id>` shows just a count, and neither `workspace.yaml` nor `workspace sync` reflect this at all. Fails with a clear error, not a raw 404, when nothing has been registered yet.
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
@@ -530,14 +535,14 @@ Deprecate a service in your Workspace configuration.
 List versions enabled in the workspace for a service slug. Supports provider-qualified slugs such as `@provider/slug`.
 
 ## `workspace service operations <service-slug>`
-List or search operationIds available for an enabled workspace service. Passing `--q` uses server-side endpoint search and supports pagination.
+List or search operationIds available for an enabled workspace service. Pagination is server-side with or without `--q`.
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
 | `--q` | | Search query for the operations action | `""` |
 | `--version` | | Enabled workspace service version; omitted uses the latest enabled version | `""` |
-| `--limit` | | Maximum rows to read; requires `--q` | `20` |
-| `--offset` | | Rows to skip before reading; requires `--q` | `0` |
+| `--limit` | | Maximum rows to read | `20` |
+| `--offset` | | Rows to skip before reading | `0` |
 
 ## `workspace service webhooks <service-slug>`
 List the service's workspace webhook registrations without exposing signing
@@ -573,7 +578,7 @@ Deprecate a specific version of a service in your Workspace configuration.
 | `--reason` | | Reason for deprecation | `""` |
 
 ## `import plan`
-Parse an auto-detected OpenAPI, AsyncAPI, Postman Collection, GraphQL SDL, or introspectable GraphQL endpoint, resolve the provider-version action, and diff it against the live service. Read-only apart from the plan record.
+Parse an auto-detected OpenAPI 3, Swagger 2, Google Discovery, AsyncAPI, Postman Collection, WSDL, GraphQL SDL, or introspectable GraphQL endpoint, resolve the provider-version action, and diff it against the live service. Read-only apart from the plan record.
 
 Usage: `fused-cli import plan [spec-path]` or `fused-cli import plan --url <http(s)-url>`
 
@@ -583,19 +588,21 @@ Usage: `fused-cli import plan [spec-path]` or `fused-cli import plan --url <http
 | `--slug` | | Account-scoped service slug to create or update (required) | `""` |
 | `--url` | | Import from an online HTTP(S) source | `""` |
 | `--version` | | Provider version when the source does not declare one | `""` |
-| `--target` | | Contract content to import: `all`, `endpoints`, or `webhooks` | `"all"` |
+| `--target` | | Contract content to import: `all`, `endpoints`, or `webhooks` | `"endpoints"` |
 | `--public` | | Mark a new service public | `false` |
 | `--category` | | Category for a new service | `""` |
+| `--overlay` | | Local overlay file sent unchanged for Registry-owned canonicalization | `""` |
 | `--receipt-out` | | Write the plan receipt to a specific path | `""` |
 | `--json` | | Print the raw plan response as JSON instead of a summary | `false` |
+| `--strict` | | Reject warning or error import diagnostics before a plan is persisted | `false` |
 
 ## `import apply`
-Commit the exact source reviewed by `import plan`. Service, provider version, contract rows, immutable internal revision, and plan completion are written atomically.
+Commit the exact source and optional overlay reviewed by `import plan`. The receipt's combined review hash authorizes the reviewed result; source and overlay hashes are informational. Service, provider version, contract rows, immutable internal revision, and plan completion are written atomically.
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
-| `--plan-id` | | Apply a specific remote plan ID (requires `--source-hash`) | `""` |
-| `--source-hash` | | Source hash to pair with `--plan-id` | `""` |
+| `--plan-id` | | Apply a specific remote plan ID (requires `--review-hash`) | `""` |
+| `--review-hash` | | Combined Registry review hash to pair with `--plan-id` | `""` |
 | `--receipt` | | Read a specific plan receipt (default: most recent local receipt) | `""` |
 
 ## `import docs`

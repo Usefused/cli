@@ -53,6 +53,73 @@ services:
 	}
 }
 
+func TestWorkspacePlanAndApplyPreserveNamedSameFamilyAuth(t *testing.T) {
+	t.Setenv("PRIMARY_API_KEY", "primary-secret")
+	t.Setenv("SECONDARY_API_KEY", "secondary-secret")
+	dir := t.TempDir()
+	path := writeSprintConfig(t, dir, "workspace.yaml", `
+apiVersion: fused/v1
+kind: workspace
+services:
+  billing:
+    service_id: "00000000-0000-0000-0000-000000000001"
+    versions: [{version: "2026-08-01"}]
+buckets:
+  primary:
+    service_config:
+      billing:
+        auth: {auth_type: api_key, auth_name: primaryHeader, api_key: $PRIMARY_API_KEY}
+  secondary:
+    service_config:
+      billing:
+        auth: {auth_type: api_key, auth_name: secondaryHeader, api_key: $SECONDARY_API_KEY}
+`)
+
+	var sourceHash string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/health":
+			_, _ = w.Write([]byte(`{"status":"ok","plane":"engine","environment":"staging"}`))
+		case "/workspace/config/plan":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			sourceHash, _ = body["source_hash"].(string)
+			config := body["config"].(map[string]any)
+			buckets := config["buckets"].(map[string]any)
+			assertPlanAuthName(t, buckets, "primary", "primaryHeader")
+			assertPlanAuthName(t, buckets, "secondary", "secondaryHeader")
+			_, _ = w.Write([]byte(`{"plan_id":"plan-workspace","config_key":"workspace","source_hash":"` + sourceHash + `","summary":{}}`))
+		case "/workspace/config/apply":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			materials := body["auth_materials"].(map[string]any)
+			if materials["primary\x00billing"].(map[string]any)["api_key"] != "primary-secret" || materials["secondary\x00billing"].(map[string]any)["api_key"] != "secondary-secret" {
+				t.Fatalf("named scheme materials changed: %#v", materials)
+			}
+			_, _ = w.Write([]byte(`{"status":"applied","plan_id":"plan-workspace"}`))
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	runCommandInDir(t, dir, server.URL, []string{"workspace", "plan", "-f", path})
+	runCommandInDir(t, dir, server.URL, []string{"workspace", "apply", "-f", path})
+}
+
+func assertPlanAuthName(t *testing.T, buckets map[string]any, bucket, want string) {
+	t.Helper()
+	serviceConfig := buckets[bucket].(map[string]any)["service_config"].(map[string]any)
+	auth := serviceConfig["billing"].(map[string]any)["auth"].(map[string]any)
+	if auth["auth_type"] != "api_key" || auth["auth_name"] != want {
+		t.Fatalf("%s auth selection = %#v, want api_key/%s", bucket, auth, want)
+	}
+}
+
 func TestMCPPlanAndApplyUseDedicatedEngineRoutes(t *testing.T) {
 	dir := t.TempDir()
 	path := writeSprintConfig(t, dir, "mcp.yaml", `

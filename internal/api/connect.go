@@ -23,6 +23,7 @@ var ErrConnectConfigNotFound = errors.New("connect config not found")
 // depends on.
 type ConnectConfigUpsertRequest struct {
 	AuthType     *string `json:"auth_type,omitempty"`
+	AuthName     *string `json:"auth_name,omitempty"`
 	Enabled      *bool   `json:"enabled,omitempty"`
 	ClientID     *string `json:"client_id,omitempty"`
 	ClientSecret *string `json:"client_secret,omitempty"`
@@ -37,6 +38,7 @@ type ConnectConfigResponse struct {
 	BucketID        string    `json:"bucket_id"`
 	ServiceID       string    `json:"service_id"`
 	AuthType        string    `json:"auth_type"`
+	AuthName        string    `json:"auth_name"`
 	Enabled         bool      `json:"enabled"`
 	RedirectURI     string    `json:"redirect_uri"`
 	HasClientID     bool      `json:"has_client_id"`

@@ -17,8 +17,9 @@ var importCmd = &cobra.Command{
 suitable for a local run or a CI step. Always imports everything the spec
 describes within --target (no endpoint-picking prompt). Mirrors this CLI's plan/apply shape:
 "import plan" computes what would change and who else relies on the version
-being touched; "import apply" commits it. OpenAPI, AsyncAPI, Postman Collection,
-GraphQL SDL, and introspectable GraphQL endpoints are detected automatically.`,
+being touched; "import apply" commits it. OpenAPI 3, Swagger 2, Google
+Discovery, AsyncAPI, Postman Collection, WSDL, GraphQL SDL, and introspectable
+GraphQL endpoints are detected automatically.`,
 	Args: cobra.NoArgs,
 	RunE: requireSubcommand,
 }
@@ -31,8 +32,10 @@ var (
 	importPlanTarget     string
 	importPlanPublic     bool
 	importPlanCategory   string
+	importPlanOverlay    string
 	importPlanReceiptOut string
 	importPlanJSON       bool
+	importPlanStrict     bool
 )
 
 var importPlanCmd = &cobra.Command{
@@ -41,7 +44,8 @@ var importPlanCmd = &cobra.Command{
 	Long: `Parses the given spec (a local file path or an http(s) URL), resolves
 whether it targets a new or existing service, and diffs it against the exact
 provider version. Use --url for an online source. Read-only -- nothing is
-written except the plan record itself.`,
+written except the plan record itself. Use --overlay for a local correction
+file that Registry will validate and canonicalize with the source.`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: WithTelemetry("cli.import.plan", func(cmd *cobra.Command, args []string) error {
 		specPath := ""
@@ -64,15 +68,17 @@ written except the plan record itself.`,
 			target:     importPlanTarget,
 			isPublic:   isPublic,
 			category:   importPlanCategory,
+			overlay:    importPlanOverlay,
 			receiptOut: importPlanReceiptOut,
 			jsonOut:    importPlanJSON,
+			strict:     importPlanStrict,
 		})
 	}),
 }
 
 var (
 	importApplyPlanID      string
-	importApplySourceHash  string
+	importApplyReviewHash  string
 	importApplyReceiptPath string
 )
 
@@ -87,7 +93,7 @@ to the most recent local plan receipt.`,
 	RunE: WithTelemetry("cli.import.apply", func(cmd *cobra.Command, args []string) error {
 		return runImportApply(cmd, importSpecApplyOptions{
 			planID:      importApplyPlanID,
-			sourceHash:  importApplySourceHash,
+			reviewHash:  importApplyReviewHash,
 			receiptPath: importApplyReceiptPath,
 		})
 	}),
@@ -102,15 +108,17 @@ func init() {
 	importPlanCmd.MarkFlagRequired("slug")
 	importPlanCmd.Flags().StringVar(&importPlanURL, "url", "", "Import from an online http(s) source")
 	importPlanCmd.Flags().StringVar(&importPlanVersion, "version", "", "Provider version when the source does not declare one")
-	importPlanCmd.Flags().StringVar(&importPlanTarget, "target", "all", "Contract content to import: all, endpoints, or webhooks")
+	importPlanCmd.Flags().StringVar(&importPlanTarget, "target", "endpoints", "Contract content to import: all, endpoints, or webhooks")
 	importPlanCmd.Flags().BoolVar(&importPlanPublic, "public", false, "Registry visibility: for a brand-new service, marks the service (and its first version) public -- default private if omitted. For a new version of an existing service, stages just that version's visibility -- default public (matching prior versions) if omitted, so existing automation that never passes this flag is unaffected.")
 	importPlanCmd.Flags().StringVar(&importPlanCategory, "category", "", "Category for a new service")
+	importPlanCmd.Flags().StringVar(&importPlanOverlay, "overlay", "", "Local overlay file applied by the Registry during planning")
 	importPlanCmd.Flags().StringVar(&importPlanReceiptOut, "receipt-out", "", "Write the plan receipt to a specific path")
 	importPlanCmd.Flags().BoolVar(&importPlanJSON, "json", false, "Print the raw plan response as JSON instead of a summary")
+	importPlanCmd.Flags().BoolVar(&importPlanStrict, "strict", false, "Reject plans containing warning or error diagnostics")
 	importPlanCmd.MarkFlagRequired("name")
 
 	importCmd.AddCommand(importApplyCmd)
-	importApplyCmd.Flags().StringVar(&importApplyPlanID, "plan-id", "", "Apply a specific remote plan ID (requires --source-hash)")
-	importApplyCmd.Flags().StringVar(&importApplySourceHash, "source-hash", "", "Source hash to pair with --plan-id")
+	importApplyCmd.Flags().StringVar(&importApplyPlanID, "plan-id", "", "Apply a specific remote plan ID (requires --review-hash)")
+	importApplyCmd.Flags().StringVar(&importApplyReviewHash, "review-hash", "", "Combined review hash to pair with --plan-id")
 	importApplyCmd.Flags().StringVar(&importApplyReceiptPath, "receipt", "", "Read a specific plan receipt (default: most recent local receipt)")
 }

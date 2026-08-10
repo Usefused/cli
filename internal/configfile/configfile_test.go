@@ -1,13 +1,170 @@
 package configfile_test
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/Usefused/cli/internal/configfile"
+	"gopkg.in/yaml.v3"
 )
+
+func TestWorkspaceAuthConfigNamedSchemeJSONAndYAML(t *testing.T) {
+	auth := configfile.AuthConfig{AuthType: "api_key", AuthName: "primaryHeader", APIKey: "$PRIMARY_API_KEY"}
+
+	jsonValue, err := json.Marshal(auth)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(jsonValue), `{"auth_type":"api_key","auth_name":"primaryHeader","api_key":"$PRIMARY_API_KEY"}`; got != want {
+		t.Fatalf("auth JSON = %s, want %s", got, want)
+	}
+
+	yamlValue, err := yaml.Marshal(auth)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(yamlValue), "auth_type: api_key\nauth_name: primaryHeader\napi_key: $PRIMARY_API_KEY\n"; got != want {
+		t.Fatalf("auth YAML = %q, want %q", got, want)
+	}
+}
+
+func TestWorkspaceAuthConfigParsesTwoNamedSchemesInOneFamily(t *testing.T) {
+	path := writeFile(t, t.TempDir(), "workspace.yaml", `
+apiVersion: fused/v1
+kind: workspace
+services:
+  billing:
+    service_id: "00000000-0000-0000-0000-000000000001"
+    versions: [{version: "2026-08-01"}]
+buckets:
+  primary:
+    service_config:
+      billing:
+        auth: {auth_type: api_key, auth_name: primaryHeader, api_key: $PRIMARY_API_KEY}
+  secondary:
+    service_config:
+      billing:
+        auth: {auth_type: api_key, auth_name: secondaryHeader, api_key: $SECONDARY_API_KEY}
+`)
+
+	parsed, err := configfile.ParseFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	primary := parsed.Workspace.Buckets["primary"].ServiceConfig["billing"].Auth
+	secondary := parsed.Workspace.Buckets["secondary"].ServiceConfig["billing"].Auth
+	if primary == nil || secondary == nil || primary.AuthName != "primaryHeader" || secondary.AuthName != "secondaryHeader" {
+		t.Fatalf("named same-family schemes were not preserved: primary=%#v secondary=%#v", primary, secondary)
+	}
+}
+
+func TestWorkspacePaginationV2GoldenRoundTrip(t *testing.T) {
+	parsed, err := configfile.ParseFile("testdata/workspace_pagination_v2.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := parsed.Workspace.Services["google-drive"]
+	if service.ExecutionPolicy == nil || service.ExecutionPolicy.Pagination == nil {
+		t.Fatalf("service pagination missing: %+v", service.ExecutionPolicy)
+	}
+	if service.ExecutionPolicy.Public == nil || *service.ExecutionPolicy.Public {
+		t.Fatalf("local-only public=false was not preserved: %+v", service.ExecutionPolicy.Public)
+	}
+	servicePagination := service.ExecutionPolicy.Pagination
+	versionPagination := service.Versions[0].ExecutionPolicy.Pagination
+	if servicePagination.Cursor == nil || versionPagination.NextURL == nil {
+		t.Fatalf("service/version pagination branches were not preserved: service=%+v version=%+v", servicePagination, versionPagination)
+	}
+
+	encoded, err := json.Marshal(parsed.Workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var roundTripped configfile.WorkspaceConfig
+	if err := json.Unmarshal(encoded, &roundTripped); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(parsed.Workspace, &roundTripped) {
+		t.Fatalf("workspace pagination changed during JSON transport\ngot:  %+v\nwant: %+v", &roundTripped, parsed.Workspace)
+	}
+}
+
+func TestWorkspacePaginationRejectsLegacyFieldsWithoutInventingCompatibility(t *testing.T) {
+	legacy, err := os.ReadFile(filepath.Join("..", "..", "..", "contract-fixtures", "pagination", "invalid_legacy_shape.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	document := fmt.Sprintf(`{"apiVersion":"fused/v1","kind":"workspace","services":{"legacy":{"execution_policy":{"pagination":%s}}}}`, legacy)
+	_, err = configfile.Parse([]byte(document), "legacy.json")
+	if err == nil || !strings.Contains(err.Error(), "request_param") {
+		t.Fatalf("legacy pagination fields must be rejected by strict config decoding, got %v", err)
+	}
+}
+
+func TestWorkspacePaginationLeavesStrategyValidationToEngine(t *testing.T) {
+	multiple, err := os.ReadFile(filepath.Join("..", "..", "..", "contract-fixtures", "pagination", "invalid_multiple_strategies.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	document := fmt.Sprintf(`{"apiVersion":"fused/v1","kind":"workspace","services":{"mixed":{"execution_policy":{"pagination":%s}}}}`, multiple)
+	parsed, err := configfile.Parse([]byte(document), "mixed.json")
+	if err != nil {
+		t.Fatalf("CLI must not duplicate Engine discriminator validation: %v", err)
+	}
+	pagination := parsed.Workspace.Services["mixed"].ExecutionPolicy.Pagination
+	if pagination.Cursor == nil || pagination.NextURL == nil {
+		t.Fatalf("CLI normalized known strategy branches: %#v", pagination)
+	}
+}
+
+func TestWorkspaceRateLimitV2RoundTripsWithoutCLIInterpretation(t *testing.T) {
+	payload, err := os.ReadFile(filepath.Join("..", "..", "..", "contract-fixtures", "rate-limit", "v2_mixed.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	document := fmt.Sprintf(`{"apiVersion":"fused/v1","kind":"workspace","services":{"drive":{"execution_policy":{"rate_limit":%s}}}}`, payload)
+	parsed, err := configfile.Parse([]byte(document), "workspace.json")
+	if err != nil {
+		t.Fatalf("parse canonical rate limit: %v", err)
+	}
+	rateLimit := parsed.Workspace.Services["drive"].ExecutionPolicy.RateLimit
+	if rateLimit == nil || len(rateLimit.Policies) != 2 || rateLimit.Policies[0].OperationCosts["rest:GET:/drive/v3/files/{}"] != 10 {
+		t.Fatalf("canonical rate limit was not preserved: %#v", rateLimit)
+	}
+}
+
+func TestWorkspaceRateLimitRejectsLegacyFieldsWithoutCompatibility(t *testing.T) {
+	payload, err := os.ReadFile(filepath.Join("..", "..", "..", "contract-fixtures", "rate-limit", "invalid_legacy.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	document := fmt.Sprintf(`{"apiVersion":"fused/v1","kind":"workspace","services":{"legacy":{"execution_policy":{"rate_limit":%s}}}}`, payload)
+	_, err = configfile.Parse([]byte(document), "workspace.json")
+	if err == nil || !strings.Contains(err.Error(), "strategy") {
+		t.Fatalf("legacy rate-limit fields must be rejected, got %v", err)
+	}
+}
+
+func TestWorkspaceRateLimitLeavesDiscriminatorValidationToEngine(t *testing.T) {
+	payload, err := os.ReadFile(filepath.Join("..", "..", "..", "contract-fixtures", "rate-limit", "invalid_discriminator.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	document := fmt.Sprintf(`{"apiVersion":"fused/v1","kind":"workspace","services":{"mixed":{"execution_policy":{"rate_limit":%s}}}}`, payload)
+	parsed, err := configfile.Parse([]byte(document), "workspace.json")
+	if err != nil {
+		t.Fatalf("CLI must not duplicate Engine discriminator validation: %v", err)
+	}
+	policy := parsed.Workspace.Services["mixed"].ExecutionPolicy.RateLimit.Policies[0]
+	if policy.FixedWindow == nil || policy.TokenBucket == nil {
+		t.Fatalf("CLI normalized known algorithm branches: %#v", policy)
+	}
+}
 
 func TestLoadRun_SingleSDKFile(t *testing.T) {
 	path := writeFile(t, t.TempDir(), "fused.yaml", `

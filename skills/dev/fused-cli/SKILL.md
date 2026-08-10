@@ -98,7 +98,7 @@ saved API key has no managed-login provenance and is left unchanged.
   directory discovery
 - `--no-input` -- fail with remediation rather than opening a prompt;
   `CI=true` enables this automatically
-- `--timeout <duration>` -- bound Engine requests (default `30s`)
+- `--timeout <duration>` -- bound Engine requests (default `1m`)
 - `--request-id <request-id>` -- attach a non-secret audit correlation ID to every
   Engine request
 - `--readme` -- print the full CLI reference and exit
@@ -213,6 +213,12 @@ Use `import plan` / `import apply` when the source is already a machine-readable
 specification. This path is reviewed and receipt-backed: `plan` parses/diffs,
 then `apply` commits the exact planned source.
 
+Treat a successful `import apply` as the completion signal for the contract
+mutation. Allow endpoint semantic-search ranking to catch up asynchronously:
+background enrichment retries transient failures, and a periodic repair sweep
+recovers interrupted work. Do not re-run plan/apply or wait/poll merely for
+that optional enrichment.
+
 ```shell
 fused-cli import plan ./openapi.yaml --name "Billing API" --slug billing-api \
   --target endpoints
@@ -221,19 +227,87 @@ fused-cli import apply
 fused-cli import plan --url https://developer.example.com/asyncapi.yaml \
   --name "Events API" --slug events-api
 fused-cli import apply
+
+fused-cli import plan ./openapi.yaml --overlay ./provider.overlay.yaml \
+  --name "Billing API" --slug billing-api
+fused-cli import apply
 ```
 
+`--overlay` accepts a local file only. The CLI transports its exact bytes as
+`overlay_content`; never parse, normalize, merge, or hash the overlay in the
+CLI or an agent wrapper. Registry is the sole owner of overlay validation and
+canonicalization. It returns source and overlay hashes for audit information
+and an opaque combined `review_hash` that authorizes apply. The local receipt
+stores that identity without storing the overlay path or content, and apply
+uses only `plan_id` plus `review_hash` without rereading either input. For a
+direct apply, pass `--plan-id` with `--review-hash`; a source hash is not an
+apply credential. Re-plan when a receipt lacks `review_hash`.
+
 Set `--target all|endpoints|webhooks` explicitly when the user's requested
-contract scope is known; it defaults to `all`. The plan persists that choice,
+contract scope is known; it defaults to `endpoints`. The plan persists that choice,
 so apply uses the reviewed scope without another selection step. Never infer
 `webhooks` merely because the source is AsyncAPI: use the user's intended
 runtime contract.
 
-Supported spec inputs are OpenAPI, AsyncAPI, Postman Collection, WSDL, GraphQL
-SDL, and introspectable GraphQL endpoints. `--url` is still a spec URL here:
+Use service-level `public` as the pre-publication gate. Keep the owned service
+`public: false` through private workspace validation; do not require its
+version to be private, because versions default public and version-level
+`public: true` cannot expose a private service. After validation passes, set
+the service `public: true` and independently confirm the intended version is
+not staged private. Never substitute version visibility for the service gate.
+
+Supported spec inputs are OpenAPI 3.0/3.1, Swagger 2.0, Google Discovery REST
+Descriptions, AsyncAPI, Postman Collection, WSDL, GraphQL SDL, and
+introspectable GraphQL endpoints. Swagger 2 is converted through the shared
+OpenAPI adapter. Google Discovery is mapped natively into the same canonical
+endpoint contract: nested resources, JSON request/response schemas, Google
+OAuth scopes, API-key shape, and pageToken/nextPageToken pagination are
+preserved. Reserved resource-name path expansion preserves embedded `/`
+characters while escaping unsafe segment characters. Media upload/download and
+resumable or multipart-related workflows remain explicit plan diagnostics until
+their distinct wire protocols are reviewed; do not treat those warnings as
+ordinary JSON upload support. Do not pre-convert either format in the CLI or
+infer provider-specific fixes. `import plan`
+reports the Registry-authoritative `source_format`, which apply re-detects and
+must match before mutation. `--url` is still a spec URL here:
 Registry first tries a bounded `GET`, then GraphQL introspection if the GET
 response is not recognized as a spec. A normal HTML docs page belongs to
 `import docs`, not `import plan --url`.
+
+For OpenAPI imports, path-level parameters are inherited by each operation and
+an operation-level declaration of the same `(name, in)` pair wins. Request-body
+media selection is deterministic: `application/json`, then a declared
+`application/*+json` media type, then
+`application/x-www-form-urlencoded`, `multipart/form-data`, then the first
+lexically sorted schema-backed raw media type. The selected media type,
+serialization, required flag, schema, multipart part metadata, and raw payload
+binding are persisted together as one request-content contract, so generated
+SDK/MCP calls and direct Engine execution use the same reviewed representation.
+Binary raw payloads and binary multipart parts cross the Fused boundary as
+strict base64 strings and are decoded immediately before the provider request.
+Raw bodies use the declared `body` payload argument; ambiguous extra body
+arguments are rejected. There is no fallback that guesses JSON when request
+content is absent or declares an unknown serialization. Multiple supported
+representations produce a diagnostic naming the deterministic choice; use
+`--strict` when that choice must be reviewed rather than accepted.
+
+Imported authentication and routing metadata also remains provider-owned.
+Operation security requirements are an ordered OR-of-AND structure: each
+`security_requirements` entry is an alternative, while every named scheme
+inside that entry must be satisfied together. An empty alternative explicitly
+allows anonymous access. `service operations` renders that order instead of
+collapsing it to one guessed auth method. `service show` exposes imported
+server variables and a Basic scheme's `basic_password_mode` (`required`,
+`optional`, or `empty`); these describe the provider contract and never carry
+credentials. A missing server-variable default stays missing in CLI transport
+rather than being filled locally.
+
+`import plan` prints concise structured diagnostics when source information
+cannot be represented exactly; `--json` returns the full diagnostic objects.
+Use `--strict` when automation must reject any warning or error diagnostic
+before a plan receipt is written. Informational diagnostics remain allowed in
+strict mode. Correct the source or explicit import metadata rather than
+silencing a diagnostic by guessing provider behavior.
 
 Use `import docs` when the source is a human-readable docs page and the agent
 must discover endpoint candidates. By default it selects every discovered

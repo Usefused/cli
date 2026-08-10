@@ -55,11 +55,9 @@ func TestListWorkspaceConnectConfigsUsesEngineGraphQL(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatalf("decode graphql body: %v", err)
 		}
-		if !strings.Contains(body.Query, "workspaceConnectConfigs") || !strings.Contains(body.Query, "profiles") {
-			t.Fatalf("expected batched workspace connect query, got %s", body.Query)
-		}
+		assertEngineQueryContains(t, body.Query, "workspaceConnectConfigs", "profiles", "auth_name")
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"data":{"workspaceConnectConfigs":[{"bucket_id":"bucket-1","bucket_name":"customers","service_id":"svc-1","auth_type":"oauth","enabled":true,"redirect_uri":"https://engine.example.com/callback","has_client_id":true,"has_client_secret":true,"profiles":[]}]}}`))
+		_, _ = w.Write([]byte(`{"data":{"workspaceConnectConfigs":[{"bucket_id":"bucket-1","bucket_name":"customers","service_id":"svc-1","auth_type":"oauth","auth_name":"primaryOAuth","enabled":true,"redirect_uri":"https://engine.example.com/callback","has_client_id":true,"has_client_secret":true,"profiles":[{"service_version_id":"ver-1","auth_type":"oauth","provenance":"workspace","profile":{"auth_type":"oauth"}}]}]}}`))
 	}))
 	defer srv.Close()
 
@@ -72,8 +70,29 @@ func TestListWorkspaceConnectConfigsUsesEngineGraphQL(t *testing.T) {
 	if sawPath != "/engine/graphql" {
 		t.Fatalf("expected /engine/graphql, got %s", sawPath)
 	}
-	if len(configs) != 1 || configs[0].BucketName != "customers" || !configs[0].HasClientSecret {
-		t.Fatalf("unexpected workspace connect configs: %#v", configs)
+	assertWorkspaceConnectConfig(t, configs)
+}
+
+func assertWorkspaceConnectConfig(t *testing.T, configs []api.WorkspaceConnectConfig) {
+	t.Helper()
+	if len(configs) != 1 {
+		t.Fatalf("workspace connect configs = %#v, want one", configs)
+	}
+	config := configs[0]
+	if config.BucketName != "customers" || config.AuthName != "primaryOAuth" || !config.HasClientSecret {
+		t.Fatalf("unexpected workspace connect config: %#v", config)
+	}
+	if len(config.Profiles) != 1 || config.Profiles[0].AuthType != "oauth" {
+		t.Fatalf("unexpected workspace profile: %#v", config.Profiles)
+	}
+}
+
+func assertEngineQueryContains(t *testing.T, query string, values ...string) {
+	t.Helper()
+	for _, value := range values {
+		if !strings.Contains(query, value) {
+			t.Errorf("query does not contain %q: %s", value, query)
+		}
 	}
 }
 
@@ -94,7 +113,7 @@ func TestServiceVisibilitiesUsesSingleGraphQLBatch(t *testing.T) {
 		sawQuery = body.Query
 		sawIDs, _ = body.Variables["serviceIds"].([]interface{})
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"data":{"servicesByIds":[{"id":"svc-1","is_owner":true,"is_public":false},{"id":"svc-2","is_owner":false,"is_public":true,"provider":{"handle":"acme"}}]}}`))
+		w.Write([]byte(`{"data":{"servicesByIds":[{"id":"svc-1","is_owner":true,"is_public":false,"rate_limit":{"version":2,"policies":[{"name":"minute_quota","unit":"quota_units","scope":"connection","default_cost":1,"operation_costs":{"rest:GET:/drive/v3/files/{}":10},"algorithm":"fixed_window","fixed_window":{"limit":10000,"duration_ms":60000},"response_headers":{"remaining":"X-Quota-Remaining","reset":{"name":"X-Quota-Reset","format":"unix_milliseconds"}}}]},"pagination":{"version":2,"type":"cursor","cursor":{"request":{"location":"query","name":"after"},"next":{"location":"body","path":"page.next","value_type":"string"}},"items_path":"items","limits":{"max_pages":100,"max_items":100000,"max_bytes":104857600,"max_duration_ms":300000}}},{"id":"svc-2","is_owner":false,"is_public":true,"provider":{"handle":"acme"}}]}}`))
 	}))
 	defer srv.Close()
 
@@ -106,6 +125,19 @@ func TestServiceVisibilitiesUsesSingleGraphQLBatch(t *testing.T) {
 	if !strings.Contains(sawQuery, "servicesByIds") || !strings.Contains(sawQuery, "provider { handle }") || len(sawIDs) != 2 {
 		t.Fatalf("expected one batched servicesByIds query, query=%q ids=%#v", sawQuery, sawIDs)
 	}
+	for _, field := range []string{"cursor {", "offset {", "page_number {", "next_url {", "items_path", "max_duration_ms", "value_type"} {
+		if !strings.Contains(sawQuery, field) {
+			t.Fatalf("pagination v2 projection missing %q: %s", field, sawQuery)
+		}
+	}
+	for _, field := range []string{"operation_costs", "fixed_window", "token_bucket", "response_headers", "retry_after"} {
+		if !strings.Contains(sawQuery, field) {
+			t.Fatalf("rate-limit v2 projection missing %q: %s", field, sawQuery)
+		}
+	}
+	if strings.Contains(sawQuery, "refill_interval_ms burst") {
+		t.Fatalf("rate-limit projection requested non-contract token_bucket.burst: %s", sawQuery)
+	}
 	if !visibility["svc-1"].IsOwner || visibility["svc-1"].IsPublic {
 		t.Fatalf("unexpected svc-1 visibility: %#v", visibility["svc-1"])
 	}
@@ -114,6 +146,25 @@ func TestServiceVisibilitiesUsesSingleGraphQLBatch(t *testing.T) {
 	}
 	if visibility["svc-2"].Provider == nil || visibility["svc-2"].Provider.Handle != "acme" {
 		t.Fatalf("unexpected svc-2 provider: %#v", visibility["svc-2"].Provider)
+	}
+	if pagination := visibility["svc-1"].Pagination; pagination == nil || pagination.Cursor == nil || pagination.Cursor.Next.Path != "page.next" || pagination.Limits.MaxPages != 100 {
+		t.Fatalf("pagination v2 did not decode: %#v", pagination)
+	}
+	if rateLimit := visibility["svc-1"].RateLimit; rateLimit == nil || rateLimit.Policies[0].OperationCosts["rest:GET:/drive/v3/files/{}"] != 10 {
+		t.Fatalf("rate-limit v2 did not decode: %#v", rateLimit)
+	}
+}
+
+func TestServiceVisibilitiesRejectsLegacyRateLimitResponse(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"servicesByIds":[{"id":"svc-1","rate_limit":{"strategy":"fixed_window","requests_per_second":10}}]}}`))
+	}))
+	defer srv.Close()
+
+	client := api.NewClient(srv.URL, "test-key")
+	if _, err := client.ServiceVisibilities([]string{"svc-1"}); err == nil {
+		t.Fatal("legacy Registry rate-limit response must not be accepted")
 	}
 }
 
@@ -137,7 +188,7 @@ func TestServiceVersionsReturnsServiceIDForSlug(t *testing.T) {
 		sawSlug, _ = body.Variables["serviceId"].(string)
 		sawProvider, _ = body.Variables["provider"].(string)
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"data":{"serviceVersions":[{"id":"ver-1","service_id":"svc-1","name":"2026-07-01","status":"public","created_at":"2026-07-16T00:00:00Z"}]}}`))
+		w.Write([]byte(`{"data":{"serviceVersions":[{"id":"ver-1","service_id":"svc-1","name":"2026-07-01","status":"public","created_at":"2026-07-16T00:00:00Z","pagination":{"version":2,"type":"next_url","next_url":{"next":{"location":"link","relation":"next","value_type":"string"}},"items_path":"values","limits":{"max_pages":25,"max_items":10000,"max_bytes":10485760,"max_duration_ms":60000}}}]}}`))
 	}))
 	defer srv.Close()
 
@@ -154,6 +205,9 @@ func TestServiceVersionsReturnsServiceIDForSlug(t *testing.T) {
 	}
 	if len(versions) != 1 || versions[0].ServiceID != "svc-1" {
 		t.Fatalf("expected service_id svc-1, got %#v", versions)
+	}
+	if pagination := versions[0].Pagination; pagination == nil || pagination.NextURL == nil || pagination.NextURL.Next.Relation != "next" {
+		t.Fatalf("version pagination v2 did not decode: %#v", pagination)
 	}
 }
 

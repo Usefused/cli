@@ -1,0 +1,34 @@
+apiVersion: fused/v1
+kind: workspace
+services:
+  google-drive:
+    execution_policy:
+      public: false
+      pagination:
+        version: 2
+        type: cursor
+        cursor:
+          request: {location: query, name: pageToken}
+          initial: {type: string, string: first}
+          next: {location: body, path: nextPageToken, value_type: string}
+          has_more: {location: body, path: hasMore, value_type: string}
+        items_path: files
+        limits:
+          max_pages: 100
+          max_items: 100000
+          max_bytes: 104857600
+          max_duration_ms: 300000
+    versions:
+      - version: v3
+        execution_policy:
+          pagination:
+            version: 2
+            type: next_url
+            next_url:
+              next: {location: link, relation: next, value_type: string}
+            items_path: values
+            limits:
+              max_pages: 25
+              max_items: 10000
+              max_bytes: 10485760
+              max_duration_ms: 60000

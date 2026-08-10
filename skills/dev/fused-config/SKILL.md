@@ -1,9 +1,25 @@
 ---
 name: fused-config
-description: "Use this skill when the task involves Fused config that isn't owned by one concept alone -- execution policy (rate limits, retries, pagination, a base_url override for a wrong/missing spec URL, event_extraction_path, incoming_webhook_config, and whether it's published to the Registry vs. only enforced locally in this workspace) nested inside a workspace service, or connection profiles (auth type, OAuth/OIDC resource discovery, dynamic request bindings) whether declared in a workspace file, a bucket, or directly in an OpenAPI/Postman spec via x-fused-connect. Trigger on 'execution policy', 'rate limit'/'retry config', 'pagination', 'base_url override', 'webhook verification'/'incoming_webhook_config', 'local override', 'connection profile', 'resource_discovery', 'binding', '${resource...}', or 'x-fused-connect'. For SDK package or MCP server selection, or bucket/secret storage, read fused-workspace/fused-sdk/fused-mcp/fused-bucket instead."
+description: "Use this skill when the task involves Fused config that isn't owned by one concept alone -- execution policy (rate limits, retries, pagination, a base_url override for a wrong/missing spec URL, event_extraction_path, incoming_webhook_config, and whether it's published to the Registry vs. only enforced locally in this workspace), import overlays that supply reviewed non-secret provider facts missing from a machine-readable source, or connection profiles (auth type, OAuth/OIDC resource discovery, dynamic request bindings) whether declared in a workspace file, a bucket, or directly in an OpenAPI/Postman spec via x-fused-connect. Trigger on 'execution policy', 'rate limit'/'retry config', 'pagination', 'base_url override', 'import overlay', '--overlay', 'webhook verification'/'incoming_webhook_config', 'local override', 'connection profile', 'resource_discovery', 'binding', '${resource...}', or 'x-fused-connect'. For SDK package or MCP server selection, or bucket/secret storage, read fused-workspace/fused-sdk/fused-mcp/fused-bucket instead."
 ---
 
 # Cross-cutting runtime config: execution policy & connection profiles
+
+## Imported auth and server routing are provider contract
+
+OpenAPI security requirements are not a workspace credential declaration.
+They remain an ordered OR-of-AND operation contract: alternatives are OR,
+schemes within one alternative are AND, and an empty alternative allows
+anonymous access. Imported Basic auth may declare `basic_password_mode` as
+`required`, `optional`, or `empty`; the mode describes credential shape and
+never supplies a password. Likewise, `servers[].variables` preserves each
+variable's optional default, enum, and required flag. Do not add these fields
+to bucket auth material or normalize them in CLI config; Registry validates the
+contract and Engine resolves credentials and connection routing at execution.
+When workspace bucket auth selects a type with several named schemes, carry
+both `auth_type` and the exact `auth_name`; never choose the first scheme in
+that type. The same identity rule applies to version connection-profile
+attachments and to `secret set --type ... --auth-name ...`.
 
 These two configs aren't owned by workspace, SDK, MCP, or bucket alone --
 they nest inside all of them (a workspace service's `execution_policy`, a
@@ -25,10 +41,17 @@ Read only the file(s) relevant to the task at hand.
 | `reference/execution-policies.md` | Rate limits, retries, pagination, a base_url override, outbound webhook verification, per-version policy overrides, and the local-enforcement-vs-Registry-publish distinction |
 | `reference/connection-profiles.md` | Auth type, OAuth/OIDC resource discovery, dynamic request bindings, profile ownership/provenance |
 | `reference/openapi-postman.md` | Declaring the same connection profile directly inside an OpenAPI or Postman source document instead of workspace config |
+| `reference/import-overlays.md` | Supplying reviewed, credential-free import facts missing from a machine-readable provider source |
 
 For the service allowlist, SDK/MCP selection, or bucket/secret commands
 themselves, read `fused-workspace`, `fused-sdk`, `fused-mcp`, or
 `fused-bucket` -- this skill only covers the config that nests inside them.
+Pagination is inherited provider/runtime policy: never add it to SDK or MCP
+config. Engine applies endpoint policy before the effective version/service
+fallback and streams successful pages as separate chunks.
+Rate limiting is likewise an Engine-owned v2 execution contract: preserve the
+ordered named policies and stable-operation-key costs exactly, and never add a
+generated-client limiter or legacy RPS/RPM shape.
 For what happens to every *other* workspace (a separate Engine deployment --
 Engine is single-workspace-per-deployment, so "other workspace" always means
 "someone else's Engine," never a second workspace inside this one) when you

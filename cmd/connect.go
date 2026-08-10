@@ -29,6 +29,7 @@ var connectSetValueStdin bool
 var connectSetBucketID string
 var connectGetBucketID string
 var connectSetType string
+var connectSetAuthName string
 
 var connectSetCmd = &cobra.Command{
 	Use:   "set <service-slug>",
@@ -62,6 +63,9 @@ func validateConnectSetArgs(cmd *cobra.Command, args []string) error {
 	}
 	if connectSetInteractive == connectSetValueStdin {
 		return fmt.Errorf("choose exactly one credential input: --interactive or --value-stdin")
+	}
+	if strings.TrimSpace(connectSetAuthName) != "" && strings.TrimSpace(connectSetType) == "" {
+		return fmt.Errorf("--auth-name requires --type")
 	}
 	return nil
 }
@@ -111,11 +115,11 @@ func runConnectSet(serviceSlug, value string) error {
 	if err != nil {
 		return err
 	}
-	authType, err := selectConnectAuthType(info, serviceSlug)
+	authType, authName, err := selectConnectAuthType(info, serviceSlug)
 	if err != nil {
 		return err
 	}
-	fields, err := connectSetFields(authType, value)
+	fields, err := connectSetFields(authType, authName, value)
 	if err != nil {
 		return err
 	}
@@ -152,28 +156,57 @@ func runConnectGet(serviceSlug string) error {
 // fused-config's auth/connect/profile split). Reuses the same --type
 // disambiguation secret.go's static-credential path already has, so a
 // service declaring both oauth and oidc is resolved the same familiar way.
-func selectConnectAuthType(info *api.ServiceInfo, serviceSlug string) (string, error) {
-	var candidates []string
+func selectConnectAuthType(info *api.ServiceInfo, serviceSlug string) (string, string, error) {
+	candidates := make([]*api.AuthConfig, 0, len(info.AuthConfigs))
 	for i := range info.AuthConfigs {
 		if t := canonicalSecretAuthType(&info.AuthConfigs[i]); t == "oauth" || t == "oidc" {
-			candidates = append(candidates, t)
+			candidates = append(candidates, &info.AuthConfigs[i])
 		}
 	}
 	if len(candidates) == 0 {
-		return "", fmt.Errorf("service %s does not declare an oauth or oidc auth scheme -- connect only supports interactive OAuth/OIDC flows", serviceSlug)
+		return "", "", fmt.Errorf("service %s does not declare an oauth or oidc auth scheme -- connect only supports interactive OAuth/OIDC flows", serviceSlug)
 	}
-	if connectSetType != "" {
-		for _, t := range candidates {
-			if t == connectSetType {
-				return t, nil
+	if strings.TrimSpace(connectSetType) == "" {
+		if len(candidates) == 1 {
+			return connectAuthIdentity(candidates[0])
+		}
+		return "", "", fmt.Errorf("service %s supports multiple connect-capable auth schemes; specify --type and, for repeated types, --auth-name", serviceSlug)
+	}
+	matches := matchingConnectAuths(candidates, canonicalSecretTypeName(connectSetType))
+	if len(matches) == 0 {
+		return "", "", fmt.Errorf("service %s does not support connect auth type %q", serviceSlug, connectSetType)
+	}
+	return selectNamedConnectAuth(matches, serviceSlug)
+}
+
+func matchingConnectAuths(candidates []*api.AuthConfig, authType string) []*api.AuthConfig {
+	matches := make([]*api.AuthConfig, 0, len(candidates))
+	for _, auth := range candidates {
+		if canonicalSecretAuthType(auth) == authType {
+			matches = append(matches, auth)
+		}
+	}
+	return matches
+}
+
+func selectNamedConnectAuth(matches []*api.AuthConfig, serviceSlug string) (string, string, error) {
+	name := strings.TrimSpace(connectSetAuthName)
+	if name != "" {
+		for _, auth := range matches {
+			if auth.Name == name {
+				return connectAuthIdentity(auth)
 			}
 		}
-		return "", fmt.Errorf("service %s does not support connect auth type %q", serviceSlug, connectSetType)
+		return "", "", fmt.Errorf("service %s does not declare connect auth_name %q for auth type %q", serviceSlug, name, connectSetType)
 	}
-	if len(candidates) == 1 {
-		return candidates[0], nil
+	if len(matches) == 1 {
+		return connectAuthIdentity(matches[0])
 	}
-	return "", fmt.Errorf("service %s supports multiple connect-capable auth types; specify --type oauth or --type oidc", serviceSlug)
+	return "", "", fmt.Errorf("service %s declares multiple %s connect schemes; pass --auth-name with one of: %s", serviceSlug, connectSetType, strings.Join(secretAuthNames(matches), ", "))
+}
+
+func connectAuthIdentity(auth *api.AuthConfig) (string, string, error) {
+	return canonicalSecretAuthType(auth), strings.TrimSpace(auth.Name), nil
 }
 
 // connectSetFields resolves which fields to send: parsed from the inline
@@ -183,19 +216,19 @@ func selectConnectAuthType(info *api.ServiceInfo, serviceSlug string) (string, e
 // to blank this out" -- only a key that never appears at all means "leave
 // unchanged". That distinction is what makes a single-field rotation
 // possible without resending the other two.
-func connectSetFields(authType, value string) (api.ConnectConfigUpsertRequest, error) {
+func connectSetFields(authType, authName, value string) (api.ConnectConfigUpsertRequest, error) {
 	if value != "" {
-		return connectFieldsFromInline(authType, value), nil
+		return connectFieldsFromInline(authType, authName, value), nil
 	}
 	if err := requireInteractive("provide connect fields in the value argument"); err != nil {
 		return api.ConnectConfigUpsertRequest{}, err
 	}
-	return connectFieldsFromPrompts(authType)
+	return connectFieldsFromPrompts(authType, authName)
 }
 
-func connectFieldsFromInline(authType, value string) api.ConnectConfigUpsertRequest {
+func connectFieldsFromInline(authType, authName, value string) api.ConnectConfigUpsertRequest {
 	pairs := parseInlineKeyValuePairs(value)
-	req := api.ConnectConfigUpsertRequest{AuthType: &authType}
+	req := connectAuthRequest(authType, authName)
 	if v, ok := pairs["client_id"]; ok {
 		req.ClientID = &v
 	}
@@ -208,7 +241,7 @@ func connectFieldsFromInline(authType, value string) api.ConnectConfigUpsertRequ
 	return req
 }
 
-func connectFieldsFromPrompts(authType string) (api.ConnectConfigUpsertRequest, error) {
+func connectFieldsFromPrompts(authType, authName string) (api.ConnectConfigUpsertRequest, error) {
 	var clientID, clientSecret, redirectURI string
 	if err := huh.NewInput().Title("Client ID (blank to leave unchanged):").Value(&clientID).Run(); err != nil {
 		return api.ConnectConfigUpsertRequest{}, err
@@ -219,7 +252,7 @@ func connectFieldsFromPrompts(authType string) (api.ConnectConfigUpsertRequest, 
 	if err := huh.NewInput().Title("Redirect URI (blank to leave unchanged):").Value(&redirectURI).Run(); err != nil {
 		return api.ConnectConfigUpsertRequest{}, err
 	}
-	req := api.ConnectConfigUpsertRequest{AuthType: &authType}
+	req := connectAuthRequest(authType, authName)
 	if clientID != "" {
 		req.ClientID = &clientID
 	}
@@ -232,13 +265,21 @@ func connectFieldsFromPrompts(authType string) (api.ConnectConfigUpsertRequest, 
 	return req, nil
 }
 
+func connectAuthRequest(authType, authName string) api.ConnectConfigUpsertRequest {
+	req := api.ConnectConfigUpsertRequest{AuthType: &authType}
+	if authName = strings.TrimSpace(authName); authName != "" {
+		req.AuthName = &authName
+	}
+	return req
+}
+
 // printConnectConfigResult renders the same safe projection whether it just
 // came from a set (freshly saved) or a get (already on record) -- neither
 // caller needs a different message, only the fields themselves.
 func printConnectConfigResult(cfg *api.ConnectConfigResponse) {
 	fmt.Printf(
-		"Connect config for service %s (bucket %s): auth_type=%s enabled=%t redirect_uri=%s has_client_id=%t has_client_secret=%t\n",
-		cfg.ServiceID, cfg.BucketID, cfg.AuthType, cfg.Enabled, cfg.RedirectURI, cfg.HasClientID, cfg.HasClientSecret,
+		"Connect config for service %s (bucket %s): auth_type=%s auth_name=%s enabled=%t redirect_uri=%s has_client_id=%t has_client_secret=%t\n",
+		cfg.ServiceID, cfg.BucketID, cfg.AuthType, cfg.AuthName, cfg.Enabled, cfg.RedirectURI, cfg.HasClientID, cfg.HasClientSecret,
 	)
 }
 
@@ -246,7 +287,8 @@ func init() {
 	RootCmd.AddCommand(connectCmd)
 	connectCmd.AddCommand(connectSetCmd, connectGetCmd)
 	connectSetCmd.Flags().StringVar(&connectSetBucketID, "bucket", "", "Bucket name or UUID (required)")
-	connectSetCmd.Flags().StringVar(&connectSetType, "type", "", "Disambiguate when a service declares both oauth and oidc")
+	connectSetCmd.Flags().StringVar(&connectSetType, "type", "", "Connect authentication type (oauth or oidc)")
+	connectSetCmd.Flags().StringVar(&connectSetAuthName, "auth-name", "", "Exact provider auth scheme name; required when --type matches multiple schemes")
 	connectSetCmd.Flags().BoolVarP(&connectSetInteractive, "interactive", "i", false, "Prompt per field (blank keeps it unchanged)")
 	connectSetCmd.Flags().BoolVar(&connectSetValueStdin, "value-stdin", false, "Read the registration fields from stdin")
 	connectGetCmd.Flags().StringVar(&connectGetBucketID, "bucket", "", "Bucket name or UUID (required)")
