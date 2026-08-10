@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -25,6 +26,7 @@ var secretSetValueStdin bool
 var secretSetBucketID string
 var secretSetExpiresAt string
 var secretSetType string
+var secretSetAuthName string
 var secretListBucketID string
 var secretRemoveBucketID string
 var secretListFlags listFlags
@@ -35,6 +37,9 @@ func validateSecretSetArgs(cmd *cobra.Command, args []string) error {
 	}
 	if secretSetInteractive == secretSetValueStdin {
 		return fmt.Errorf("choose exactly one credential input: --interactive or --value-stdin")
+	}
+	if strings.TrimSpace(secretSetAuthName) != "" && strings.TrimSpace(secretSetType) == "" {
+		return fmt.Errorf("--auth-name requires --type")
 	}
 	return nil
 }
@@ -164,21 +169,50 @@ func selectSecretAuth(info *api.ServiceInfo, serviceSlug string) (*api.AuthConfi
 	return promptSecretAuthSelect(info)
 }
 
-// selectSecretAuthByType treats --type as a concrete auth scheme name rather
-// than a broad family because static secrets are keyed by scheme identity.
+// selectSecretAuthByType uses --type for the public auth family and
+// --auth-name for the exact provider scheme. Keeping those identities
+// separate prevents two same-family schemes from silently sharing secrets.
 func selectSecretAuthByType(info *api.ServiceInfo, serviceSlug string) (*api.AuthConfig, error) {
 	requested := canonicalSecretTypeName(secretSetType)
+	matches := make([]*api.AuthConfig, 0, len(info.AuthConfigs))
 	for i := range info.AuthConfigs {
 		auth := &info.AuthConfigs[i]
-		if auth.Name == secretSetType || canonicalSecretAuthType(auth) == requested {
-			return &info.AuthConfigs[i], nil
+		if canonicalSecretAuthType(auth) == requested {
+			matches = append(matches, auth)
 		}
 	}
-	var validTypes []string
-	for _, a := range info.AuthConfigs {
-		validTypes = append(validTypes, a.Name)
+	if len(matches) == 0 {
+		return nil, unsupportedSecretAuthError(info, serviceSlug)
 	}
-	return nil, fmt.Errorf("service %s does not support authentication method '%s'. Valid methods are: %s. Run 'fused-cli service %s show' for details", serviceSlug, secretSetType, strings.Join(validTypes, ", "), serviceSlug)
+	name := strings.TrimSpace(secretSetAuthName)
+	if name != "" {
+		for _, auth := range matches {
+			if auth.Name == name {
+				return auth, nil
+			}
+		}
+		return nil, fmt.Errorf("service %s does not declare auth_name %q for auth type %q; matching names are: %s", serviceSlug, name, requested, strings.Join(secretAuthNames(matches), ", "))
+	}
+	if len(matches) == 1 {
+		return matches[0], nil
+	}
+	return nil, fmt.Errorf("service %s declares multiple %s authentication schemes; pass --auth-name with one of: %s", serviceSlug, requested, strings.Join(secretAuthNames(matches), ", "))
+}
+
+func unsupportedSecretAuthError(info *api.ServiceInfo, serviceSlug string) error {
+	valid := make([]string, 0, len(info.AuthConfigs))
+	for i := range info.AuthConfigs {
+		valid = append(valid, canonicalSecretAuthType(&info.AuthConfigs[i])+":"+info.AuthConfigs[i].Name)
+	}
+	return fmt.Errorf("service %s does not support authentication type %q; valid type:name pairs are: %s", serviceSlug, secretSetType, strings.Join(valid, ", "))
+}
+
+func secretAuthNames(auths []*api.AuthConfig) []string {
+	names := make([]string, 0, len(auths))
+	for _, auth := range auths {
+		names = append(names, auth.Name)
+	}
+	return names
 }
 
 // promptSecretAuthSelect shows scheme names next to labels because those names
@@ -205,30 +239,13 @@ func promptSecretAuthSelect(info *api.ServiceInfo) (*api.AuthConfig, error) {
 }
 
 func handleBasicSecretSet(client *api.Client, serviceID, bucketID string, auth *api.AuthConfig, value string, expiresAt *time.Time) error {
-	var username, password string
-
-	if value != "" {
-		pairs := parseInlineKeyValuePairs(value)
-		username, password = pairs["username"], pairs["password"]
-		if username == "" || password == "" {
-			return fmt.Errorf("basic auth requires both username and password. Provide format 'username=...;password=...' or use interactive mode (-i)")
-		}
-	} else {
-		if err := requireInteractive("provide username and password using the command's value input"); err != nil {
-			return err
-		}
-		err := huh.NewInput().Title("Username:").Value(&username).Run()
-		if err != nil {
-			return err
-		}
-		err = huh.NewInput().Title("Password:").EchoMode(huh.EchoModePassword).Value(&password).Run()
-		if err != nil {
-			return err
-		}
+	username, password, err := resolveBasicSecretInput(auth.BasicPasswordMode, value)
+	if err != nil {
+		return err
 	}
 
 	name := secretAuthCredentialName(auth)
-	err := client.UpsertSecrets(bucketID, []api.SecretUpsertRequest{
+	err = client.UpsertSecrets(bucketID, []api.SecretUpsertRequest{
 		{ServiceID: serviceID, KeyName: name + "_username", CredentialType: "basic", Value: username, ExpiresAt: expiresAt},
 		{ServiceID: serviceID, KeyName: name + "_password", CredentialType: "basic", Value: password, ExpiresAt: expiresAt},
 	})
@@ -237,6 +254,43 @@ func handleBasicSecretSet(client *api.Client, serviceID, bucketID string, auth *
 	}
 	fmt.Printf("Basic Auth secrets set successfully.\n")
 	return nil
+}
+
+func resolveBasicSecretInput(mode api.BasicPasswordMode, value string) (string, string, error) {
+	if value != "" {
+		pairs := parseInlineKeyValuePairs(value)
+		return validateBasicSecretInput(mode, pairs["username"], pairs["password"])
+	}
+	if err := requireInteractive("provide Basic authentication material using the command's value input"); err != nil {
+		return "", "", err
+	}
+	var username, password string
+	if err := huh.NewInput().Title("Username:").Value(&username).Run(); err != nil {
+		return "", "", err
+	}
+	if basicPasswordRequired(mode) || mode == api.BasicPasswordMode("optional") {
+		if err := huh.NewInput().Title("Password (optional when supported):").EchoMode(huh.EchoModePassword).Value(&password).Run(); err != nil {
+			return "", "", err
+		}
+	}
+	return validateBasicSecretInput(mode, username, password)
+}
+
+func validateBasicSecretInput(mode api.BasicPasswordMode, username, password string) (string, string, error) {
+	if strings.TrimSpace(username) == "" {
+		return "", "", errors.New("basic auth requires a username")
+	}
+	if basicPasswordRequired(mode) && password == "" {
+		return "", "", errors.New("basic auth requires a password; provide format 'username=...;password=...' or use interactive mode (-i)")
+	}
+	if mode == api.BasicPasswordMode("empty") && password != "" {
+		return "", "", errors.New("this Basic authentication scheme requires an empty password")
+	}
+	return username, password, nil
+}
+
+func basicPasswordRequired(mode api.BasicPasswordMode) bool {
+	return mode == "" || mode == api.BasicPasswordMode("required")
 }
 
 func handleMTLSSecretSet(client *api.Client, serviceID, bucketID string, auth *api.AuthConfig, value string, expiresAt *time.Time) error {
@@ -460,7 +514,8 @@ func init() {
 
 	secretSetCmd.Flags().StringVar(&secretSetBucketID, "bucket", "", "Bucket name or UUID; omit to use the default bucket")
 	secretSetCmd.Flags().StringVar(&secretSetExpiresAt, "expires-at", "", "RFC3339 expiry timestamp; omit for no expiry")
-	secretSetCmd.Flags().StringVar(&secretSetType, "type", "", "Logical authentication method name, such as bearerAuth")
+	secretSetCmd.Flags().StringVar(&secretSetType, "type", "", "Authentication family, such as bearer, api_key, oauth, or mtls")
+	secretSetCmd.Flags().StringVar(&secretSetAuthName, "auth-name", "", "Exact provider auth scheme name; required when --type matches multiple schemes")
 	secretSetCmd.Flags().BoolVarP(&secretSetInteractive, "interactive", "i", false, "Prompt for the supported authentication method and value")
 	secretSetCmd.Flags().BoolVar(&secretSetValueStdin, "value-stdin", false, "Read the credential value from stdin")
 	secretListCmd.Flags().StringVar(&secretListBucketID, "bucket", "", "Bucket name or UUID (required)")

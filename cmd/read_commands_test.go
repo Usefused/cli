@@ -73,6 +73,40 @@ func TestServiceOperationsSearchUsesServerPagination(t *testing.T) {
 	}
 }
 
+func TestWorkspaceServiceOperationsUsesServerPaginationWithoutQuery(t *testing.T) {
+	var sawSearchVars map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Query     string         `json:"query"`
+			Variables map[string]any `json:"variables"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode graphql body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.Contains(body.Query, "GetServiceInfo"):
+			_, _ = w.Write([]byte(`{"data":{"service":{"id":"svc-1","name":"GitHub","slug":"github","base_url":"https://api.github.test","provider":null,"is_owner":true,"servers":[],"auth_configs":[]}}}`))
+		case strings.Contains(body.Query, "WorkspaceServices"):
+			_, _ = w.Write([]byte(`{"data":{"workspaceServices":[{"service_id":"svc-1","service_name":"GitHub","service_slug":"github","version":"v1","enabled_versions":[{"service_version_id":"version-1","version":"v1","status":"active"}]}]}}`))
+		case strings.Contains(body.Query, "searchEndpoints"):
+			sawSearchVars = body.Variables
+			_, _ = w.Write([]byte(`{"data":{"searchEndpoints":[{"id":"ep-1","name":"issuesList","path":"/issues","method":"GET","description":"","service_id":"svc-1"}]}}`))
+		default:
+			t.Fatalf("unexpected query: %s", body.Query)
+		}
+	}))
+	defer server.Close()
+
+	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"workspace", "service", "operations", "github", "--version", "v1", "--limit", "5", "--offset", "10"})
+	if sawSearchVars["limit"] != float64(5) || sawSearchVars["offset"] != float64(10) || sawSearchVars["q"] != "" {
+		t.Fatalf("unexpected unfiltered pagination variables: %#v", sawSearchVars)
+	}
+	if !strings.Contains(out, "issuesList") || !strings.Contains(out, "/issues") {
+		t.Fatalf("unexpected output: %q", out)
+	}
+}
+
 func TestSecretListUsesBucketScopedPagination(t *testing.T) {
 	const bucketID = "11111111-1111-4111-8111-111111111111"
 	var sawVariables map[string]any

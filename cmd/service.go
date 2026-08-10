@@ -60,11 +60,37 @@ func readServiceOperations(cmd *cobra.Command, client *cliapi.Client, serviceID 
 
 func printIntegrations(out io.Writer, integrations []cliapi.Integration) {
 	w := tabwriter.NewWriter(out, 0, 8, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tMETHOD\tPATH\tID")
+	fmt.Fprintln(w, "NAME\tMETHOD\tPATH\tSECURITY\tID")
 	for _, op := range integrations {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", op.Name, op.Method, op.Path, op.ID)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", op.Name, op.Method, op.Path, formatSecurityRequirements(op.SecurityRequirements), op.ID)
 	}
 	w.Flush()
+}
+
+func formatSecurityRequirements(requirements cliapi.SecurityRequirements) string {
+	if len(requirements) == 0 {
+		return "-"
+	}
+	alternatives := make([]string, 0, len(requirements))
+	for _, alternative := range requirements {
+		if len(alternative.Schemes) == 0 {
+			alternatives = append(alternatives, "anonymous")
+			continue
+		}
+		schemes := make([]string, 0, len(alternative.Schemes))
+		for _, requirement := range alternative.Schemes {
+			schemes = append(schemes, formatSecurityRequirement(requirement))
+		}
+		alternatives = append(alternatives, strings.Join(schemes, " + "))
+	}
+	return strings.Join(alternatives, " OR ")
+}
+
+func formatSecurityRequirement(requirement cliapi.SecurityRequirement) string {
+	if len(requirement.Scopes) == 0 {
+		return requirement.Scheme
+	}
+	return requirement.Scheme + "[" + strings.Join(requirement.Scopes, ",") + "]"
 }
 
 func runServiceWebhooks(cmd *cobra.Command, serviceSlug string) error {
@@ -200,14 +226,38 @@ func runServiceShow(cmd *cobra.Command, serviceSlug string) error {
 		} else {
 			fmt.Fprintf(cmd.OutOrStdout(), "server:\t%s\n", srv.URL)
 		}
+		for _, variable := range srv.Variables {
+			fmt.Fprintf(cmd.OutOrStdout(), "  variable:\t%s\trequired: %t%s\n", variable.Name, variable.Required, formatServerVariableOptions(variable))
+		}
 	}
 	if len(info.AuthConfigs) > 0 {
 		fmt.Fprintf(cmd.OutOrStdout(), "\nauth_methods:\n")
 		for _, auth := range info.AuthConfigs {
-			fmt.Fprintf(cmd.OutOrStdout(), "  - %s (type: %s, scheme: %s)\n", auth.Name, auth.Type, auth.Scheme)
+			fmt.Fprintf(cmd.OutOrStdout(), "  - %s (type: %s, scheme: %s%s)\n", auth.Name, auth.Type, auth.Scheme, formatBasicPasswordMode(auth.BasicPasswordMode))
 		}
 	}
 	return nil
+}
+
+func formatServerVariableOptions(variable cliapi.ServerVariable) string {
+	parts := make([]string, 0, 2)
+	if variable.Default != nil {
+		parts = append(parts, "default: "+*variable.Default)
+	}
+	if len(variable.Enum) > 0 {
+		parts = append(parts, "enum: "+strings.Join(variable.Enum, ","))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "\t" + strings.Join(parts, "\t")
+}
+
+func formatBasicPasswordMode(mode cliapi.BasicPasswordMode) string {
+	if mode == "" {
+		return ""
+	}
+	return ", basic_password_mode: " + string(mode)
 }
 
 func runServiceVersions(cmd *cobra.Command, service string) error {

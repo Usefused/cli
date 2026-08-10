@@ -249,7 +249,8 @@ func uniqueStrings(values []string) []string {
 // used to be one flat service-level list carrying its own `version` field per
 // entry; now that Versions is itself the per-version container, an entry
 // only needs auth_type to disambiguate itself from siblings on the same
-// version.
+// version. Exact scheme names belong to bucket Connect config, while the
+// effective routing profile remains shared by authentication family.
 func mergeWorkspaceConnectionProfilesFromRemote(cfg *configfile.WorkspaceConfig, services map[string]api.WorkspaceService, serviceKeys map[string]string, configs []api.WorkspaceConnectConfig) ([]string, error) {
 	grouped, err := workspaceConnectionProfilesByServiceVersion(services, serviceKeys, configs)
 	if err != nil {
@@ -489,12 +490,9 @@ func attachWorkspaceVersionPolicyOverrides(svc api.WorkspaceService, visibility 
 // policy fields, so this keeps the two round-trip functions from duplicating
 // the same field-by-field copy four times over.
 func mapExecRateLimit(rl *api.ServiceRateLimit) *configfile.RateLimitConfig {
-	if rl == nil {
-		return nil
-	}
-	return &configfile.RateLimitConfig{
-		Strategy: rl.Strategy, RequestsPerSecond: rl.RequestsPerSecond, RequestsPerMinute: rl.RequestsPerMinute,
-	}
+	// API and configfile intentionally alias the same v2 transport type. The
+	// Engine remains the sole place that interprets or enforces the policy.
+	return rl
 }
 
 func mapExecRetry(rc *api.ServiceRetryConfig) *configfile.RetryConfig {
@@ -505,10 +503,10 @@ func mapExecRetry(rc *api.ServiceRetryConfig) *configfile.RetryConfig {
 }
 
 func mapExecPagination(p *api.ServicePagination) *configfile.PaginationConfig {
-	if p == nil {
-		return nil
-	}
-	return &configfile.PaginationConfig{Type: p.Type, RequestParam: p.RequestParam, ResponsePath: p.ResponsePath}
+	// API and configfile intentionally alias the shared transport type. Returning
+	// the value unchanged keeps Registry/Engine authoritative over pagination
+	// semantics and prevents sync from normalizing policy locally.
+	return p
 }
 
 // mapExecWebhookConfig round-trips the provider's own webhook verification

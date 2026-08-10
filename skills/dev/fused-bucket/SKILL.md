@@ -132,9 +132,11 @@ skill's `reference/access-management.md` for the complete role matrix.
 ```shell
 fused-cli secret list --bucket <bucket-name-or-id>
 # single-value scheme (api_key, bearer, oauth/oidc static token):
-printf '%s' "$TOKEN" | fused-cli secret set <service-slug> --value-stdin [--bucket <bucket-name-or-id>] [--type <scheme>] [--expires-at <RFC3339>]
+printf '%s' "$TOKEN" | fused-cli secret set <service-slug> --value-stdin [--bucket <bucket-name-or-id>] [--type <auth-type>] [--auth-name <scheme>] [--expires-at <RFC3339>]
 # multi-field scheme (basic, mtls): send ONE ';'-joined value over stdin:
 printf '%s' 'username=x;password=y' | fused-cli secret set <service-slug> --value-stdin [--bucket <bucket-name-or-id>] --type basic
+# Basic schemes whose service metadata declares basic_password_mode=empty:
+printf '%s' 'username=api-key;password=' | fused-cli secret set <service-slug> --value-stdin [--bucket <bucket-name-or-id>] --type basic
 printf '%s' 'cert=...;key=...' | fused-cli secret set <service-slug> --value-stdin [--bucket <bucket-name-or-id>] --type mtls
 fused-cli secret set <service-slug> --interactive [--bucket <bucket-name-or-id>]
 fused-cli secret delete <service-slug> <key-name> [--bucket <bucket-name-or-id>]
@@ -156,13 +158,16 @@ request immediately, there's nothing to `plan`/`apply` afterward. That also
 means re-running `set` with a new value is how you rotate a credential;
 there's no versioning or grace period, the old value is simply gone.
 
-If a service declares more than one auth scheme (e.g. both `api_key` and
-`oauth` as alternatives), a bare `set` only auto-picks the scheme when
-there's exactly one -- otherwise pass `--type <scheme-name>` or use `-i` to
-pick interactively. They are always stored as two separate secret keys
-(`<name>_username`/`<name>_password`, or `<name>_cert`/`<name>_key`) once
-parsed out of that one `;`-delimited value, and a client cert/key pair is
-validated (matching pair, not expired) before it's ever stored.
+If a service declares more than one auth scheme, a bare `set` only auto-picks
+when there is exactly one. `--type` selects the public credential type
+(`api_key`, `oauth`, and so on); when two schemes share that type, also pass the exact
+Registry scheme name as `--auth-name <scheme-name>` or use `-i`. The CLI fails
+an ambiguous same-type selection rather than choosing the first. Basic input
+follows the selected scheme's `basic_password_mode`: `required` needs a
+non-empty password, `optional` permits one to be empty, and `empty` rejects a
+non-empty password. The CLI writes the password key even when empty so a stale
+older value is replaced. mTLS is always stored as the matching
+`<name>_cert`/`<name>_key` pair and is validated before storage.
 
 `--expires-at` is optional and purely advisory metadata (`secret list` and
 `bucket secrets <bucket-name-or-id>` flag an expired one) -- nothing auto-rotates or
@@ -185,7 +190,7 @@ its own storage instead).
 ## Registering a service's OAuth/OIDC app (connect)
 
 ```shell
-printf '%s' 'client_id=...;client_secret=...;redirect_uri=https://...' | fused-cli connect set <service-slug> --bucket <bucket-name-or-id> --value-stdin [--type oauth|oidc]
+printf '%s' 'client_id=...;client_secret=...;redirect_uri=https://...' | fused-cli connect set <service-slug> --bucket <bucket-name-or-id> --value-stdin [--type oauth|oidc] [--auth-name <scheme>]
 fused-cli connect set <service-slug> --bucket <bucket-name-or-id> --interactive
 ```
 
@@ -193,8 +198,10 @@ This registers (or rotates) the app credentials a service's interactive
 OAuth/OIDC flow uses -- distinct from any one end user connecting, see the
 next section for that. Like `secret set`/`value set`, this is an **immediate
 admin action**: no workspace.yaml block, no plan/apply, takes effect on save.
-`--type` disambiguates only when a service declares both `oauth` and `oidc`;
-otherwise the sole supported scheme is picked automatically.
+`--type` selects OAuth versus OIDC. When the selected type has multiple named
+schemes, `--auth-name` must select the exact Registry scheme; the CLI never
+uses declaration order as a fallback. A sole supported scheme is picked
+automatically.
 
 Every field is required the first time (there is nothing to fall back to),
 but afterward **omitting a field leaves it unchanged** -- rotating just

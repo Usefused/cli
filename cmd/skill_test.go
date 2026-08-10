@@ -99,9 +99,35 @@ func TestFusedCLISkillDocumentsImportTargetScope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)
 	}
-	for _, token := range []string{"--target all|endpoints|webhooks", "defaults to `all`", "plan persists that choice"} {
+	for _, token := range []string{"--target all|endpoints|webhooks", "defaults to `endpoints`", "plan persists that choice"} {
 		if !strings.Contains(string(data), token) {
 			t.Errorf("fused-cli skill missing import target guidance %q", token)
+		}
+	}
+}
+
+func TestDevSkillsDocumentServicePublicationGate(t *testing.T) {
+	paths := []string{
+		filepath.Join("..", "skills", "dev", "fused-cli", "SKILL.md"),
+		filepath.Join("..", "skills", "dev", "fused-workspace", "SKILL.md"),
+	}
+	var combined strings.Builder
+	for _, path := range paths {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		combined.Write(data)
+		combined.WriteByte('\n')
+	}
+	for _, token := range []string{
+		"service-level `public` as the pre-publication gate",
+		"cannot expose a private service",
+		"do not fail private validation",
+		"Never substitute version visibility for the service gate",
+	} {
+		if !strings.Contains(combined.String(), token) {
+			t.Errorf("publication guidance missing %q", token)
 		}
 	}
 }

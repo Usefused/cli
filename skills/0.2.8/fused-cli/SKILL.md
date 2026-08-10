@@ -98,7 +98,7 @@ saved API key has no managed-login provenance and is left unchanged.
   directory discovery
 - `--no-input` -- fail with remediation rather than opening a prompt;
   `CI=true` enables this automatically
-- `--timeout <duration>` -- bound Engine requests (default `30s`)
+- `--timeout <duration>` -- bound Engine requests (default `1m`)
 - `--request-id <request-id>` -- attach a non-secret audit correlation ID to every
   Engine request
 - `--readme` -- print the full CLI reference and exit
@@ -213,6 +213,12 @@ Use `import plan` / `import apply` when the source is already a machine-readable
 specification. This path is reviewed and receipt-backed: `plan` parses/diffs,
 then `apply` commits the exact planned source.
 
+Treat a successful `import apply` as the completion signal for the contract
+mutation. Allow endpoint semantic-search ranking to catch up asynchronously:
+background enrichment retries transient failures, and a periodic repair sweep
+recovers interrupted work. Do not re-run plan/apply or wait/poll merely for
+that optional enrichment.
+
 ```shell
 fused-cli import plan ./openapi.yaml --name "Billing API" --slug billing-api
 fused-cli import apply
@@ -221,6 +227,13 @@ fused-cli import plan --url https://developer.example.com/asyncapi.yaml \
   --name "Events API" --slug events-api
 fused-cli import apply
 ```
+
+Use service-level `public` as the pre-publication gate. Keep the owned service
+`public: false` through private workspace validation; do not require its
+version to be private, because versions default public and version-level
+`public: true` cannot expose a private service. After validation passes, set
+the service `public: true` and independently confirm the intended version is
+not staged private. Never substitute version visibility for the service gate.
 
 Supported spec inputs are OpenAPI, AsyncAPI, Postman Collection, WSDL, GraphQL
 SDL, and introspectable GraphQL endpoints. `--url` is still a spec URL here:

@@ -452,11 +452,8 @@ func runWorkspaceServiceOperations(cmd *cobra.Command, serviceSlug, version stri
 }
 
 func readWorkspaceServiceOperations(cmd *cobra.Command, client *cliapi.Client, serviceID, version string) ([]cliapi.Integration, error) {
-	if strings.TrimSpace(workspaceServiceOperationsQuery) != "" {
+	if strings.TrimSpace(workspaceServiceOperationsQuery) != "" || cmd.Flags().Changed("limit") || cmd.Flags().Changed("offset") {
 		return client.SearchEndpointsPage(serviceID, version, workspaceServiceOperationsQuery, workspaceServiceListFlags.pageOptions())
-	}
-	if cmd.Flags().Changed("limit") || cmd.Flags().Changed("offset") {
-		return nil, fmt.Errorf("--limit and --offset require --q for workspace service operations because only endpoint search is paginated server-side")
 	}
 	// Why: Workspace membership/version validation happens above; this call
 	// preserves the existing full-list behavior when the user is browsing

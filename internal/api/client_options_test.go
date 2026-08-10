@@ -10,6 +10,9 @@ import (
 )
 
 func TestNewClientUsesFiniteDefaultTimeout(t *testing.T) {
+	if DefaultTimeout != time.Minute {
+		t.Fatalf("default timeout = %s, want 1m", DefaultTimeout)
+	}
 	client := NewClient("https://engine.example.com", "test-key")
 	if client.HTTP.Timeout != DefaultTimeout {
 		t.Fatalf("expected default timeout %s, got %s", DefaultTimeout, client.HTTP.Timeout)

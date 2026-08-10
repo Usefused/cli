@@ -11,17 +11,38 @@ or not `public` is set:
 execution_policy:
   public: false
   rate_limit:
-    strategy: "fixed_window"       # engine-defined strategies
-    requests_per_second: 10
-    requests_per_minute: 300
+    version: 2
+    policies:
+      - name: minute_requests
+        unit: requests              # requests | points | quota_units
+        scope: service_version      # service_version | connection
+        default_cost: 1
+        operation_costs: {}
+        algorithm: fixed_window     # exactly one matching algorithm block
+        fixed_window:
+          limit: 300
+          duration_ms: 60000
+    retry_after:
+      enabled: true
+      max_delay_ms: 60000
   retry:
     strategy: "exponential_backoff"
     max_retries: 3
     backoff_ms: 500
   pagination:
-    type: "cursor"                 # cursor | offset | page_number | next_url
-    request_param: "cursor"
-    response_path: "metadata.next_cursor"
+    version: 2
+    type: cursor                    # exactly one matching strategy block
+    cursor:
+      request: {location: query, name: cursor}
+      initial: {type: string, string: first} # optional; integer is also supported
+      next: {location: body, path: "$.metadata.next_cursor", value_type: string}
+      has_more: {location: body, path: "$.metadata.has_more", value_type: string}
+    items_path: "$.items"
+    limits:
+      max_pages: 100
+      max_items: 10000
+      max_bytes: 16777216
+      max_duration_ms: 120000
   base_url: "https://api.example.com/v2"
   event_extraction_path: "body.eventType"
   incoming_webhook_config:
@@ -29,6 +50,35 @@ execution_policy:
     signature_header: "X-Signature"
     verification_headers: ["X-Timestamp"]
 ```
+
+Rate limiting is a discriminated v2 transport contract. Each named policy has
+one unit and scope, a default cost plus optional stable-operation-key cost
+overrides, and exactly one algorithm block: `fixed_window` (`limit`,
+`duration_ms`) or `token_bucket` (`capacity`, `refill_units`,
+`refill_interval_ms`). Optional response-header metadata can
+name limit/remaining/reset headers and the reset format. There is no legacy
+`strategy`/`requests_per_second`/`requests_per_minute` workspace shape.
+
+The CLI strictly preserves this shape but does not interpret its algorithms.
+Engine validates the policy and is the sole enforcement authority. Generated
+TypeScript and Python SDKs contain no local token bucket, window, sleep, or
+acquire step, avoiding per-process counters that disagree with shared
+connection and service-version quotas.
+
+Pagination is a discriminated v2 contract. `type` is one of `cursor`,
+`offset`, `page_number`, or `next_url`, and exactly one same-named block is
+present. Request targets contain `location` and `name`. Response value sources
+use `location` (`body`, `header`, or `link`) plus the applicable `path`, `name`,
+or `relation`, and declare `value_type`. Offset supports `start`, a
+`fixed`/`items_returned` increment, optional page size, next-offset/total/has-more
+signals, and short-page stopping. Page-number supports start/increment, optional
+page size, total-pages/has-more signals, and short-page stopping. Next-URL has a
+single `next` value source. `items_path` and all four safety limits are required.
+There is no legacy `request_param`/`response_path` workspace shape.
+
+Do not repeat pagination in SDK or MCP config. Engine resolves endpoint policy
+first, then the effective version/service fallback, and streams every successful
+provider page as its own chunk to generated SDK and MCP consumers.
 
 `retry_config` is also accepted as an alias for `retry` (same shape); if
 both are set, `retry` wins -- it's the one the Registry publish path

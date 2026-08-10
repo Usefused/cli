@@ -1,6 +1,6 @@
 ---
 name: fused-workspace
-description: "Use when the user wants to configure a Fused workspace's service allowlist using fused-cli -- enabling/disabling services or versions, listing a service's existing webhook registrations (read-only), or scheduling a deprecation. Trigger on 'workspace config', 'enable a service', 'fused-cli workspace', 'deprecate a service version', or 'kind: workspace' files. For registering a new inbound webhook read fused-webhook instead; for rate limits/retries/pagination/outbound-webhook-verification (execution_policy) or auth/connect/dynamic-binding config, read fused-config instead; for bucket credentials read fused-bucket."
+description: "Use when the user wants to configure a Fused workspace's service allowlist using fused-cli -- enabling/disabling or publishing services or versions, distinguishing service visibility from version visibility, listing a service's existing webhook registrations (read-only), or scheduling a deprecation. Trigger on 'workspace config', 'enable a service', 'publish a service', 'service visibility', 'version visibility', 'fused-cli workspace', 'deprecate a service version', or 'kind: workspace' files. For registering a new inbound webhook read fused-webhook instead; for rate limits/retries/pagination/outbound-webhook-verification (execution_policy) or auth/connect/dynamic-binding config, read fused-config instead; for bucket credentials read fused-bucket."
 ---
 
 # Workspace config
@@ -50,6 +50,11 @@ with "bucket not found" if it doesn't; it never creates one implicitly. Run
 `fused-cli bucket create <bucket-name>` first (see `fused-bucket`) for any bucket
 name you're about to reference here.
 
+A bucket service's static `auth` uses `auth_type` for the credential type
+and optional `auth_name` for the exact provider scheme. `auth_name` is required
+when the provider declares multiple named schemes of one type; plan/apply
+must not rely on declaration order. See `fused-config` for the field matrix.
+
 There is no `runtime_config` field on a workspace service anymore -- it was
 removed with no backward compatibility once `kind: webhook` shipped (a
 `workspace.yaml` still containing `runtime_config: {...}` now fails to parse
@@ -60,7 +65,8 @@ services and attached to whichever SDK should receive delivery
 (see `fused-webhook`); `auth`/`connect` moved to
 `buckets.<bucket>.service_config.<slug>` (see `fused-bucket`);
 `pagination`/`pagination_overrides` moved under `execution_policy.pagination`
-(one value per service/version, no more per-operation overrides map); and
+(one v2 strategy per service/version, no workspace per-operation overrides
+map; provider-contract endpoint pagination remains the more specific tier); and
 `base_url` moved under `execution_policy.base_url` -- an owner override for a
 wrong or missing spec-derived base URL, workspace-settable and, with
 `execution_policy.public: true`, publishable to every other consumer too
@@ -80,6 +86,17 @@ settings to the Registry instead -- and unlike this `public`,
 `execution_policy` itself always has a real *local* effect in this
 workspace regardless of whether `execution_policy.public` is set (see
 `fused-config`).
+An exact version execution policy wins over the local service default for that
+version. Pagination is not copied into SDK/MCP config; Engine resolves it at
+dispatch and streams each provider page separately.
+
+For staged publication, use the top-level service `public` value as the
+pre-publication gate, not `versions[].public`. Keep the service `public: false`
+through private validation. A version with `public: true` cannot expose a
+private service, and versions default public, so do not fail private validation
+merely because the version is public. Version visibility is an independent
+staging control for versions of a public service. After validation, set the
+service `public: true` and confirm the intended version is not staged private.
 
 ## Deprecating and removing a service
 
@@ -207,6 +224,11 @@ it's a full mirror, not a merge of additions only:
   their own `kind: webhook` files entirely outside this sync (see
   `fused-webhook`), so there's nothing webhook-related for `workspace sync`
   to preserve or touch in the first place.
+- Provider auth requirements and server-variable declarations remain on the
+  Registry service/operation contract; sync does not copy them into
+  `workspace.yaml` or turn them into credentials. Connection-profile snapshots
+  remain opaque transport maps, so Engine-defined routing bindings round-trip
+  without the CLI normalizing their meaning or inventing a missing default.
 - `public` (service-level or per-version) is written only for services you
   own (`true` or `false`, whichever the Registry reports); it's omitted
   entirely for a third-party service, matching that it can't be set for one

@@ -13,6 +13,8 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/Usefused/cli/internal/pagination"
+	"github.com/Usefused/cli/internal/ratelimitpolicy"
 	"github.com/charmbracelet/huh/spinner"
 )
 
@@ -23,7 +25,7 @@ type Client struct {
 	showProgress bool
 }
 
-const DefaultTimeout = 30 * time.Second
+const DefaultTimeout = time.Minute
 
 var (
 	errGraphQLResponseMalformed = errors.New("graphql_response_malformed: Engine returned a malformed GraphQL response; retry or check Engine logs")
@@ -523,11 +525,23 @@ type ServiceVisibility struct {
 	IncomingWebhookConfig *ServiceIncomingWebhookConfig `json:"incoming_webhook_config"`
 }
 
-type ServiceRateLimit struct {
-	Strategy          string `json:"strategy"`
-	RequestsPerSecond int    `json:"requests_per_second"`
-	RequestsPerMinute int    `json:"requests_per_minute"`
-}
+type ServiceRateLimit = ratelimitpolicy.Config
+
+const serviceRateLimitGraphQLFields = `
+	version
+	policies {
+		name
+		unit
+		scope
+		default_cost
+		operation_costs
+		algorithm
+		fixed_window { limit duration_ms }
+		token_bucket { capacity refill_units refill_interval_ms }
+		response_headers { limit remaining reset { name format } }
+	}
+	retry_after { enabled max_delay_ms }
+`
 
 type ServiceRetryConfig struct {
 	Strategy   string `json:"strategy"`
@@ -535,11 +549,50 @@ type ServiceRetryConfig struct {
 	BackoffMs  int    `json:"backoff_ms"`
 }
 
-type ServicePagination struct {
-	Type         string `json:"type"`
-	RequestParam string `json:"request_param"`
-	ResponsePath string `json:"response_path"`
-}
+type ServicePagination = pagination.Config
+type ServicePaginationCursor = pagination.Cursor
+type ServicePaginationOffset = pagination.Offset
+type ServicePaginationPageNumber = pagination.PageNumber
+type ServicePaginationNextURL = pagination.NextURL
+type ServicePaginationPageSize = pagination.PageSize
+type ServicePaginationIncrement = pagination.Increment
+type ServicePaginationRequestTarget = pagination.RequestTarget
+type ServicePaginationValueSource = pagination.ValueSource
+type ServicePaginationScalar = pagination.Scalar
+type ServicePaginationLimits = pagination.Limits
+
+const servicePaginationGraphQLFields = `
+	version
+	type
+	items_path
+	limits { max_pages max_items max_bytes max_duration_ms }
+	cursor {
+		request { location name }
+		initial { type string integer }
+		next { location path name relation value_type }
+		has_more { location path name relation value_type }
+	}
+	offset {
+		request { location name }
+		start
+		increment { mode value }
+		page_size { target { location name } value }
+		next_offset { location path name relation value_type }
+		total_items { location path name relation value_type }
+		has_more { location path name relation value_type }
+		stop_on_short_page
+	}
+	page_number {
+		request { location name }
+		start
+		increment
+		page_size { target { location name } value }
+		total_pages { location path name relation value_type }
+		has_more { location path name relation value_type }
+		stop_on_short_page
+	}
+	next_url { next { location path name relation value_type } }
+`
 
 // ServiceIncomingWebhookConfig is the provider's webhook verification recipe
 // -- auth mechanism + where to find the signature. It deliberately has no
@@ -566,13 +619,34 @@ type ConnectionProfileRevision struct {
 }
 
 type Integration struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Path        string `json:"path"`
-	Method      string `json:"method"`
-	Description string `json:"description"`
-	ServiceID   string `json:"service_id"`
+	ID                   string               `json:"id"`
+	Name                 string               `json:"name"`
+	Path                 string               `json:"path"`
+	Method               string               `json:"method"`
+	Description          string               `json:"description"`
+	ServiceID            string               `json:"service_id"`
+	SecurityRequirements SecurityRequirements `json:"security_requirements"`
 }
+
+// SecurityRequirements preserves Registry ordering because alternatives are
+// tried in declaration order by the runtime. The CLI only transports and
+// displays this shape; Registry and Engine remain its semantic authorities.
+type SecurityRequirements []SecurityAlternative
+
+type SecurityAlternative struct {
+	Schemes []SecurityRequirement `json:"schemes"`
+}
+
+type SecurityRequirement struct {
+	Scheme string   `json:"scheme"`
+	Scopes []string `json:"scopes"`
+}
+
+const securityRequirementsGraphQLFields = `
+	security_requirements {
+		schemes { scheme scopes }
+	}
+`
 
 type WorkspaceService struct {
 	ID               string                    `json:"id"`
@@ -623,6 +697,7 @@ type WorkspaceConnectConfig struct {
 	BucketName      string                    `json:"bucket_name"`
 	ServiceID       string                    `json:"service_id"`
 	AuthType        string                    `json:"auth_type"`
+	AuthName        string                    `json:"auth_name"`
 	Enabled         bool                      `json:"enabled"`
 	RedirectURI     string                    `json:"redirect_uri"`
 	HasClientID     bool                      `json:"has_client_id"`
@@ -674,6 +749,7 @@ func (c *Client) ListWorkspaceConnectConfigs() ([]WorkspaceConnectConfig, error)
 				bucket_name
 				service_id
 				auth_type
+				auth_name
 				enabled
 				redirect_uri
 				has_client_id
@@ -837,10 +913,10 @@ func (c *Client) ServiceVisibilities(serviceIDs []string) (map[string]ServiceVis
 					provider { handle }
 				is_owner
 				is_public
-				rate_limit { strategy requests_per_second requests_per_minute }
+				rate_limit {` + serviceRateLimitGraphQLFields + `}
 				retry_config { strategy max_retries backoff_ms }
 				timeout_ms
-				pagination { type request_param response_path }
+				pagination {` + servicePaginationGraphQLFields + `}
 				event_extraction_path
 				incoming_webhook_config { auth_type auth_location auth_key_name signature_header verification_headers }
 				base_url_override
@@ -882,17 +958,59 @@ type ServiceVersion struct {
 }
 
 type ServiceServer struct {
-	URL         string `json:"url"`
-	Description string `json:"description"`
+	URL         string           `json:"url"`
+	Description string           `json:"description,omitempty"`
+	Environment string           `json:"environment,omitempty"`
+	IsDefault   bool             `json:"is_default,omitempty"`
+	Variables   []ServerVariable `json:"variables,omitempty"`
+}
+
+type ServerVariable struct {
+	Name     string   `json:"name"`
+	Default  *string  `json:"default,omitempty"`
+	Enum     []string `json:"enum,omitempty"`
+	Required bool     `json:"required"`
 }
 
 type AuthConfig struct {
-	Name     string `json:"name"`
-	Type     string `json:"type"`
-	Scheme   string `json:"scheme"`
-	Location string `json:"location"`
-	KeyName  string `json:"key_name"`
+	Name              string            `json:"name,omitempty"`
+	Type              string            `json:"type"`
+	Flow              string            `json:"flow,omitempty"`
+	Scheme            string            `json:"scheme,omitempty"`
+	BasicPasswordMode BasicPasswordMode `json:"basic_password_mode,omitempty"`
+	Location          string            `json:"location,omitempty"`
+	KeyName           string            `json:"key_name,omitempty"`
+	TokenURL          string            `json:"token_url,omitempty"`
+	AuthorizationURL  string            `json:"authorization_url,omitempty"`
+	OpenIDConnectURL  string            `json:"open_id_connect_url,omitempty"`
+	Scopes            []string          `json:"scopes,omitempty"`
 }
+
+// BasicPasswordMode is intentionally an unconstrained transport string here;
+// Registry validates the frozen vocabulary and Engine applies its behavior.
+type BasicPasswordMode string
+
+const serviceServerGraphQLFields = `
+	url
+	description
+	environment
+	is_default
+	variables { name default enum required }
+`
+
+const serviceAuthConfigGraphQLFields = `
+	name
+	type
+	flow
+	scheme
+	basic_password_mode
+	location
+	key_name
+	token_url
+	authorization_url
+	open_id_connect_url
+	scopes
+`
 
 type ServiceInfo struct {
 	ID          string          `json:"id"`
@@ -969,15 +1087,10 @@ func (c *Client) GetServiceInfo(serviceSlug string) (*ServiceInfo, error) {
 					provider { handle }
 				is_owner
 				servers {
-					url
-					description
+					` + serviceServerGraphQLFields + `
 				}
 				auth_configs {
-					name
-					type
-					scheme
-					location
-					key_name
+					` + serviceAuthConfigGraphQLFields + `
 				}
 			}
 		}
@@ -1000,10 +1113,10 @@ func (c *Client) ServiceVersions(serviceSlug string) ([]ServiceVersion, error) {
 				status
 				created_at
 				is_public
-				rate_limit { strategy requests_per_second requests_per_minute }
+				rate_limit {` + serviceRateLimitGraphQLFields + `}
 				retry_config { strategy max_retries backoff_ms }
 				timeout_ms
-				pagination { type request_param response_path }
+				pagination {` + servicePaginationGraphQLFields + `}
 				event_extraction_path
 				incoming_webhook_config { auth_type auth_location auth_key_name signature_header verification_headers }
 				base_url_override
@@ -1082,6 +1195,7 @@ func (c *Client) SearchEndpointsPage(serviceID, version, q string, opts PageOpti
 				method
 				description
 				service_id
+				` + securityRequirementsGraphQLFields + `
 			}
 		}
 	`
@@ -1102,6 +1216,7 @@ func (c *Client) ServiceOperations(serviceID, version string) ([]Integration, er
 				method
 				description
 				service_id
+				` + securityRequirementsGraphQLFields + `
 			}
 		}
 	`
@@ -1690,11 +1805,12 @@ func (c *Client) UpdateWorkspacePlanAction(planID string, actions []map[string]a
 // (RESTProxyMountPaths), so the CLI needs no separate Registry URL concept.
 
 type SpecImportPlanRequest struct {
-	Name          string `json:"name"`
-	Slug          string `json:"slug"`
-	Version       string `json:"version,omitempty"`
-	SourceURL     string `json:"source_url,omitempty"`
-	SourceContent string `json:"source_content,omitempty"`
+	Name           string  `json:"name"`
+	Slug           string  `json:"slug"`
+	Version        string  `json:"version,omitempty"`
+	SourceURL      string  `json:"source_url,omitempty"`
+	SourceContent  string  `json:"source_content,omitempty"`
+	OverlayContent *string `json:"overlay_content,omitempty"`
 	// IsPublic is omitted from the request entirely when --public was not
 	// passed, so the Registry can default it differently depending on
 	// whether this targets a new service or a new version of an existing
@@ -1702,6 +1818,7 @@ type SpecImportPlanRequest struct {
 	IsPublic   *bool  `json:"is_public,omitempty"`
 	TargetType string `json:"target_type,omitempty"`
 	Category   string `json:"category,omitempty"`
+	Strict     bool   `json:"strict,omitempty"`
 }
 
 type SpecImportDiff struct {
@@ -1729,23 +1846,56 @@ type SpecImportUsage struct {
 	Workspaces []SpecImportWorkspaceUsage `json:"workspaces"`
 }
 
+type SpecImportDiagnostic struct {
+	Severity       string   `json:"severity"`
+	Code           string   `json:"code"`
+	Scope          string   `json:"scope"`
+	Method         string   `json:"method,omitempty"`
+	Path           string   `json:"path,omitempty"`
+	OperationID    string   `json:"operation_id,omitempty"`
+	Message        string   `json:"message"`
+	Recommendation string   `json:"recommendation,omitempty"`
+	Source         string   `json:"source,omitempty"`
+	Confidence     *float64 `json:"confidence,omitempty"`
+}
+
+type SpecImportStrictError struct {
+	HTTPStatus  int
+	Code        string
+	Message     string
+	Diagnostics []SpecImportDiagnostic
+}
+
+func (e *SpecImportStrictError) Error() string {
+	message := strings.Join(strings.Fields(e.Message), " ")
+	if message == "" {
+		message = "strict import rejected provider contract diagnostics"
+	}
+	return fmt.Sprintf("plan spec import failed (HTTP %d): %s: %s", e.HTTPStatus, e.Code, message)
+}
+
 type SpecImportPlanResponse struct {
-	PlanID        string           `json:"plan_id"`
-	SourceHash    string           `json:"source_hash"`
-	ServiceID     string           `json:"service_id"`
-	Slug          string           `json:"slug"`
-	Name          string           `json:"name"`
-	IsNewService  bool             `json:"is_new_service"`
-	TargetVersion string           `json:"target_version"`
-	TargetType    string           `json:"target_type"`
-	Action        string           `json:"action"`
-	Diff          SpecImportDiff   `json:"diff"`
-	Usage         *SpecImportUsage `json:"usage,omitempty"`
+	PlanID         string                 `json:"plan_id"`
+	SourceHash     string                 `json:"source_hash"`
+	OverlayHash    string                 `json:"overlay_hash,omitempty"`
+	ReviewHash     string                 `json:"review_hash"`
+	SourceFormat   string                 `json:"source_format"`
+	AdapterVersion string                 `json:"adapter_version"`
+	ServiceID      string                 `json:"service_id"`
+	Slug           string                 `json:"slug"`
+	Name           string                 `json:"name"`
+	IsNewService   bool                   `json:"is_new_service"`
+	TargetVersion  string                 `json:"target_version"`
+	TargetType     string                 `json:"target_type"`
+	Action         string                 `json:"action"`
+	Diff           SpecImportDiff         `json:"diff"`
+	Usage          *SpecImportUsage       `json:"usage,omitempty"`
+	Diagnostics    []SpecImportDiagnostic `json:"diagnostics,omitempty"`
 }
 
 type SpecImportApplyRequest struct {
 	PlanID     string `json:"plan_id"`
-	SourceHash string `json:"source_hash"`
+	ReviewHash string `json:"review_hash"`
 }
 
 type SpecImportApplyResponse struct {
@@ -1785,6 +1935,9 @@ func (c *Client) PlanSpecImport(req SpecImportPlanRequest) (*SpecImportPlanRespo
 
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(resp.Body)
+		if strictError := decodeSpecImportStrictError(resp.StatusCode, respBody); strictError != nil {
+			return nil, strictError
+		}
 		return nil, fmt.Errorf("plan spec import failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(resp.StatusCode, respBody))
 	}
 
@@ -1795,11 +1948,28 @@ func (c *Client) PlanSpecImport(req SpecImportPlanRequest) (*SpecImportPlanRespo
 	return &out, nil
 }
 
-// ApplySpecImport commits a plan produced by PlanSpecImport. sourceHash must
-// match the plan's own recorded hash or the Registry rejects the call --
-// same concurrency guard ApplySDKConfig/ApplyWorkspaceConfig already use.
-func (c *Client) ApplySpecImport(planID, sourceHash string) (*SpecImportApplyResponse, error) {
-	reqBody := SpecImportApplyRequest{PlanID: planID, SourceHash: sourceHash}
+func decodeSpecImportStrictError(status int, body []byte) *SpecImportStrictError {
+	if status != http.StatusUnprocessableEntity {
+		return nil
+	}
+	var response struct {
+		Error       string                 `json:"error"`
+		Message     string                 `json:"message"`
+		Diagnostics []SpecImportDiagnostic `json:"diagnostics"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil || response.Error != "strict_import_rejected" {
+		return nil
+	}
+	return &SpecImportStrictError{
+		HTTPStatus: status, Code: response.Error, Message: response.Message,
+		Diagnostics: append([]SpecImportDiagnostic(nil), response.Diagnostics...),
+	}
+}
+
+// ApplySpecImport commits the exact source and overlay reviewed by Registry.
+// reviewHash is opaque to the CLI so canonicalization has one owner.
+func (c *Client) ApplySpecImport(planID, reviewHash string) (*SpecImportApplyResponse, error) {
+	reqBody := SpecImportApplyRequest{PlanID: planID, ReviewHash: reviewHash}
 	body, err := json.Marshal(reqBody)
 	if err != nil {
 		return nil, err

@@ -1,6 +1,6 @@
 ---
 name: fused-workspace
-description: "Use when the user wants to configure a Fused workspace's service allowlist using fused-cli -- enabling/disabling services or versions, listing a service's existing webhook registrations (read-only), or scheduling a deprecation. Trigger on 'workspace config', 'enable a service', 'fused-cli workspace', 'deprecate a service version', or 'kind: workspace' files. For registering a new inbound webhook read fused-webhook instead; for rate limits/retries/pagination/outbound-webhook-verification (execution_policy) or auth/connect/dynamic-binding config, read fused-config instead; for bucket credentials read fused-bucket."
+description: "Use when the user wants to configure a Fused workspace's service allowlist using fused-cli -- enabling/disabling or publishing services or versions, distinguishing service visibility from version visibility, listing a service's existing webhook registrations (read-only), or scheduling a deprecation. Trigger on 'workspace config', 'enable a service', 'publish a service', 'service visibility', 'version visibility', 'fused-cli workspace', 'deprecate a service version', or 'kind: workspace' files. For registering a new inbound webhook read fused-webhook instead; for rate limits/retries/pagination/outbound-webhook-verification (execution_policy) or auth/connect/dynamic-binding config, read fused-config instead; for bucket credentials read fused-bucket."
 ---
 
 # Workspace config
@@ -80,6 +80,14 @@ settings to the Registry instead -- and unlike this `public`,
 `execution_policy` itself always has a real *local* effect in this
 workspace regardless of whether `execution_policy.public` is set (see
 `fused-config`).
+
+For staged publication, use the top-level service `public` value as the
+pre-publication gate, not `versions[].public`. Keep the service `public: false`
+through private validation. A version with `public: true` cannot expose a
+private service, and versions default public, so do not fail private validation
+merely because the version is public. Version visibility is an independent
+staging control for versions of a public service. After validation, set the
+service `public: true` and confirm the intended version is not staged private.
 
 ## Deprecating and removing a service
 

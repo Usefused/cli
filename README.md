@@ -119,7 +119,7 @@ individually attributable user credential remains active after login.
 
 ### Automation-safe execution
 
-Engine requests time out after 30 seconds by default. Override this per run
+Engine requests time out after one minute by default. Override this per run
 with `--timeout`, and pass `--request-id` to attach a safe audit correlation ID
 to every Engine request. SIGINT and SIGTERM cancel outstanding requests.
 
@@ -189,7 +189,7 @@ MCP servers use their own `mcp plan` and `mcp apply` deployment flow.
 
 ### Import a Provider API (`import`)
 
-Use `import plan` / `import apply` when the source is already a supported API specification (OpenAPI, AsyncAPI, Postman Collection, or GraphQL SDL/introspectable endpoint) -- the non-interactive path for teams adding their own internal service to Fused, e.g. from a CI step. The Registry auto-detects the source format; no `--format` flag is required.
+Use `import plan` / `import apply` when the source is already a supported API specification (OpenAPI 3, Swagger 2, Google Discovery, AsyncAPI, Postman Collection, WSDL, or GraphQL SDL/introspectable endpoint) -- the non-interactive path for teams adding their own internal service to Fused, e.g. from a CI step. The Registry auto-detects the source format; no `--format` flag is required, and the plan summary reports the authoritative detected format.
 
 ```bash
 # Plan endpoint-only import from a local file. Slug is required for create/update.
@@ -200,14 +200,33 @@ fused-cli import apply
 # sources (GraphQL SDL, versionless Postman collections) need --version.
 fused-cli import plan --url https://developer.example.com/asyncapi.yaml --name "Events API" --slug events-api
 
+# Google Discovery documents use the same reviewed plan/apply path.
+fused-cli import plan --url https://www.googleapis.com/discovery/v1/apis/drive/v3/rest --name "Google Drive" --slug google-drive
+
+# Apply provider-specific corrections from a local overlay. The CLI sends the
+# file unchanged; Registry validates and canonicalizes it with the source.
+fused-cli import plan ./openapi.json --overlay ./billing.overlay.yaml --name "Billing API" --slug billing-api
+
 # Human-readable docs URL: the agent discovers endpoints and, by default,
 # imports every one it finds. --review or --select narrows that down.
 fused-cli import docs --url https://docs.example.com/api --name "Docs API" --slug docs-api --version 1.0
 ```
 
-`--target` accepts `all`, `endpoints`, or `webhooks` and defaults to `all`.
+`--target` accepts `all`, `endpoints`, or `webhooks` and defaults to `endpoints`.
 The selected target is stored in the plan, so `import apply` commits exactly
 the contract scope that was reviewed.
+
+`import plan` reports structured diagnostics when provider metadata cannot be
+represented exactly. Use `--json` to consume the diagnostic fields unchanged,
+or `--strict` to reject a plan containing warning or error diagnostics. Info
+diagnostics do not fail strict mode.
+
+`--overlay` accepts a local file only. The CLI does not parse, normalize, or
+merge it: Registry owns canonicalization and returns a combined `review_hash`.
+The receipt records that opaque review identity, so `import apply` commits the
+exact source and overlay that were reviewed without rereading either file. For
+direct apply, pass both `--plan-id` and `--review-hash`; do not use the
+informational source or overlay hashes as the apply guard.
 
 `--slug` is required and is resolved within the caller's Registry account. An existing match updates that service; an unknown slug creates one. The provider-declared version is authoritative -- importing the same version creates a new internal revision, importing a different version creates that provider version -- and if a generated SDK or workspace uses the version being changed, `import plan` reports that usage without blocking apply. When apply runs, Engine also best-effort registers the service in its sole workspace; a workspace failure there is logged and traced without affecting the successful Registry apply response, so use the explicit `workspace service add` flow if that automatic registration fails.
 
@@ -264,6 +283,29 @@ services:
       - version: "1.0.0"
 ```
 The service keys are Registry service slugs. Engine resolves those slugs to service IDs during workspace planning, so teams do not need to know UUIDs. If `versions` is omitted, the Engine resolves Registry's latest public service version during planning and records the exact service-version ID in the plan. `versions` is a list of objects rather than bare version strings: each entry carries its own resolved `service_version_id` plus any per-version `public`/`execution_policy`/`connection_profiles` override, so that data doesn't need a separate sibling list keyed by a repeated version string. Service authentication secrets and API keys are stored securely using `fused-cli secret set <service-slug>`; a bucket's OAuth/OIDC app registration is a separate, immediate admin action via `fused-cli connect set <service-slug>` -- see [`docs/COMMANDS.md`](docs/COMMANDS.md) -- neither is a workspace.yaml field.
+
+Pagination uses the versioned strategy contract under `execution_policy`:
+
+```yaml
+services:
+  google-drive:
+    execution_policy:
+      pagination:
+        version: 2
+        type: cursor
+        cursor:
+          request: {location: query, name: pageToken}
+          next: {location: body, path: "$.nextPageToken", value_type: string}
+        items_path: "$.files"
+        limits: {max_pages: 100, max_items: 10000, max_bytes: 16777216, max_duration_ms: 120000}
+```
+
+The policy always affects this Engine locally. `execution_policy.public: true`
+also publishes it for other consumers when the caller owns the service. A
+version entry's policy overrides the service-level local default for that
+version, while endpoint pagination imported into the provider contract remains
+more specific. SDK and MCP configs do not duplicate pagination settings;
+Engine automatically streams each provider page as a separate result chunk.
 
 ### Syncing Local Config From Remote State
 

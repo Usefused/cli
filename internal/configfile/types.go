@@ -1,5 +1,10 @@
 package configfile
 
+import (
+	"github.com/Usefused/cli/internal/pagination"
+	"github.com/Usefused/cli/internal/ratelimitpolicy"
+)
+
 // ConfigKind defines the type of Fused config file.
 type ConfigKind string
 type ConfigAPIVersion string
@@ -101,8 +106,9 @@ type WorkspaceServiceVersion struct {
 	ExecutionPolicy *ExecutionPolicy `yaml:"execution_policy,omitempty" json:"execution_policy,omitempty"`
 	// ConnectionProfiles is intentionally raw in the CLI: Engine owns full
 	// validation, while CLI only resolves local env refs before apply. Each
-	// entry only needs auth_type to disambiguate itself from siblings, since
-	// Version is already implied by nesting here.
+	// Version is already implied by nesting here. auth_name remains part of an
+	// entry when a provider declares several named schemes in the same family;
+	// Engine needs both values to select the reviewed scheme deterministically.
 	ConnectionProfiles []map[string]interface{} `yaml:"connection_profiles,omitempty" json:"connection_profiles,omitempty"`
 }
 
@@ -155,21 +161,14 @@ type WebhookVerify struct {
 	VerificationHeaders []string `yaml:"verification_headers,omitempty" json:"verification_headers,omitempty"`
 }
 
-// PaginationConfig mirrors models.PaginationConfig on the Registry -- shape
-// must match the real dispatch type (Type/RequestParam/ResponsePath), not the
-// old dead workspace-config shape (Type/CursorField/NextPageField) that this
-// replaces.
-type PaginationConfig struct {
-	Type         string `yaml:"type" json:"type"`
-	RequestParam string `yaml:"request_param" json:"request_param"`
-	ResponsePath string `yaml:"response_path" json:"response_path"`
-}
+// PaginationConfig is an alias so workspace files and Registry projections
+// transport the exact same v2 shape without duplicated field mappings.
+type PaginationConfig = pagination.Config
 
-type RateLimitConfig struct {
-	Strategy          string `yaml:"strategy" json:"strategy"`
-	RequestsPerSecond int    `yaml:"requests_per_second" json:"requests_per_second"`
-	RequestsPerMinute int    `yaml:"requests_per_minute" json:"requests_per_minute"`
-}
+// RateLimitConfig aliases the canonical transport contract. The CLI must
+// preserve it exactly while the Engine owns semantic validation and runtime
+// enforcement.
+type RateLimitConfig = ratelimitpolicy.Config
 
 type RetryConfig struct {
 	Strategy   string `yaml:"strategy" json:"strategy"`
@@ -183,6 +182,7 @@ type RetryConfig struct {
 type AuthConfig struct {
 	Bucket   string `yaml:"bucket,omitempty" json:"bucket,omitempty"`
 	AuthType string `yaml:"auth_type" json:"auth_type"`
+	AuthName string `yaml:"auth_name,omitempty" json:"auth_name,omitempty"`
 	Username string `yaml:"username,omitempty" json:"username,omitempty"`
 	Password string `yaml:"password,omitempty" json:"password,omitempty"`
 	Token    string `yaml:"token,omitempty" json:"token,omitempty"`

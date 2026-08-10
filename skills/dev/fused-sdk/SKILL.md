@@ -72,6 +72,14 @@ request fewer scopes per user but never more than declared here. Credential
 material itself never lives in this file -- it's resolved from `bucket` at
 generation/dispatch time (see `fused-bucket`).
 
+The selected operation's imported `security_requirements` is authoritative:
+alternatives are OR, schemes within one alternative are AND, and an empty
+alternative permits anonymous execution. Do not collapse an AND alternative
+to one convenient scheme or invent a scheme absent from the operation. Basic
+password mode and templated server variables are carried from Registry into
+the generated object; SDK config still contains neither provider credentials
+nor resolved tenant URLs.
+
 `select_all: true` is the alternative to listing `operations` explicitly --
 exactly one of the two is required, never both/neither. Be aware `sdk sync`
 (below) always freezes whatever's currently selected into an explicit,
@@ -207,6 +215,18 @@ then retry `sdk sync`; do not infer missing security policy from endpoint IDs.
 Generated SDK calls only ever carry Fused selectors (`endUserRef`,
 `authType`, `resourceId`) -- never a raw provider token, API key, or
 provider base URL.
+
+Pagination is inherited automatically from the selected endpoint and its
+effective service-version policy. Do not add cursor, offset, page, or next-URL
+fields to SDK config. Engine performs pagination and each successful provider
+page remains a separate chunk on the generated client's execution stream.
+
+Rate and quota policy is inherited the same way and enforced only by Engine.
+Generated TypeScript and Python clients do not maintain local token buckets or
+windows and never sleep before dispatch. Do not add rate-limit settings to SDK
+config or wrap generated calls with a second limiter unless the application has
+an independent business requirement; provider quota correctness comes from the
+Engine's shared service-version/connection policy.
 
 ## Runtime timeout contract
 
