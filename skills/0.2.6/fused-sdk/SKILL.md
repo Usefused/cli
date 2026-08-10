@@ -67,7 +67,7 @@ fused-cli sdk download
 fused-cli sdk sync [--sync-version]
 fused-cli sdk token generate <sdk-name-or-id> <token-name>
 fused-cli sdk token list <sdk-name-or-id>
-fused-cli sdk token revoke <sdk-name-or-id> <token-name-or-id>
+fused-cli sdk token revoke <sdk-name-or-id> <token-name>
 fused-cli sdk service add <slug>
 fused-cli sdk service remove <slug>
 fused-cli sdk operation add|remove <service-slug> <operation-id...>

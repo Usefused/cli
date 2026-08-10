@@ -115,9 +115,11 @@ Keep these credentials distinct:
 
 Never place the License Key or provider credentials in generated SDK config.
 Pass the one-time SDK execution token to the generated client and store it in a
-local secret manager. The current CLI has no SDK deprecate/deactivate command;
-do not invent one. Those lifecycle actions are available through Engine's App
-UI/API.
+local secret manager. The first successful `sdk apply` prints that token once;
+capture it immediately because an idempotent apply or later lookup will not
+return it. Never log it or persist it in the SDK config, plan receipt, or CLI
+state. The current CLI has no SDK deprecate/deactivate command; do not invent
+one. Those lifecycle actions are available through Engine's App UI/API.
 
 ## Commands
 
@@ -136,7 +138,7 @@ fused-cli sdk services <sdk-name@version-or-version-id>
 fused-cli sdk buckets <sdk-name-or-id>
 fused-cli sdk token generate <sdk-name-or-id> <token-name>
 fused-cli sdk token list <sdk-name-or-id>
-fused-cli sdk token revoke <sdk-name-or-id> <token-name-or-id>
+fused-cli sdk token revoke <sdk-name-or-id> <token-name>
 fused-cli sdk service add <service-slug>
 fused-cli sdk service remove <service-slug>
 fused-cli sdk operation add|remove <service-slug> <operation-id...>

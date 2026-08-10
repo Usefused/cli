@@ -368,9 +368,6 @@ List services selected by one exact SDK version.
 ## `sdk buckets <sdk-name-or-id>`
 List credential buckets shared by all versions of an SDK.
 
-## `sdk token list <sdk-name-or-id>`
-List runtime tokens shared by every active or deprecated version of an SDK.
-
 ## `mcp deactivate <mcp-name@version-or-version-id>`
 Deactivate exactly one MCP server version. Human-readable references must use
 `name@version`; a version ID can identify the version directly. There is no
@@ -416,10 +413,23 @@ Generate a named execution token that works across every active or deprecated
 version of the SDK.
 
 ## `sdk token list <sdk-name-or-id>`
-List active execution tokens for an SDK.
+List execution-token metadata for an SDK, including expired tokens that may
+still need to be inspected or revoked.
 
-## `sdk token revoke <sdk-name-or-id> <token-name-or-id>`
-Revoke an SDK execution token by its label or ID.
+## `sdk token revoke <sdk-name-or-id> <token-name>`
+Revoke an SDK execution token by name.
+
+## `mcp token generate <mcp-name-or-id> <token-name>`
+Generate a named MCP execution token. It defaults to full access (`--allow "*"`)
+with no expiry. Repeat `--allow <operation-id>` (or pass a comma-separated list)
+to narrow the token, and use `--expires-in 15m` to make it short-lived.
+
+## `mcp token list <mcp-name-or-id>`
+List MCP execution-token metadata, including its operation allowlist, expiry,
+last use, and creation time.
+
+## `mcp token revoke <mcp-name-or-id> <token-name>`
+Revoke an MCP execution token by name.
 
 ## `sdk webhook add <service-slug> [webhook-id...]`
 Add webhooks to an existing SDK configuration. Use `--interactive` to select

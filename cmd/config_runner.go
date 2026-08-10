@@ -513,6 +513,11 @@ func applyPreparedSDK(client *api.Client, cfg *configfile.ParsedConfig, receipt 
 	}
 	fmt.Printf("Successfully applied SDK %s\n", cfg.SDK.Name)
 	fmt.Printf("  SDK ID: %s\n  Version ID: %s\n", resp.AppFamilyID, resp.AppID)
+	// Engine cannot recover the plaintext token later, so surface it on the
+	// successful response path without copying it into CLI state or logs.
+	if resp.ExecutionToken != "" {
+		fmt.Printf("  SDK token (shown once): %s\n", resp.ExecutionToken)
+	}
 	if !download {
 		return nil
 	}

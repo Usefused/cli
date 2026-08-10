@@ -47,6 +47,22 @@ func TestAppPlansSendOwnerTeamOnlyAtPlanTime(t *testing.T) {
 	}
 }
 
+func TestApplySDKConfigDecodesOneTimeExecutionToken(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/sdk-config/apply" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"status":"applied","plan_id":"plan-1","app_family_id":"family-1","app_id":"app-1","job_id":"job-1","execution_token":"shown-once"}`))
+	}))
+	defer server.Close()
+
+	response, err := NewClient(server.URL, "fsk_test").ApplySDKConfig("plan-1", "hash")
+	requireAppTestNoError(t, err)
+	if response.ExecutionToken != "shown-once" {
+		t.Fatalf("execution token = %q, want shown-once", response.ExecutionToken)
+	}
+}
+
 func appPlanTestResponse(t *testing.T, path string) string {
 	t.Helper()
 	responses := map[string]string{

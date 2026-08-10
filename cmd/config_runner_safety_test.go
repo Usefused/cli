@@ -51,6 +51,44 @@ func TestPrintPlanResultIncludesEngineSummary(t *testing.T) {
 	}
 }
 
+func TestApplyPreparedSDKPrintsOneTimeExecutionToken(t *testing.T) {
+	tests := []struct {
+		name          string
+		responseToken string
+		wantTokenLine bool
+	}{
+		{name: "initial apply", responseToken: "shown-once", wantTokenLine: true},
+		{name: "idempotent apply", wantTokenLine: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/sdk-config/apply" {
+					t.Fatalf("unexpected path %s", r.URL.Path)
+				}
+				_, _ = w.Write([]byte(`{"status":"applied","app_family_id":"family-1","app_id":"app-1","execution_token":"` + test.responseToken + `"}`))
+			}))
+			defer server.Close()
+
+			cfg := &configfile.ParsedConfig{SDK: &configfile.SDKConfig{Name: "security"}}
+			out := captureStdout(t, func() {
+				err := applyPreparedSDK(api.NewClient(server.URL, "fsk_test"), cfg, planReceipt{PlanID: "plan-1", SourceHash: "hash"}, false)
+				if err != nil {
+					t.Fatalf("applyPreparedSDK: %v", err)
+				}
+			})
+
+			gotCount := strings.Count(out, "SDK token (shown once):")
+			if test.wantTokenLine && (gotCount != 1 || !strings.Contains(out, "SDK token (shown once): shown-once")) {
+				t.Fatalf("expected one SDK token line, got:\n%s", out)
+			}
+			if !test.wantTokenLine && gotCount != 0 {
+				t.Fatalf("expected no SDK token line, got:\n%s", out)
+			}
+		})
+	}
+}
+
 func TestPrintPlanResultJSONIncludesSummaryAndNotifications(t *testing.T) {
 	planned := []plannedConfig{{
 		receipt: planReceipt{

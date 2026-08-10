@@ -30,6 +30,7 @@ func TestCanonicalCommandParentsRequireAction(t *testing.T) {
 		{name: "config", args: []string{"config"}},
 		{name: "import", args: []string{"import"}},
 		{name: "mcp", args: []string{"mcp"}},
+		{name: "mcp token", args: []string{"mcp", "token"}},
 		{name: "sdk", args: []string{"sdk"}},
 		{name: "sdk operation", args: []string{"sdk", "operation"}},
 		{name: "sdk service", args: []string{"sdk", "service"}},

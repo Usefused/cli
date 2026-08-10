@@ -60,10 +60,11 @@ new version. The runtime URL contains the exact opaque `app_id`, which is the
 authoritative version identity.
 
 MCP execution tokens are shared across versions. The token emitted once by the
-first apply can authorize every active or deprecated version of that MCP,
-while each version enforces its own operation scope. A capability-expanding
-version therefore affects existing tokens. Use another MCP name when the
-audience must not inherit that capability.
+first apply allows every selected operation and does not expire, preserving the
+simple default. For an agent, generate a stricter MCP token with an exact
+operation allowlist and, when appropriate, a short lifetime. Anything absent
+from `--allow` is denied. A token can only narrow a version's own operation
+scope; it cannot grant an operation the MCP version does not expose.
 
 The MCP token only authenticates the client to Engine. Provider credentials
 remain in the MCP's selected Engine bucket and are never sent by the MCP
@@ -82,6 +83,9 @@ fused-cli mcp apply
 fused-cli mcp validate
 fused-cli mcp list
 fused-cli mcp deactivate <mcp-name@version-or-version-id>
+fused-cli mcp token generate <mcp-name-or-id> <token-name> --allow <operation-id> --expires-in 15m
+fused-cli mcp token list <mcp-name-or-id>
+fused-cli mcp token revoke <mcp-name-or-id> <token-name>
 ```
 
 `mcp apply` doesn't just validate config -- it stands up (or updates) a
@@ -100,6 +104,12 @@ The first successful MCP apply may return `execution_token` once. An idempotent
 apply does not reveal it again. Store it immediately. After an Engine database
 reset, Registry cannot restore the MCP or its token; reapply the exact config
 and securely distribute the newly issued token.
+
+`mcp token generate` also reveals the plaintext once. Omit `--expires-in` for
+no expiry; omit `--allow` for the full-access `*` default. Repeat `--allow` or
+pass a comma-separated list for multiple exact operation IDs. Applications
+that need dynamic agent sessions can use Engine's equivalent app-token API;
+the caller still needs `app.tokens.manage`.
 
 ## Permissions and team access
 

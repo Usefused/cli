@@ -1572,11 +1572,12 @@ func (c *Client) PlanWorkspaceConfig(sourceHash, configKey string, config json.R
 }
 
 type SDKConfigApplyResponse struct {
-	Status      string `json:"status"`
-	PlanID      string `json:"plan_id"`
-	AppFamilyID string `json:"app_family_id"`
-	AppID       string `json:"app_id"`
-	JobID       string `json:"job_id"`
+	Status         string `json:"status"`
+	PlanID         string `json:"plan_id"`
+	AppFamilyID    string `json:"app_family_id"`
+	AppID          string `json:"app_id"`
+	JobID          string `json:"job_id"`
+	ExecutionToken string `json:"execution_token"`
 }
 
 type MCPConfigApplyResponse struct {
@@ -1606,6 +1607,8 @@ type WebhookConfigRegistration struct {
 	Slug    string `json:"slug"`
 }
 
+// ApplySDKConfig may return a plaintext execution token only when Engine first
+// creates the SDK. Callers must surface it without retaining it.
 func (c *Client) ApplySDKConfig(planID, sourceHash string) (*SDKConfigApplyResponse, error) {
 	reqBody := map[string]interface{}{
 		"plan_id":     planID,

@@ -128,7 +128,7 @@ fused-cli sdk services <sdk-name@version-or-version-id>
 fused-cli sdk buckets <sdk-name-or-id>
 fused-cli sdk token generate <sdk-name-or-id> <token-name>
 fused-cli sdk token list <sdk-name-or-id>
-fused-cli sdk token revoke <sdk-name-or-id> <token-name-or-id>
+fused-cli sdk token revoke <sdk-name-or-id> <token-name>
 fused-cli sdk service add <service-slug>
 fused-cli sdk service remove <service-slug>
 fused-cli sdk operation add|remove <service-slug> <operation-id...>
