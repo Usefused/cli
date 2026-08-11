@@ -52,15 +52,16 @@ can reference it — discovery isn't limited to the default server. Use
 `base_url_template` when the URL is built from the resource ID; both require
 `allowed_hosts` for dynamic routing.
 
-A provider-maintained document may keep a protocol-relative server such as
-`//your-domain.example.com`. Registry preserves that source reference instead
-of inventing a scheme. It is not executable by itself: Engine requires either
+Registry accepts absolute, templated, protocol-relative, and path-relative
+OpenAPI servers. It resolves a path-relative value such as `/wiki` against the
+persisted HTTP(S) source-document URL. For uploaded sources, the relative value
+is preserved because no authoritative host exists. Protocol-relative values
+are also preserved rather than assigned a scheme. Either unresolved form needs
 an absolute HTTP(S) workspace `base_url` override or a trusted forced
-`${resource.base_url}` binding that resolves to an allowed absolute HTTPS host
-(HTTP remains limited to loopback development). The protocol-relative source
-does not relax `allowed_hosts` validation. Likewise, a server template such as
-`{protocol}://api.example.com` is validated from its declared HTTP(S) variable
-default/enum while the raw template is retained for runtime resolution.
+`${resource.base_url}` binding before execution (HTTP remains limited to
+loopback development). This does not relax `allowed_hosts` validation. A
+template such as `{protocol}://api.example.com` is validated from its declared
+HTTP(S) variable default/enum while the template remains bindable at runtime.
 
 ## Postman
 

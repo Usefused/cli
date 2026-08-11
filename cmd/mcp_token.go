@@ -110,6 +110,6 @@ func runMCPTokenRevoke(cmd *cobra.Command, target, name string) error {
 func init() {
 	mcpCmd.AddCommand(mcpTokenCmd)
 	mcpTokenCmd.AddCommand(mcpTokenGenerateCmd, mcpTokenListCmd, mcpTokenRevokeCmd)
-	mcpTokenGenerateCmd.Flags().StringSlice("allow", []string{"*"}, "Exact operation IDs to allow; * grants all operations")
+	mcpTokenGenerateCmd.Flags().StringSlice("allow", []string{api.AppTokenAllowAllWildcard}, "Exact operation IDs to allow; * grants all operations")
 	mcpTokenGenerateCmd.Flags().String("expires-in", "", "Optional token lifetime, for example 15m or 1h")
 }

@@ -58,6 +58,19 @@ Three related but distinct things, all under a bucket's
   Registering the app is separate from any one user connecting: start an
   actual user session with `fused-cli workspace service connect <slug>
   --user-ref <end-user-reference>` (see `fused-bucket`).
+
+  The imported OAuth2 security scheme also determines how Engine authenticates
+  those app credentials at the token endpoint. `client_secret_basic` uses HTTP
+  Basic and keeps both credentials out of the form; `client_secret_post` puts
+  both in the form and sends no Authorization header. Engine follows that
+  reviewed contract for both authorization-code exchange and refresh and
+  rejects an absent or unknown runtime method before contacting the provider.
+  The same imported public policy can require PKCE, join requested scopes with
+  a comma instead of a space, add reviewed fixed authorization/token
+  parameters, and declare refresh-token rotation. Engine always owns and
+  overwrites state, client credentials, redirect URI, grant/code/refresh
+  values, scopes, nonce, and PKCE fields; imported maps can never supply those
+  fields or secret references.
 - `profile` — the fuller `resource_discovery`/`resource_input`/`metadata`/
   `bindings` rule set below, for OAuth/OIDC services where one token can
   reach several sites/shops/portals/accounts.

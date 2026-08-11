@@ -481,7 +481,10 @@ func handleSDKSyncGraphQL(t *testing.T, w http.ResponseWriter, r *http.Request, 
 	case strings.Contains(body.Query, "appReference"):
 		_, _ = w.Write([]byte(`{"data":{"appReference":{"id":"app-1","kind":"app"}}}`))
 	case strings.Contains(body.Query, "query App("):
-		_, _ = w.Write([]byte(`{"data":{"app":{"app_family_id":"family-1","app_id":"app-1","name":"security-sdk","version":"` + sdkVersion + `","kind":"sdk","status":"active","created_at":"now","target_language":"python","selections":[{"service_id":"svc-github","service_version_id":"sv-1","definition_schema_version":1,"endpoint_ids":["ep-1"],"operation_names":["repos_list_for_authenticated_user"],"webhook_ids":[],"webhook_names":[],"select_all":false,"webhook_select_all":false,"auth_type":"oauth","auth_name":"githubOAuth","connect_scopes":["repo"],"injections":[{"location":"header","name":"X-Tenant","value":"$connection.tenant","mode":"replace"}]}]}}}`))
+		if !strings.Contains(body.Query, "required_auth") {
+			t.Fatal("app query omitted immutable required auth policy")
+		}
+		_, _ = w.Write([]byte(`{"data":{"app":{"app_family_id":"family-1","app_id":"app-1","name":"security-sdk","version":"` + sdkVersion + `","kind":"sdk","status":"active","created_at":"now","target_language":"python","selections":[{"service_id":"svc-github","service_version_id":"sv-1","definition_schema_version":3,"endpoint_ids":["ep-1"],"operation_names":["repos_list_for_authenticated_user"],"webhook_ids":[],"webhook_names":[],"select_all":false,"webhook_select_all":false,"auth_type":"oauth","auth_name":"githubOAuth","required_auth":[{"auth_type":"oauth","auth_name":"githubOAuth","basic_password_mode":""}],"connect_scopes":["repo"],"injections":[{"location":"header","name":"X-Tenant","value":"$connection.tenant","mode":"replace"}]}]}}}`))
 	case strings.Contains(body.Query, "appServices"):
 		_, _ = w.Write([]byte(`{"data":{"appServices":[{"service_id":"svc-github","service_slug":"github-rest-api","service_name":"GitHub REST API","version":"1.1.4","select_all":false,"endpoint_count":1,"webhook_count":0}]}}`))
 	default:

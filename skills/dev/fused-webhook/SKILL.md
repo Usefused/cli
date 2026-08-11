@@ -40,6 +40,15 @@ services:
   apply-time diff, same as any other kind -- no separate imperative delete
   command.
 
+## Imported verification headers
+
+For a service whose imported signed-webhook contract declares
+`verification_headers`, treat that list as the complete, reviewed header set.
+Preserve source order and spelling; Fused removes blank and case-insensitive
+duplicate names. Only when a `signature_header` list is absent does OpenAPI
+import infer it from required header parameters on webhook operations. Do not
+add guessed provider headers or put header values in the Registry contract.
+
 ## Attaching to an SDK/MCP so it actually receives events
 
 Registering a webhook here only makes Fused *accept* the inbound delivery --

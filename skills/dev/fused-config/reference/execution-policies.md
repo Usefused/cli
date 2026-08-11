@@ -59,6 +59,13 @@ overrides, and exactly one algorithm block: `fixed_window` (`limit`,
 name limit/remaining/reset headers and the reset format. There is no legacy
 `strategy`/`requests_per_second`/`requests_per_minute` workspace shape.
 
+When these policies come from OpenAPI, exact `x-fused-rate-limit`,
+`x-fused-retry`, and root or operation-level `x-fused-pagination` extensions
+are strict executable contracts. Unknown fields or invalid values reject the
+import with a bounded policy/operation error; Registry never silently drops a
+malformed exact policy. Vendor and fuzzy extensions remain inert evidence
+until curation translates them into an exact Fused contract.
+
 The CLI strictly preserves this shape but does not interpret its algorithms.
 Engine validates the policy and is the sole enforcement authority. Generated
 TypeScript and Python SDKs contain no local token bucket, window, sleep, or

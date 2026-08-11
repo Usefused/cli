@@ -17,6 +17,15 @@ servers: []                # optional canonical Fused Server objects
 auth_configs:              # optional named, credential-free scheme corrections
   - name: basicAuth
     basic_password_mode: empty
+  - name: browserOAuth
+    type: oauth2
+    flow: authorizationCode
+    authorization_url: https://auth.example.com/authorize
+    pkce_required: true
+    scopes_delimiter: comma
+    extra_auth_params: {prompt: consent}
+    extra_token_params: {audience: payments}
+    refresh_token_rotates: true
 security_requirements:     # optional service default: ordered alternatives (OR)
   - schemes:               # every scheme in one alternative is required (AND)
       - scheme: basicAuth  # exact auth_configs[].name
@@ -78,6 +87,26 @@ than exact `x-fused-security-requirements`, which is stronger than the overlay.
 For HTTP Basic, an omitted mode is defaulted to `required` only after extensions
 and overlay corrections are applied, so `empty` is a deliberate credential
 shape rather than a password value.
+
+OAuth2 token requests use the security-scheme field
+`token_endpoint_auth_method`. Its only values are `client_secret_basic`
+(HTTP Basic, with neither client credential repeated in the form) and
+`client_secret_post` (both credentials in the form, without an Authorization
+header). OpenAPI writes this as the strict
+`x-fused-token-endpoint-auth-method` extension. A blank OAuth2 method defaults
+to `client_secret_post` only after overlay merging; non-OAuth schemes, legacy
+`basic`/`body` values, and unknown methods are rejected.
+
+The remaining exact security-scheme extensions are
+`x-fused-pkce-required`, `x-fused-scopes-delimiter` (`space` or `comma`),
+`x-fused-extra-auth-params`, `x-fused-extra-token-params`, and
+`x-fused-refresh-token-rotates`. Their overlay field names omit the
+`x-fused-` prefix. Parameter maps are bounded fixed public strings; credential-
+shaped names or references and Engine-owned fields such as `client_id`,
+`client_secret`, `grant_type`, `code`, `redirect_uri`, `state`, `scope`, and
+PKCE fields are rejected. PKCE, authorization parameters, and refresh-token
+rotation require an `authorizationCode` flow with `authorization_url`; include
+that public context in an overlay rather than relying on a sparse inference.
 
 Templated server URLs remain templated. Each `{placeholder}` must have exactly
 one matching `variables` entry with `name`, optional `default`, optional `enum`,

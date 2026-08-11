@@ -219,6 +219,13 @@ background enrichment retries transient failures, and a periodic repair sweep
 recovers interrupted work. Do not re-run plan/apply or wait/poll merely for
 that optional enrichment.
 
+A 2xx apply through Engine also activates the exact imported version in that
+workspace and persists the Registry slug used by later SDK/MCP config. If the
+client receives a proxy timeout or other non-2xx response, do not infer
+activation merely because Registry search can already see the committed row;
+verify with `workspace services list -q <slug>` and use the normal workspace
+plan/apply flow to activate it.
+
 ```shell
 fused-cli import plan ./openapi.yaml --name "Billing API" --slug billing-api \
   --target endpoints
@@ -247,7 +254,12 @@ Set `--target all|endpoints|webhooks` explicitly when the user's requested
 contract scope is known; it defaults to `endpoints`. The plan persists that choice,
 so apply uses the reviewed scope without another selection step. Never infer
 `webhooks` merely because the source is AsyncAPI: use the user's intended
-runtime contract.
+runtime contract. Re-importing one target on an existing provider version is
+non-destructive to the other target: `endpoints` replaces endpoint rows and
+endpoint/shared execution config while retaining webhook rows and verification
+policy; `webhooks` replaces webhook rows and webhook policy while retaining
+endpoint rows, authentication, routing, connection profiles, and core execution
+policy. Use `all` only when one reviewed artifact authoritatively contains both.
 
 Use service-level `public` as the pre-publication gate. Keep the owned service
 `public: false` through private workspace validation; do not require its
@@ -275,8 +287,10 @@ response is not recognized as a spec. A normal HTML docs page belongs to
 `import docs`, not `import plan --url`.
 
 For OpenAPI imports, path-level parameters are inherited by each operation and
-an operation-level declaration of the same `(name, in)` pair wins. Request-body
-media selection is deterministic: `application/json`, then a declared
+an operation-level declaration of the same `(name, in)` pair wins.
+HTTP `HEAD` operations are imported as first-class endpoints with their
+parameters, security requirements, and stable operation identity preserved.
+Request-body media selection is deterministic: `application/json`, then a declared
 `application/*+json` media type, then
 `application/x-www-form-urlencoded`, `multipart/form-data`, then the first
 lexically sorted schema-backed raw media type. The selected media type,
