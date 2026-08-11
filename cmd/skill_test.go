@@ -99,7 +99,7 @@ func TestFusedCLISkillDocumentsImportTargetScope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)
 	}
-	for _, token := range []string{"--target all|endpoints|webhooks", "defaults to `endpoints`", "plan persists that choice"} {
+	for _, token := range []string{"--target all|endpoints|webhooks", "defaults to `endpoints`", "plan persists that choice", "non-destructive to the other target"} {
 		if !strings.Contains(string(data), token) {
 			t.Errorf("fused-cli skill missing import target guidance %q", token)
 		}

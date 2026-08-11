@@ -10,6 +10,11 @@ import (
 	"time"
 )
 
+const (
+	AppTokenAllowAllWildcard = "*"
+	appTokensPath            = "/workspace/app-tokens"
+)
+
 type AppTokenGenerateRequest struct {
 	Name      string   `json:"name"`
 	Allow     []string `json:"allow,omitempty"`
@@ -80,7 +85,7 @@ func (c *Client) GenerateAppToken(appFamilyID string, input AppTokenGenerateRequ
 		return nil, err
 	}
 
-	u, err := url.Parse(c.BaseURL + "/workspace/app-tokens")
+	u, err := url.Parse(c.BaseURL + appTokensPath)
 	if err != nil {
 		return nil, err
 	}
@@ -131,7 +136,7 @@ func (c *Client) ListAppTokens(appFamilyID string) ([]AppTokenResponse, error) {
 }
 
 func (c *Client) RevokeAppToken(appFamilyID, name string) error {
-	u, err := url.Parse(c.BaseURL + "/workspace/app-tokens")
+	u, err := url.Parse(c.BaseURL + appTokensPath)
 	if err != nil {
 		return err
 	}

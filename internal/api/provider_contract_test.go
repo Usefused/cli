@@ -15,6 +15,7 @@ import (
 
 type providerTransportFixture struct {
 	AuthConfig           api.AuthConfig           `json:"auth_config"`
+	OAuthAuthConfig      api.AuthConfig           `json:"oauth_auth_config"`
 	SecurityRequirements api.SecurityRequirements `json:"security_requirements"`
 	Server               api.ServiceServer        `json:"server"`
 }
@@ -34,6 +35,12 @@ func TestProviderAuthRoutingFixtureRoundTripsWithoutNormalization(t *testing.T) 
 	if fixture.AuthConfig.BasicPasswordMode != "empty" {
 		t.Fatalf("basic password mode changed: %#v", fixture.AuthConfig)
 	}
+	if fixture.OAuthAuthConfig.TokenEndpointAuthMethod != api.TokenEndpointAuthMethodClientSecretBasic {
+		t.Fatalf("OAuth token endpoint auth method changed: %#v", fixture.OAuthAuthConfig)
+	}
+	if !fixture.OAuthAuthConfig.PKCERequired || fixture.OAuthAuthConfig.ScopesDelimiter != "comma" || fixture.OAuthAuthConfig.ExtraAuthParams["prompt"] != "consent" || fixture.OAuthAuthConfig.ExtraTokenParams["audience"] != "payments" || !fixture.OAuthAuthConfig.RefreshTokenRotates {
+		t.Fatalf("OAuth edge policy changed: %#v", fixture.OAuthAuthConfig)
+	}
 	if len(fixture.SecurityRequirements) != 3 || len(fixture.SecurityRequirements[0].Schemes) != 2 {
 		t.Fatalf("ordered OR-of-AND requirements changed: %#v", fixture.SecurityRequirements)
 	}
@@ -51,12 +58,13 @@ func TestGetServiceInfoProjectsAndDecodesProviderAuthRouting(t *testing.T) {
 
 	server := newGraphQLContractServer(t, func(query string) any {
 		assertGraphQLFields(t, query, []string{
-			"basic_password_mode", "flow", "token_url", "authorization_url", "open_id_connect_url", "scopes",
+			"basic_password_mode", "flow", "token_url", "token_endpoint_auth_method", "authorization_url", "open_id_connect_url", "scopes",
+			"pkce_required", "scopes_delimiter", "extra_auth_params", "extra_token_params", "refresh_token_rotates",
 			"variables { name default enum required }", "environment", "is_default",
 		})
 		return map[string]any{"service": map[string]any{
 			"id": "svc-1", "name": "Confluence", "slug": "confluence", "base_url": fixture.Server.URL,
-			"servers": []api.ServiceServer{fixture.Server}, "auth_configs": []api.AuthConfig{fixture.AuthConfig},
+			"servers": []api.ServiceServer{fixture.Server}, "auth_configs": []api.AuthConfig{fixture.AuthConfig, fixture.OAuthAuthConfig},
 		}}
 	})
 	defer server.Close()
@@ -65,7 +73,7 @@ func TestGetServiceInfoProjectsAndDecodesProviderAuthRouting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info == nil || !reflect.DeepEqual(info.Servers, []api.ServiceServer{fixture.Server}) || !reflect.DeepEqual(info.AuthConfigs, []api.AuthConfig{fixture.AuthConfig}) {
+	if info == nil || !reflect.DeepEqual(info.Servers, []api.ServiceServer{fixture.Server}) || !reflect.DeepEqual(info.AuthConfigs, []api.AuthConfig{fixture.AuthConfig, fixture.OAuthAuthConfig}) {
 		t.Fatalf("provider auth/routing metadata changed: %#v", info)
 	}
 }

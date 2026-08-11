@@ -973,22 +973,37 @@ type ServerVariable struct {
 }
 
 type AuthConfig struct {
-	Name              string            `json:"name,omitempty"`
-	Type              string            `json:"type"`
-	Flow              string            `json:"flow,omitempty"`
-	Scheme            string            `json:"scheme,omitempty"`
-	BasicPasswordMode BasicPasswordMode `json:"basic_password_mode,omitempty"`
-	Location          string            `json:"location,omitempty"`
-	KeyName           string            `json:"key_name,omitempty"`
-	TokenURL          string            `json:"token_url,omitempty"`
-	AuthorizationURL  string            `json:"authorization_url,omitempty"`
-	OpenIDConnectURL  string            `json:"open_id_connect_url,omitempty"`
-	Scopes            []string          `json:"scopes,omitempty"`
+	Name                    string                  `json:"name,omitempty"`
+	Type                    string                  `json:"type"`
+	Flow                    string                  `json:"flow,omitempty"`
+	Scheme                  string                  `json:"scheme,omitempty"`
+	BasicPasswordMode       BasicPasswordMode       `json:"basic_password_mode,omitempty"`
+	Location                string                  `json:"location,omitempty"`
+	KeyName                 string                  `json:"key_name,omitempty"`
+	TokenURL                string                  `json:"token_url,omitempty"`
+	TokenEndpointAuthMethod TokenEndpointAuthMethod `json:"token_endpoint_auth_method,omitempty"`
+	AuthorizationURL        string                  `json:"authorization_url,omitempty"`
+	OpenIDConnectURL        string                  `json:"open_id_connect_url,omitempty"`
+	Scopes                  []string                `json:"scopes,omitempty"`
+	PKCERequired            bool                    `json:"pkce_required,omitempty"`
+	ScopesDelimiter         string                  `json:"scopes_delimiter,omitempty"`
+	ExtraAuthParams         map[string]string       `json:"extra_auth_params,omitempty"`
+	ExtraTokenParams        map[string]string       `json:"extra_token_params,omitempty"`
+	RefreshTokenRotates     bool                    `json:"refresh_token_rotates,omitempty"`
 }
 
 // BasicPasswordMode is intentionally an unconstrained transport string here;
 // Registry validates the frozen vocabulary and Engine applies its behavior.
 type BasicPasswordMode string
+
+// TokenEndpointAuthMethod mirrors Registry's validated, credential-free OAuth
+// transport contract. The CLI carries it verbatim and does not infer provider behavior.
+type TokenEndpointAuthMethod string
+
+const (
+	TokenEndpointAuthMethodClientSecretBasic TokenEndpointAuthMethod = "client_secret_basic"
+	TokenEndpointAuthMethodClientSecretPost  TokenEndpointAuthMethod = "client_secret_post"
+)
 
 const serviceServerGraphQLFields = `
 	url
@@ -1007,9 +1022,15 @@ const serviceAuthConfigGraphQLFields = `
 	location
 	key_name
 	token_url
+	token_endpoint_auth_method
 	authorization_url
 	open_id_connect_url
 	scopes
+	pkce_required
+	scopes_delimiter
+	extra_auth_params
+	extra_token_params
+	refresh_token_rotates
 `
 
 type ServiceInfo struct {
@@ -1359,7 +1380,7 @@ func emitSDKEvent(line []byte, eventChan chan<- SDKEvent) {
 	}
 }
 
-const SDKDefinitionSchemaVersion = 1
+const SDKDefinitionSchemaVersion = 3
 
 func (c *Client) DownloadSDK(appID string) ([]byte, error) {
 	req, err := http.NewRequest("GET", c.BaseURL+"/sdks/"+appID+"/download", nil)

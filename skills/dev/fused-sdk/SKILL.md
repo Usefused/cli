@@ -34,6 +34,9 @@ permission decision remains unresolved.
 `kind: sdk`, managed by `fused-cli sdk ...`, declares a typed SDK package
 generated from a bucket's already-configured services.
 
+Each service map key is the persisted Registry slug of an activated workspace
+service. Confirm it with `fused-cli workspace services list -q <slug>`; Registry
+visibility alone does not grant activation or `service.consume` scope.
 ```yaml
 apiVersion: fused/v1
 kind: sdk
@@ -66,11 +69,19 @@ is rejected at plan time.
 `auth.type` selects a Registry-declared scheme (`basic`, `bearer`,
 `api_key`, `oauth`, `oidc`, `mtls` -- the same list `fused-config` documents
 for workspace `auth`); `auth.name` disambiguates two schemes of the same
-type. Omitting `auth` pins the first scheme the selected service version
-declares. `connect.scopes` narrows OAuth/OIDC consent -- an application can
-request fewer scopes per user but never more than declared here. Credential
-material itself never lives in this file -- it's resolved from `bucket` at
-generation/dispatch time (see `fused-bucket`).
+type. An explicit selector must occur in a valid alternative for every secured
+selected operation. Without one, Engine chooses each operation's first
+provider-declared OR alternative. The immutable SDK definition records every
+scheme in those chosen alternatives, and bucket readiness checks the full AND
+sets from metadata without decrypting values. Anonymous-only and webhook-only
+selections record no required auth and perform no credential read.
+For a mix of anonymous and secured operations, any inferred common selector is
+applied only to secured calls; an anonymous call stays anonymous unless it
+supplies an explicit per-call auth selector; that selector may choose another
+declared OR branch at runtime. `connect.scopes` narrows OAuth/OIDC consent
+-- an application can request fewer scopes per user but never more than
+declared here. Credential material itself never lives in this file -- it's
+resolved from `bucket` at generation/dispatch time (see `fused-bucket`).
 
 The selected operation's imported `security_requirements` is authoritative:
 alternatives are OR, schemes within one alternative are AND, and an empty
@@ -195,10 +206,8 @@ requests it and the caller is authorised. Read the `fused-cli` skill's
 
 SDK ownership does not have to match its audience. The owning person or team
 keeps management authority, while `fused-cli workspace access app grant
-<sdk-id>` grants bounded workspace-wide use across every SDK version. This does
-not replace
-the generated SDK's runtime token or reveal it; token issuance/revocation stays
-with SDK managers. Likewise, a platform-owned bucket shared with
+<sdk-id>` grants bounded workspace-wide use across every SDK version without
+replacing or revealing its runtime token. Likewise, a platform-owned bucket shared with
 `workspace access bucket grant <bucket-name>` can be selected by any eligible
 owning team without granting those teams secret management.
 

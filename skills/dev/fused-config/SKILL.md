@@ -16,10 +16,21 @@ never supplies a password. Likewise, `servers[].variables` preserves each
 variable's optional default, enum, and required flag. Do not add these fields
 to bucket auth material or normalize them in CLI config; Registry validates the
 contract and Engine resolves credentials and connection routing at execution.
-Provider documents may also retain a protocol-relative server such as
-`//tenant.example.com`; that remains source metadata until an absolute HTTPS
-workspace override or trusted forced `${resource.base_url}` binding resolves
-it. Engine never guesses the missing scheme.
+SDK planning preserves the chosen OR branches and validates bucket metadata for
+every scheme in each AND set; a single selector never replaces secondary
+credentials such as mTLS certificates or an additional API token.
+Provider documents may retain protocol-relative or path-relative servers.
+Registry resolves a path-relative server only against the persisted HTTP(S)
+document URL; uploaded sources remain unresolved. Engine never guesses an
+origin or scheme, so unresolved references need an absolute workspace override
+or trusted forced `${resource.base_url}` binding before execution.
+OAuth behavior that standard OpenAPI cannot express stays credential-free and
+provider-neutral: use only the exact `x-fused-pkce-required`,
+`x-fused-scopes-delimiter`, `x-fused-extra-auth-params`,
+`x-fused-extra-token-params`, `x-fused-refresh-token-rotates`, and
+`x-fused-token-endpoint-auth-method` fields. Registry rejects secret-shaped or
+Engine-owned OAuth parameters; read `reference/import-overlays.md` for the
+closed policy and `reference/connection-profiles.md` for runtime behavior.
 When workspace bucket auth selects a type with several named schemes, carry
 both `auth_type` and the exact `auth_name`; never choose the first scheme in
 that type. The same identity rule applies to version connection-profile
