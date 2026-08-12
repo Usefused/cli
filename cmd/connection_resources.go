@@ -59,6 +59,9 @@ func runConnectionResourcesList(cmd *cobra.Command, connectionID string) error {
 	if err != nil {
 		return err
 	}
+	if wantsJSON(cmd) {
+		return writeJSON(cmd, resources)
+	}
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 8, 2, ' ', 0)
 	fmt.Fprintln(w, "ID\tDISPLAY_NAME\tRESOURCE_TYPE\tDEFAULT")
 	for _, resource := range resources {
@@ -104,6 +107,7 @@ func init() {
 	workspaceCmd.AddCommand(workspaceConnectionCmd)
 	workspaceConnectionCmd.AddCommand(workspaceConnectionResourcesCmd)
 	workspaceConnectionResourcesCmd.AddCommand(workspaceConnectionResourcesListCmd)
+	addJSONOutputFlag(workspaceConnectionResourcesListCmd)
 	workspaceConnectionResourcesCmd.AddCommand(workspaceConnectionResourcesDefaultCmd)
 	workspaceConnectionResourcesCmd.AddCommand(workspaceConnectionResourcesRediscoverCmd)
 }

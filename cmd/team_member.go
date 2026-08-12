@@ -22,6 +22,9 @@ var teamMemberListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		if wantsJSON(cmd) {
+			return writeJSONPage(cmd, page.Items, page.Total, teamMemberListFlags)
+		}
 		if len(page.Items) == 0 {
 			fmt.Fprintln(cmd.OutOrStdout(), "No team members found.")
 			return nil
@@ -95,6 +98,7 @@ func printTeamMembers(cmd *cobra.Command, members []cliapi.TeamMember) {
 func init() {
 	teamCmd.AddCommand(teamMemberCmd)
 	teamMemberCmd.AddCommand(teamMemberListCmd, teamMemberAddCmd, teamMemberRemoveCmd)
+	addJSONOutputFlag(teamMemberListCmd)
 	addListFlags(teamMemberListCmd, &teamMemberListFlags)
 	teamMemberAddCmd.Flags().StringVar(&teamMemberRole, "role", "member", "Membership role: member or manager")
 }

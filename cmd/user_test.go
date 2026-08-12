@@ -73,8 +73,11 @@ func TestMalformedIssueCredentialDoesNotLeakToErrorOrTelemetry(t *testing.T) {
 	}
 
 	telemetry := fmt.Sprintf("%#v", exporter.GetSpans())
-	if !strings.Contains(telemetry, "graphql_response_malformed") || !strings.Contains(telemetry, "exception") {
+	if !strings.Contains(telemetry, "graphql_response_malformed") || !strings.Contains(telemetry, "error.code") {
 		t.Fatalf("expected safe error to be recorded in telemetry: %s", telemetry)
+	}
+	if strings.Contains(telemetry, "exception.message") {
+		t.Fatalf("telemetry should not record remote error messages: %s", telemetry)
 	}
 	if strings.Contains(telemetry, secret) {
 		t.Fatalf("telemetry leaked credential: %s", telemetry)

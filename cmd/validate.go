@@ -17,6 +17,9 @@ var validateCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		if wantsJSON(cmd) {
+			return writeJSON(cmd, validationResult("all", len(run.Configs)))
+		}
 		fmt.Fprintf(cmd.OutOrStdout(), "validated %d config\n", len(run.Configs))
 		return nil
 	}),
@@ -24,4 +27,5 @@ var validateCmd = &cobra.Command{
 
 func init() {
 	RootCmd.AddCommand(validateCmd)
+	addJSONOutputFlag(validateCmd)
 }

@@ -37,7 +37,7 @@ func (c *Client) WhoAmI() (*WhoAmIResponse, error) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 16<<10))
-		return nil, fmt.Errorf("whoami failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(resp.StatusCode, body))
+		return nil, fmt.Errorf("whoami failed (HTTP %d): %w", resp.StatusCode, newHTTPError(resp.StatusCode, body))
 	}
 	var identity WhoAmIResponse
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 16<<10)).Decode(&identity); err != nil {
@@ -64,7 +64,7 @@ func (c *Client) LogoutCLI() error {
 		return ErrCLILogoutAlreadyInactive
 	}
 	if resp.StatusCode != http.StatusNoContent {
-		return fmt.Errorf("CLI logout failed (HTTP %d): %s", resp.StatusCode, genericHTTPError(resp.StatusCode))
+		return fmt.Errorf("CLI logout failed (HTTP %d): %w", resp.StatusCode, genericHTTPError(resp.StatusCode))
 	}
 	return nil
 }

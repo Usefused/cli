@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -20,9 +21,11 @@ var serviceCmd = &cobra.Command{
 
 var serviceListFlags listFlags
 var serviceSearchQuery string
-var serviceSearchJSON bool
 var serviceOperationsQuery string
 var serviceOperationsVersion string
+var serviceOperationVersion string
+var serviceOperationIncludeRequest bool
+var serviceOperationIncludeResponses bool
 var serviceWebhooksVersion string
 
 func runServiceOperations(cmd *cobra.Command, serviceSlug string) error {
@@ -40,6 +43,9 @@ func runServiceOperations(cmd *cobra.Command, serviceSlug string) error {
 	ops, err := readServiceOperations(cmd, client, service.ID)
 	if err != nil {
 		return err
+	}
+	if wantsJSON(cmd) {
+		return writeJSON(cmd, ops)
 	}
 	printIntegrations(cmd.OutOrStdout(), ops)
 	return nil
@@ -109,6 +115,9 @@ func runServiceWebhooks(cmd *cobra.Command, serviceSlug string) error {
 	if err != nil {
 		return err
 	}
+	if wantsJSON(cmd) {
+		return writeJSON(cmd, webhooks)
+	}
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 8, 2, ' ', 0)
 	fmt.Fprintln(w, "NAME\tID\tDESCRIPTION")
 	for _, webhook := range webhooks {
@@ -162,8 +171,8 @@ var serviceSearchCmd = &cobra.Command{
 				IsPublic:  service.IsPublic,
 			})
 		}
-		if serviceSearchJSON {
-			return json.NewEncoder(cmd.OutOrStdout()).Encode(results)
+		if wantsJSON(cmd) {
+			return writeJSON(cmd, results)
 		}
 		if len(results) == 0 {
 			fmt.Fprintf(cmd.OutOrStdout(), "No Registry services found for query %q.\n", query)
@@ -184,6 +193,22 @@ var serviceShowCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	RunE: WithTelemetry("cli.service.show", func(cmd *cobra.Command, args []string) error {
 		return runServiceShow(cmd, args[0])
+	}),
+}
+
+var serviceOperationCmd = &cobra.Command{
+	Use:   "operation",
+	Short: "Inspect one Registry operation",
+	Args:  cobra.NoArgs,
+	RunE:  requireSubcommand,
+}
+
+var serviceOperationShowCmd = &cobra.Command{
+	Use:   "show <service-slug> <operation-name>",
+	Short: "Show one operation from an exact service version",
+	Args:  cobra.ExactArgs(2),
+	RunE: WithTelemetry("cli.service.operation.show", func(cmd *cobra.Command, args []string) error {
+		return runServiceOperationShow(cmd, args[0], args[1])
 	}),
 }
 
@@ -217,7 +242,11 @@ func runServiceShow(cmd *cobra.Command, serviceSlug string) error {
 	if info == nil {
 		return fmt.Errorf("service %s not found", serviceSlug)
 	}
+	if wantsJSON(cmd) {
+		return writeJSON(cmd, newServiceShowResult(info))
+	}
 	fmt.Fprintf(cmd.OutOrStdout(), "name:\t%s\n", info.Name)
+	fmt.Fprintf(cmd.OutOrStdout(), "description:\t%s\n", info.Description)
 	fmt.Fprintf(cmd.OutOrStdout(), "slug:\t%s\n", info.DisplaySlug())
 	fmt.Fprintf(cmd.OutOrStdout(), "base_url:\t%s\n", info.BaseURL)
 	for _, srv := range info.Servers {
@@ -236,6 +265,87 @@ func runServiceShow(cmd *cobra.Command, serviceSlug string) error {
 			fmt.Fprintf(cmd.OutOrStdout(), "  - %s (type: %s, scheme: %s%s)\n", auth.Name, auth.Type, auth.Scheme, formatBasicPasswordMode(auth.BasicPasswordMode))
 		}
 	}
+	return nil
+}
+
+type serviceShowResult struct {
+	ID          string                 `json:"service_id"`
+	Name        string                 `json:"name"`
+	Description string                 `json:"description,omitempty"`
+	Slug        string                 `json:"slug"`
+	BaseURL     string                 `json:"base_url"`
+	Servers     []cliapi.ServiceServer `json:"servers"`
+	AuthConfigs []cliapi.AuthConfig    `json:"auth_configs"`
+}
+
+func newServiceShowResult(info *cliapi.ServiceInfo) serviceShowResult {
+	return serviceShowResult{
+		ID: info.ID, Name: info.Name, Description: info.Description,
+		Slug: info.DisplaySlug(), BaseURL: info.BaseURL,
+		Servers: info.Servers, AuthConfigs: info.AuthConfigs,
+	}
+}
+
+func runServiceOperationShow(cmd *cobra.Command, serviceSlug, operationName string) error {
+	version := strings.TrimSpace(serviceOperationVersion)
+	if version == "" {
+		return errors.New("--version is required")
+	}
+	client, err := getAPIClient()
+	if err != nil {
+		return err
+	}
+	service, err := client.GetServiceInfo(serviceSlug)
+	if err != nil {
+		return err
+	}
+	if service == nil {
+		return fmt.Errorf("service %s not found", serviceSlug)
+	}
+	detail, err := client.GetServiceOperation(service.ID, version, operationName, cliapi.ServiceOperationDetailOptions{
+		IncludeRequest: serviceOperationIncludeRequest, IncludeResponses: serviceOperationIncludeResponses,
+	})
+	if err != nil {
+		return err
+	}
+	return renderServiceOperation(cmd, detail)
+}
+
+func renderServiceOperation(cmd *cobra.Command, detail *cliapi.ServiceOperationDetail) error {
+	if wantsJSON(cmd) {
+		return writeJSON(cmd, detail)
+	}
+	out := cmd.OutOrStdout()
+	printServiceOperationSummary(out, detail)
+	if serviceOperationIncludeRequest {
+		if err := printJSONSection(out, "request_content", detail.RequestContent); err != nil {
+			return err
+		}
+	}
+	if serviceOperationIncludeResponses {
+		return printJSONSection(out, "responses", detail.Responses)
+	}
+	return nil
+}
+
+func printServiceOperationSummary(out io.Writer, detail *cliapi.ServiceOperationDetail) {
+	fmt.Fprintf(out, "name:\t%s\n", detail.Name)
+	fmt.Fprintf(out, "id:\t%s\n", detail.ID)
+	fmt.Fprintf(out, "description:\t%s\n", detail.Description)
+	fmt.Fprintf(out, "method:\t%s\n", detail.Method)
+	fmt.Fprintf(out, "path:\t%s\n", detail.Path)
+	fmt.Fprintf(out, "security:\t%s\n", formatSecurityRequirements(detail.SecurityRequirements))
+	for _, parameter := range detail.Parameters {
+		fmt.Fprintf(out, "parameter:\t%s\tin: %s\trequired: %t\ttype: %s\n", parameter.Name, parameter.In, parameter.Required, parameter.Type)
+	}
+}
+
+func printJSONSection(out io.Writer, label string, value any) error {
+	encoded, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "%s:\n%s\n", label, encoded)
 	return nil
 }
 
@@ -269,6 +379,9 @@ func runServiceVersions(cmd *cobra.Command, service string) error {
 	if err != nil {
 		return err
 	}
+	if wantsJSON(cmd) {
+		return writeJSON(cmd, versions)
+	}
 	printServiceVersions(cmd.OutOrStdout(), service, versions)
 	return nil
 }
@@ -288,11 +401,16 @@ func printServiceVersions(out io.Writer, service string, versions []cliapi.Servi
 
 func init() {
 	RootCmd.AddCommand(serviceCmd)
-	serviceCmd.AddCommand(serviceSearchCmd, serviceVersionsCmd, serviceShowCmd, serviceOperationsCmd, serviceWebhooksCmd)
+	serviceCmd.AddCommand(serviceSearchCmd, serviceVersionsCmd, serviceShowCmd, serviceOperationsCmd, serviceOperationCmd, serviceWebhooksCmd)
+	serviceOperationCmd.AddCommand(serviceOperationShowCmd)
 	serviceSearchCmd.Flags().StringVar(&serviceSearchQuery, "q", "", "Service name or capability to search for")
-	serviceSearchCmd.Flags().BoolVar(&serviceSearchJSON, "json", false, "Print results as JSON")
+	addJSONOutputFlag(serviceSearchCmd, serviceVersionsCmd, serviceShowCmd, serviceOperationsCmd, serviceOperationShowCmd, serviceWebhooksCmd)
 	serviceOperationsCmd.Flags().StringVar(&serviceOperationsQuery, "q", "", "Search query")
 	serviceOperationsCmd.Flags().StringVar(&serviceOperationsVersion, "version", "", "Service version")
 	addListFlags(serviceOperationsCmd, &serviceListFlags)
+	serviceOperationShowCmd.Flags().StringVar(&serviceOperationVersion, "version", "", "Exact service version (required)")
+	serviceOperationShowCmd.Flags().BoolVar(&serviceOperationIncludeRequest, "include-request", false, "Include the request content contract")
+	serviceOperationShowCmd.Flags().BoolVar(&serviceOperationIncludeResponses, "include-responses", false, "Include response contracts")
+	serviceOperationShowCmd.MarkFlagRequired("version")
 	serviceWebhooksCmd.Flags().StringVar(&serviceWebhooksVersion, "version", "", "Service version")
 }

@@ -75,7 +75,7 @@ func runImportPlan(cmd *cobra.Command, specArg string, opts importSpecPlanOption
 	resp, err := client.PlanSpecImport(req)
 	if err != nil {
 		var strictError *api.SpecImportStrictError
-		if errors.As(err, &strictError) {
+		if errors.As(err, &strictError) && !opts.jsonOut {
 			printImportDiagnostics(cmd.ErrOrStderr(), strictError.Diagnostics)
 		}
 		return err

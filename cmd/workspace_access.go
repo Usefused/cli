@@ -35,6 +35,9 @@ var workspaceAccessListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		if wantsJSON(cmd) {
+			return writeJSONPage(cmd, page.Items, page.Total, workspaceAccessListFlags)
+		}
 		if len(page.Items) == 0 {
 			fmt.Fprintln(cmd.OutOrStdout(), "No workspace-wide resource access found.")
 			return nil
@@ -114,6 +117,7 @@ func printWorkspaceShares(cmd *cobra.Command, shares []cliapi.WorkspaceShare) {
 func init() {
 	workspaceCmd.AddCommand(workspaceAccessCmd)
 	workspaceAccessCmd.AddCommand(workspaceAccessListCmd, workspaceBucketAccessCmd, workspaceAppAccessCmd)
+	addJSONOutputFlag(workspaceAccessListCmd)
 	workspaceBucketAccessCmd.AddCommand(workspaceBucketAccessGrantCmd, workspaceBucketAccessRevokeCmd)
 	workspaceAppAccessCmd.AddCommand(workspaceAppAccessGrantCmd, workspaceAppAccessRevokeCmd)
 	workspaceAccessListCmd.Flags().StringVar(&workspaceAccessListResource, "resource", "", "Filter by bucket or app")

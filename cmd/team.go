@@ -32,6 +32,9 @@ var teamListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		if wantsJSON(cmd) {
+			return writeJSONPage(cmd, page.Items, page.Total, teamListFlags)
+		}
 		if len(page.Items) == 0 {
 			fmt.Fprintln(cmd.OutOrStdout(), "No teams found.")
 			return nil
@@ -55,6 +58,9 @@ var teamShowCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		if wantsJSON(cmd) {
+			return writeJSON(cmd, team)
+		}
 		printTeam(cmd, *team)
 		return nil
 	}),
@@ -74,6 +80,9 @@ var teamEligibleOwnersCmd = &cobra.Command{
 		page, err := client.ListAppOwningTeams(teamEligibleOwnerSearch, teamEligibleOwnerFlags.pageOptions())
 		if err != nil {
 			return err
+		}
+		if wantsJSON(cmd) {
+			return writeJSONPage(cmd, page.Items, page.Total, teamEligibleOwnerFlags)
 		}
 		if len(page.Items) == 0 {
 			fmt.Fprintln(cmd.OutOrStdout(), "No eligible owning teams found. Join an active team or ask an access administrator to add you.")
@@ -184,6 +193,9 @@ var teamBuildAccessCmd = &cobra.Command{
 		page, err := client.ListAppBuildSelectors(args[0], resourceType, teamBuildAccessSearch, teamBuildAccessFlags.pageOptions())
 		if err != nil {
 			return err
+		}
+		if wantsJSON(cmd) {
+			return writeJSONPage(cmd, page.Items, page.Total, teamBuildAccessFlags)
 		}
 		if len(page.Items) == 0 {
 			fmt.Fprintf(cmd.OutOrStdout(), "No %s available to both you and this team.\n", strings.ToLower(resourceType)+"s")
@@ -422,6 +434,7 @@ func printTeam(cmd *cobra.Command, team cliapi.Team) {
 func init() {
 	RootCmd.AddCommand(teamCmd)
 	teamCmd.AddCommand(teamListCmd, teamEligibleOwnersCmd, teamShowCmd, teamCreateCmd, teamUpdateCmd, teamArchiveCmd, teamBuildAccessCmd, teamAccessCmd)
+	addJSONOutputFlag(teamListCmd, teamShowCmd, teamEligibleOwnersCmd, teamBuildAccessCmd)
 	addListFlags(teamListCmd, &teamListFlags)
 	teamListCmd.Flags().StringVar(&teamListSearch, "search", "", "Search team names and slugs")
 	teamListCmd.Flags().BoolVar(&teamListIncludeArchived, "include-archived", false, "Include archived teams")

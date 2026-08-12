@@ -21,6 +21,51 @@ receives SIGINT or SIGTERM. `CI=true` and `FUSED_NO_UPDATE_CHECK=1` disable
 release update checks. A command that would prompt fails with remediation when
 `--no-input` or `CI=true` is active.
 
+## Structured output for read commands
+
+Read-only inspection commands accept `--json` without changing their default
+human-readable output. This includes service and workspace discovery,
+SDK/MCP inspection and token metadata, validation, bucket/secret/value/connect
+metadata, identity, access, team, user, config, and skill listings.
+
+Commands backed by an API page return:
+
+```json
+{"items": [], "total": 0, "limit": 20, "offset": 0}
+```
+
+Exact-object and non-paged reads return the object or array directly. Sensitive
+reads keep the same safe projection as human output: secret values, decrypted
+connect credentials, and execution-token values are never returned by list
+commands. Plan commands retain their existing `--json` plan-result contract.
+
+When a command using `--json` fails, stdout remains reserved for successful
+output and stderr receives one JSON object before the CLI exits non-zero:
+
+```json
+{
+  "ok": false,
+  "error": {
+    "code": "bucket_credentials_missing",
+    "message": "Required authentication material is missing.",
+    "category": "validation",
+    "retryable": false,
+    "remediation": "Add the required credentials and create the plan again.",
+    "details": {"missing": ["basicAuth_username"]},
+    "trace_id": "...",
+    "http_status": 400,
+    "command": "fused-cli sdk plan"
+  }
+}
+```
+
+Fields unavailable for a particular failure are omitted. Engine errors retain
+their safe structured fields through CLI wrapping; untrusted response bodies
+are still excluded. Cobra usage failures use `invalid_arguments`; other local
+CLI failures use `command_failed` with the original message and a help-oriented
+remediation. OTEL records the stable error code and retryability without
+recording remote messages or command input.
+
 ## `login`
 
 Open the selected Engine's sign-in page and save a subject-scoped CLI
@@ -38,6 +83,9 @@ Show the non-secret Engine identity used by the effective credential. The
 command follows normal `--key` / saved config / environment resolution and
 prints identity, account, workspace, credential source, authentication method,
 and expiry when reported.
+
+Pass `--json` for the Engine URL, local credential source, and non-secret
+identity response as structured fields.
 
 ## `logout`
 
@@ -71,9 +119,16 @@ Manage your local CLI configuration (`set`, `get`, `list`, `reset`). Inherits gl
 
 ## `service versions <service-slug>`
 List Registry versions visible to the current account for a service slug. Supports provider-qualified slugs such as `@provider/slug`.
+Pass `--json` to return the version objects directly.
 
 ## `service show <service-slug>`
-Show the base URL, servers, and supported authentication methods for a service.
+Show the description, base URL, servers, and supported authentication methods
+for a service. Pass `--json` for stable machine-readable metadata, including
+the reusable provider-qualified slug and complete non-secret auth contract.
+
+| Argument | Short | Description | Default |
+|----------|-------|-------------|---------|
+| `--json` | | Print service metadata as JSON | `false` |
 
 ## `service operations <service-slug>`
 List or search Registry operations for a service. Passing `--q` uses the server-side endpoint search path and supports pagination.
@@ -84,9 +139,25 @@ List or search Registry operations for a service. Passing `--q` uses the server-
 | `--version` | | Service version for operations | `""` |
 | `--limit` | | Maximum rows to read; requires `--q` | `20` |
 | `--offset` | | Rows to skip before reading; requires `--q` | `0` |
+| `--json` | | Print operation summaries, descriptions, documentation, and security requirements as JSON | `false` |
+
+## `service operation show <service-slug> <operation-name>`
+
+Show one operation grounded in an exact service version. Parameters,
+description, documentation, protocol, and ordered security requirements are
+returned by default. Request and response contracts are opt-in so large schemas
+do not unnecessarily fill an agent's context.
+
+| Argument | Short | Description | Default |
+|----------|-------|-------------|---------|
+| `--version` | | Exact service version (required) | `""` |
+| `--json` | | Print operation detail as JSON | `false` |
+| `--include-request` | | Include the request content contract | `false` |
+| `--include-responses` | | Include response contracts | `false` |
 
 ## `service webhooks <service-slug>`
 List Registry webhook definitions for a service.
+Pass `--json` to return webhook definitions directly.
 
 ## `secret set <service-slug>`
 Set authentication credentials for a workspace service. Choose exactly one

@@ -46,6 +46,7 @@ Logout always uses the Engine URL and credential stored by login. Inherited
 
 func init() {
 	RootCmd.AddCommand(whoAmICmd, logoutCmd)
+	addJSONOutputFlag(whoAmICmd)
 }
 
 func runWhoAmI(cmd *cobra.Command) error {
@@ -64,8 +65,20 @@ func runWhoAmI(cmd *cobra.Command) error {
 	if err != nil {
 		return fmt.Errorf("identify current CLI credential: %w", err)
 	}
+	if wantsJSON(cmd) {
+		return writeJSON(cmd, whoAmIResult{
+			Authenticated: true, Engine: engineURL, LocalCredentialSource: credential.source, Identity: identity,
+		})
+	}
 	writeWhoAmI(cmd, engineURL, credential.source, identity)
 	return nil
+}
+
+type whoAmIResult struct {
+	Authenticated         bool                `json:"authenticated"`
+	Engine                string              `json:"engine"`
+	LocalCredentialSource string              `json:"local_credential_source"`
+	Identity              *api.WhoAmIResponse `json:"identity"`
 }
 
 func writeWhoAmI(cmd *cobra.Command, engineURL, localSource string, identity *api.WhoAmIResponse) {

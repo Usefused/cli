@@ -80,6 +80,9 @@ func runValueList(cmd *cobra.Command, bucketID string) error {
 	if err != nil {
 		return err
 	}
+	if wantsJSON(cmd) {
+		return writeJSONPage(cmd, page.Items, page.Total, valueListFlags)
+	}
 	for _, value := range page.Items {
 		fmt.Fprintf(cmd.OutOrStdout(), "Service: %s, Key: %s, Location: %s\n", value.ServiceID, value.KeyName, value.Location)
 	}
@@ -114,5 +117,6 @@ func runValueDelete(cmd *cobra.Command, bucketID, serviceSlug, keyName string) e
 func init() {
 	RootCmd.AddCommand(valueCmd)
 	valueCmd.AddCommand(valueSetCmd, valueListCmd, valueDeleteCmd)
+	addJSONOutputFlag(valueListCmd)
 	addListFlags(valueListCmd, &valueListFlags)
 }

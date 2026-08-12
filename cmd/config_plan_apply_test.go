@@ -1220,7 +1220,7 @@ func runCommandInDirExpectError(t *testing.T, dir, engineURL string, args []stri
 	return out.String() + errOut.String() + err.Error()
 }
 
-// resetHelpFlags clears the "help" flag across the entire command tree
+// resetHelpFlags clears reusable boolean flags across the entire command tree
 // before each test invocation. Cobra's *cobra.Command values are
 // package-level singletons shared by every test in this binary, and pflag
 // does not reset a bool flag's value between Parse() calls -- it only sets
@@ -1228,11 +1228,14 @@ func runCommandInDirExpectError(t *testing.T, dir, engineURL string, args []stri
 // `<cmd> --help` leaves that command's help flag permanently "true" for
 // every later test that reaches the same command without passing --help
 // again, causing cobra to silently print help instead of running RunE. This
-// makes every command execution start from the correct default (help not
-// requested) regardless of what an earlier test in the same process did.
+// makes every command execution start from the correct defaults regardless of
+// what an earlier test in the same process did.
 func resetHelpFlags(cmd *cobra.Command) {
-	if help := cmd.Flags().Lookup("help"); help != nil {
-		_ = help.Value.Set("false")
+	for _, name := range []string{"help", jsonOutputFlag} {
+		if flag := cmd.Flags().Lookup(name); flag != nil {
+			_ = flag.Value.Set("false")
+			flag.Changed = false
+		}
 	}
 	for _, child := range cmd.Commands() {
 		resetHelpFlags(child)

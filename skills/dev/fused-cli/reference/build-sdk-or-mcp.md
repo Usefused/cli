@@ -44,10 +44,13 @@ Always look for a suitable already-enabled service before querying the
 Registry:
 
 ```shell
-fused-cli workspace services list --q "<provider or product>"
+fused-cli workspace services list --q "<provider or product>" --json
 # Use this additional exact check when the Registry service name is known:
 fused-cli workspace has "<exact service name>"
 ```
+
+Use `--json` on workspace service versions, operations, and webhooks as the
+selection is refined; agents should not parse their human-readable tables.
 
 Inspect the list's service names, slugs, and enabled versions against the
 user's requested provider and capability. If a suitable service is enabled,
@@ -89,12 +92,25 @@ business terms:
 
 ```shell
 fused-cli service versions <slug>
-fused-cli service operations <slug> --version <version> --q "<capability>"
+fused-cli service show <slug> --json
+fused-cli service operations <slug> --version <version> --q "<capability>" --json
 ```
 
 Prefer a stable public version unless the user requested another version. Keep
-the exact operation IDs returned by the CLI. Use `select_all: true` only when
-the user genuinely wants the full surface and accepts future scope growth.
+the exact operation IDs returned by the CLI. Search results intentionally omit
+large request/response schemas. Inspect only the operations that could satisfy
+the goal:
+
+```shell
+fused-cli service operation show <slug> <operation-name> --version <version> --json
+fused-cli service operation show <slug> <operation-name> --version <version> --json --include-request --include-responses
+```
+
+Start without body flags, then request only the contract needed to author or
+verify the SDK usage. Descriptions and provider-declared security requirements
+are authoritative; do not infer parameters or payload fields from an operation
+name. Use `select_all: true` only when the user genuinely wants the full surface
+and accepts future scope growth.
 
 `workspace has` matches the exact service name, not its slug.
 

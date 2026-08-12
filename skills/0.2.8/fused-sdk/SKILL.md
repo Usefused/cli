@@ -30,6 +30,7 @@ Return here once Engine setup, workspace-first service discovery, activation,
 and credential requirements are understood. Apply or download only when the
 user requested completion and no production, ownership, credential, or
 permission decision remains unresolved.
+Use `service operations --json` for bounded discovery, inspect body contracts only with `service operation show` opt-in flags, and run `sdk validate --json` after writing the config.
 
 `kind: sdk`, managed by `fused-cli sdk ...`, declares a typed SDK package
 generated from a bucket's already-configured services.

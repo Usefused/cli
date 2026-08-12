@@ -103,6 +103,97 @@ func TestServiceShow_PrintsServerVariablesAndBasicPasswordMode(t *testing.T) {
 	}
 }
 
+func TestServiceShowJSONReturnsReusableSlugAndAuthMetadata(t *testing.T) {
+	server := newServiceInfoTestServer(t, `{
+		"id":"svc-2","name":"Payments","description":"Payment APIs","slug":"payments","base_url":"https://api.example.test",
+		"provider":{"handle":"acme"},"is_owner":false,"servers":[],
+		"auth_configs":[{"name":"oauth","type":"oauth2","pkce_required":true,"oauth2_flows":{"authorizationCode":{"scopes":{"payments:write":"Create payments"}}}}]
+	}`)
+	defer server.Close()
+
+	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"service", "show", "@acme/payments", "--json"})
+	var result serviceShowResult
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
+		t.Fatalf("decode output %q: %v", out, err)
+	}
+	if result.Slug != "@acme/payments" || result.Description != "Payment APIs" || len(result.AuthConfigs) != 1 {
+		t.Fatalf("service JSON = %#v", result)
+	}
+}
+
+func TestServiceOperationsJSONIncludesDescriptionAndSecurity(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Query string `json:"query"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		switch {
+		case strings.Contains(body.Query, "GetServiceInfo"):
+			_, _ = w.Write([]byte(`{"data":{"service":{"id":"svc-1","name":"Payments","description":"Payment APIs","slug":"payments","base_url":"https://api.example.test","provider":null,"is_owner":true,"servers":[],"auth_configs":[]}}}`))
+		case strings.Contains(body.Query, "searchEndpoints"):
+			_, _ = w.Write([]byte(`{"data":{"searchEndpoints":[{"id":"op-1","name":"createPayment","description":"Create a payment","path":"/payments","method":"POST","service_id":"svc-1","security_requirements":[{"schemes":[{"scheme":"oauth","scopes":["payments:write"]}]}]}]}}`))
+		default:
+			t.Fatalf("unexpected query: %s", body.Query)
+		}
+	}))
+	defer server.Close()
+
+	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"service", "operations", "payments", "--version", "v2", "--q", "create", "--json"})
+	var operations []api.Integration
+	if err := json.Unmarshal([]byte(out), &operations); err != nil {
+		t.Fatalf("decode output %q: %v", out, err)
+	}
+	if len(operations) != 1 || operations[0].Description != "Create a payment" || operations[0].SecurityRequirements[0].Schemes[0].Scopes[0] != "payments:write" {
+		t.Fatalf("operation summaries = %#v", operations)
+	}
+}
+
+func TestServiceOperationShowJSONIncludesRequestedContracts(t *testing.T) {
+	serviceOperationVersion = ""
+	serviceOperationIncludeRequest, serviceOperationIncludeResponses = false, false
+	t.Cleanup(func() {
+		serviceOperationVersion = ""
+		serviceOperationIncludeRequest, serviceOperationIncludeResponses = false, false
+	})
+	var operationQueries int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Query     string         `json:"query"`
+			Variables map[string]any `json:"variables"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		switch {
+		case strings.Contains(body.Query, "GetServiceInfo"):
+			_, _ = w.Write([]byte(`{"data":{"service":{"id":"svc-1","name":"Payments","description":"Payment APIs","slug":"payments","base_url":"https://api.example.test","provider":null,"is_owner":true,"servers":[],"auth_configs":[]}}}`))
+		case strings.Contains(body.Query, "endpointByName"):
+			operationQueries++
+			if body.Variables["version"] != "v2" || body.Variables["name"] != "createPayment" {
+				t.Fatalf("operation variables = %#v", body.Variables)
+			}
+			if !strings.Contains(body.Query, "request_content") || !strings.Contains(body.Query, "responses") {
+				t.Fatalf("optional contracts missing from query: %s", body.Query)
+			}
+			_, _ = w.Write([]byte(`{"data":{"endpointByName":{"id":"op-1","service_id":"svc-1","name":"createPayment","description":"Create a payment","method":"POST","path":"/payments","deprecated":false,"parameters":[],"request_content":{"required":true,"representations":[{"media_type":"application/json","serialization":"json"}]},"responses":{"201":{"description":"created","representations":[]}},"security_requirements":[{"schemes":[{"scheme":"oauth","scopes":["payments:write"]}]}]}}}`))
+		default:
+			t.Fatalf("unexpected query: %s", body.Query)
+		}
+	}))
+	defer server.Close()
+
+	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"service", "operation", "show", "payments", "createPayment", "--version", "v2", "--json", "--include-request", "--include-responses"})
+	var detail api.ServiceOperationDetail
+	if err := json.Unmarshal([]byte(out), &detail); err != nil {
+		t.Fatalf("decode output %q: %v", out, err)
+	}
+	if operationQueries != 1 || detail.RequestContent == nil || detail.Responses["201"].Description != "created" {
+		t.Fatalf("operation queries=%d detail=%#v", operationQueries, detail)
+	}
+}
+
 func TestFormatSecurityRequirementsPreservesAlternativeAndSchemeOrder(t *testing.T) {
 	requirements := api.SecurityRequirements{
 		{Schemes: []api.SecurityRequirement{
@@ -124,7 +215,6 @@ func TestServiceSearch_PrintsReusableAccountScopedSlugs(t *testing.T) {
 		{"id":"svc-public","name":"Acme Billing","slug":"billing","provider":{"handle":"acme"},"is_owner":false,"is_public":true}
 	]`)
 	defer server.Close()
-	serviceSearchJSON = false
 
 	out := runCommandInDirOutput(t, dir, server.URL, []string{"service", "search", "--q", "billing"})
 	if !strings.Contains(out, "Billing API") || !strings.Contains(out, "billing") {
@@ -141,7 +231,6 @@ func TestServiceSearch_JSONHasStableReusableFields(t *testing.T) {
 		{"id":"svc-public","name":"Acme Billing","slug":"billing","provider":{"handle":"acme"},"is_owner":false,"is_public":true}
 	]`)
 	defer server.Close()
-	serviceSearchJSON = false
 
 	out := runCommandInDirOutput(t, dir, server.URL, []string{"service", "search", "--q", "billing", "--json"})
 	var results []serviceSearchResult
@@ -156,7 +245,6 @@ func TestServiceSearch_JSONHasStableReusableFields(t *testing.T) {
 func TestServiceSearch_RejectsEmptyQuery(t *testing.T) {
 	dir := t.TempDir()
 	serviceSearchQuery = ""
-	serviceSearchJSON = false
 	errText := runCommandInDirExpectError(t, dir, "http://127.0.0.1:1", []string{"service", "search", "--q", "   "})
 	if !strings.Contains(errText, "--q must not be empty") {
 		t.Fatalf("expected empty-query error, got %q", errText)

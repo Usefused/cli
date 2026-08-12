@@ -2,7 +2,7 @@
 
 The `fused-cli` is the official command-line interface for [Fused](https://usefused.com). It manages a Fused Engine from your terminal: connect the CLI to an Engine, import API services into the Registry, apply workspace configuration, manage buckets and secrets, generate SDK packages, and deploy MCP servers.
 
-Use it as the config-as-code and operations CLI for the Fused integration layer. SDK and MCP generation are supported workflows, not the whole product.
+Use it as the config-as-code and operations CLI for the Fused integration harness. SDK and MCP generation are supported workflows, not the whole product.
 
 ## Installation
 
@@ -124,6 +124,11 @@ with `--timeout`, and pass `--request-id` to attach a safe audit correlation ID
 to every Engine request. SIGINT and SIGTERM cancel outstanding requests.
 
 Use `--no-input` in scripts and agent runs to fail instead of prompting.
+Read-only inspection commands also accept `--json`; paginated results include
+`items`, `total`, `limit`, and `offset` so agents do not need to parse tables.
+On failure, commands using `--json` write one structured error object to stderr
+and exit non-zero; Engine error codes, remediation, retryability, and trace IDs
+are preserved when available.
 `CI=true` enables the same non-interactive behavior and disables release update
 checks; `FUSED_NO_UPDATE_CHECK=1` disables only the update check. Interactive
 options such as `import docs --review` must be replaced by their explicit flag

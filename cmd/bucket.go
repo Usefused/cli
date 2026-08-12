@@ -77,6 +77,9 @@ func runBucketList(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
+	if wantsJSON(cmd) {
+		return writeJSONPage(cmd, page.Items, page.Total, bucketListFlags)
+	}
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 8, 2, ' ', 0)
 	fmt.Fprintln(w, "NAME\tID\tSECRETS\tVALUES")
 	for _, b := range page.Items {
@@ -114,6 +117,9 @@ func runBucketShow(cmd *cobra.Command, nameOrID string) error {
 	if err != nil {
 		return err
 	}
+	if wantsJSON(cmd) {
+		return writeJSON(cmd, bucket)
+	}
 	fmt.Fprintf(cmd.OutOrStdout(), "name:\t%s\nid:\t%s\nsecrets:\t%d\nvalues:\t%d\ncreated_at:\t%s\n", bucket.Name, bucket.ID, bucket.SecretCount, bucket.ValueCount, bucket.CreatedAt)
 	return nil
 }
@@ -126,6 +132,9 @@ func runBucketServices(cmd *cobra.Command, nameOrID string) error {
 	page, err := client.ListBucketServicePage(bucketID, bucketServicesFlags.pageOptions())
 	if err != nil {
 		return err
+	}
+	if wantsJSON(cmd) {
+		return writeJSONPage(cmd, page.Items, page.Total, bucketServicesFlags)
 	}
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 8, 2, ' ', 0)
 	fmt.Fprintln(w, "SERVICE_NAME\tSERVICE_ID\tSECRETS\tVALUES\tCONNECT_CONFIGS\tUSERS")
@@ -146,6 +155,9 @@ func runBucketSecrets(cmd *cobra.Command, nameOrID string) error {
 	if err != nil {
 		return err
 	}
+	if wantsJSON(cmd) {
+		return writeJSONPage(cmd, page.Items, page.Total, bucketSecretsFlags)
+	}
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 8, 2, ' ', 0)
 	fmt.Fprintln(w, "SERVICE_ID\tKEY_NAME\tTYPE\tEXPIRES")
 	for _, secret := range page.Items {
@@ -164,6 +176,9 @@ func runBucketValues(cmd *cobra.Command, nameOrID string) error {
 	page, err := client.ListBucketValuesPage(bucketID, bucketValuesFlags.pageOptions())
 	if err != nil {
 		return err
+	}
+	if wantsJSON(cmd) {
+		return writeJSONPage(cmd, page.Items, page.Total, bucketValuesFlags)
 	}
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 8, 2, ' ', 0)
 	fmt.Fprintln(w, "SERVICE_ID\tKEY_NAME\tLOCATION")
@@ -188,6 +203,9 @@ func runBucketConnections(cmd *cobra.Command, nameOrID string) error {
 	if err != nil {
 		return err
 	}
+	if wantsJSON(cmd) {
+		return writeJSONPage(cmd, page.Items, page.Total, bucketConnectionsFlags)
+	}
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 8, 2, ' ', 0)
 	fmt.Fprintln(w, "USER_REF\tSERVICE_ID\tAUTH_TYPE\tREFRESH_STATE\tLAST_FAILURE\tTRACE_ID\tID")
 	for _, conn := range page.Items {
@@ -206,6 +224,9 @@ func runBucketSDKs(cmd *cobra.Command, nameOrID string) error {
 	page, err := client.ListBucketSDKPage(bucketID, bucketSDKsFlags.pageOptions())
 	if err != nil {
 		return err
+	}
+	if wantsJSON(cmd) {
+		return writeJSONPage(cmd, page.Items, page.Total, bucketSDKsFlags)
 	}
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 8, 2, ' ', 0)
 	fmt.Fprintln(w, "NAME\tID\tKIND\tACTIVE")
@@ -262,6 +283,7 @@ func formatOptionalTime(value *time.Time) string {
 func init() {
 	RootCmd.AddCommand(bucketCmd)
 	bucketCmd.AddCommand(bucketCreateCmd, bucketDeleteCmd, bucketListCmd, bucketShowCmd, bucketServicesCmd, bucketSecretsCmd, bucketValuesCmd, bucketConnectionsCmd, bucketSDKsCmd)
+	addJSONOutputFlag(bucketListCmd, bucketShowCmd, bucketServicesCmd, bucketSecretsCmd, bucketValuesCmd, bucketConnectionsCmd, bucketSDKsCmd)
 	addListFlags(bucketListCmd, &bucketListFlags)
 	addListFlags(bucketServicesCmd, &bucketServicesFlags)
 	addListFlags(bucketSecretsCmd, &bucketSecretsFlags)

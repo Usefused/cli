@@ -79,6 +79,9 @@ func runMCPTokenList(cmd *cobra.Command, target string) error {
 	if err != nil {
 		return err
 	}
+	if wantsJSON(cmd) {
+		return writeJSON(cmd, tokens)
+	}
 	for _, token := range tokens {
 		fmt.Fprintf(cmd.OutOrStdout(), "ID: %s, Name: %s, Allow: %s, Expires: %s, Last used: %s, Created: %s\n",
 			token.ID, token.Name, strings.Join(token.Allow, ","), tokenExpiryDisplay(token.ExpiresAt), optionalTokenTimeDisplay(token.LastUsedAt), token.CreatedAt.Format("2006-01-02 15:04:05"))
@@ -110,6 +113,7 @@ func runMCPTokenRevoke(cmd *cobra.Command, target, name string) error {
 func init() {
 	mcpCmd.AddCommand(mcpTokenCmd)
 	mcpTokenCmd.AddCommand(mcpTokenGenerateCmd, mcpTokenListCmd, mcpTokenRevokeCmd)
+	addJSONOutputFlag(mcpTokenListCmd)
 	mcpTokenGenerateCmd.Flags().StringSlice("allow", []string{api.AppTokenAllowAllWildcard}, "Exact operation IDs to allow; * grants all operations")
 	mcpTokenGenerateCmd.Flags().String("expires-in", "", "Optional token lifetime, for example 15m or 1h")
 }

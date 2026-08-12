@@ -100,7 +100,7 @@ func (c *Client) postJSON(ctx context.Context, path string, reqBody any, success
 	defer resp.Body.Close()
 	if resp.StatusCode != successStatus {
 		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("%s failed (HTTP %d): %s", strings.TrimPrefix(path, "/"), resp.StatusCode, formatHTTPErrorBody(resp.StatusCode, respBody))
+		return fmt.Errorf("%s failed (HTTP %d): %w", strings.TrimPrefix(path, "/"), resp.StatusCode, newHTTPError(resp.StatusCode, respBody))
 	}
 	if out == nil {
 		return nil
@@ -123,7 +123,7 @@ func (c *Client) StreamIntegrationExtraction(ctx context.Context, sessionID stri
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("integration extraction stream failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(resp.StatusCode, respBody))
+		return fmt.Errorf("integration extraction stream failed (HTTP %d): %w", resp.StatusCode, newHTTPError(resp.StatusCode, respBody))
 	}
 	return readSSEEvents(resp.Body, onEvent)
 }
