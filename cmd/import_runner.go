@@ -48,13 +48,14 @@ type importSpecApplyOptions struct {
 // "import apply" (possibly a different process/CI step) knows what plan_id
 // and review_hash to send without re-planning.
 type importPlanReceipt struct {
-	Slug        string `json:"slug,omitempty"`
-	PlanID      string `json:"plan_id"`
-	ReviewHash  string `json:"review_hash"`
-	SourceHash  string `json:"source_hash,omitempty"`
-	OverlayHash string `json:"overlay_hash,omitempty"`
-	EngineURL   string `json:"engine_url,omitempty"`
-	CreatedAt   string `json:"created_at,omitempty"`
+	Slug             string `json:"slug,omitempty"`
+	PlanID           string `json:"plan_id"`
+	ReviewHash       string `json:"review_hash"`
+	SourceHash       string `json:"source_hash,omitempty"`
+	OverlayHash      string `json:"overlay_hash,omitempty"`
+	SourceBundleHash string `json:"source_bundle_hash,omitempty"`
+	EngineURL        string `json:"engine_url,omitempty"`
+	CreatedAt        string `json:"created_at,omitempty"`
 }
 
 func runImportPlan(cmd *cobra.Command, specArg string, opts importSpecPlanOptions) error {
@@ -192,14 +193,17 @@ func isURL(s string) bool {
 	return strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://")
 }
 
+// newImportPlanReceipt keeps the informational bundle identity across process
+// restarts without turning it into an apply credential or storage locator.
 func newImportPlanReceipt(resp *api.SpecImportPlanResponse) importPlanReceipt {
 	receipt := importPlanReceipt{
-		Slug:        resp.Slug,
-		PlanID:      resp.PlanID,
-		ReviewHash:  resp.ReviewHash,
-		SourceHash:  resp.SourceHash,
-		OverlayHash: resp.OverlayHash,
-		CreatedAt:   time.Now().UTC().Format(time.RFC3339),
+		Slug:             resp.Slug,
+		PlanID:           resp.PlanID,
+		ReviewHash:       resp.ReviewHash,
+		SourceHash:       resp.SourceHash,
+		OverlayHash:      resp.OverlayHash,
+		SourceBundleHash: resp.SourceBundleHash,
+		CreatedAt:        time.Now().UTC().Format(time.RFC3339),
 	}
 	if engineURL, err := GetEngineURL(); err == nil {
 		receipt.EngineURL = canonicalEngineURLOrRaw(engineURL)
@@ -218,10 +222,13 @@ func maybeWriteImportPlanReceipt(receipt importPlanReceipt, opts importSpecPlanO
 	return writeImportPlanReceiptFile(path, receipt)
 }
 
+// printImportPlanSummary exposes the reviewed bundle digest while keeping
+// Registry object-storage implementation details out of the CLI surface.
 func printImportPlanSummary(out io.Writer, resp *api.SpecImportPlanResponse) {
 	fmt.Fprintf(out, "Plan %s for %q (slug: %s, version: %s, target: %s) -- plan ID: %s\n", resp.Action, resp.Name, resp.Slug, resp.TargetVersion, displayImportTarget(resp.TargetType), resp.PlanID)
 	fmt.Fprintf(out, "Source format: %s\n", resp.SourceFormat)
 	fmt.Fprintf(out, "Review hash: %s\n", resp.ReviewHash)
+	fmt.Fprintf(out, "Source bundle hash: %s\n", resp.SourceBundleHash)
 	if resp.OverlayHash == "" {
 		fmt.Fprintln(out, "Overlay: none")
 	} else {

@@ -63,6 +63,57 @@ loopback development). This does not relax `allowed_hosts` validation. A
 template such as `{protocol}://api.example.com` is validated from its declared
 HTTP(S) variable default/enum while the template remains bindable at runtime.
 
+Registry persists the effective server for every operation using OpenAPI
+precedence: operation-level `servers`, then path-level, then document-root.
+Variable declarations retain their default, enum, description, and required
+state; actual tenant values belong in workspace
+`execution_policy.server_variables`, never in Registry metadata.
+
+Parameters retain all five locations (`path`, `query`, `querystring`, `header`,
+`cookie`) plus
+their schema or content form, style, explode, allow-reserved/empty flags,
+examples, defaults, and deprecation state. Explicit `false` remains distinct
+from an absent option. Generated SDKs expose schema-derived TypeScript/Python
+types and pass typed values to Engine; Engine alone applies OpenAPI wire
+serialization. Cookie style and location/style-aware `allowReserved` stay
+explicit rather than using generated-client URL conventions. Standard methods
+such as `CONNECT`, `OPTIONS`, and `TRACE` are
+imported as operations rather than dropped.
+
+OpenAPI 3.2 also retains `QUERY` and the exact token of custom
+`additionalOperations`, named servers, a single whole-query content parameter,
+OAuth device-authorization metadata, response summaries, and sequential or
+positional media encodings. Tag summary/parent/kind remains documentation-only.
+Generated callers pass the whole-query value once
+to Engine and do not apply its media-type serialization or stream framing.
+Registry resolves reusable `components.mediaTypes` into the ordinary canonical
+representations instead of exposing a second reference shape.
+Device Authorization remains non-executable and blocks public admission; its
+retained source fields are diagnostic evidence, not a selectable auth flow.
+
+Schemas are retained as canonical raw JSON plus dialect and content hash, beside
+one bounded Registry projection and explicit projection diagnostics. Raw keeps
+composition, unions/null, constraints, cycles, and absent/false/true/schema
+`additionalProperties` states. Request bodies preserve ordered media choices,
+their reviewed default, and complete form/multipart property encodings.
+Responses preserve exact/default/range status keys, descriptions, headers,
+vendor JSON/text/XML/binary representations, examples, and links. CLI and SDK
+code must consume the Registry projection rather than parsing raw schema again.
+
+OAuth2 imports retain every declared flow, refresh URL, and scope description;
+no preferred flow is inferred when several exist. Reviewed OAuth1 signing and
+HTTP challenge behavior use generic strategy objects, and a security alternative
+may select an exact declared server for one of its own schemes. Unknown challenge
+schemes remain strict diagnostics until a complete execution capability exists.
+
+OpenAPI callbacks retain their runtime expression and parent operation, while
+3.1 top-level webhooks retain the same parameter, request, response, server,
+and security contract as outbound operations. Response links and their runtime
+expressions are preserved but not executed. Safe namespaced `x-*` JSON carries
+`source_spec` provenance for documentation; only the exact reviewed
+`x-fused-*` allowlist can affect behavior, and strict planning rejects unknown
+Fused execution extensions.
+
 ## Postman
 
 The same object sits as a collection-root sibling of `info`, `item`,

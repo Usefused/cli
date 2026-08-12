@@ -43,9 +43,9 @@ Read only the file(s) relevant to the task at hand.
 
 | Read this file | When the task involves |
 |---|---|
-| `reference/execution-policies.md` | Rate limits, retries, pagination, a base_url override, outbound webhook verification, per-version policy overrides, and the local-enforcement-vs-Registry-publish distinction |
+| `reference/execution-policies.md` | Rate limits, retries, pagination, a base_url override, Engine-local server-variable bindings, outbound webhook verification, per-version policy overrides, and the local-enforcement-vs-Registry-publish distinction |
 | `reference/connection-profiles.md` | Auth type, OAuth/OIDC resource discovery, dynamic request bindings, profile ownership/provenance |
-| `reference/openapi-postman.md` | Declaring the same connection profile directly inside an OpenAPI or Postman source document instead of workspace config |
+| `reference/openapi-postman.md` | OpenAPI server/parameter fidelity and declaring the same connection profile directly inside an OpenAPI or Postman source document instead of workspace config |
 
 For the service allowlist, SDK/MCP selection, or bucket/secret commands
 themselves, read `fused-workspace`, `fused-sdk`, `fused-mcp`, or

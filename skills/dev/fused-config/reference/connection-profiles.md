@@ -85,7 +85,10 @@ per-context set.
 ```yaml
 auth_type: oauth
 auth_name: primaryOAuth # required when another named OAuth scheme exists
+oauth2_flow: authorizationCode # required when the scheme declares several flows
 resource_discovery:
+  version: 1
+  stage: post_auth
   operation_id: getAccessibleResources
   server: api
   id_path: "$[*].id"
@@ -109,6 +112,18 @@ bindings:
     mode: force
     operations: [getAccount, listAccountUsers]
 ```
+
+`oauth2_flow` is one of `implicit`, `password`, `clientCredentials`, or
+`authorizationCode` and selects a flow already declared by that exact Registry
+scheme. It carries no client secret, token, or signing material. Omit it only
+when the scheme has zero or one unambiguous flow; Engine rejects a missing or
+unknown selection for a multi-flow scheme instead of choosing a preferred flow.
+
+`resource_discovery.version` is `1` and `stage` is `post_auth`; Registry may
+normalize older omitted ingress values, but new config should always state both.
+Discovery is an Engine-owned OAuth callback workflow, not an SDK/MCP method:
+generated clients select an opaque `resourceId` after discovery and never call
+the discovery operation or parse its provider response themselves.
 
 `resource_discovery.operation_id` must be a `GET` on the pinned service
 version; `server` names an imported server environment, not an arbitrary

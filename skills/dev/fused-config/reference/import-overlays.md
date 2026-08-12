@@ -30,27 +30,33 @@ security_requirements:     # optional service default: ordered alternatives (OR)
   - schemes:               # every scheme in one alternative is required (AND)
       - scheme: basicAuth  # exact auth_configs[].name
         scopes: []
-rate_limit:                # optional existing Fused policy shape
-  version: 2
+rate_limit:                # optional canonical Fused policy
+  version: 3
   policies:
     - name: request_burst
+      mode: enforce
       unit: requests
-      scope: service_version
-      default_cost: 1
-      operation_costs: {}
+      identity: {inputs: [{kind: service_version}]}
+      cost: {default: 1, rules: []}
       algorithm: token_bucket
       token_bucket: {capacity: 10, refill_units: 2, refill_interval_ms: 1000}
-retry:                     # optional existing Fused retry shape
-  strategy: exponential
-  max_retries: 3
-  backoff_ms: 250
+retry:                     # optional canonical Fused retry policy
+  version: 3
+  rules:
+    - predicates: {methods: [GET]}
+      action:
+        max_attempts: 3
+        max_elapsed_ms: 30000
+        backoff: {strategy: exponential, base_delay_ms: 250, max_delay_ms: 5000, jitter_ms: 100}
+        retry_after_headers: []
 pagination:                # optional service default
-  version: 2
-  type: cursor
-  cursor:
-    request: {location: query, name: cursor}
-    next: {location: body, path: "$.next_cursor", value_type: string}
-  items_path: "$.items"
+  version: 3
+  request: [{state: cursor, target: {location: query, name: cursor}, value_type: string, apply: subsequent}]
+  response:
+    items: {path: "$.items"}
+    values: [{name: next_cursor, source: {location: body, path: "$.next_cursor", value_type: string}}]
+  continuation: [{kind: token, state: cursor, response_value: next_cursor}]
+  termination: {stop_on_missing_values: [next_cursor], repeated_value: error}
   limits: {max_pages: 100, max_items: 10000, max_bytes: 16777216, max_duration_ms: 120000}
 connect: {}                # optional credential-free connection profile
 operations:
@@ -61,12 +67,13 @@ operations:
     security_requirements:
       - schemes: []        # explicit anonymous alternative
     pagination:
-      version: 2
-      type: cursor
-      cursor:
-        request: {location: query, name: cursor}
-        next: {location: body, path: "$.next_cursor", value_type: string}
-      items_path: "$.items"
+      version: 3
+      request: [{state: cursor, target: {location: query, name: cursor}, value_type: string, apply: subsequent}]
+      response:
+        items: {path: "$.items"}
+        values: [{name: next_cursor, source: {location: body, path: "$.next_cursor", value_type: string}}]
+      continuation: [{kind: token, state: cursor, response_value: next_cursor}]
+      termination: {stop_on_missing_values: [next_cursor], repeated_value: error}
       limits: {max_pages: 100, max_items: 10000, max_bytes: 16777216, max_duration_ms: 120000}
 ```
 
@@ -80,6 +87,14 @@ hashes are audit information, never substitutes for the combined review hash.
 Never place tokens, passwords, signing secrets, default authorization headers,
 or literal connection binding values in an overlay. Put credential material in
 a bucket secret and keep overlays limited to contract metadata.
+
+Phase 7 execution metadata remains provider-neutral: inbound signature recipes
+contain ordered components and bucket `secret_ref` references, upload workflows
+contain declared/response URL sources with explicit origin and status guards,
+and catalog composition uses collision policy `reject` with namespaced sources.
+The CLI sends reviewed source/overlay bytes without resolving secret references
+or simulating signature, discovery, upload, or catalogue behavior; Registry owns
+normalization and Engine owns execution.
 
 Security scheme references must exactly match a unique `auth_configs[].name`;
 unknown or duplicate names are rejected. Standard OpenAPI security is stronger

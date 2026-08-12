@@ -26,18 +26,20 @@ func TestPlanSpecImport_PostsToImportPlanEndpoint(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(api.SpecImportPlanResponse{
-			PlanID:         "plan-1",
-			SourceHash:     "hash-1",
-			OverlayHash:    "overlay-1",
-			ReviewHash:     "review-1",
-			SourceFormat:   "swagger2",
-			AdapterVersion: "swagger2-v1",
-			ServiceID:      "svc-1",
-			Slug:           "widgets",
-			Name:           "Widgets",
-			IsNewService:   false,
-			Action:         "update_version",
-			TargetVersion:  "1.0",
+			PlanID:           "plan-1",
+			SourceHash:       "hash-1",
+			OverlayPresent:   true,
+			OverlayHash:      "overlay-1",
+			ReviewHash:       "review-1",
+			SourceBundleHash: "bundle-1",
+			SourceFormat:     "swagger2",
+			AdapterVersion:   "swagger2-v1",
+			ServiceID:        "svc-1",
+			Slug:             "widgets",
+			Name:             "Widgets",
+			IsNewService:     false,
+			Action:           "update_version",
+			TargetVersion:    "1.0",
 			Diff: api.SpecImportDiff{
 				Added: 1, Changed: 2, Removed: 0,
 				ChangedNames: []string{"listWidgets"},
@@ -90,12 +92,29 @@ func assertSpecImportPlanRequest(t *testing.T, method, path, authHeader string, 
 
 func assertSpecImportPlanResponse(t *testing.T, resp *api.SpecImportPlanResponse) {
 	t.Helper()
+	assertSpecImportPlanIdentity(t, resp)
+	assertSpecImportPlanReview(t, resp)
+	assertSpecImportPlanUsage(t, resp)
+}
+
+func assertSpecImportPlanIdentity(t *testing.T, resp *api.SpecImportPlanResponse) {
+	t.Helper()
 	if resp.PlanID != "plan-1" || resp.Action != "update_version" || resp.TargetVersion != "1.0" || resp.SourceFormat != "swagger2" {
 		t.Errorf("unexpected response: %+v", resp)
 	}
-	if resp.ReviewHash != "review-1" || resp.OverlayHash != "overlay-1" || resp.AdapterVersion != "swagger2-v1" {
+}
+
+// assertSpecImportPlanReview checks every reviewed identity returned by the
+// Registry so JSON decoding cannot silently discard future replay metadata.
+func assertSpecImportPlanReview(t *testing.T, resp *api.SpecImportPlanResponse) {
+	t.Helper()
+	if !resp.OverlayPresent || resp.ReviewHash != "review-1" || resp.OverlayHash != "overlay-1" || resp.SourceBundleHash != "bundle-1" || resp.AdapterVersion != "swagger2-v1" {
 		t.Errorf("expected review metadata to decode, got %+v", resp)
 	}
+}
+
+func assertSpecImportPlanUsage(t *testing.T, resp *api.SpecImportPlanResponse) {
+	t.Helper()
 	if resp.Usage == nil || len(resp.Usage.SDKs) != 1 || !resp.Usage.SDKs[0].UsesChangedEndpoint {
 		t.Errorf("expected usage block to decode, got %+v", resp.Usage)
 	}
@@ -137,6 +156,9 @@ func TestPlanSpecImportDecodesDiagnostics(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(api.SpecImportPlanResponse{Diagnostics: []api.SpecImportDiagnostic{{
 			Severity: "warning", Code: "unsupported_request_media_type", Scope: "operation",
 			Method: "POST", Path: "/widgets", Message: "Request body media type was not imported.",
+			SourceFormat: "openapi", SourceVersion: "3.1.0", Pointer: "/paths/~1widgets/post/requestBody",
+			Service: "widgets", Disposition: "diagnosed", RequiredCapability: "http.request.alternatives.v1",
+			Provenance: "openapi-source",
 		}}})
 	}))
 	defer server.Close()
@@ -146,6 +168,10 @@ func TestPlanSpecImportDecodesDiagnostics(t *testing.T) {
 	}
 	if len(response.Diagnostics) != 1 || response.Diagnostics[0].Code != "unsupported_request_media_type" {
 		t.Fatalf("expected diagnostics to decode, got %+v", response.Diagnostics)
+	}
+	diagnostic := response.Diagnostics[0]
+	if diagnostic.SourceVersion != "3.1.0" || diagnostic.Pointer == "" || diagnostic.RequiredCapability == "" || len(diagnostic.Provenance) == 0 {
+		t.Fatalf("expected loss-aware diagnostic metadata to decode, got %+v", diagnostic)
 	}
 }
 

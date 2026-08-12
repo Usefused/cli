@@ -67,6 +67,7 @@ per-context set.
 
 ```yaml
 auth_type: oauth
+oauth2_flow: authorizationCode # required when the scheme declares several flows
 resource_discovery:
   operation_id: getAccessibleResources
   server: api
@@ -91,6 +92,12 @@ bindings:
     mode: force
     operations: [getAccount, listAccountUsers]
 ```
+
+`oauth2_flow` is one of `implicit`, `password`, `clientCredentials`, or
+`authorizationCode` and selects a flow already declared by that exact Registry
+scheme. It carries no client secret, token, or signing material. Omit it only
+when the scheme has zero or one unambiguous flow; Engine rejects a missing or
+unknown selection for a multi-flow scheme instead of choosing a preferred flow.
 
 `resource_discovery.operation_id` must be a `GET` on the pinned service
 version; `server` names an imported server environment, not an arbitrary

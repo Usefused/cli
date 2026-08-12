@@ -490,16 +490,15 @@ func attachWorkspaceVersionPolicyOverrides(svc api.WorkspaceService, visibility 
 // policy fields, so this keeps the two round-trip functions from duplicating
 // the same field-by-field copy four times over.
 func mapExecRateLimit(rl *api.ServiceRateLimit) *configfile.RateLimitConfig {
-	// API and configfile intentionally alias the same v2 transport type. The
+	// API and configfile intentionally alias the same canonical v3 type. The
 	// Engine remains the sole place that interprets or enforces the policy.
 	return rl
 }
 
 func mapExecRetry(rc *api.ServiceRetryConfig) *configfile.RetryConfig {
-	if rc == nil {
-		return nil
-	}
-	return &configfile.RetryConfig{Strategy: rc.Strategy, MaxRetries: rc.MaxRetries, BackoffMs: rc.BackoffMs}
+	// Both API and workspace config alias the canonical retry contract. Passing
+	// it through keeps ordered v3 rules intact and avoids another policy mapper.
+	return rc
 }
 
 func mapExecPagination(p *api.ServicePagination) *configfile.PaginationConfig {
