@@ -65,8 +65,8 @@ services and attached to whichever SDK should receive delivery
 (see `fused-webhook`); `auth`/`connect` moved to
 `buckets.<bucket>.service_config.<slug>` (see `fused-bucket`);
 `pagination`/`pagination_overrides` moved under `execution_policy.pagination`
-(one v2 strategy per service/version, no workspace per-operation overrides
-map; provider-contract endpoint pagination remains the more specific tier); and
+(one composable v3 policy per service/version, no workspace per-operation
+overrides map; provider-contract endpoint pagination remains the more specific tier); and
 `base_url` moved under `execution_policy.base_url` -- an owner override for a
 wrong or missing spec-derived base URL, workspace-settable and, with
 `execution_policy.public: true`, publishable to every other consumer too

@@ -219,6 +219,32 @@ background enrichment retries transient failures, and a periodic repair sweep
 recovers interrupted work. Do not re-run plan/apply or wait/poll merely for
 that optional enrichment.
 
+Read import diagnostics by stable `code`, `disposition`, source format/version,
+and JSON pointer. `captured` means the source meaning survived, `diagnosed`
+means it was preserved or bounded but is not fully executable, and
+`strict_error` means strict import must stop. Keep provenance as evidence; do
+not infer execution support from human message text.
+
+When a reviewed overlay supplies a provider fact absent from the source, keep
+its non-secret research and acceptance evidence under the sibling FusedImport
+repository's `acceptance/openapi-execution-contract/` area. Fused's
+`contract-fixtures/` tree is reserved for provider-neutral executable contracts,
+so future imports cannot quietly make production tests depend on one provider.
+Record the source URL, stable section/anchor or quote summary, retrieval date,
+reasoning, target contract field, and disposition. Do not claim a provider
+baseline when its source specification is not checked in; record that absence
+explicitly, and never place credentials, response bodies, or copied secrets in
+the evidence folder.
+
+Service versions and runtime snapshots carry `contract_version` plus
+`required_capabilities`. The CLI is a transport mirror, not the compatibility
+authority: never remove, default, or locally reinterpret these fields. An
+unknown additive documentation field is harmless, but an unknown required
+capability must remain visible so Registry/Engine can reject execution with
+`execution_capability_required`. Re-importing or stripping the field is not a
+remediation; use an Engine version that declares support or publish a contract
+whose execution semantics are actually implemented.
+
 A 2xx apply through Engine also activates the exact imported version in that
 workspace and persists the Registry slug used by later SDK/MCP config. If the
 client receives a proxy timeout or other non-2xx response, do not infer
@@ -244,11 +270,21 @@ fused-cli import apply
 `overlay_content`; never parse, normalize, merge, or hash the overlay in the
 CLI or an agent wrapper. Registry is the sole owner of overlay validation and
 canonicalization. It returns source and overlay hashes for audit information
-and an opaque combined `review_hash` that authorizes apply. The local receipt
-stores that identity without storing the overlay path or content, and apply
+and an opaque combined `review_hash` that authorizes apply. Registry also
+returns an informational `source_bundle_hash` covering the exact root,
+overlay, ordered captured dependencies, source format, and adapter version.
+Apply replays that immutable bundle without fetching the provider again, so a
+Registry restart or changed/unavailable source between plan and apply does not
+change what was reviewed. Missing or corrupt bundle data fails closed; never
+substitute a new download or treat `source_bundle_hash` as an apply credential.
+Engine receives only the canonical Fused snapshot and never reads the import
+bundle. The local receipt stores the review identity without storing the
+overlay path or content, and apply
 uses only `plan_id` plus `review_hash` without rereading either input. For a
 direct apply, pass `--plan-id` with `--review-hash`; a source hash is not an
-apply credential. Re-plan when a receipt lacks `review_hash`.
+apply credential. Re-plan when a receipt lacks `review_hash`. JSON plan output
+always includes `overlay_present`, including `false`, so audit consumers can
+distinguish a reviewed no-overlay plan from a client that dropped the field.
 
 Set `--target all|endpoints|webhooks` explicitly when the user's requested
 contract scope is known; it defaults to `endpoints`. The plan persists that choice,
@@ -290,20 +326,27 @@ For OpenAPI imports, path-level parameters are inherited by each operation and
 an operation-level declaration of the same `(name, in)` pair wins.
 HTTP `HEAD` operations are imported as first-class endpoints with their
 parameters, security requirements, and stable operation identity preserved.
-Request-body media selection is deterministic: `application/json`, then a declared
-`application/*+json` media type, then
-`application/x-www-form-urlencoded`, `multipart/form-data`, then the first
-lexically sorted schema-backed raw media type. The selected media type,
-serialization, required flag, schema, multipart part metadata, and raw payload
-binding are persisted together as one request-content contract, so generated
-SDK/MCP calls and direct Engine execution use the same reviewed representation.
+The same applies to `CONNECT`, `OPTIONS`, and `TRACE`. Effective server
+selection follows operation, path, then root precedence, while path, query,
+header, cookie, and whole-query parameters retain schema/content and
+location/style-aware serialization metadata.
+Request content retains every declared media representation in source order,
+including exact vendor `+json`, form, multipart, text, XML, and binary media
+types. A reviewed `default_media_type` selects the generated SDK input shape;
+the alternatives and complete Encoding Objects remain in the runtime contract.
 Binary raw payloads and binary multipart parts cross the Fused boundary as
 strict base64 strings and are decoded immediately before the provider request.
 Raw bodies use the declared `body` payload argument; ambiguous extra body
 arguments are rejected. There is no fallback that guesses JSON when request
-content is absent or declares an unknown serialization. Multiple supported
-representations produce a diagnostic naming the deterministic choice; use
-`--strict` when that choice must be reviewed rather than accepted.
+content is absent or declares an unknown serialization.
+
+Each imported schema carries canonical raw JSON, dialect, SHA-256 content hash,
+one Registry-derived SDK/runtime projection, and bounded projection diagnostics.
+Unions, composition, null, constraints, and all four `additionalProperties`
+states stay exact in raw even when the compatibility projection is narrower.
+CLI and SDK generators consume the projection and never reinterpret raw schema.
+Responses retain exact/default/range status keys, descriptions, headers, every
+media representation, examples, and links.
 
 Imported authentication and routing metadata also remains provider-owned.
 Operation security requirements are an ordered OR-of-AND structure: each
@@ -315,6 +358,40 @@ server variables and a Basic scheme's `basic_password_mode` (`required`,
 `optional`, or `empty`); these describe the provider contract and never carry
 credentials. A missing server-variable default stays missing in CLI transport
 rather than being filled locally.
+
+OAuth2 schemes retain every named flow, refresh URL, and scope description;
+legacy singular flow fields exist only when the source declared exactly one.
+OAuth1 and HTTP challenge behavior is an explicit generic runtime strategy,
+never a provider-name fallback. Ordered security alternatives may bind one
+scheme to an exact declared server (for example an mTLS endpoint), while an
+empty alternative remains anonymous. Workspace profiles choose `oauth2_flow`;
+CLI never accepts tokens, signing keys, or challenge responses in that selector.
+
+OpenAPI callbacks and 3.1 top-level webhooks retain their complete inbound
+operation contracts, including callback parent/runtime expression. Links and
+namespaced `x-*` values retain source provenance for review, but remain inert;
+unknown `x-fused-*` execution keys are diagnosed and strict imports reject them.
+Normalized tags, summaries, external docs, contact, license, and examples are
+documentation metadata only and cannot select CLI or SDK execution behavior.
+
+Phase 7 imports may carry structured inbound signature policies, post-auth
+resource discovery, media-upload workflows, and reject-on-collision catalog
+composition. Review these as credential-free execution contracts: signing
+material appears only as a bucket `secret_ref`. CLI transports the normalized
+shape but never resolves the reference, trusts inbound routing headers as the
+callback URL, advances upload/discovery state, or composes specs; those actions
+belong to the version-compatible Engine.
+
+OpenAPI 3.2 preserves exact `QUERY` and custom method tokens, named servers,
+`in: querystring` content, device-authorization metadata, response summaries,
+tag hierarchy, and sequential or positional media encodings. Tag hierarchy is
+documentation-only; CLI transports the other canonical fields but never
+serializes a whole query string, frames a provider stream, or
+interprets multipart positions. Registry resolves reusable media types; gated
+`$self`, XML execution, external URI security names, and discriminator fallback
+features must remain diagnostics rather than local approximations.
+Device Authorization is not an executable flow: public admission must reject
+it even when the source metadata was retained for a precise diagnostic.
 
 `import plan` prints concise structured diagnostics when source information
 cannot be represented exactly; `--json` returns the full diagnostic objects.

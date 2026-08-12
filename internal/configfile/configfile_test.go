@@ -63,34 +63,40 @@ buckets:
 	}
 }
 
-func TestWorkspacePaginationV2GoldenRoundTrip(t *testing.T) {
-	parsed, err := configfile.ParseFile("testdata/workspace_pagination_v2.yaml")
-	if err != nil {
-		t.Fatal(err)
+func TestWorkspacePaginationV2IsRejected(t *testing.T) {
+	_, err := configfile.ParseFile("testdata/workspace_pagination_v2.yaml")
+	if err == nil || !strings.Contains(err.Error(), "field type not found") {
+		t.Fatalf("legacy workspace pagination must fail strict YAML decoding, got %v", err)
 	}
-	service := parsed.Workspace.Services["google-drive"]
-	if service.ExecutionPolicy == nil || service.ExecutionPolicy.Pagination == nil {
-		t.Fatalf("service pagination missing: %+v", service.ExecutionPolicy)
-	}
-	if service.ExecutionPolicy.Public == nil || *service.ExecutionPolicy.Public {
-		t.Fatalf("local-only public=false was not preserved: %+v", service.ExecutionPolicy.Public)
-	}
-	servicePagination := service.ExecutionPolicy.Pagination
-	versionPagination := service.Versions[0].ExecutionPolicy.Pagination
-	if servicePagination.Cursor == nil || versionPagination.NextURL == nil {
-		t.Fatalf("service/version pagination branches were not preserved: service=%+v version=%+v", servicePagination, versionPagination)
-	}
+}
 
-	encoded, err := json.Marshal(parsed.Workspace)
+func TestWorkspacePaginationV3RoundTripsWithoutCLIInterpretation(t *testing.T) {
+	payload, err := os.ReadFile(filepath.Join("..", "..", "..", "contract-fixtures", "pagination", "v3_graphql_templates.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	var roundTripped configfile.WorkspaceConfig
-	if err := json.Unmarshal(encoded, &roundTripped); err != nil {
+	document := fmt.Sprintf(`{"apiVersion":"fused/v1","kind":"workspace","services":{"graphql":{"execution_policy":{"pagination":%s}}}}`, payload)
+	parsed, err := configfile.Parse([]byte(document), "workspace.json")
+	if err != nil {
+		t.Fatalf("parse pagination v3: %v", err)
+	}
+	policy := parsed.Workspace.Services["graphql"].ExecutionPolicy.Pagination
+	if policy == nil || policy.GraphQL == nil || len(policy.Continuation) != 1 {
+		t.Fatalf("composable pagination changed: %#v", policy)
+	}
+	encoded, err := json.Marshal(policy)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(parsed.Workspace, &roundTripped) {
-		t.Fatalf("workspace pagination changed during JSON transport\ngot:  %+v\nwant: %+v", &roundTripped, parsed.Workspace)
+	var got, want any
+	if err := json.Unmarshal(encoded, &got); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(payload, &want); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("CLI interpreted pagination v3\ngot:  %s\nwant: %s", encoded, payload)
 	}
 }
 
@@ -106,35 +112,94 @@ func TestWorkspacePaginationRejectsLegacyFieldsWithoutInventingCompatibility(t *
 	}
 }
 
-func TestWorkspacePaginationLeavesStrategyValidationToEngine(t *testing.T) {
+func TestWorkspacePaginationRejectsLegacyMultipleStrategies(t *testing.T) {
 	multiple, err := os.ReadFile(filepath.Join("..", "..", "..", "contract-fixtures", "pagination", "invalid_multiple_strategies.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	document := fmt.Sprintf(`{"apiVersion":"fused/v1","kind":"workspace","services":{"mixed":{"execution_policy":{"pagination":%s}}}}`, multiple)
-	parsed, err := configfile.Parse([]byte(document), "mixed.json")
-	if err != nil {
-		t.Fatalf("CLI must not duplicate Engine discriminator validation: %v", err)
-	}
-	pagination := parsed.Workspace.Services["mixed"].ExecutionPolicy.Pagination
-	if pagination.Cursor == nil || pagination.NextURL == nil {
-		t.Fatalf("CLI normalized known strategy branches: %#v", pagination)
+	_, err = configfile.Parse([]byte(document), "mixed.json")
+	if err == nil || !strings.Contains(err.Error(), "type") {
+		t.Fatalf("legacy pagination strategies must be rejected, got %v", err)
 	}
 }
 
-func TestWorkspaceRateLimitV2RoundTripsWithoutCLIInterpretation(t *testing.T) {
+func TestWorkspaceRateLimitV2IsRejected(t *testing.T) {
 	payload, err := os.ReadFile(filepath.Join("..", "..", "..", "contract-fixtures", "rate-limit", "v2_mixed.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	document := fmt.Sprintf(`{"apiVersion":"fused/v1","kind":"workspace","services":{"drive":{"execution_policy":{"rate_limit":%s}}}}`, payload)
+	_, err = configfile.Parse([]byte(document), "workspace.json")
+	if err == nil || !strings.Contains(err.Error(), "scope") {
+		t.Fatalf("legacy rate-limit policy must be rejected, got %v", err)
+	}
+}
+
+func TestWorkspaceQuotaAndRetryV3RoundTripWithoutCLIEnforcement(t *testing.T) {
+	rateLimit := readContractFixture(t, "rate-limit", "v3_dynamic_headers.json")
+	retry := readContractFixture(t, "retry", "v3_idempotency_predicates.json")
+	document := fmt.Sprintf(`{"apiVersion":"fused/v1","kind":"workspace","services":{"api":{"execution_policy":{"rate_limit":%s,"retry":%s}}}}`, rateLimit, retry)
 	parsed, err := configfile.Parse([]byte(document), "workspace.json")
 	if err != nil {
-		t.Fatalf("parse canonical rate limit: %v", err)
+		t.Fatalf("parse v3 execution policy: %v", err)
 	}
-	rateLimit := parsed.Workspace.Services["drive"].ExecutionPolicy.RateLimit
-	if rateLimit == nil || len(rateLimit.Policies) != 2 || rateLimit.Policies[0].OperationCosts["rest:GET:/drive/v3/files/{}"] != 10 {
-		t.Fatalf("canonical rate limit was not preserved: %#v", rateLimit)
+	policy := parsed.Workspace.Services["api"].ExecutionPolicy
+	if policy.RateLimit == nil || policy.Retry == nil {
+		t.Fatalf("v3 policy missing: %#v", policy)
+	}
+	encodedRate, err := json.Marshal(policy.RateLimit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encodedRetry, err := json.Marshal(policy.Retry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertSemanticPayload(t, encodedRate, rateLimit)
+	assertSemanticPayload(t, encodedRetry, retry)
+}
+
+// TestWorkspaceSignaturePolicyRoundTripsAsSecretReferenceOnly ensures fixture
+// cleanup cannot turn an out-of-band secret reference into persisted material.
+func TestWorkspaceSignaturePolicyRoundTripsAsSecretReferenceOnly(t *testing.T) {
+	signature := readContractFixture(t, "signature", "v1_raw_body_callback_signature.json")
+	document := fmt.Sprintf(`{"apiVersion":"fused/v1","kind":"workspace","services":{"api":{"execution_policy":{"incoming_webhook_config":{"auth_type":"hmac_signature","signature_policy":%s}}}}}`, signature)
+	parsed, err := configfile.Parse([]byte(document), "workspace.json")
+	if err != nil {
+		t.Fatalf("parse structured signature policy: %v", err)
+	}
+	policy := parsed.Workspace.Services["api"].ExecutionPolicy.IncomingWebhookConfig.SignaturePolicy
+	if policy == nil || len(policy.Rules) != 1 {
+		t.Fatalf("structured signature policy missing: %#v", policy)
+	}
+	encoded, err := json.Marshal(policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertSemanticPayload(t, encoded, signature)
+}
+
+func readContractFixture(t *testing.T, directory, name string) []byte {
+	t.Helper()
+	payload, err := os.ReadFile(filepath.Join("..", "..", "..", "contract-fixtures", directory, name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return payload
+}
+
+func assertSemanticPayload(t *testing.T, gotPayload, wantPayload []byte) {
+	t.Helper()
+	var got, want any
+	if err := json.Unmarshal(gotPayload, &got); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(wantPayload, &want); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("policy changed\ngot:  %s\nwant: %s", gotPayload, wantPayload)
 	}
 }
 
@@ -151,10 +216,9 @@ func TestWorkspaceRateLimitRejectsLegacyFieldsWithoutCompatibility(t *testing.T)
 }
 
 func TestWorkspaceRateLimitLeavesDiscriminatorValidationToEngine(t *testing.T) {
-	payload, err := os.ReadFile(filepath.Join("..", "..", "..", "contract-fixtures", "rate-limit", "invalid_discriminator.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	// Both branches are canonical fields; Engine remains responsible for the
+	// semantic exactly-one-algorithm decision.
+	payload := []byte(`{"version":3,"policies":[{"name":"conflicting","mode":"enforce","unit":"requests","identity":{"inputs":[{"kind":"service_version"}]},"cost":{"default":1,"rules":[]},"algorithm":"fixed_window","fixed_window":{"limit":100,"duration_ms":60000},"token_bucket":{"capacity":10,"refill_units":1,"refill_interval_ms":1000}}]}`)
 	document := fmt.Sprintf(`{"apiVersion":"fused/v1","kind":"workspace","services":{"mixed":{"execution_policy":{"rate_limit":%s}}}}`, payload)
 	parsed, err := configfile.Parse([]byte(document), "workspace.json")
 	if err != nil {
@@ -328,6 +392,46 @@ services:
 `)
 	if _, err := configfile.ParseFile(invalid); err == nil || !strings.Contains(err.Error(), "timeout_ms") {
 		t.Fatalf("invalid timeout error = %v", err)
+	}
+}
+
+func TestWorkspaceExecutionPolicyServerVariablesValidation(t *testing.T) {
+	valid := writeFile(t, t.TempDir(), "workspace.yaml", `
+apiVersion: fused/v1
+kind: workspace
+services:
+  confluence:
+    execution_policy:
+      server_variables:
+        your-domain: acme
+        region: eu1
+`)
+	parsed, err := configfile.ParseFile(valid)
+	if err != nil {
+		t.Fatalf("valid server_variables: %v", err)
+	}
+	variables := parsed.Workspace.Services["confluence"].ExecutionPolicy.ServerVariables
+	if !reflect.DeepEqual(variables, map[string]string{"your-domain": "acme", "region": "eu1"}) {
+		t.Fatalf("server_variables = %#v", variables)
+	}
+
+	invalidCases := []string{
+		"bad name: acme",
+		"tenant: evil/path",
+	}
+	for _, variablesYAML := range invalidCases {
+		path := writeFile(t, t.TempDir(), "workspace.yaml", `
+apiVersion: fused/v1
+kind: workspace
+services:
+  confluence:
+    execution_policy:
+      server_variables:
+        `+variablesYAML+`
+`)
+		if _, err := configfile.ParseFile(path); err == nil || !strings.Contains(err.Error(), "server_variables") {
+			t.Fatalf("invalid server_variables %q error = %v", variablesYAML, err)
+		}
 	}
 }
 
@@ -544,6 +648,46 @@ services:
 	if _, err := configfile.ParseFile(conflict); err == nil {
 		t.Fatal("profile detach with profile_id was accepted")
 	}
+}
+
+func TestWorkspaceConnectionProfileValidatesOAuth2FlowSelection(t *testing.T) {
+	tests := []struct {
+		name    string
+		auth    string
+		flow    string
+		wantErr bool
+	}{
+		{name: "authorization code", auth: "oauth", flow: "authorizationCode"},
+		{name: "client credentials", auth: "oauth2", flow: "clientCredentials"},
+		{name: "unknown flow", auth: "oauth", flow: "deviceCode", wantErr: true},
+		{name: "non oauth", auth: "mtls", flow: "authorizationCode", wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			path := writeOAuth2FlowWorkspace(t, test.auth, test.flow)
+			_, err := configfile.ParseFile(path)
+			if (err != nil) != test.wantErr {
+				t.Fatalf("ParseFile error = %v, wantErr %v", err, test.wantErr)
+			}
+		})
+	}
+}
+
+func writeOAuth2FlowWorkspace(t *testing.T, authType, flow string) string {
+	t.Helper()
+	return writeFile(t, t.TempDir(), "workspace.yaml", fmt.Sprintf(`
+apiVersion: fused/v1
+kind: workspace
+services:
+  example:
+    versions:
+      - version: "v1"
+        connection_profiles:
+          - auth_type: %s
+            profile:
+              auth_type: %s
+              oauth2_flow: %s
+`, authType, authType, flow))
 }
 
 func TestLoadRun_DiscoversFusedFolderInOrder(t *testing.T) {

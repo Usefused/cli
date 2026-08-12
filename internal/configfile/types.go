@@ -3,6 +3,8 @@ package configfile
 import (
 	"github.com/Usefused/cli/internal/pagination"
 	"github.com/Usefused/cli/internal/ratelimitpolicy"
+	"github.com/Usefused/cli/internal/retrypolicy"
+	"github.com/Usefused/cli/internal/signaturepolicy"
 )
 
 // ConfigKind defines the type of Fused config file.
@@ -134,6 +136,10 @@ type ExecutionPolicy struct {
 	// additionally publishes it to the provider contract so every other
 	// consumer's effective base_url inherits it too.
 	BaseURL *string `yaml:"base_url,omitempty" json:"base_url,omitempty"`
+	// ServerVariables binds reviewed OpenAPI server-template variables without
+	// requiring an authentication profile. Values remain ordinary workspace
+	// configuration; Engine owns final enum, host, and URL safety validation.
+	ServerVariables map[string]string `yaml:"server_variables,omitempty" json:"server_variables,omitempty"`
 	// EventExtractionPath and IncomingWebhookConfig are the provider's own
 	// outbound webhook verification recipe
 	// (plans/plan-service-config-restructure.md item 3) -- how *this service*
@@ -154,15 +160,16 @@ type ExecutionPolicy struct {
 // and where to find the signature. It intentionally has no secret field --
 // see ExecutionPolicy.IncomingWebhookConfig's doc comment.
 type WebhookVerify struct {
-	AuthType            string   `yaml:"auth_type,omitempty" json:"auth_type,omitempty"`
-	AuthLocation        string   `yaml:"auth_location,omitempty" json:"auth_location,omitempty"`
-	AuthKeyName         string   `yaml:"auth_key_name,omitempty" json:"auth_key_name,omitempty"`
-	SignatureHeader     string   `yaml:"signature_header,omitempty" json:"signature_header,omitempty"`
-	VerificationHeaders []string `yaml:"verification_headers,omitempty" json:"verification_headers,omitempty"`
+	AuthType            string                  `yaml:"auth_type,omitempty" json:"auth_type,omitempty"`
+	AuthLocation        string                  `yaml:"auth_location,omitempty" json:"auth_location,omitempty"`
+	AuthKeyName         string                  `yaml:"auth_key_name,omitempty" json:"auth_key_name,omitempty"`
+	SignatureHeader     string                  `yaml:"signature_header,omitempty" json:"signature_header,omitempty"`
+	VerificationHeaders []string                `yaml:"verification_headers,omitempty" json:"verification_headers,omitempty"`
+	SignaturePolicy     *signaturepolicy.Config `yaml:"signature_policy,omitempty" json:"signature_policy,omitempty"`
 }
 
 // PaginationConfig is an alias so workspace files and Registry projections
-// transport the exact same v2 shape without duplicated field mappings.
+// transport the exact same v3 shape without duplicated field mappings.
 type PaginationConfig = pagination.Config
 
 // RateLimitConfig aliases the canonical transport contract. The CLI must
@@ -170,11 +177,7 @@ type PaginationConfig = pagination.Config
 // enforcement.
 type RateLimitConfig = ratelimitpolicy.Config
 
-type RetryConfig struct {
-	Strategy   string `yaml:"strategy" json:"strategy"`
-	MaxRetries int    `yaml:"max_retries" json:"max_retries"`
-	BackoffMs  int    `yaml:"backoff_ms" json:"backoff_ms"`
-}
+type RetryConfig = retrypolicy.Config
 
 // RuntimeConfig (workspace-level runtime_config.webhooks) was removed
 // outright with no backward compatibility once kind: webhook shipped -- see

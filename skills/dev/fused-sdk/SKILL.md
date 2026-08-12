@@ -90,6 +90,13 @@ to one convenient scheme or invent a scheme absent from the operation. Basic
 password mode and templated server variables are carried from Registry into
 the generated object; SDK config still contains neither provider credentials
 nor resolved tenant URLs.
+Generated SDKs use only Registry schema/media projections and auth selectors; raw schemas, OAuth flow choice, credentials, signing, and challenges remain Engine-owned. Callback/link/runtime-expression and unknown-extension metadata stays inert; only normalized documentation fields may shape generated prose.
+For a non-object request root, generated TypeScript and Python methods expose a
+typed `payload` argument and forward that scalar or array as the declared root;
+do not wrap it in a caller-authored object or spread an array into numeric
+keys. Object and referenced-object inputs retain their named option fields,
+while sequential-media arrays retain the existing ordered `body` option so
+Engine can apply JSONL/JSON-seq framing.
 
 `select_all: true` is the alternative to listing `operations` explicitly --
 exactly one of the two is required, never both/neither. Be aware `sdk sync`
@@ -207,13 +214,11 @@ requests it and the caller is authorised. Read the `fused-cli` skill's
 SDK ownership does not have to match its audience. The owning person or team
 keeps management authority, while `fused-cli workspace access app grant
 <sdk-id>` grants bounded workspace-wide use across every SDK version without
-replacing or revealing its runtime token. Likewise, a platform-owned bucket shared with
-`workspace access bucket grant <bucket-name>` can be selected by any eligible
+replacing or revealing its runtime token. Likewise, a platform-owned bucket shared with `workspace access bucket grant <bucket-name>` can be selected by any eligible
 owning team without granting those teams secret management.
 
 `sdk sync` full-mirrors the exact Engine app version declared by the local
-SDK config back into that file. Anything the Engine app no longer selects is
-removed locally, not just flagged, and Engine values win on any conflict.
+SDK config back into that file. Anything the Engine app no longer selects is removed locally, not just flagged, and Engine values win on any conflict.
 There is no implicit latest lookup or sync-time version upgrade; change the
 config's `version`, then plan and apply that exact version deliberately.
 
@@ -223,21 +228,15 @@ expressions may have been discarded. The CLI rejects that definition before
 writing the local file. Use the original config to publish a new SDK version,
 then retry `sdk sync`; do not infer missing security policy from endpoint IDs.
 
-Generated SDK calls only ever carry Fused selectors (`endUserRef`,
-`authType`, `resourceId`) -- never a raw provider token, API key, or
-provider base URL.
+Generated SDK calls only ever carry Fused selectors (`endUserRef`, `authType`, `resourceId`) -- never a raw provider token, API key, or provider base URL. For execution-contract negotiation, keep each pinned service version's `contract_version` and `required_capabilities` intact: Registry and Engine accept additive documentation fields but fail closed on unsupported execution semantics. Never bypass that error by dropping fields or adding provider-specific client logic; upgrade Engine or publish semantics implemented end to end. These identifiers describe provider execution, not SDK operation grants or token allowlists.
+Pagination is inherited automatically from the selected endpoint and its effective service-version policy. Do not add token, offset, page, RFC Link, next-URL, conditional-path, derived-cursor, or GraphQL-template fields to SDK config. Generated TypeScript and Python clients make one Engine call;
+Engine owns v3 continuation state, origin/repetition checks, hard limits, and per-page streaming so language runtimes cannot disagree about termination.
 
-Pagination is inherited automatically from the selected endpoint and its
-effective service-version policy. Do not add cursor, offset, page, or next-URL
-fields to SDK config. Engine performs pagination and each successful provider
-page remains a separate chunk on the generated client's execution stream.
+Quota, concurrency, and retry v3 policy is inherited and enforced only by Engine. Generated TypeScript and Python clients never maintain local windows,
+buckets, semaphores, retry loops, jitter, or sleeps. Do not add those policy fields to SDK config or replay provider calls: Engine coordinates identities,
+response-driven limits, idempotency predicates, and retry bounds across pages and processes. Application-level business retries remain a separate concern.
 
-Rate and quota policy is inherited the same way and enforced only by Engine.
-Generated TypeScript and Python clients do not maintain local token buckets or
-windows and never sleep before dispatch. Do not add rate-limit settings to SDK
-config or wrap generated calls with a second limiter unless the application has
-an independent business requirement; provider quota correctness comes from the
-Engine's shared service-version/connection policy.
+Structured webhook verification, post-auth discovery, media-upload workflows, catalog composition, and OpenAPI 3.2 whole-query/sequential-media behavior are Engine-owned. Generated callers preserve exact `QUERY` or custom method tokens and pass a declared `querystring` value once in their one logical Engine call; they never expose `secret_ref`, sign, percent-encode whole queries, frame provider streams, advance workflows, or merge catalogues. Ordinary operation inputs and Fused selectors such as `resourceId` are the only caller surface.
 
 ## Runtime timeout contract
 

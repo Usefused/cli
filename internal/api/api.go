@@ -15,6 +15,8 @@ import (
 
 	"github.com/Usefused/cli/internal/pagination"
 	"github.com/Usefused/cli/internal/ratelimitpolicy"
+	"github.com/Usefused/cli/internal/retrypolicy"
+	"github.com/Usefused/cli/internal/signaturepolicy"
 	"github.com/charmbracelet/huh/spinner"
 )
 
@@ -531,30 +533,64 @@ const serviceRateLimitGraphQLFields = `
 	version
 	policies {
 		name
+		mode
 		unit
-		scope
-		default_cost
-		operation_costs
+		identity { inputs { kind binding name } }
+		cost { default rules { operation cost } }
 		algorithm
 		fixed_window { limit duration_ms }
+		rolling_window { limit duration_ms }
 		token_bucket { capacity refill_units refill_interval_ms }
-		response_headers { limit remaining reset { name format } }
+		concurrency { limit }
+		response_signals {
+			limit { source name path }
+			remaining { source name path }
+			reset { signal { source name path } format }
+			cost { source name path }
+		}
 	}
-	retry_after { enabled max_delay_ms }
+	cooldown { statuses { min max } headers { name formats max_delay_ms } }
 `
 
-type ServiceRetryConfig struct {
-	Strategy   string `json:"strategy"`
-	MaxRetries int    `json:"max_retries"`
-	BackoffMs  int    `json:"backoff_ms"`
-}
+type ServiceRetryConfig = retrypolicy.Config
+
+const serviceRetryGraphQLFields = `
+	version
+	rules {
+		predicates {
+			methods
+			operation_kinds
+			statuses { min max }
+			errors
+			body_replayability
+			idempotency_key { requirement header }
+			required_provider_headers
+		}
+		action {
+			max_attempts
+			max_elapsed_ms
+			backoff { strategy base_delay_ms max_delay_ms jitter_ms }
+			retry_after_headers { name formats max_delay_ms }
+		}
+	}
+`
 
 type ServicePagination = pagination.Config
-type ServicePaginationCursor = pagination.Cursor
-type ServicePaginationOffset = pagination.Offset
-type ServicePaginationPageNumber = pagination.PageNumber
-type ServicePaginationNextURL = pagination.NextURL
-type ServicePaginationPageSize = pagination.PageSize
+type ServicePaginationRequestStep = pagination.RequestStep
+type ServicePaginationResponsePlan = pagination.ResponsePlan
+type ServicePaginationItemsSource = pagination.ItemsSource
+type ServicePaginationResponseValue = pagination.ResponseValue
+type ServicePaginationConditionalPath = pagination.ConditionalPath
+type ServicePaginationRequestCondition = pagination.RequestCondition
+type ServicePaginationItemSelector = pagination.ItemSelector
+type ServicePaginationContinuationStep = pagination.ContinuationStep
+type ServicePaginationOriginPolicy = pagination.OriginPolicy
+type ServicePaginationTermination = pagination.Termination
+type ServicePaginationShortPageTermination = pagination.ShortPageTermination
+type ServicePaginationResponseCondition = pagination.ResponseCondition
+type ServicePaginationGraphQLPlan = pagination.GraphQLPlan
+type ServicePaginationGraphQLVariable = pagination.GraphQLVariable
+type ServicePaginationGraphQLResultAlias = pagination.GraphQLResultAlias
 type ServicePaginationIncrement = pagination.Increment
 type ServicePaginationRequestTarget = pagination.RequestTarget
 type ServicePaginationValueSource = pagination.ValueSource
@@ -563,35 +599,47 @@ type ServicePaginationLimits = pagination.Limits
 
 const servicePaginationGraphQLFields = `
 	version
-	type
-	items_path
-	limits { max_pages max_items max_bytes max_duration_ms }
-	cursor {
-		request { location name }
-		initial { type string integer }
-		next { location path name relation value_type }
-		has_more { location path name relation value_type }
+	request {
+		state
+		target { location name }
+		value_type
+		initial { type string integer boolean }
+		constant { type string integer boolean }
+		apply
 	}
-	offset {
-		request { location name }
-		start
+	response {
+		items {
+			path
+			paths { path when { state operator value { type string integer boolean } } }
+		}
+		values {
+			name
+			source {
+				location path name relation value_type
+				paths { path when { state operator value { type string integer boolean } } }
+				item { position path }
+			}
+		}
+	}
+	continuation {
+		kind state response_value
 		increment { mode value }
-		page_size { target { location name } value }
-		next_offset { location path name relation value_type }
-		total_items { location path name relation value_type }
-		has_more { location path name relation value_type }
-		stop_on_short_page
+		origin { mode allowed_origins }
 	}
-	page_number {
-		request { location name }
-		start
-		increment
-		page_size { target { location name } value }
-		total_pages { location path name relation value_type }
-		has_more { location path name relation value_type }
-		stop_on_short_page
+	termination {
+		stop_on_empty_items
+		stop_on_short_page { request_state }
+		stop_on_missing_values
+		conditions { response_value state operator value { type string integer boolean } }
+		repeated_value
 	}
-	next_url { next { location path name relation value_type } }
+	graphql {
+		variables { name state value_type }
+		result_aliases { name alias }
+		first_page_template
+		subsequent_page_template
+	}
+	limits { max_pages max_items max_bytes max_duration_ms }
 `
 
 // ServiceIncomingWebhookConfig is the provider's webhook verification recipe
@@ -600,12 +648,32 @@ const servicePaginationGraphQLFields = `
 // plans/plan-service-config-restructure.md item 3), only the non-secret
 // shape of how to verify a delivery.
 type ServiceIncomingWebhookConfig struct {
-	AuthType            string   `json:"auth_type"`
-	AuthLocation        string   `json:"auth_location"`
-	AuthKeyName         string   `json:"auth_key_name"`
-	SignatureHeader     string   `json:"signature_header"`
-	VerificationHeaders []string `json:"verification_headers"`
+	AuthType            string                  `json:"auth_type"`
+	AuthLocation        string                  `json:"auth_location"`
+	AuthKeyName         string                  `json:"auth_key_name"`
+	SignatureHeader     string                  `json:"signature_header"`
+	VerificationHeaders []string                `json:"verification_headers"`
+	SignaturePolicy     *signaturepolicy.Config `json:"signature_policy,omitempty"`
 }
+
+const serviceSignaturePolicyGraphQLFields = `
+	version
+	rules {
+		name kind
+		predicates { source { location name path } operator value }
+		verification {
+			kind
+			signature {
+				secret_ref
+				signature { location name path }
+				components { kind names join algorithm encoding }
+				algorithm encoding comparison prefix component_separator
+			}
+			jwt { secret_ref token { location name path } algorithms issuer audience clock_skew_ms }
+			challenge { value { location name path } body_field status_code }
+		}
+	}
+`
 
 // ConnectionProfileRevision is the immutable Registry result printed by the
 // provider publication command. It intentionally excludes the profile body.
@@ -619,13 +687,14 @@ type ConnectionProfileRevision struct {
 }
 
 type Integration struct {
-	ID                   string               `json:"id"`
-	Name                 string               `json:"name"`
-	Path                 string               `json:"path"`
-	Method               string               `json:"method"`
-	Description          string               `json:"description"`
-	ServiceID            string               `json:"service_id"`
-	SecurityRequirements SecurityRequirements `json:"security_requirements"`
+	ID                   string                  `json:"id"`
+	Name                 string                  `json:"name"`
+	Path                 string                  `json:"path"`
+	Method               string                  `json:"method"`
+	Description          string                  `json:"description"`
+	ServiceID            string                  `json:"service_id"`
+	SecurityRequirements SecurityRequirements    `json:"security_requirements"`
+	Documentation        *OperationDocumentation `json:"documentation,omitempty"`
 }
 
 // SecurityRequirements preserves Registry ordering because alternatives are
@@ -634,7 +703,13 @@ type Integration struct {
 type SecurityRequirements []SecurityAlternative
 
 type SecurityAlternative struct {
-	Schemes []SecurityRequirement `json:"schemes"`
+	Schemes         []SecurityRequirement    `json:"schemes"`
+	ServerSelection *SecurityServerSelection `json:"server_selection,omitempty"`
+}
+
+type SecurityServerSelection struct {
+	Scheme    string `json:"scheme"`
+	ServerURL string `json:"server_url"`
 }
 
 type SecurityRequirement struct {
@@ -645,6 +720,7 @@ type SecurityRequirement struct {
 const securityRequirementsGraphQLFields = `
 	security_requirements {
 		schemes { scheme scopes }
+		server_selection
 	}
 `
 
@@ -914,12 +990,12 @@ func (c *Client) ServiceVisibilities(serviceIDs []string) (map[string]ServiceVis
 				is_owner
 				is_public
 				rate_limit {` + serviceRateLimitGraphQLFields + `}
-				retry_config { strategy max_retries backoff_ms }
+				retry_config {` + serviceRetryGraphQLFields + `}
 				timeout_ms
 				pagination {` + servicePaginationGraphQLFields + `}
 				event_extraction_path
-				incoming_webhook_config { auth_type auth_location auth_key_name signature_header verification_headers }
-				base_url_override
+					incoming_webhook_config { auth_type auth_location auth_key_name signature_header verification_headers signature_policy {` + serviceSignaturePolicyGraphQLFields + `} }
+					base_url_override
 			}
 		}
 	`
@@ -936,11 +1012,13 @@ func (c *Client) ServiceVisibilities(serviceIDs []string) (map[string]ServiceVis
 }
 
 type ServiceVersion struct {
-	ID        string `json:"id"`
-	ServiceID string `json:"service_id"`
-	Name      string `json:"name"`
-	Status    string `json:"status"`
-	CreatedAt string `json:"created_at"`
+	ExecutionContractEnvelope
+	ID            string                `json:"id"`
+	ServiceID     string                `json:"service_id"`
+	Name          string                `json:"name"`
+	Status        string                `json:"status"`
+	CreatedAt     string                `json:"created_at"`
+	Documentation *ServiceDocumentation `json:"documentation,omitempty"`
 	// IsPublic/RateLimit/RetryConfig mirror ServiceVisibility's identically
 	// named fields, but scoped to this one version rather than the service as
 	// a whole. Sync uses these to round-trip version_policies[*].public and
@@ -959,6 +1037,7 @@ type ServiceVersion struct {
 
 type ServiceServer struct {
 	URL         string           `json:"url"`
+	Name        string           `json:"name,omitempty"`
 	Description string           `json:"description,omitempty"`
 	Environment string           `json:"environment,omitempty"`
 	IsDefault   bool             `json:"is_default,omitempty"`
@@ -973,23 +1052,47 @@ type ServerVariable struct {
 }
 
 type AuthConfig struct {
-	Name                    string                  `json:"name,omitempty"`
-	Type                    string                  `json:"type"`
-	Flow                    string                  `json:"flow,omitempty"`
-	Scheme                  string                  `json:"scheme,omitempty"`
-	BasicPasswordMode       BasicPasswordMode       `json:"basic_password_mode,omitempty"`
-	Location                string                  `json:"location,omitempty"`
-	KeyName                 string                  `json:"key_name,omitempty"`
-	TokenURL                string                  `json:"token_url,omitempty"`
-	TokenEndpointAuthMethod TokenEndpointAuthMethod `json:"token_endpoint_auth_method,omitempty"`
-	AuthorizationURL        string                  `json:"authorization_url,omitempty"`
-	OpenIDConnectURL        string                  `json:"open_id_connect_url,omitempty"`
-	Scopes                  []string                `json:"scopes,omitempty"`
-	PKCERequired            bool                    `json:"pkce_required,omitempty"`
-	ScopesDelimiter         string                  `json:"scopes_delimiter,omitempty"`
-	ExtraAuthParams         map[string]string       `json:"extra_auth_params,omitempty"`
-	ExtraTokenParams        map[string]string       `json:"extra_token_params,omitempty"`
-	RefreshTokenRotates     bool                    `json:"refresh_token_rotates,omitempty"`
+	Name                    string                        `json:"name,omitempty"`
+	Type                    string                        `json:"type"`
+	Scheme                  string                        `json:"scheme,omitempty"`
+	BasicPasswordMode       BasicPasswordMode             `json:"basic_password_mode,omitempty"`
+	Location                string                        `json:"location,omitempty"`
+	KeyName                 string                        `json:"key_name,omitempty"`
+	TokenEndpointAuthMethod TokenEndpointAuthMethod       `json:"token_endpoint_auth_method,omitempty"`
+	OpenIDConnectURL        string                        `json:"open_id_connect_url,omitempty"`
+	OAuth2MetadataURL       string                        `json:"oauth2_metadata_url,omitempty"`
+	Deprecated              *bool                         `json:"deprecated,omitempty"`
+	PKCERequired            bool                          `json:"pkce_required,omitempty"`
+	ScopesDelimiter         string                        `json:"scopes_delimiter,omitempty"`
+	ExtraAuthParams         map[string]string             `json:"extra_auth_params,omitempty"`
+	ExtraTokenParams        map[string]string             `json:"extra_token_params,omitempty"`
+	RefreshTokenRotates     bool                          `json:"refresh_token_rotates,omitempty"`
+	OAuth2Flows             map[string]OAuth2FlowContract `json:"oauth2_flows,omitempty"`
+	Strategy                *AuthRuntimeStrategy          `json:"strategy,omitempty"`
+	PolicyProvenance        map[string]string             `json:"policy_provenance,omitempty"`
+}
+
+type OAuth2FlowContract struct {
+	AuthorizationURL       string            `json:"authorization_url,omitempty"`
+	DeviceAuthorizationURL string            `json:"device_authorization_url,omitempty"`
+	TokenURL               string            `json:"token_url,omitempty"`
+	RefreshURL             string            `json:"refresh_url,omitempty"`
+	Scopes                 map[string]string `json:"scopes"`
+}
+
+type AuthRuntimeStrategy struct {
+	Kind      string                 `json:"kind"`
+	OAuth1    *OAuth1Strategy        `json:"oauth1,omitempty"`
+	Challenge *HTTPChallengeStrategy `json:"challenge,omitempty"`
+}
+
+type OAuth1Strategy struct {
+	SignatureMethod   string `json:"signature_method"`
+	ParameterLocation string `json:"parameter_location"`
+}
+
+type HTTPChallengeStrategy struct {
+	Scheme string `json:"scheme"`
 }
 
 // BasicPasswordMode is intentionally an unconstrained transport string here;
@@ -1007,6 +1110,7 @@ const (
 
 const serviceServerGraphQLFields = `
 	url
+	name
 	description
 	environment
 	is_default
@@ -1016,21 +1120,22 @@ const serviceServerGraphQLFields = `
 const serviceAuthConfigGraphQLFields = `
 	name
 	type
-	flow
 	scheme
 	basic_password_mode
 	location
 	key_name
-	token_url
 	token_endpoint_auth_method
-	authorization_url
 	open_id_connect_url
-	scopes
+	oauth2_metadata_url
+	deprecated
 	pkce_required
 	scopes_delimiter
 	extra_auth_params
 	extra_token_params
 	refresh_token_rotates
+	oauth2_flows
+	strategy
+	policy_provenance
 `
 
 type ServiceInfo struct {
@@ -1128,19 +1233,22 @@ func (c *Client) ServiceVersions(serviceSlug string) ([]ServiceVersion, error) {
 	query := `
 		query ServiceVersions($serviceId: String!, $provider: String) {
 			serviceVersions(serviceId: $serviceId, provider: $provider) {
+				contract_version
+				required_capabilities
 				id
 				service_id
 				name
 				status
 				created_at
+				documentation
 				is_public
 				rate_limit {` + serviceRateLimitGraphQLFields + `}
-				retry_config { strategy max_retries backoff_ms }
+				retry_config {` + serviceRetryGraphQLFields + `}
 				timeout_ms
 				pagination {` + servicePaginationGraphQLFields + `}
 				event_extraction_path
-				incoming_webhook_config { auth_type auth_location auth_key_name signature_header verification_headers }
-				base_url_override
+					incoming_webhook_config { auth_type auth_location auth_key_name signature_header verification_headers signature_policy {` + serviceSignaturePolicyGraphQLFields + `} }
+					base_url_override
 			}
 		}
 	`
@@ -1215,6 +1323,7 @@ func (c *Client) SearchEndpointsPage(serviceID, version, q string, opts PageOpti
 				path
 				method
 				description
+				documentation
 				service_id
 				` + securityRequirementsGraphQLFields + `
 			}
@@ -1236,6 +1345,7 @@ func (c *Client) ServiceOperations(serviceID, version string) ([]Integration, er
 				path
 				method
 				description
+				documentation
 				service_id
 				` + securityRequirementsGraphQLFields + `
 			}
@@ -1249,9 +1359,10 @@ func (c *Client) ServiceOperations(serviceID, version string) ([]Integration, er
 }
 
 type Webhook struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
+	ID          string                    `json:"id"`
+	Name        string                    `json:"name"`
+	Description string                    `json:"description"`
+	Contract    *InboundOperationContract `json:"contract,omitempty"`
 }
 
 func (c *Client) FetchWebhooks(serviceID, version string) ([]Webhook, error) {
@@ -1262,6 +1373,7 @@ func (c *Client) FetchWebhooks(serviceID, version string) ([]Webhook, error) {
 					id
 					name
 					description
+					contract
 				}
 			}
 		}
@@ -1871,16 +1983,23 @@ type SpecImportUsage struct {
 }
 
 type SpecImportDiagnostic struct {
-	Severity       string   `json:"severity"`
-	Code           string   `json:"code"`
-	Scope          string   `json:"scope"`
-	Method         string   `json:"method,omitempty"`
-	Path           string   `json:"path,omitempty"`
-	OperationID    string   `json:"operation_id,omitempty"`
-	Message        string   `json:"message"`
-	Recommendation string   `json:"recommendation,omitempty"`
-	Source         string   `json:"source,omitempty"`
-	Confidence     *float64 `json:"confidence,omitempty"`
+	Severity           string   `json:"severity"`
+	Code               string   `json:"code"`
+	Scope              string   `json:"scope"`
+	Method             string   `json:"method,omitempty"`
+	Path               string   `json:"path,omitempty"`
+	OperationID        string   `json:"operation_id,omitempty"`
+	Message            string   `json:"message"`
+	Recommendation     string   `json:"recommendation,omitempty"`
+	Source             string   `json:"source,omitempty"`
+	SourceFormat       string   `json:"source_format,omitempty"`
+	SourceVersion      string   `json:"source_version,omitempty"`
+	Pointer            string   `json:"pointer,omitempty"`
+	Service            string   `json:"service,omitempty"`
+	Disposition        string   `json:"disposition,omitempty"`
+	RequiredCapability string   `json:"required_capability,omitempty"`
+	Provenance         string   `json:"provenance,omitempty"`
+	Confidence         *float64 `json:"confidence,omitempty"`
 }
 
 type SpecImportStrictError struct {
@@ -1899,22 +2018,24 @@ func (e *SpecImportStrictError) Error() string {
 }
 
 type SpecImportPlanResponse struct {
-	PlanID         string                 `json:"plan_id"`
-	SourceHash     string                 `json:"source_hash"`
-	OverlayHash    string                 `json:"overlay_hash,omitempty"`
-	ReviewHash     string                 `json:"review_hash"`
-	SourceFormat   string                 `json:"source_format"`
-	AdapterVersion string                 `json:"adapter_version"`
-	ServiceID      string                 `json:"service_id"`
-	Slug           string                 `json:"slug"`
-	Name           string                 `json:"name"`
-	IsNewService   bool                   `json:"is_new_service"`
-	TargetVersion  string                 `json:"target_version"`
-	TargetType     string                 `json:"target_type"`
-	Action         string                 `json:"action"`
-	Diff           SpecImportDiff         `json:"diff"`
-	Usage          *SpecImportUsage       `json:"usage,omitempty"`
-	Diagnostics    []SpecImportDiagnostic `json:"diagnostics,omitempty"`
+	PlanID           string                 `json:"plan_id"`
+	SourceHash       string                 `json:"source_hash"`
+	OverlayPresent   bool                   `json:"overlay_present"`
+	OverlayHash      string                 `json:"overlay_hash,omitempty"`
+	SourceBundleHash string                 `json:"source_bundle_hash"`
+	ReviewHash       string                 `json:"review_hash"`
+	SourceFormat     string                 `json:"source_format"`
+	AdapterVersion   string                 `json:"adapter_version"`
+	ServiceID        string                 `json:"service_id"`
+	Slug             string                 `json:"slug"`
+	Name             string                 `json:"name"`
+	IsNewService     bool                   `json:"is_new_service"`
+	TargetVersion    string                 `json:"target_version"`
+	TargetType       string                 `json:"target_type"`
+	Action           string                 `json:"action"`
+	Diff             SpecImportDiff         `json:"diff"`
+	Usage            *SpecImportUsage       `json:"usage,omitempty"`
+	Diagnostics      []SpecImportDiagnostic `json:"diagnostics,omitempty"`
 }
 
 type SpecImportApplyRequest struct {

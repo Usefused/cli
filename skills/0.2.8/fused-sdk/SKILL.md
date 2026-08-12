@@ -72,6 +72,30 @@ request fewer scopes per user but never more than declared here. Credential
 material itself never lives in this file -- it's resolved from `bucket` at
 generation/dispatch time (see `fused-bucket`).
 
+Generated TypeScript and Python method options derive parameter types from the
+imported schema (or the deterministic schema-backed content entry) across path,
+query, header, and cookie locations. The SDK passes those typed values to Engine
+without percent-encoding, joining arrays, or constructing cookie headers;
+Engine applies the imported style, explode, allow-reserved, and default rules
+once at the provider boundary. Server templates carry declarations from
+Registry, while resolved tenant values stay in Engine-local workspace policy.
+
+Each schema contract carries lossless canonical raw JSON, its dialect and hash,
+and one Registry-owned compatibility projection. Generated SDKs consume only
+that projection, using the reviewed request media representation and first
+ordered response representation for types; they never reinterpret raw unions,
+composition, constraints, or nullability as a second schema implementation.
+
+Full OAuth2-flow, OAuth1-signature, HTTP-challenge, and server-predicate
+metadata is also Registry-owned. Generated calls pass only auth type/name/user/
+resource selectors; provider credentials, flow choice, signing, and challenge
+responses stay in Engine-local connection profiles and buckets.
+
+Registry also preserves callback expressions, response links, full imported
+webhook contracts, normalized documentation, and source-provenanced `x-*`
+metadata. Generated SDKs may use normalized summaries/descriptions as prose,
+but never execute callbacks or links and never infer behavior from extensions.
+
 `select_all: true` is the alternative to listing `operations` explicitly --
 exactly one of the two is required, never both/neither. Be aware `sdk sync`
 (below) always freezes whatever's currently selected into an explicit,

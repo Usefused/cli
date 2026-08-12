@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -99,7 +101,26 @@ func assertEngineQueryContains(t *testing.T, query string, values ...string) {
 func TestServiceVisibilitiesUsesSingleGraphQLBatch(t *testing.T) {
 	var sawIDs []interface{}
 	var sawQuery string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := newServiceVisibilitiesServer(t, &sawIDs, &sawQuery)
+	defer srv.Close()
+
+	client := api.NewClient(srv.URL, "test-key")
+	visibility, err := client.ServiceVisibilities([]string{"svc-1", "svc-2"})
+	if err != nil {
+		t.Fatalf("ServiceVisibilities: %v", err)
+	}
+	assertServiceVisibilityQuery(t, sawQuery, sawIDs)
+	assertServiceVisibilityValues(t, visibility)
+}
+
+// newServiceVisibilitiesServer uses the neutral form-signature fixture to
+// verify Engine projection without encoding a provider-specific recipe.
+func newServiceVisibilitiesServer(t *testing.T, sawIDs *[]interface{}, sawQuery *string) *httptest.Server {
+	t.Helper()
+	rateLimit := readEngineClientFixture(t, "rate-limit", "v3_dynamic_headers.json")
+	retry := readEngineClientFixture(t, "retry", "v3_idempotency_predicates.json")
+	signature := readEngineClientFixture(t, "signature", "v1_url_form_signature.json")
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/graphql" {
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
@@ -110,34 +131,77 @@ func TestServiceVisibilitiesUsesSingleGraphQLBatch(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatalf("decode graphql body: %v", err)
 		}
-		sawQuery = body.Query
-		sawIDs, _ = body.Variables["serviceIds"].([]interface{})
+		*sawQuery = body.Query
+		*sawIDs, _ = body.Variables["serviceIds"].([]interface{})
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"data":{"servicesByIds":[{"id":"svc-1","is_owner":true,"is_public":false,"rate_limit":{"version":2,"policies":[{"name":"minute_quota","unit":"quota_units","scope":"connection","default_cost":1,"operation_costs":{"rest:GET:/drive/v3/files/{}":10},"algorithm":"fixed_window","fixed_window":{"limit":10000,"duration_ms":60000},"response_headers":{"remaining":"X-Quota-Remaining","reset":{"name":"X-Quota-Reset","format":"unix_milliseconds"}}}]},"pagination":{"version":2,"type":"cursor","cursor":{"request":{"location":"query","name":"after"},"next":{"location":"body","path":"page.next","value_type":"string"}},"items_path":"items","limits":{"max_pages":100,"max_items":100000,"max_bytes":104857600,"max_duration_ms":300000}}},{"id":"svc-2","is_owner":false,"is_public":true,"provider":{"handle":"acme"}}]}}`))
+		response := map[string]any{"data": map[string]any{"servicesByIds": []any{
+			map[string]any{"id": "svc-1", "is_owner": true, "is_public": false, "rate_limit": rateLimit, "retry_config": retry, "pagination": paginationVisibilityFixture(), "incoming_webhook_config": map[string]any{"auth_type": "hmac_signature", "signature_policy": signature}},
+			map[string]any{"id": "svc-2", "is_owner": false, "is_public": true, "provider": map[string]any{"handle": "acme"}},
+		}}}
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			t.Fatal(err)
+		}
 	}))
-	defer srv.Close()
+}
 
-	client := api.NewClient(srv.URL, "test-key")
-	visibility, err := client.ServiceVisibilities([]string{"svc-1", "svc-2"})
+func readEngineClientFixture(t *testing.T, directory, name string) json.RawMessage {
+	t.Helper()
+	payload, err := os.ReadFile(filepath.Join("..", "..", "..", "contract-fixtures", directory, name))
 	if err != nil {
-		t.Fatalf("ServiceVisibilities: %v", err)
+		t.Fatal(err)
 	}
+	return payload
+}
+
+func paginationVisibilityFixture() map[string]any {
+	return map[string]any{
+		"version": 3, "request": []any{},
+		"response": map[string]any{
+			"items": map[string]any{"path": "$.items"},
+			"values": []any{map[string]any{
+				"name": "next_cursor", "source": map[string]any{"location": "body", "path": "$.page.next", "value_type": "string"},
+			}},
+		},
+		"continuation": []any{map[string]any{"kind": "token", "state": "cursor", "response_value": "next_cursor"}},
+		"termination":  map[string]any{"stop_on_missing_values": []string{"next_cursor"}, "repeated_value": "error"},
+		"limits":       map[string]any{"max_pages": 100, "max_items": 100000, "max_bytes": 104857600, "max_duration_ms": 300000},
+	}
+}
+
+func assertServiceVisibilityQuery(t *testing.T, sawQuery string, sawIDs []interface{}) {
+	t.Helper()
 	if !strings.Contains(sawQuery, "servicesByIds") || !strings.Contains(sawQuery, "provider { handle }") || len(sawIDs) != 2 {
 		t.Fatalf("expected one batched servicesByIds query, query=%q ids=%#v", sawQuery, sawIDs)
 	}
-	for _, field := range []string{"cursor {", "offset {", "page_number {", "next_url {", "items_path", "max_duration_ms", "value_type"} {
-		if !strings.Contains(sawQuery, field) {
-			t.Fatalf("pagination v2 projection missing %q: %s", field, sawQuery)
-		}
-	}
-	for _, field := range []string{"operation_costs", "fixed_window", "token_bucket", "response_headers", "retry_after"} {
-		if !strings.Contains(sawQuery, field) {
-			t.Fatalf("rate-limit v2 projection missing %q: %s", field, sawQuery)
-		}
-	}
+	assertQueryContainsFields(t, sawQuery, "pagination v3", []string{"request {", "response {", "continuation {", "termination {", "graphql {", "allowed_origins", "result_aliases", "max_duration_ms", "value_type"})
+	assertQueryContainsFields(t, sawQuery, "quota v3", []string{"mode", "identity", "cost {", "fixed_window", "rolling_window", "token_bucket", "concurrency", "response_signals", "cooldown"})
+	assertQueryContainsFields(t, sawQuery, "retry v3", []string{"rules {", "operation_kinds", "body_replayability", "idempotency_key", "max_attempts", "retry_after_headers"})
+	assertQueryContainsFields(t, sawQuery, "signature policy v1", []string{"signature_policy {", "predicates {", "components {", "secret_ref", "component_separator", "clock_skew_ms", "challenge {"})
 	if strings.Contains(sawQuery, "refill_interval_ms burst") {
 		t.Fatalf("rate-limit projection requested non-contract token_bucket.burst: %s", sawQuery)
 	}
+}
+
+func assertQueryContainsFields(t *testing.T, query, label string, fields []string) {
+	t.Helper()
+	for _, field := range fields {
+		if !strings.Contains(query, field) {
+			t.Fatalf("%s projection missing %q: %s", label, field, query)
+		}
+	}
+}
+
+func assertServiceVisibilityValues(t *testing.T, visibility map[string]api.ServiceVisibility) {
+	t.Helper()
+	assertServiceVisibilityFlags(t, visibility)
+	assertServiceVisibilityPagination(t, visibility["svc-1"].Pagination)
+	assertServiceVisibilityRateLimit(t, visibility["svc-1"].RateLimit)
+	assertServiceVisibilityRetry(t, visibility["svc-1"].RetryConfig)
+	assertServiceVisibilitySignature(t, visibility["svc-1"].IncomingWebhookConfig)
+}
+
+func assertServiceVisibilityFlags(t *testing.T, visibility map[string]api.ServiceVisibility) {
+	t.Helper()
 	if !visibility["svc-1"].IsOwner || visibility["svc-1"].IsPublic {
 		t.Fatalf("unexpected svc-1 visibility: %#v", visibility["svc-1"])
 	}
@@ -147,11 +211,37 @@ func TestServiceVisibilitiesUsesSingleGraphQLBatch(t *testing.T) {
 	if visibility["svc-2"].Provider == nil || visibility["svc-2"].Provider.Handle != "acme" {
 		t.Fatalf("unexpected svc-2 provider: %#v", visibility["svc-2"].Provider)
 	}
-	if pagination := visibility["svc-1"].Pagination; pagination == nil || pagination.Cursor == nil || pagination.Cursor.Next.Path != "page.next" || pagination.Limits.MaxPages != 100 {
-		t.Fatalf("pagination v2 did not decode: %#v", pagination)
+}
+
+func assertServiceVisibilityPagination(t *testing.T, pagination *api.ServicePagination) {
+	t.Helper()
+	if pagination == nil || len(pagination.Continuation) != 1 || pagination.Response.Values[0].Source.Path != "$.page.next" || pagination.Limits.MaxPages != 100 {
+		t.Fatalf("pagination v3 did not decode: %#v", pagination)
 	}
-	if rateLimit := visibility["svc-1"].RateLimit; rateLimit == nil || rateLimit.Policies[0].OperationCosts["rest:GET:/drive/v3/files/{}"] != 10 {
-		t.Fatalf("rate-limit v2 did not decode: %#v", rateLimit)
+}
+
+func assertServiceVisibilityRateLimit(t *testing.T, rateLimit *api.ServiceRateLimit) {
+	t.Helper()
+	if rateLimit == nil || rateLimit.Policies[0].ResponseSignals.Reset.Format != "unix_seconds" || rateLimit.Cooldown.Headers[0].Name != "Retry-After" {
+		t.Fatalf("quota v3 did not decode: %#v", rateLimit)
+	}
+}
+
+func assertServiceVisibilityRetry(t *testing.T, retry *api.ServiceRetryConfig) {
+	t.Helper()
+	if retry == nil || retry.Rules[2].Predicates.IdempotencyKey.Header != "Idempotency-Key" || retry.Rules[0].Action.MaxAttempts != 3 {
+		t.Fatalf("retry v3 did not decode: %#v", retry)
+	}
+}
+
+func assertServiceVisibilitySignature(t *testing.T, incoming *api.ServiceIncomingWebhookConfig) {
+	t.Helper()
+	if incoming == nil || incoming.SignaturePolicy == nil || len(incoming.SignaturePolicy.Rules) != 1 {
+		t.Fatalf("signature policy v1 did not decode: %#v", incoming)
+	}
+	signature := incoming.SignaturePolicy.Rules[0].Verification.Signature
+	if signature == nil || len(signature.Components) != 2 || signature.Components[1].Join != "concat_name_value" {
+		t.Fatalf("signature recipe changed: %#v", incoming.SignaturePolicy)
 	}
 }
 
@@ -171,7 +261,20 @@ func TestServiceVisibilitiesRejectsLegacyRateLimitResponse(t *testing.T) {
 func TestServiceVersionsReturnsServiceIDForSlug(t *testing.T) {
 	var sawSlug string
 	var sawProvider string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := newPaginationServiceVersionsServer(t, &sawSlug, &sawProvider)
+	defer srv.Close()
+
+	client := api.NewClient(srv.URL, "test-key")
+	versions, err := client.ServiceVersions("github")
+	if err != nil {
+		t.Fatalf("ServiceVersions: %v", err)
+	}
+	assertPaginationServiceVersion(t, sawSlug, sawProvider, versions)
+}
+
+func newPaginationServiceVersionsServer(t *testing.T, sawSlug, sawProvider *string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/graphql" {
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
@@ -185,18 +288,15 @@ func TestServiceVersionsReturnsServiceIDForSlug(t *testing.T) {
 		if !strings.Contains(body.Query, "service_id") {
 			t.Fatalf("expected service_id in query, got %s", body.Query)
 		}
-		sawSlug, _ = body.Variables["serviceId"].(string)
-		sawProvider, _ = body.Variables["provider"].(string)
+		*sawSlug, _ = body.Variables["serviceId"].(string)
+		*sawProvider, _ = body.Variables["provider"].(string)
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"data":{"serviceVersions":[{"id":"ver-1","service_id":"svc-1","name":"2026-07-01","status":"public","created_at":"2026-07-16T00:00:00Z","pagination":{"version":2,"type":"next_url","next_url":{"next":{"location":"link","relation":"next","value_type":"string"}},"items_path":"values","limits":{"max_pages":25,"max_items":10000,"max_bytes":10485760,"max_duration_ms":60000}}}]}}`))
+		w.Write([]byte(`{"data":{"serviceVersions":[{"id":"ver-1","service_id":"svc-1","name":"2026-07-01","status":"public","created_at":"2026-07-16T00:00:00Z","pagination":{"version":3,"request":[],"response":{"items":{"path":"$.values"},"values":[{"name":"next_link","source":{"location":"link","name":"Link","relation":"next","value_type":"url"}}]},"continuation":[{"kind":"rfc_link","state":"next_url","response_value":"next_link","origin":{"mode":"same_origin"}}],"termination":{"stop_on_missing_values":["next_link"],"repeated_value":"stop"},"limits":{"max_pages":25,"max_items":10000,"max_bytes":10485760,"max_duration_ms":60000}}}]}}`))
 	}))
-	defer srv.Close()
+}
 
-	client := api.NewClient(srv.URL, "test-key")
-	versions, err := client.ServiceVersions("github")
-	if err != nil {
-		t.Fatalf("ServiceVersions: %v", err)
-	}
+func assertPaginationServiceVersion(t *testing.T, sawSlug, sawProvider string, versions []api.ServiceVersion) {
+	t.Helper()
 	if sawSlug != "github" {
 		t.Fatalf("expected slug variable github, got %q", sawSlug)
 	}
@@ -206,8 +306,8 @@ func TestServiceVersionsReturnsServiceIDForSlug(t *testing.T) {
 	if len(versions) != 1 || versions[0].ServiceID != "svc-1" {
 		t.Fatalf("expected service_id svc-1, got %#v", versions)
 	}
-	if pagination := versions[0].Pagination; pagination == nil || pagination.NextURL == nil || pagination.NextURL.Next.Relation != "next" {
-		t.Fatalf("version pagination v2 did not decode: %#v", pagination)
+	if pagination := versions[0].Pagination; pagination == nil || pagination.Response.Values[0].Source.Relation != "next" || pagination.Continuation[0].Origin.Mode != "same_origin" {
+		t.Fatalf("version pagination v3 did not decode: %#v", pagination)
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -479,6 +480,9 @@ func validateWorkspaceExecutionPolicy(name, version string, policy *ExecutionPol
 	if err := validateWorkspaceExecutionPolicyTimeout(policy.TimeoutMs); err != nil {
 		return workspaceExecutionPolicyValidationError(name, version, err.Error())
 	}
+	if err := validateWorkspaceServerVariables(policy.ServerVariables); err != nil {
+		return workspaceExecutionPolicyValidationError(name, version, err.Error())
+	}
 	if policy.Reset {
 		if err := validateWorkspaceExecutionPolicyReset(policy, retry); err != nil {
 			return workspaceExecutionPolicyValidationError(name, version, err.Error())
@@ -495,7 +499,7 @@ func validateWorkspaceExecutionPolicy(name, version string, policy *ExecutionPol
 	// the configurable fields set -- since that's never a meaningful policy.
 	if workspaceExecutionPolicyEmpty(policy, retry) {
 		return workspaceExecutionPolicyValidationError(name, version,
-			"requires at least one of rate_limit, retry, timeout_ms, pagination, base_url, event_extraction_path, or incoming_webhook_config")
+			"requires at least one of rate_limit, retry, timeout_ms, pagination, base_url, server_variables, event_extraction_path, or incoming_webhook_config")
 	}
 	return nil
 }
@@ -505,7 +509,7 @@ func workspaceExecutionPolicyEmpty(policy *ExecutionPolicy, retry *RetryConfig) 
 	// fields are added without turning the caller into a high-complexity guard.
 	present := []bool{
 		policy.RateLimit != nil, retry != nil, policy.TimeoutMs != nil, policy.Pagination != nil,
-		policy.BaseURL != nil, policy.EventExtractionPath != nil,
+		policy.BaseURL != nil, len(policy.ServerVariables) > 0, policy.EventExtractionPath != nil,
 		policy.IncomingWebhookConfig != nil,
 	}
 	for _, configured := range present {
@@ -514,6 +518,31 @@ func workspaceExecutionPolicyEmpty(policy *ExecutionPolicy, retry *RetryConfig) 
 		}
 	}
 	return true
+}
+
+var (
+	workspaceServerVariableNamePattern  = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.-]{0,127}$`)
+	workspaceServerVariableValuePattern = regexp.MustCompile(`^[A-Za-z0-9._~-]{1,512}$`)
+)
+
+func validateWorkspaceServerVariables(variables map[string]string) error {
+	if len(variables) > 128 {
+		return fmt.Errorf("server_variables may contain at most 128 entries")
+	}
+	names := make([]string, 0, len(variables))
+	for name := range variables {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if !workspaceServerVariableNamePattern.MatchString(name) {
+			return fmt.Errorf("server_variables name %q is invalid", name)
+		}
+		if !workspaceServerVariableValuePattern.MatchString(variables[name]) {
+			return fmt.Errorf("server_variables value for %q is invalid", name)
+		}
+	}
+	return nil
 }
 
 func workspaceExecutionPolicyRetry(policy *ExecutionPolicy) (*RetryConfig, error) {
@@ -554,6 +583,9 @@ func workspaceExecutionPolicyValidationError(name, version, message string) erro
 // validation to the Engine.
 func validateWorkspaceConnectionProfiles(name string, profiles []map[string]interface{}) error {
 	for _, profile := range profiles {
+		if err := validateWorkspaceOAuth2Flow(name, profile); err != nil {
+			return err
+		}
 		reset, _ := profile["reset"].(bool)
 		if !reset {
 			continue
@@ -564,6 +596,34 @@ func validateWorkspaceConnectionProfiles(name string, profiles []map[string]inte
 		}
 	}
 	return nil
+}
+
+func validateWorkspaceOAuth2Flow(name string, entry map[string]interface{}) error {
+	profile, _ := entry["profile"].(map[string]interface{})
+	if profile == nil || profile["oauth2_flow"] == nil {
+		return nil
+	}
+	flow, ok := profile["oauth2_flow"].(string)
+	if !ok || strings.TrimSpace(flow) == "" {
+		return fmt.Errorf("workspace service %q connection profile oauth2_flow must be a string", name)
+	}
+	authType, _ := entry["auth_type"].(string)
+	if authType != "oauth" && authType != "oauth2" {
+		return fmt.Errorf("workspace service %q connection profile oauth2_flow requires auth_type oauth", name)
+	}
+	if !isOAuth2FlowName(flow) {
+		return fmt.Errorf("workspace service %q connection profile oauth2_flow is not supported", name)
+	}
+	return nil
+}
+
+func isOAuth2FlowName(flow string) bool {
+	switch strings.TrimSpace(flow) {
+	case "implicit", "password", "clientCredentials", "authorizationCode":
+		return true
+	default:
+		return false
+	}
 }
 
 // validateWorkspaceBucket keeps bucket material scoped to services declared in

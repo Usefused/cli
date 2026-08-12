@@ -68,20 +68,28 @@ Read only the file(s) relevant to the task at hand.
 
 | Read this file | When the task involves |
 |---|---|
-| `reference/execution-policies.md` | Rate limits, retries, pagination, a base_url override, outbound webhook verification, per-version policy overrides, and the local-enforcement-vs-Registry-publish distinction |
+| `reference/execution-policies.md` | Rate limits, retries, pagination, a base_url override, Engine-local server-variable bindings, outbound webhook verification, per-version policy overrides, and the local-enforcement-vs-Registry-publish distinction |
 | `reference/connection-profiles.md` | Auth type, OAuth/OIDC resource discovery, dynamic request bindings, profile ownership/provenance |
-| `reference/openapi-postman.md` | Declaring the same connection profile directly inside an OpenAPI or Postman source document instead of workspace config |
+| `reference/openapi-postman.md` | OpenAPI server/parameter fidelity and declaring the same connection profile directly inside an OpenAPI or Postman source document instead of workspace config |
 | `reference/import-overlays.md` | Supplying reviewed, credential-free import facts missing from a machine-readable provider source |
 
 For the service allowlist, SDK/MCP selection, or bucket/secret commands
 themselves, read `fused-workspace`, `fused-sdk`, `fused-mcp`, or
 `fused-bucket` -- this skill only covers the config that nests inside them.
-Pagination is inherited provider/runtime policy: never add it to SDK or MCP
-config. Engine applies endpoint policy before the effective version/service
-fallback and streams successful pages as separate chunks.
-Rate limiting is likewise an Engine-owned v2 execution contract: preserve the
-ordered named policies and stable-operation-key costs exactly, and never add a
-generated-client limiter or legacy RPS/RPM shape.
+Pagination v3 is inherited provider/runtime policy: preserve its ordered
+request, response, continuation, termination, GraphQL, and limit fields exactly,
+and never add it to SDK or MCP config. Engine applies endpoint policy before the
+effective version/service fallback and streams successful pages as separate
+chunks.
+Quota, concurrency, and retry v3 are Engine-owned execution contracts: preserve
+ordered dimensions, explicit bucket identities/enforcement modes, response
+signals, and retry predicates/bounds exactly. Never add generated-client
+coordination or infer a policy from a provider name.
+Structured signature policies, post-auth discovery v1, upload workflows, and
+catalog composition are likewise Registry-normalized and Engine-executed. Keep
+signature inputs ordered and credential-free except for bucket `secret_ref`
+references; never resolve a reference, trust inbound forwarding headers for an
+exact callback URL, or advance discovery/upload state in CLI code.
 For what happens to every *other* workspace (a separate Engine deployment --
 Engine is single-workspace-per-deployment, so "other workspace" always means
 "someone else's Engine," never a second workspace inside this one) when you

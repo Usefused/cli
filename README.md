@@ -221,6 +221,20 @@ represented exactly. Use `--json` to consume the diagnostic fields unchanged,
 or `--strict` to reject a plan containing warning or error diagnostics. Info
 diagnostics do not fail strict mode.
 
+Loss-aware diagnostics include the detected source format/version, a bounded
+source pointer, service scope, disposition (`captured`, `diagnosed`, or
+`strict_error`), required execution capability when applicable, and provenance.
+Treat diagnostic codes and disposition as the stable automation contract;
+message text remains for people.
+
+Every imported service version also carries an execution-contract envelope:
+`contract_version` identifies the wire shape and `required_capabilities` names
+behaviour an Engine must understand to execute it correctly. The CLI transports
+these fields without choosing compatibility. Registry publication and Engine
+snapshot materialization fail closed when the target Engine cannot execute the
+declared version or any required capability; additive documentation fields do
+not require a capability.
+
 `--overlay` accepts a local file only. The CLI does not parse, normalize, or
 merge it: Registry owns canonicalization and returns a combined `review_hash`.
 The receipt records that opaque review identity, so `import apply` commits the
@@ -291,12 +305,23 @@ services:
   google-drive:
     execution_policy:
       pagination:
-        version: 2
-        type: cursor
-        cursor:
-          request: {location: query, name: pageToken}
-          next: {location: body, path: "$.nextPageToken", value_type: string}
-        items_path: "$.files"
+        version: 3
+        request:
+          - state: cursor
+            target: {location: query, name: pageToken}
+            value_type: string
+            apply: all
+        response:
+          items: {path: "$.files"}
+          values:
+            - name: next_cursor
+              source: {location: body, path: "$.nextPageToken", value_type: string}
+        continuation:
+          - {kind: token, state: cursor, response_value: next_cursor}
+        termination:
+          stop_on_empty_items: true
+          stop_on_missing_values: [next_cursor]
+          repeated_value: error
         limits: {max_pages: 100, max_items: 10000, max_bytes: 16777216, max_duration_ms: 120000}
 ```
 
@@ -304,8 +329,40 @@ The policy always affects this Engine locally. `execution_policy.public: true`
 also publishes it for other consumers when the caller owns the service. A
 version entry's policy overrides the service-level local default for that
 version, while endpoint pagination imported into the provider contract remains
-more specific. SDK and MCP configs do not duplicate pagination settings;
-Engine automatically streams each provider page as a separate result chunk.
+more specific. SDK and MCP configs do not duplicate pagination settings. The
+composable v3 policy can combine token, offset, page, RFC Link, next-URL,
+conditional item paths, derived cursors, and GraphQL page templates without
+provider-specific client code. Engine validates termination, repeated values,
+URL origins and hard limits, then streams each successful provider page as a
+separate result chunk.
+
+Quota, concurrency, and retry policies use the same `execution_policy`
+ownership boundary. Version 3 policies declare simultaneous dimensions,
+explicit bucket-identity inputs and enforcement modes, response-driven state,
+and bounded replay predicates. The CLI transports them unchanged. Generated
+SDKs make one Engine request and contain no provider limiter, semaphore, retry
+loop, jitter, or backoff; Engine coordinates those decisions across pages and
+processes.
+
+Structured webhook signatures, post-auth discovery, media-upload workflows,
+and multi-spec catalogues follow that boundary too. CLI preserves reviewed
+recipes, bucket-secret references, ordered upload steps, origin/status guards,
+and reject-on-collision catalog metadata without executing them. Generated SDK
+and MCP callers make one logical Engine request; they never receive signing
+references or implement verification, discovery, resumable upload, or catalogue
+composition locally.
+
+OpenAPI 3.2 operations keep the exact `QUERY` or custom HTTP method token,
+named servers, whole-query parameter content, OAuth device-flow metadata, and
+sequential/positional media encodings. Tag summary, parent, and kind remain
+documentation-only. Generated callers forward one declared query-string value
+in their single Engine request; they do not percent-encode
+it, frame streams, or interpret multipart positions themselves. Registry
+resolves reusable media types before projection, while unsupported `$self`,
+XML node execution, external URI security names, and discriminator fallback
+semantics remain gated instead of being guessed. Device Authorization metadata
+may survive source analysis, but public admission rejects that flow until its
+connection and Engine execution vertical is implemented.
 
 ### Syncing Local Config From Remote State
 
