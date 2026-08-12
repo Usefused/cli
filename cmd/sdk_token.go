@@ -45,6 +45,9 @@ func runSDKTokenList(cmd *cobra.Command, target string) error {
 	if err != nil {
 		return err
 	}
+	if wantsJSON(cmd) {
+		return writeJSON(cmd, tokens)
+	}
 	for _, token := range tokens {
 		fmt.Fprintf(cmd.OutOrStdout(), "ID: %s, Name: %s, Created: %s\n", token.ID, token.Name, token.CreatedAt.Format("2006-01-02 15:04:05"))
 	}
@@ -58,4 +61,5 @@ func runSDKTokenRevoke(cmd *cobra.Command, target, name string) error {
 func init() {
 	sdkCmd.AddCommand(sdkTokenCmd)
 	sdkTokenCmd.AddCommand(sdkTokenGenerateCmd, sdkTokenListCmd, sdkTokenRevokeCmd)
+	addJSONOutputFlag(sdkTokenListCmd)
 }

@@ -83,8 +83,9 @@ func Execute() {
 		_ = shutdown(context.Background())
 	}()
 
-	if err := RootCmd.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+	executed, err := RootCmd.ExecuteC()
+	if err != nil {
+		_ = writeCommandError(os.Stderr, executed, err)
 		os.Exit(1)
 	}
 	if updateStarted {

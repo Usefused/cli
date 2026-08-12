@@ -67,6 +67,9 @@ var webhookValidateCmd = &cobra.Command{
 		if count == 0 {
 			return fmt.Errorf("no webhook configs found")
 		}
+		if wantsJSON(cmd) {
+			return writeJSON(cmd, validationResult("webhook", count))
+		}
 		fmt.Fprintf(cmd.OutOrStdout(), "validated %d webhook config\n", count)
 		return nil
 	}),
@@ -85,4 +88,5 @@ func init() {
 	webhookApplyCmd.Flags().StringVar(&webhookApplyReceiptPath, "receipt", "", "Read a specific plan receipt for a single webhook config")
 
 	webhookCmd.AddCommand(webhookValidateCmd)
+	addJSONOutputFlag(webhookValidateCmd)
 }

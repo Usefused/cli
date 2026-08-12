@@ -1,6 +1,9 @@
 package api
 
 import (
+	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -124,6 +127,35 @@ func TestStructuredEngineErrorReturnsMessageAndTrace(t *testing.T) {
 		if !strings.Contains(message, want) {
 			t.Fatalf("message %q does not contain %q", message, want)
 		}
+	}
+}
+
+func TestStructuredEngineErrorRemainsTypedThroughWrapping(t *testing.T) {
+	body := []byte(`{"error":{"code":"registry_request_failed","message":"Registry dependency failed.","category":"dependency","retryable":true,"remediation":"Retry.","trace_id":"trace-1"}}`)
+	wrapped := fmt.Errorf("generate SDK: %w", newHTTPError(http.StatusServiceUnavailable, body))
+	var apiError *APIError
+	if !errors.As(wrapped, &apiError) {
+		t.Fatalf("wrapped error lost APIError: %v", wrapped)
+	}
+	if apiError.Code != "registry_request_failed" || !apiError.Retryable || apiError.TraceID != "trace-1" || apiError.HTTPStatus != http.StatusServiceUnavailable {
+		t.Fatalf("APIError = %#v", apiError)
+	}
+}
+
+func TestPermissionDeniedTypedDetailsRemainProductSafe(t *testing.T) {
+	const resourceID = "22222222-2222-2222-2222-222222222222"
+	body := []byte(`{"error":"permission_denied","missing":[{"permission":"service.consume","resource_type":"service","resource_id":"` + resourceID + `","display_name":"GitHub"}]}`)
+	var apiError *APIError
+	if !errors.As(newHTTPError(http.StatusForbidden, body), &apiError) {
+		t.Fatal("permission error was not typed")
+	}
+	encoded, err := json.Marshal(apiError.Details)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(encoded)
+	if !strings.Contains(text, `use service \"GitHub\"`) || strings.Contains(text, "service.consume") || strings.Contains(text, resourceID) {
+		t.Fatalf("unsafe permission details: %s", text)
 	}
 }
 

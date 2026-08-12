@@ -5,6 +5,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	cliapi "github.com/Usefused/cli/internal/api"
 	"github.com/Usefused/cli/internal/configfile"
 	"github.com/spf13/cobra"
 )
@@ -68,6 +69,9 @@ var mcpValidateCmd = &cobra.Command{
 		if count == 0 {
 			return fmt.Errorf("no mcp configs found")
 		}
+		if wantsJSON(cmd) {
+			return writeJSON(cmd, validationResult("mcp", count))
+		}
 		fmt.Fprintf(cmd.OutOrStdout(), "validated %d mcp config\n", count)
 		return nil
 	}),
@@ -82,6 +86,10 @@ func runMCPList(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
+	results := mcpListResults(client.BaseURL, page.Items)
+	if wantsJSON(cmd) {
+		return writeJSONPage(cmd, results, page.Total, mcpListFlags)
+	}
 	writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 8, 2, ' ', 0)
 	fmt.Fprintln(writer, "NAME\tVERSION\tMCP_ID\tVERSION_ID\tSTATUS\tCREATED\tURL")
 	for _, app := range page.Items {
@@ -92,6 +100,20 @@ func runMCPList(cmd *cobra.Command) error {
 	_ = writer.Flush()
 	printPageSummary(cmd.OutOrStdout(), page.Total, mcpListFlags)
 	return nil
+}
+
+type mcpListResult struct {
+	cliapi.AppSummary
+	URL string `json:"url"`
+}
+
+func mcpListResults(baseURL string, apps []cliapi.AppSummary) []mcpListResult {
+	results := make([]mcpListResult, 0, len(apps))
+	for _, app := range apps {
+		url := strings.TrimSuffix(baseURL, "/") + "/mcp/" + app.AppID + "/sse"
+		results = append(results, mcpListResult{AppSummary: app, URL: url})
+	}
+	return results
 }
 
 var mcpDeactivateCmd = &cobra.Command{
@@ -134,6 +156,7 @@ func runMCPDeactivate(cmd *cobra.Command, target string) error {
 func init() {
 	RootCmd.AddCommand(mcpCmd)
 	mcpCmd.AddCommand(mcpListCmd, mcpPlanCmd, mcpApplyCmd, mcpValidateCmd, mcpDeactivateCmd)
+	addJSONOutputFlag(mcpListCmd, mcpValidateCmd)
 	addListFlags(mcpListCmd, &mcpListFlags)
 	mcpPlanCmd.Flags().BoolVar(&mcpPlanJSON, "json", false, "Print plan result JSON")
 	mcpPlanCmd.Flags().StringVar(&mcpPlanReceiptOut, "receipt-out", "", "Write the plan receipt to this path")

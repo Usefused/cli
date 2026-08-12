@@ -107,6 +107,9 @@ var workspaceServicesListCmd = &cobra.Command{
 			return err
 		}
 		services = filterWorkspaceServices(services, workspaceServicesListQuery)
+		if wantsJSON(cmd) {
+			return writeJSON(cmd, services)
+		}
 		if len(services) == 0 {
 			if strings.TrimSpace(workspaceServicesListQuery) != "" {
 				fmt.Fprintf(cmd.OutOrStdout(), "No visible workspace services found matching %q.\n", strings.TrimSpace(workspaceServicesListQuery))
@@ -204,6 +207,9 @@ var workspaceHasCmd = &cobra.Command{
 		}
 		for _, service := range services {
 			if service.ServiceName == serviceName {
+				if wantsJSON(cmd) {
+					return writeJSON(cmd, service)
+				}
 				fmt.Fprintf(cmd.OutOrStdout(), "Found service %s (Enabled Versions: %s)\n", service.ServiceName, strings.Join(workspaceServiceVersionNames(service), ", "))
 				return nil
 			}
@@ -414,6 +420,9 @@ func runWorkspaceServiceVersions(cmd *cobra.Command, serviceSlug string) error {
 	if err != nil {
 		return err
 	}
+	if wantsJSON(cmd) {
+		return writeJSON(cmd, workspaceService.EnabledVersions)
+	}
 	printWorkspaceServiceVersions(cmd.OutOrStdout(), workspaceService)
 	return nil
 }
@@ -441,6 +450,9 @@ func runWorkspaceServiceOperations(cmd *cobra.Command, serviceSlug, version stri
 	}
 	if len(endpoints) == 0 {
 		return fmt.Errorf("no operations found for service %s version %s", serviceSlug, resolvedVersion)
+	}
+	if wantsJSON(cmd) {
+		return writeJSON(cmd, endpoints)
 	}
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 8, 2, ' ', 0)
 	fmt.Fprintln(w, "NAME\tMETHOD\tPATH")
@@ -486,7 +498,11 @@ func runWorkspaceServiceWebhooks(cmd *cobra.Command, serviceSlug string) error {
 	if err != nil {
 		return err
 	}
-	if len(webhooks) == 0 {
+	results := workspaceWebhookResults(client.BaseURL, serviceSlug, webhooks)
+	if wantsJSON(cmd) {
+		return writeJSON(cmd, results)
+	}
+	if len(results) == 0 {
 		fmt.Fprintf(cmd.OutOrStdout(), "No webhook registrations for service %s.\n", serviceSlug)
 		return nil
 	}
@@ -495,12 +511,27 @@ func runWorkspaceServiceWebhooks(cmd *cobra.Command, serviceSlug string) error {
 	// can tell at a glance whether a registration verifies its provider's
 	// signature without a second lookup.
 	fmt.Fprintln(w, "LABEL\tURL\tSIGNATURE\tCREATED_AT")
-	for _, wh := range webhooks {
-		url := appliedWebhookURL(client.BaseURL, cliapi.AppliedWebhookConfig{ServiceKey: serviceSlug, Label: wh.Label, Slug: wh.Slug})
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", wh.Label, url, wh.Signature, wh.CreatedAt)
+	for _, webhook := range results {
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", webhook.Label, webhook.URL, webhook.Signature, webhook.CreatedAt)
 	}
 	w.Flush()
 	return nil
+}
+
+type workspaceWebhookResult struct {
+	Label     string `json:"label"`
+	URL       string `json:"url"`
+	Signature string `json:"signature"`
+	CreatedAt string `json:"created_at"`
+}
+
+func workspaceWebhookResults(baseURL, serviceSlug string, webhooks []cliapi.WorkspaceWebhook) []workspaceWebhookResult {
+	results := make([]workspaceWebhookResult, 0, len(webhooks))
+	for _, webhook := range webhooks {
+		url := appliedWebhookURL(baseURL, cliapi.AppliedWebhookConfig{ServiceKey: serviceSlug, Label: webhook.Label, Slug: webhook.Slug})
+		results = append(results, workspaceWebhookResult{Label: webhook.Label, URL: url, Signature: webhook.Signature, CreatedAt: webhook.CreatedAt})
+	}
+	return results
 }
 
 var workspaceServiceConnectBucket string
@@ -805,6 +836,7 @@ func init() {
 	workspaceCmd.AddCommand(workspaceServicesCmd)
 	workspaceServicesListCmd.Flags().BoolVarP(&workspaceServicesListInteractive, "interactive", "i", false, "Interactive service selection")
 	workspaceServicesListCmd.Flags().StringVarP(&workspaceServicesListQuery, "q", "q", "", "Filter visible workspace services by name or slug")
+	addJSONOutputFlag(workspaceServicesListCmd, workspaceHasCmd, workspaceServiceVersionsCmd, workspaceServiceOperationsCmd, workspaceServiceWebhooksCmd)
 	workspaceServicesCmd.AddCommand(workspaceServicesListCmd)
 	workspaceCmd.AddCommand(workspaceServiceCmd)
 	workspaceCmd.AddCommand(workspaceHasCmd)

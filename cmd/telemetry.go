@@ -2,11 +2,14 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"os"
 
+	cliapi "github.com/Usefused/cli/internal/api"
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.17.0"
@@ -55,10 +58,27 @@ func WithTelemetry(spanName string, runE func(cmd *cobra.Command, args []string)
 
 		err := runE(cmd, args)
 		if err != nil {
-			span.RecordError(err)
+			recordTelemetryError(span, err)
 		}
 		return err
 	}
+}
+
+func recordTelemetryError(span trace.Span, err error) {
+	code := "command_failed"
+	retryable := false
+	var strictError *cliapi.SpecImportStrictError
+	if errors.As(err, &strictError) {
+		code = strictError.Code
+	}
+	var apiError *cliapi.APIError
+	if errors.As(err, &apiError) {
+		code, retryable = apiError.Code, apiError.Retryable
+	}
+	// Stable fields make failures searchable without attaching user input or
+	// remote messages that could contain credentials.
+	span.SetAttributes(attribute.String("error.code", code), attribute.Bool("error.retryable", retryable))
+	span.SetStatus(codes.Error, code)
 }
 
 func recordAppliedChange(ctx context.Context, action, resourceKind string) {

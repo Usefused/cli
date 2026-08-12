@@ -461,6 +461,9 @@ func runSecretList(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
+	if wantsJSON(cmd) {
+		return writeJSONPage(cmd, page.Items, page.Total, secretListFlags)
+	}
 	for _, s := range page.Items {
 		bucket := s.BucketID
 		expiry := "never"
@@ -511,6 +514,7 @@ func resolveOptionalBucketID(value string) (string, error) {
 func init() {
 	RootCmd.AddCommand(secretCmd)
 	secretCmd.AddCommand(secretSetCmd, secretListCmd, secretDeleteCmd)
+	addJSONOutputFlag(secretListCmd)
 
 	secretSetCmd.Flags().StringVar(&secretSetBucketID, "bucket", "", "Bucket name or UUID; omit to use the default bucket")
 	secretSetCmd.Flags().StringVar(&secretSetExpiresAt, "expires-at", "", "RFC3339 expiry timestamp; omit for no expiry")

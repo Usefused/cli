@@ -377,7 +377,7 @@ func TestRunImportPlanPrintsStrictRejectionDiagnostics(t *testing.T) {
 	command.SetContext(t.Context())
 	errOut := &strings.Builder{}
 	command.SetErr(errOut)
-	err := runImportPlan(command, specPath, importSpecPlanOptions{name: "Widgets", slug: "widgets", strict: true, jsonOut: true})
+	err := runImportPlan(command, specPath, importSpecPlanOptions{name: "Widgets", slug: "widgets", strict: true})
 	if err == nil || !strings.Contains(err.Error(), "strict_import_rejected") {
 		t.Fatalf("expected strict rejection, got %v", err)
 	}

@@ -81,6 +81,9 @@ var sdkValidateCmd = &cobra.Command{
 		if count == 0 {
 			return fmt.Errorf("no sdk configs found")
 		}
+		if wantsJSON(cmd) {
+			return writeJSON(cmd, validationResult("sdk", count))
+		}
 		fmt.Fprintf(cmd.OutOrStdout(), "validated %d sdk config\n", count)
 		return nil
 	}),
@@ -161,6 +164,9 @@ func runSDKList(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
+	if wantsJSON(cmd) {
+		return writeJSONPage(cmd, page.Items, page.Total, sdkListFlags)
+	}
 	writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 8, 2, ' ', 0)
 	fmt.Fprintln(writer, "NAME\tVERSION\tSTATUS\tSDK_ID\tVERSION_ID")
 	for _, sdk := range page.Items {
@@ -226,6 +232,9 @@ func runSDKShow(cmd *cobra.Command, target sdkDownloadTarget) error {
 	if err != nil {
 		return err
 	}
+	if wantsJSON(cmd) {
+		return writeJSON(cmd, sdk)
+	}
 	fmt.Fprintf(cmd.OutOrStdout(), "name:\t%s\nversion:\t%s\nstatus:\t%s\nsdk_id:\t%s\nversion_id:\t%s\n", sdk.Name, sdk.Version, sdk.Status, sdk.AppFamilyID, sdk.AppID)
 	return nil
 }
@@ -245,6 +254,9 @@ func runSDKServices(cmd *cobra.Command, target sdkDownloadTarget) error {
 	services, err := client.ListAppServices(appID)
 	if err != nil {
 		return err
+	}
+	if wantsJSON(cmd) {
+		return writeJSON(cmd, services)
 	}
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 8, 2, ' ', 0)
 	fmt.Fprintln(w, "SERVICE\tSERVICE_ID\tVERSION\tSELECT_ALL\tENDPOINTS\tWEBHOOKS")
@@ -267,6 +279,9 @@ func runSDKBuckets(cmd *cobra.Command, target sdkDownloadTarget) error {
 	buckets, err := client.ListSDKBuckets(appFamilyID)
 	if err != nil {
 		return err
+	}
+	if wantsJSON(cmd) {
+		return writeJSON(cmd, buckets)
 	}
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 8, 2, ' ', 0)
 	fmt.Fprintln(w, "NAME\tID\tDEFAULT")
@@ -808,6 +823,7 @@ func selectedIndex(rawChoice string, size int) (int, error) {
 func init() {
 	RootCmd.AddCommand(sdkCmd)
 	sdkCmd.AddCommand(sdkListCmd, sdkPlanCmd, sdkApplyCmd, sdkValidateCmd, sdkDownloadCmd, sdkShowCmd, sdkServicesCmd, sdkBucketsCmd)
+	addJSONOutputFlag(sdkListCmd, sdkValidateCmd, sdkShowCmd, sdkServicesCmd, sdkBucketsCmd)
 	addListFlags(sdkListCmd, &sdkListFlags)
 	sdkPlanCmd.Flags().BoolVar(&sdkPlanJSON, "json", false, "Print plan result JSON")
 	sdkPlanCmd.Flags().StringVar(&sdkPlanReceiptOut, "receipt-out", "", "Write the plan receipt to this path")

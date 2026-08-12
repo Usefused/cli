@@ -110,7 +110,7 @@ func (c *Client) GenerateAppToken(appFamilyID string, input AppTokenGenerateRequ
 
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("generate app token failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(resp.StatusCode, respBody))
+		return nil, fmt.Errorf("generate app token failed (HTTP %d): %w", resp.StatusCode, newHTTPError(resp.StatusCode, respBody))
 	}
 
 	var out AppTokenGenerateResponse
@@ -161,7 +161,7 @@ func (c *Client) RevokeAppToken(appFamilyID, name string) error {
 
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("revoke app token failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(resp.StatusCode, respBody))
+		return fmt.Errorf("revoke app token failed (HTTP %d): %w", resp.StatusCode, newHTTPError(resp.StatusCode, respBody))
 	}
 
 	return nil

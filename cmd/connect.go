@@ -40,7 +40,7 @@ var connectSetCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		if err := runConnectSet(args[0], value); err != nil {
+		if err := runConnectSet(cmd, args[0], value); err != nil {
 			return err
 		}
 		recordAppliedChange(cmd.Context(), cmd.CommandPath(), "connect_config")
@@ -52,8 +52,8 @@ var connectGetCmd = &cobra.Command{
 	Use:   "get <service-slug>",
 	Short: "Read the safe OAuth/OIDC app projection",
 	Args:  cobra.ExactArgs(1),
-	RunE: WithTelemetry("cli.connect.get", func(_ *cobra.Command, args []string) error {
-		return runConnectGet(args[0])
+	RunE: WithTelemetry("cli.connect.get", func(cmd *cobra.Command, args []string) error {
+		return runConnectGet(cmd, args[0])
 	}),
 }
 
@@ -106,7 +106,7 @@ func resolveConnectTarget(action, serviceSlug, bucketValue string) (client *api.
 // rotated (e.g. redirect_uri) without resupplying the others; Engine's
 // partial-update merge (see UpsertConnectConfigHandler) carries forward
 // whatever this call omits.
-func runConnectSet(serviceSlug, value string) error {
+func runConnectSet(cmd *cobra.Command, serviceSlug, value string) error {
 	client, bucketID, serviceID, err := resolveConnectTarget("set", serviceSlug, connectSetBucketID)
 	if err != nil {
 		return err
@@ -127,14 +127,14 @@ func runConnectSet(serviceSlug, value string) error {
 	if err != nil {
 		return err
 	}
-	printConnectConfigResult(saved)
+	printConnectConfigResult(cmd, saved)
 	return nil
 }
 
 // runConnectGet reads back whatever `set` last saved, if anything. Unlike
 // set, it needs no auth-type selection -- it just asks Engine for whatever
 // is on record for this bucket+service, or reports that nothing is.
-func runConnectGet(serviceSlug string) error {
+func runConnectGet(cmd *cobra.Command, serviceSlug string) error {
 	client, bucketID, serviceID, err := resolveConnectTarget("get", serviceSlug, connectGetBucketID)
 	if err != nil {
 		return err
@@ -146,7 +146,10 @@ func runConnectGet(serviceSlug string) error {
 		}
 		return err
 	}
-	printConnectConfigResult(cfg)
+	if wantsJSON(cmd) {
+		return writeJSON(cmd, cfg)
+	}
+	printConnectConfigResult(cmd, cfg)
 	return nil
 }
 
@@ -276,8 +279,8 @@ func connectAuthRequest(authType, authName string) api.ConnectConfigUpsertReques
 // printConnectConfigResult renders the same safe projection whether it just
 // came from a set (freshly saved) or a get (already on record) -- neither
 // caller needs a different message, only the fields themselves.
-func printConnectConfigResult(cfg *api.ConnectConfigResponse) {
-	fmt.Printf(
+func printConnectConfigResult(cmd *cobra.Command, cfg *api.ConnectConfigResponse) {
+	fmt.Fprintf(cmd.OutOrStdout(),
 		"Connect config for service %s (bucket %s): auth_type=%s auth_name=%s enabled=%t redirect_uri=%s has_client_id=%t has_client_secret=%t\n",
 		cfg.ServiceID, cfg.BucketID, cfg.AuthType, cfg.AuthName, cfg.Enabled, cfg.RedirectURI, cfg.HasClientID, cfg.HasClientSecret,
 	)
@@ -286,6 +289,7 @@ func printConnectConfigResult(cfg *api.ConnectConfigResponse) {
 func init() {
 	RootCmd.AddCommand(connectCmd)
 	connectCmd.AddCommand(connectSetCmd, connectGetCmd)
+	addJSONOutputFlag(connectGetCmd)
 	connectSetCmd.Flags().StringVar(&connectSetBucketID, "bucket", "", "Bucket name or UUID (required)")
 	connectSetCmd.Flags().StringVar(&connectSetType, "type", "", "Connect authentication type (oauth or oidc)")
 	connectSetCmd.Flags().StringVar(&connectSetAuthName, "auth-name", "", "Exact provider auth scheme name; required when --type matches multiple schemes")

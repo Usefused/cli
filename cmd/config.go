@@ -53,6 +53,9 @@ var configGetCmd = &cobra.Command{
 			}
 			return err
 		}
+		if wantsJSON(cmd) {
+			return writeJSON(cmd, map[string]string{"key": key, "value": val})
+		}
 		fmt.Fprintln(cmd.OutOrStdout(), val)
 		return nil
 	}),
@@ -77,6 +80,13 @@ var configListCmd = &cobra.Command{
 		keyVal := cfg.APIKey
 		if len(keyVal) > 4 {
 			keyVal = keyVal[:4] + "..."
+		}
+		if wantsJSON(cmd) {
+			return writeJSON(cmd, map[string]any{
+				"engine_url": cfg.EngineURL, "engine_url_overridden": os.Getenv("FUSED_ENGINE_URL") != "",
+				"api_key": keyVal, "api_key_expires_at": cfg.APIKeyExpiresAt,
+				"api_key_environment_fallback": cfg.APIKey == "" && (os.Getenv("FUSED_API_KEY") != "" || os.Getenv("FUSED_LICENSE_KEY") != ""),
+			})
 		}
 		fmt.Fprintln(cmd.OutOrStdout(), "api-key =", keyVal)
 		fmt.Fprintln(cmd.OutOrStdout(), "api-key-expires-at =", cfg.APIKeyExpiresAt)
@@ -110,5 +120,6 @@ func init() {
 	configCmd.AddCommand(configGetCmd)
 	configCmd.AddCommand(configListCmd)
 	configCmd.AddCommand(configResetCmd)
+	addJSONOutputFlag(configGetCmd, configListCmd)
 	RootCmd.AddCommand(configCmd)
 }

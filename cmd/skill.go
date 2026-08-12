@@ -337,6 +337,9 @@ var skillListCmd = &cobra.Command{
 	Short: "List every fused-cli skill",
 	Args:  cobra.NoArgs,
 	RunE: WithTelemetry("cli.skill.list", func(cmd *cobra.Command, _ []string) error {
+		if wantsJSON(cmd) {
+			return writeJSON(cmd, skillListResults())
+		}
 		w := cmd.OutOrStdout()
 		for _, name := range sortedSkillSpecNames() {
 			spec, _ := skillSpecByName(name)
@@ -344,6 +347,20 @@ var skillListCmd = &cobra.Command{
 		}
 		return nil
 	}),
+}
+
+type skillListResult struct {
+	Name    string `json:"name"`
+	Summary string `json:"summary"`
+}
+
+func skillListResults() []skillListResult {
+	results := make([]skillListResult, 0, len(skillSpecs))
+	for _, name := range sortedSkillSpecNames() {
+		spec, _ := skillSpecByName(name)
+		results = append(results, skillListResult{Name: spec.name, Summary: spec.summary})
+	}
+	return results
 }
 
 var skillPrintCmd = &cobra.Command{
@@ -373,6 +390,9 @@ Available skills: %s`, strings.Join(sortedSkillSpecNames(), ", ")),
 		content, ok := files[relPath]
 		if !ok {
 			return fmt.Errorf("unknown file %q for skill %q; available: %s", relPath, spec.name, strings.Join(spec.manifest, ", "))
+		}
+		if wantsJSON(cmd) {
+			return writeJSON(cmd, map[string]string{"skill": spec.name, "file": relPath, "content": content})
 		}
 		fmt.Fprint(cmd.OutOrStdout(), content)
 		return nil
@@ -471,6 +491,7 @@ func init() {
 	skillCmd.AddCommand(skillListCmd)
 	skillCmd.AddCommand(skillPrintCmd)
 	skillCmd.AddCommand(skillInstallCmd)
+	addJSONOutputFlag(skillListCmd, skillPrintCmd)
 
 	skillPrintCmd.Flags().StringVar(&skillPrintName, "skill", "fused-cli",
 		fmt.Sprintf(`Which skill to print (default: fused-cli). Supported: %s`, strings.Join(sortedSkillSpecNames(), ", ")))

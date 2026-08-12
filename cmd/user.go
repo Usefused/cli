@@ -25,6 +25,9 @@ var userListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		if wantsJSON(cmd) {
+			return writeJSONPage(cmd, page.Items, page.Total, userListFlags)
+		}
 		if len(page.Items) == 0 {
 			fmt.Fprintln(cmd.OutOrStdout(), "No people found.")
 			return nil
@@ -45,6 +48,9 @@ var userShowCmd = &cobra.Command{
 		user, err := client.GetUser(args[0])
 		if err != nil {
 			return err
+		}
+		if wantsJSON(cmd) {
+			return writeJSON(cmd, user)
 		}
 		printUser(cmd, *user)
 		return nil
@@ -253,6 +259,7 @@ func printIssuedCredential(cmd *cobra.Command, payload *cliapi.IssuedCredentialP
 func init() {
 	RootCmd.AddCommand(userCmd)
 	userCmd.AddCommand(userListCmd, userShowCmd, userCreateCmd, userUpdateCmd, userSuspendCmd, userReactivateCmd, userCredentialCmd)
+	addJSONOutputFlag(userListCmd, userShowCmd)
 	addListFlags(userListCmd, &userListFlags)
 	userListCmd.Flags().StringVar(&userListSearch, "search", "", "Search names and email addresses")
 	userListCmd.Flags().BoolVar(&userListIncludeSuspended, "include-suspended", false, "Include suspended people")

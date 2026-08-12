@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -30,11 +29,11 @@ type Client struct {
 const DefaultTimeout = time.Minute
 
 var (
-	errGraphQLResponseMalformed = errors.New("graphql_response_malformed: Engine returned a malformed GraphQL response; retry or check Engine logs")
-	errGraphQLRequestRejected   = errors.New("graphql_request_rejected: Engine rejected the GraphQL request; check command inputs and workspace permissions")
-	errGraphQLDataMalformed     = errors.New("graphql_data_malformed: Engine returned malformed GraphQL data; retry or check Engine logs")
-	errGraphQLResourceNotFound  = errors.New("resource_not_found: resource was not found; use its name, slug, email, or full UUID")
-	errGraphQLResourceAmbiguous = errors.New("resource_ambiguous: name exists as both an SDK and MCP server; use the full UUID")
+	errGraphQLResponseMalformed = &APIError{Code: "graphql_response_malformed", Message: "Engine returned a malformed GraphQL response", Category: "dependency", Retryable: true, Remediation: "Retry or check Engine logs."}
+	errGraphQLRequestRejected   = &APIError{Code: "graphql_request_rejected", Message: "Engine rejected the GraphQL request", Category: "validation", Remediation: "Check command inputs and workspace permissions."}
+	errGraphQLDataMalformed     = &APIError{Code: "graphql_data_malformed", Message: "Engine returned malformed GraphQL data", Category: "dependency", Retryable: true, Remediation: "Retry or check Engine logs."}
+	errGraphQLResourceNotFound  = &APIError{Code: "resource_not_found", Message: "resource was not found", Category: "not_found", Remediation: "Use its name, slug, email, or full UUID."}
+	errGraphQLResourceAmbiguous = &APIError{Code: "resource_ambiguous", Message: "name exists as both an SDK and MCP server", Category: "validation", Remediation: "use the full UUID."}
 )
 
 const (
@@ -183,7 +182,7 @@ func (c *Client) graphQLAt(path string, query string, variables map[string]inter
 	}
 
 	if resp.StatusCode >= 400 {
-		return fmt.Errorf("graphql request failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(resp.StatusCode, respBody))
+		return fmt.Errorf("graphql request failed (HTTP %d): %w", resp.StatusCode, newHTTPError(resp.StatusCode, respBody))
 	}
 
 	return decodeGraphQLData(respBody, out)
@@ -235,7 +234,7 @@ type apiErrorPayload struct {
 	Missing []PermissionRequirement `json:"missing"`
 }
 
-type engineAPIError struct {
+type APIError struct {
 	Code      string `json:"code"`
 	Message   string `json:"message"`
 	Category  string `json:"category"`
@@ -245,13 +244,32 @@ type engineAPIError struct {
 	} `json:"details,omitempty"`
 	Remediation string `json:"remediation,omitempty"`
 	TraceID     string `json:"trace_id,omitempty"`
+	HTTPStatus  int    `json:"-"`
+}
+
+func (e *APIError) Error() string {
+	message := e.Code + ": " + e.Message
+	if len(e.Details.Missing) > 0 {
+		message += " Missing: " + strings.Join(e.Details.Missing, ", ") + "."
+	}
+	if e.Remediation != "" {
+		message += " " + e.Remediation
+	}
+	if e.TraceID != "" {
+		message += " Trace: " + e.TraceID
+	}
+	return message
 }
 
 func formatHTTPErrorBody(status int, respBody []byte) string {
+	return newHTTPError(status, respBody).Error()
+}
+
+func newHTTPError(status int, respBody []byte) error {
 	var payload apiErrorPayload
 	if err := json.Unmarshal(respBody, &payload); err == nil {
-		if message := parsedHTTPError(status, payload); message != "" {
-			return message
+		if parsed := parsedHTTPError(status, payload); parsed != nil {
+			return parsed
 		}
 	}
 	// Response bodies are untrusted and may echo credentials. Callers already
@@ -260,69 +278,65 @@ func formatHTTPErrorBody(status int, respBody []byte) string {
 	return genericHTTPError(status)
 }
 
-func parsedHTTPError(status int, payload apiErrorPayload) string {
-	var structured engineAPIError
+func parsedHTTPError(status int, payload apiErrorPayload) error {
+	var structured APIError
 	if len(payload.Error) > 0 && json.Unmarshal(payload.Error, &structured) == nil && structured.Code != "" && structured.Message != "" {
-		return formatEngineAPIError(structured)
+		structured.HTTPStatus = status
+		return &structured
 	}
 
 	var errorCode string
 	_ = json.Unmarshal(payload.Error, &errorCode)
 	if status == http.StatusUnauthorized && errorCode == "authentication_required" {
-		return "authentication required; provide a valid Fused credential"
+		return &APIError{Code: "authentication_required", Message: "authentication required; provide a valid Fused credential", Category: "authentication", HTTPStatus: status}
 	}
 	if status == http.StatusForbidden && errorCode == "permission_denied" {
-		return formatPermissionDenied(payload.Missing)
+		return permissionDeniedError(status, payload.Missing)
 	}
-	return appOwnerHTTPError(errorCode)
+	return appOwnerHTTPError(status, errorCode)
 }
 
-func formatEngineAPIError(engineError engineAPIError) string {
-	message := engineError.Code + ": " + engineError.Message
-	if len(engineError.Details.Missing) > 0 {
-		message += " Missing: " + strings.Join(engineError.Details.Missing, ", ") + "."
-	}
-	if engineError.Remediation != "" {
-		message += " " + engineError.Remediation
-	}
-	if engineError.TraceID != "" {
-		message += " Trace: " + engineError.TraceID
-	}
-	return message
-}
-
-func appOwnerHTTPError(code string) string {
+func appOwnerHTTPError(status int, code string) error {
 	switch code {
 	case "app owner is immutable":
-		return "app_owner_immutable: this app already has an owner; omit --owner-team or use its existing team slug"
+		return &APIError{Code: "app_owner_immutable", Message: "this app already has an owner", Category: "conflict", Remediation: "Omit --owner-team or use its existing team slug.", HTTPStatus: status}
 	case "app owner is unavailable":
-		return "app_owner_unavailable: ask a workspace administrator for help"
+		return &APIError{Code: "app_owner_unavailable", Message: "the app owner is unavailable", Category: "authorization", Remediation: "Ask a workspace administrator for help.", HTTPStatus: status}
 	case "owner team was not found or is archived":
-		return "owner_team_unavailable: choose an active team slug"
+		return &APIError{Code: "owner_team_unavailable", Message: "the owner team was not found or is archived", Category: "validation", Remediation: "Choose an active team slug.", HTTPStatus: status}
 	case "app owner authorization denied":
-		return "owner_team_access_denied: you or the owning team no longer have the required access"
+		return &APIError{Code: "owner_team_access_denied", Message: "you or the owning team no longer have the required access", Category: "authorization", HTTPStatus: status}
 	default:
-		return ""
+		return nil
 	}
 }
 
-func genericHTTPError(status int) string {
+func genericHTTPError(status int) error {
+	apiErr := &APIError{HTTPStatus: status}
 	switch status {
-	case http.StatusBadRequest:
-		return "request_rejected: Engine rejected the request; check command inputs"
+	case http.StatusBadRequest, http.StatusUnprocessableEntity:
+		apiErr.Code, apiErr.Message, apiErr.Category, apiErr.Remediation = "request_rejected", "Engine rejected the request", "validation", "Check command inputs."
 	case http.StatusUnauthorized:
-		return "authentication_failed: provide a valid Fused credential"
+		apiErr.Code, apiErr.Message, apiErr.Category, apiErr.Remediation = "authentication_failed", "authentication failed", "authentication", "Provide a valid Fused credential."
 	case http.StatusForbidden:
-		return "request_forbidden: check workspace permissions"
+		apiErr.Code, apiErr.Message, apiErr.Category, apiErr.Remediation = "request_forbidden", "the request is forbidden", "authorization", "Check workspace permissions."
 	case http.StatusNotFound:
-		return "resource_not_found: the requested resource was not found"
+		apiErr.Code, apiErr.Message, apiErr.Category = "resource_not_found", "the requested resource was not found", "not_found"
 	case http.StatusConflict:
-		return "request_conflict: workspace state changed; refresh and retry"
+		apiErr.Code, apiErr.Message, apiErr.Category, apiErr.Retryable, apiErr.Remediation = "request_conflict", "workspace state changed", "conflict", true, "Refresh and retry."
 	case http.StatusTooManyRequests:
-		return "request_rate_limited: retry later"
+		apiErr.Code, apiErr.Message, apiErr.Category, apiErr.Retryable, apiErr.Remediation = "request_rate_limited", "request rate limited", "rate_limit", true, "Retry later."
 	default:
-		return "engine_request_failed: check Engine logs and retry"
+		apiErr.Code, apiErr.Message, apiErr.Category, apiErr.Retryable, apiErr.Remediation = "engine_request_failed", "Engine request failed", "dependency", status >= 500, "Check Engine logs and retry."
 	}
+	return apiErr
+}
+
+func permissionDeniedError(status int, missing []PermissionRequirement) error {
+	message := formatPermissionDenied(missing)
+	apiErr := &APIError{Code: "permission_denied", Message: message, Category: "authorization", HTTPStatus: status}
+	apiErr.Details.Missing = safePermissionDescriptions(missing)
+	return apiErr
 }
 
 func formatPermissionDenied(missing []PermissionRequirement) string {
@@ -332,17 +346,21 @@ func formatPermissionDenied(missing []PermissionRequirement) string {
 	if containsPermission(missing, "access.manage") {
 		return "permission denied; you are not a member of the owning team; join that team or ask an access administrator to perform this action"
 	}
-	items := make([]string, 0, len(missing))
-	for _, requirement := range missing {
-		if !requirement.valid() {
-			continue
-		}
-		items = append(items, requirement.ProductDescription())
-	}
+	items := safePermissionDescriptions(missing)
 	if len(items) == 0 {
 		return "permission denied; ask a workspace administrator for access"
 	}
 	return "permission denied; ask a workspace administrator to allow you to " + strings.Join(items, "; ")
+}
+
+func safePermissionDescriptions(requirements []PermissionRequirement) []string {
+	items := make([]string, 0, len(requirements))
+	for _, requirement := range requirements {
+		if requirement.valid() {
+			items = append(items, requirement.ProductDescription())
+		}
+	}
+	return items
 }
 
 func containsPermission(requirements []PermissionRequirement, permission string) bool {
@@ -465,7 +483,7 @@ func (c *Client) Health() (*HealthStatus, error) {
 
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("health check failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(resp.StatusCode, respBody))
+		return nil, fmt.Errorf("health check failed (HTTP %d): %w", resp.StatusCode, newHTTPError(resp.StatusCode, respBody))
 	}
 
 	var out HealthStatus
@@ -1141,6 +1159,7 @@ const serviceAuthConfigGraphQLFields = `
 type ServiceInfo struct {
 	ID          string          `json:"id"`
 	Name        string          `json:"name"`
+	Description string          `json:"description,omitempty"`
 	Slug        string          `json:"slug"`
 	BaseURL     string          `json:"base_url"`
 	Servers     []ServiceServer `json:"servers"`
@@ -1208,6 +1227,7 @@ func (c *Client) GetServiceInfo(serviceSlug string) (*ServiceInfo, error) {
 			service(id: $id, provider: $provider) {
 				id
 				name
+				description
 				slug
 				base_url
 					provider { handle }
@@ -1445,7 +1465,7 @@ func (c *Client) StreamSDKGenerationEvents(jobID string, eventChan chan<- SDKEve
 
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(resp.Body)
-		errChan <- fmt.Errorf("stream failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(resp.StatusCode, respBody))
+		errChan <- fmt.Errorf("stream failed (HTTP %d): %w", resp.StatusCode, newHTTPError(resp.StatusCode, respBody))
 		return
 	}
 
@@ -1511,7 +1531,7 @@ func (c *Client) DownloadSDK(appID string) ([]byte, error) {
 
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("download failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(resp.StatusCode, respBody))
+		return nil, fmt.Errorf("download failed (HTTP %d): %w", resp.StatusCode, newHTTPError(resp.StatusCode, respBody))
 	}
 
 	return io.ReadAll(resp.Body)
@@ -1656,7 +1676,7 @@ func (c *Client) planDesiredConfig(kind string, intent DesiredConfigPlanIntent) 
 
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("plan %s config failed (HTTP %d): %s", kind, resp.StatusCode, formatHTTPErrorBody(resp.StatusCode, respBody))
+		return nil, fmt.Errorf("plan %s config failed (HTTP %d): %w", kind, resp.StatusCode, newHTTPError(resp.StatusCode, respBody))
 	}
 
 	var out SDKConfigPlanResponse
@@ -1694,7 +1714,7 @@ func (c *Client) PlanWorkspaceConfig(sourceHash, configKey string, config json.R
 
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("plan workspace config failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(resp.StatusCode, respBody))
+		return nil, fmt.Errorf("plan workspace config failed (HTTP %d): %w", resp.StatusCode, newHTTPError(resp.StatusCode, respBody))
 	}
 
 	var out ConfigPlanResponse
@@ -1769,7 +1789,7 @@ func (c *Client) ApplySDKConfig(planID, sourceHash string) (*SDKConfigApplyRespo
 
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("apply SDK config failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(resp.StatusCode, respBody))
+		return nil, fmt.Errorf("apply SDK config failed (HTTP %d): %w", resp.StatusCode, newHTTPError(resp.StatusCode, respBody))
 	}
 
 	var out SDKConfigApplyResponse
@@ -1802,7 +1822,7 @@ func (c *Client) ApplyMCPConfig(planID, sourceHash string) (*MCPConfigApplyRespo
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("apply mcp config failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(resp.StatusCode, respBody))
+		return nil, fmt.Errorf("apply mcp config failed (HTTP %d): %w", resp.StatusCode, newHTTPError(resp.StatusCode, respBody))
 	}
 	var out MCPConfigApplyResponse
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
@@ -1835,7 +1855,7 @@ func (c *Client) ApplyWebhookConfig(planID, sourceHash string) (*WebhookConfigAp
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("apply webhook config failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(resp.StatusCode, respBody))
+		return nil, fmt.Errorf("apply webhook config failed (HTTP %d): %w", resp.StatusCode, newHTTPError(resp.StatusCode, respBody))
 	}
 	var out WebhookConfigApplyResponse
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
@@ -1880,7 +1900,7 @@ func (c *Client) ApplyWorkspaceConfig(planID, sourceHash string, authMaterials m
 
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("apply workspace config failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(resp.StatusCode, respBody))
+		return nil, fmt.Errorf("apply workspace config failed (HTTP %d): %w", resp.StatusCode, newHTTPError(resp.StatusCode, respBody))
 	}
 
 	var out ConfigApplyResponse
@@ -1925,7 +1945,7 @@ func (c *Client) UpdateWorkspacePlanAction(planID string, actions []map[string]a
 
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("update workspace plan action failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(resp.StatusCode, respBody))
+		return fmt.Errorf("update workspace plan action failed (HTTP %d): %w", resp.StatusCode, newHTTPError(resp.StatusCode, respBody))
 	}
 
 	return nil
@@ -2083,7 +2103,7 @@ func (c *Client) PlanSpecImport(req SpecImportPlanRequest) (*SpecImportPlanRespo
 		if strictError := decodeSpecImportStrictError(resp.StatusCode, respBody); strictError != nil {
 			return nil, strictError
 		}
-		return nil, fmt.Errorf("plan spec import failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(resp.StatusCode, respBody))
+		return nil, fmt.Errorf("plan spec import failed (HTTP %d): %w", resp.StatusCode, newHTTPError(resp.StatusCode, respBody))
 	}
 
 	var out SpecImportPlanResponse
@@ -2137,7 +2157,7 @@ func (c *Client) ApplySpecImport(planID, reviewHash string) (*SpecImportApplyRes
 
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("apply spec import failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(resp.StatusCode, respBody))
+		return nil, fmt.Errorf("apply spec import failed (HTTP %d): %w", resp.StatusCode, newHTTPError(resp.StatusCode, respBody))
 	}
 
 	var out SpecImportApplyResponse
@@ -2163,7 +2183,7 @@ func (c *Client) DeactivateApp(appID string) error {
 
 	if resp.StatusCode >= 400 {
 		b, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("deactivate failed (HTTP %d): %s", resp.StatusCode, formatHTTPErrorBody(resp.StatusCode, b))
+		return fmt.Errorf("deactivate failed (HTTP %d): %w", resp.StatusCode, newHTTPError(resp.StatusCode, b))
 	}
 	return nil
 }
