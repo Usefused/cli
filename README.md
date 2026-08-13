@@ -2,7 +2,7 @@
 
 The `fused-cli` is the official command-line interface for [Fused](https://usefused.com). It manages a Fused Engine from your terminal: connect the CLI to an Engine, import API services into the Registry, apply workspace configuration, manage buckets and secrets, generate SDK packages, and deploy MCP servers.
 
-Use it as the config-as-code and operations CLI for the Fused integration harness. SDK and MCP generation are supported workflows, not the whole product.
+Use it as the config-as-code and operations CLI for the Fused integration gateway. SDK and MCP generation are supported workflows, not the whole product.
 
 ## Installation
 

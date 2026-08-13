@@ -34,14 +34,9 @@ deprecations:
 `versions` is a list of objects, one per enabled version -- not a bare list of
 version strings. Each entry's own `public`/`execution_policy`/
 `connection_profiles` are scoped to just that version; a version with none of
-these overrides is just `{version: "v1"}`. This replaced three separate
-service-level lists (`resolved_versions`, `version_policies`,
-`connection_profiles`), each previously keyed by a repeated `version` string
--- nesting means a version's identity is declared once instead of once per
-list. There is no backward compatibility for the old flat shape: a
-`workspace.yaml` still using `versions: ["v1"]` or a sibling
-`version_policies`/`connection_profiles`/`resolved_versions` list now fails to
-parse outright.
+these overrides is just `{version: "v1"}`. Version identity and all overrides
+must be nested in that one entry. Flat version strings and service-level
+override lists fail to parse so no policy can be detached from its version.
 
 `buckets.<name>` here only configures an *existing* bucket's
 `service_config`/`secrets` -- **it cannot create the bucket itself.** Apply

@@ -90,6 +90,8 @@ func TestBucketListJSONUsesAPIPageWithoutHumanSummary(t *testing.T) {
 }
 
 func TestWriteCommandErrorPreservesStructuredEngineFields(t *testing.T) {
+	// JSON output exposes the same reviewed server detail as human output so an
+	// agent can diagnose validation failures without parsing prose.
 	command := &cobra.Command{Use: "inspect"}
 	addJSONOutputFlag(command)
 	if err := command.Flags().Set(jsonOutputFlag, "true"); err != nil {
@@ -100,6 +102,7 @@ func TestWriteCommandErrorPreservesStructuredEngineFields(t *testing.T) {
 		Category: "validation", Remediation: "Add credentials and plan again.", TraceID: "trace-1", HTTPStatus: http.StatusBadRequest,
 	}
 	apiError.Details.Missing = []string{"basicAuth_username", "basicAuth_password"}
+	apiError.Details.ServerDetail = `unknown field "items_path"`
 
 	var out bytes.Buffer
 	if err := writeCommandError(&out, command, fmt.Errorf("plan failed: %w", apiError)); err != nil {
@@ -116,6 +119,9 @@ func TestWriteCommandErrorPreservesStructuredEngineFields(t *testing.T) {
 	missing, ok := envelope.Error.Details["missing"].([]any)
 	if !ok || len(missing) != 2 {
 		t.Fatalf("missing details = %#v", envelope.Error.Details)
+	}
+	if envelope.Error.Details["server_detail"] != apiError.Details.ServerDetail {
+		t.Fatalf("server detail = %#v", envelope.Error.Details)
 	}
 }
 
