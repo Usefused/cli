@@ -231,6 +231,7 @@ type PermissionRequirement struct {
 
 type apiErrorPayload struct {
 	Error   json.RawMessage         `json:"error"`
+	Message json.RawMessage         `json:"message"`
 	Missing []PermissionRequirement `json:"missing"`
 }
 
@@ -240,7 +241,8 @@ type APIError struct {
 	Category  string `json:"category"`
 	Retryable bool   `json:"retryable"`
 	Details   struct {
-		Missing []string `json:"missing"`
+		Missing      []string `json:"missing"`
+		ServerDetail string   `json:"server_detail,omitempty"`
 	} `json:"details,omitempty"`
 	Remediation string `json:"remediation,omitempty"`
 	TraceID     string `json:"trace_id,omitempty"`
@@ -248,9 +250,14 @@ type APIError struct {
 }
 
 func (e *APIError) Error() string {
+	// The detail is intentionally separate from the stable message so scripts can
+	// branch on the contract while an Engine owner still sees the parser decision.
 	message := e.Code + ": " + e.Message
 	if len(e.Details.Missing) > 0 {
 		message += " Missing: " + strings.Join(e.Details.Missing, ", ") + "."
+	}
+	if e.Details.ServerDetail != "" {
+		message += " Server detail: " + e.Details.ServerDetail
 	}
 	if e.Remediation != "" {
 		message += " " + e.Remediation
@@ -271,17 +278,83 @@ func newHTTPError(status int, respBody []byte) error {
 		if parsed := parsedHTTPError(status, payload); parsed != nil {
 			return parsed
 		}
+		apiErr := genericHTTPError(status)
+		apiErr.Details.ServerDetail = validationServerDetail(status, payload)
+		return apiErr
 	}
-	// Response bodies are untrusted and may echo credentials. Callers already
-	// include the operation and status, so a status-based message stays useful
-	// without copying remote text into returned errors or telemetry.
+	// Non-JSON bodies have no contract boundary and can contain proxy pages or
+	// credentials, so only structured Engine validation strings are displayable.
 	return genericHTTPError(status)
 }
 
+// validationServerDetail exposes bounded validation context only where the
+// caller can act on it; authentication and dependency responses stay opaque.
+func validationServerDetail(status int, payload apiErrorPayload) string {
+	if detail := decodedErrorString(payload.Error); detail != "" {
+		return safeValidationDetail(status, detail)
+	}
+	return safeValidationDetail(status, decodedErrorString(payload.Message))
+}
+
+// safeValidationDetail centralizes the status gate so both legacy string and
+// structured Engine errors receive the same local-display safety policy.
+func safeValidationDetail(status int, value string) string {
+	if status != http.StatusBadRequest && status != http.StatusUnprocessableEntity {
+		return ""
+	}
+	return safeServerDetail(value)
+}
+
+// decodedErrorString rejects nested or mixed response shapes because those
+// are not part of the Engine's user-facing validation-error contract.
+func decodedErrorString(raw json.RawMessage) string {
+	var value string
+	if len(raw) == 0 || json.Unmarshal(raw, &value) != nil {
+		return ""
+	}
+	return value
+}
+
+// safeServerDetail keeps terminal and JSON diagnostics useful without turning
+// a remotely supplied error into an unbounded or credential-bearing payload.
+func safeServerDetail(value string) string {
+	value = strings.Join(strings.Fields(value), " ")
+	if value == "" || containsCredentialMaterial(value) {
+		return ""
+	}
+	const maxServerDetailRunes = 1024
+	runes := []rune(value)
+	if len(runes) > maxServerDetailRunes {
+		return string(runes[:maxServerDetailRunes]) + "…"
+	}
+	return value
+}
+
+// containsCredentialMaterial fails closed on common serialized credential
+// markers while allowing field names in parser errors to remain actionable.
+func containsCredentialMaterial(value string) bool {
+	lower := strings.ToLower(value)
+	markers := []string{
+		"fsk_", "-----begin ", "authorization:", "authorization=",
+		"access_token=", `"access_token":`, "refresh_token=", `"refresh_token":`,
+		"client_secret=", `"client_secret":`, "password=", `"password":`,
+		"api_key=", `"api_key":`, "apikey=", `"apikey":`, "secret=", `"secret":`,
+	}
+	for _, marker := range markers {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
+}
+
 func parsedHTTPError(status int, payload apiErrorPayload) error {
+	// Structured errors remain the preferred stable contract, but their optional
+	// owner detail still passes through the same validation-only safety boundary.
 	var structured APIError
 	if len(payload.Error) > 0 && json.Unmarshal(payload.Error, &structured) == nil && structured.Code != "" && structured.Message != "" {
 		structured.HTTPStatus = status
+		structured.Details.ServerDetail = safeValidationDetail(status, structured.Details.ServerDetail)
 		return &structured
 	}
 
@@ -311,7 +384,8 @@ func appOwnerHTTPError(status int, code string) error {
 	}
 }
 
-func genericHTTPError(status int) error {
+// genericHTTPError keeps stable error codes independent of mutable server text.
+func genericHTTPError(status int) *APIError {
 	apiErr := &APIError{HTTPStatus: status}
 	switch status {
 	case http.StatusBadRequest, http.StatusUnprocessableEntity:

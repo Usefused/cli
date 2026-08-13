@@ -220,8 +220,13 @@ and response bodies only when needed.
 For a command using `--json`, treat a non-zero exit as a structured failure and
 decode stderr as `{ "ok": false, "error": { ... } }`. Branch on `error.code`
 and `error.retryable`; show `error.remediation` to the user and retain
-`error.trace_id` for support. Do not retry when `retryable` is false and do not
-parse the human error string to recover fields already present in the object.
+`error.trace_id` for support. Validation failures may also include the Engine's
+bounded `error.details.server_detail`; display it locally because the Engine
+owner needs the parser or contract decision to correct their input, but never
+copy it into OTEL, analytics, or durable receipts. Arbitrary response bodies,
+credential-shaped strings, and non-validation server messages remain hidden.
+Do not retry when `retryable` is false and do not parse the human error string
+to recover fields already present in the object.
 
 Use `import plan` / `import apply` when the source is already a machine-readable
 specification. This path is reviewed and receipt-backed: `plan` parses/diffs,

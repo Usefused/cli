@@ -60,12 +60,16 @@ func TestWithTelemetryDoesNotRecordRemoteErrorMessage(t *testing.T) {
 }
 
 func TestRecordTelemetryErrorUsesSafeStructuredFields(t *testing.T) {
+	// Owner-visible diagnostics stay local to CLI output; OTEL retains only
+	// bounded fields suitable for cross-tenant aggregation and auditing.
 	exporter := tracetest.NewInMemoryExporter()
 	provider := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
 	_, span := provider.Tracer("test").Start(context.Background(), "read")
-	recordTelemetryError(span, &cliapi.APIError{
+	apiError := &cliapi.APIError{
 		Code: "registry_request_failed", Message: "do not attach this remote message", Retryable: true,
-	})
+	}
+	apiError.Details.ServerDetail = `unknown field "items_path" from user input`
+	recordTelemetryError(span, apiError)
 	span.End()
 
 	spans := exporter.GetSpans()
@@ -81,6 +85,9 @@ func TestRecordTelemetryErrorUsesSafeStructuredFields(t *testing.T) {
 	}
 	if _, exposed := attributes["error.message"]; exposed {
 		t.Fatalf("remote error message was attached: %#v", attributes)
+	}
+	if _, exposed := attributes["error.server_detail"]; exposed {
+		t.Fatalf("server detail was attached: %#v", attributes)
 	}
 }
 

@@ -88,6 +88,8 @@ func writeCommandError(out io.Writer, cmd *cobra.Command, err error) error {
 }
 
 func classifyCommandError(cmd *cobra.Command, err error) jsonErrorResult {
+	// Human and JSON output share the same typed error; only the presentation
+	// changes, so debugging detail cannot drift between interactive and agent use.
 	result := jsonErrorResult{
 		Code: "command_failed", Message: err.Error(), Category: "cli", Command: cmd.CommandPath(),
 		Remediation: "Review the message and run '" + cmd.CommandPath() + " --help' if the required input is unclear.",
@@ -105,9 +107,7 @@ func classifyCommandError(cmd *cobra.Command, err error) jsonErrorResult {
 		result.Code, result.Message = apiError.Code, apiError.Message
 		result.Category, result.Retryable = apiError.Category, apiError.Retryable
 		result.Remediation, result.TraceID, result.HTTPStatus = apiError.Remediation, apiError.TraceID, apiError.HTTPStatus
-		if len(apiError.Details.Missing) > 0 {
-			result.Details = map[string]any{"missing": apiError.Details.Missing}
-		}
+		result.Details = apiErrorJSONDetails(apiError)
 		return result
 	}
 	if isCommandUsageError(err.Error()) {
@@ -122,6 +122,22 @@ func classifyCommandError(cmd *cobra.Command, err error) jsonErrorResult {
 		result.Code, result.Category = "request_cancelled", "cancelled"
 	}
 	return result
+}
+
+// apiErrorJSONDetails preserves every reviewed diagnostic field without
+// exposing arbitrary response JSON that the API client deliberately rejected.
+func apiErrorJSONDetails(apiError *cliapi.APIError) map[string]any {
+	details := map[string]any{}
+	if len(apiError.Details.Missing) > 0 {
+		details["missing"] = apiError.Details.Missing
+	}
+	if apiError.Details.ServerDetail != "" {
+		details["server_detail"] = apiError.Details.ServerDetail
+	}
+	if len(details) == 0 {
+		return nil
+	}
+	return details
 }
 
 func isCommandUsageError(message string) bool {

@@ -199,12 +199,12 @@ func TestPlanSpecImportDecodesStrictRejectionWithoutRawBody(t *testing.T) {
 	}
 }
 
-// TestPlanSpecImport_HandlesError verifies non-2xx responses surface a stable,
-// actionable category without copying remote response bodies into telemetry.
+// TestPlanSpecImport_HandlesError verifies an owner sees the exact bounded
+// parser decision while the stable error category remains machine-readable.
 func TestPlanSpecImport_HandlesError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte(`{"error": "invalid spec"}`))
+		w.Write([]byte(`{"error":"operation \"listCampaigns\" (GET /campaigns): invalid x-fused-pagination: json: unknown field \"items_path\""}`))
 	}))
 	defer srv.Close()
 
@@ -216,8 +216,8 @@ func TestPlanSpecImport_HandlesError(t *testing.T) {
 	if !strings.Contains(err.Error(), "HTTP 400") || !strings.Contains(err.Error(), "request_rejected") {
 		t.Errorf("expected safe HTTP error category, got: %v", err)
 	}
-	if strings.Contains(err.Error(), "invalid spec") {
-		t.Errorf("expected remote response body to be omitted, got: %v", err)
+	if !strings.Contains(err.Error(), `unknown field "items_path"`) {
+		t.Errorf("expected parser decision in CLI error, got: %v", err)
 	}
 }
 

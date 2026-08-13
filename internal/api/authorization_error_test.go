@@ -159,7 +159,9 @@ func TestPermissionDeniedTypedDetailsRemainProductSafe(t *testing.T) {
 	}
 }
 
-func TestRemoteErrorBodiesAreNotReturned(t *testing.T) {
+// TestUnstructuredAndCredentialBearingErrorDetailsAreNotReturned verifies the
+// owner diagnostic path never turns arbitrary or credential-shaped input into output.
+func TestUnstructuredAndCredentialBearingErrorDetailsAreNotReturned(t *testing.T) {
 	const secret = "fsk_never_return_or_record"
 	tests := []struct {
 		name   string
@@ -179,6 +181,36 @@ func TestRemoteErrorBodiesAreNotReturned(t *testing.T) {
 			}
 			if strings.Contains(message, secret) {
 				t.Fatalf("message contains response body credential: %q", message)
+			}
+		})
+	}
+}
+
+// TestValidationErrorDetailsAreBoundedAndStructured verifies only the reviewed
+// string fields from actionable validation responses reach terminal output.
+func TestValidationErrorDetailsAreBoundedAndStructured(t *testing.T) {
+	longDetail := strings.Repeat("a", 1100)
+	tests := []struct {
+		name      string
+		body      string
+		want      string
+		doNotWant string
+	}{
+		{name: "error string", body: `{"error":"invalid x-fused-pagination: unknown field items_path"}`, want: "unknown field items_path"},
+		{name: "message fallback", body: `{"message":"request schema is invalid"}`, want: "request schema is invalid"},
+		{name: "nested error", body: `{"error":{"debug":"internal detail"}}`, doNotWant: "internal detail"},
+		{name: "structured detail", body: `{"error":{"code":"request_rejected","message":"request rejected","details":{"server_detail":"schema dialect is unsupported"}}}`, want: "schema dialect is unsupported"},
+		{name: "structured credential", body: `{"error":{"code":"request_rejected","message":"request rejected","details":{"server_detail":"fsk_do_not_return"}}}`, doNotWant: "fsk_do_not_return"},
+		{name: "bounded detail", body: `{"error":` + strconv.Quote(longDetail) + `}`, want: "…", doNotWant: strings.Repeat("a", 1025)},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			message := formatHTTPErrorBody(http.StatusBadRequest, []byte(test.body))
+			if test.want != "" && !strings.Contains(message, test.want) {
+				t.Fatalf("message %q does not contain %q", message, test.want)
+			}
+			if test.doNotWant != "" && strings.Contains(message, test.doNotWant) {
+				t.Fatalf("message %q unexpectedly contains %q", message, test.doNotWant)
 			}
 		})
 	}

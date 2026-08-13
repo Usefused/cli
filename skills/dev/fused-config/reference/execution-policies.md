@@ -66,7 +66,7 @@ execution_policy:
       max_items: 10000
       max_bytes: 16777216
       max_duration_ms: 120000
-  base_url: "https://api.example.com/v2"
+  base_url: "https://api.example.com/current"
   server_variables:
     tenant: acme
     region: eu1
@@ -213,16 +213,13 @@ nothing else.
 
 A `versions[]` entry's own `execution_policy` lets that specific version
 override the service-level policy, resolved independently at both the
-local-effect and publish layers (a version-tier local override wins over the
-service-default local override for that version; same precedence, unrelated
-mechanism, on the publish side). This replaced the old sibling
-`version_policies` list -- the override now nests directly on the version
-entry it applies to instead of being declared in a separate list keyed by a
-repeated `version` string:
+local-effect and publish layers. A version-tier local override wins over the
+service-default local override for that version; the publish side follows the
+same precedence as a separate mechanism:
 
 ```yaml
 versions:
-  - version: "v2"
+  - version: "2026-08-01"
     execution_policy:
       rate_limit: {...}
 ```
