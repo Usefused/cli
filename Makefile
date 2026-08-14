@@ -17,12 +17,9 @@ clean:
 # release binary embeds the same skill content it fetches at runtime.
 skills-version:
 	@ver=$$(echo $(VERSION) | sed 's/^v//'); \
-	if [ -d "skills/$$ver" ]; then \
-		rm -rf "skills/$$ver"; \
-	fi; \
-	cp -r skills/dev "skills/$$ver"; \
-	if [ -n "$$(git status --porcelain -- "skills/$$ver")" ]; then \
-		git add -A -- "skills/$$ver"; \
+	./scripts/stage-release-skills.sh "$(VERSION)"; \
+	git add -f -A -- "skills/$$ver"; \
+	if ! git diff --cached --quiet -- "skills/$$ver"; then \
 		git commit -m "chore: prepare CLI skills for $(VERSION)"; \
 		git push origin HEAD; \
 		echo "Committed and pushed skills/$$ver for $(VERSION)."; \

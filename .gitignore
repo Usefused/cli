@@ -8,3 +8,6 @@ bin/cli
 # committed by this once before, so ignore both names it could take.
 /cli
 /fused-cli
+# GoReleaser stages the current development skills under the release version.
+# Historical snapshots already tracked by git remain tracked despite this rule.
+/skills/[0-9]*/

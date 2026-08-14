@@ -8,7 +8,7 @@ set -e
 
 REPO="Usefused/cli"
 BINARY="fused-cli"
-INSTALL_DIR="${HOME}/.local/bin"
+INSTALL_DIR="${FUSED_CLI_INSTALL_DIR:-${HOME}/.local/bin}"
 
 # Detect OS
 OS="$(uname -s)"
@@ -111,6 +111,15 @@ fi
 echo "=> Extracting archive..."
 tar -xzf "${TAR_NAME}"
 
+SKILL_VERSION="${TARGET_VERSION#v}"
+SKILLS_SOURCE="skills/${SKILL_VERSION}"
+HAS_BUNDLED_SKILLS=0
+if [ -f "${SKILLS_SOURCE}/fused-cli/SKILL.md" ]; then
+    HAS_BUNDLED_SKILLS=1
+else
+    echo "=> This older release has no bundled skills; the CLI will use its fallback source."
+fi
+
 # Ensure the install directory exists
 mkdir -p "${INSTALL_DIR}"
 
@@ -118,6 +127,15 @@ mkdir -p "${INSTALL_DIR}"
 echo "=> Installing to ${INSTALL_DIR}/${BINARY}..."
 mv "${BINARY}" "${INSTALL_DIR}/${BINARY}"
 chmod +x "${INSTALL_DIR}/${BINARY}"
+
+# Keep the immutable skill snapshot beside the executable. The CLI resolves
+# this copy first, so installation works offline and cannot drift from its binary.
+if [ "$HAS_BUNDLED_SKILLS" -eq 1 ]; then
+    SKILLS_DEST="${INSTALL_DIR}/skills/${SKILL_VERSION}"
+    mkdir -p "${SKILLS_DEST}"
+    cp -R "${SKILLS_SOURCE}/." "${SKILLS_DEST}/"
+    echo "=> Installed bundled skills to ${SKILLS_DEST}"
+fi
 
 echo "=> Note: Installed to ${INSTALL_DIR} to avoid requiring sudo."
 echo "=> If you prefer a system-wide installation, you can move it to /usr/local/bin using sudo."

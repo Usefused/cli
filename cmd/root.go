@@ -100,7 +100,7 @@ func init() {
 	RootCmd.PersistentFlags().BoolVar(&NoInput, "no-input", false, "Fail instead of prompting for input (also enabled by CI=true)")
 	RootCmd.PersistentFlags().DurationVar(&RequestTimeout, "timeout", api.DefaultTimeout, "Maximum duration for an Engine request")
 	RootCmd.PersistentFlags().StringVar(&RequestID, "request-id", "", "Attach an audit correlation ID to Engine requests")
-	RootCmd.PersistentFlags().BoolVar(&showReadme, "readme", false, "Print the full CLI README text and exit")
+	RootCmd.PersistentFlags().BoolVar(&showReadme, "readme", false, "Print the CLI onboarding README and exit")
 }
 
 func validateExecutionOptions() error {

@@ -76,6 +76,11 @@ jobs:
         with:
           go-version: '1.22'
 
+      - name: Stage versioned skills
+        env:
+          RELEASE_VERSION: ${{ steps.tag.outputs.new_tag || github.ref_name }}
+        run: ./scripts/stage-release-skills.sh "$RELEASE_VERSION"
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
         with:

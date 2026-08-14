@@ -27,6 +27,13 @@ func setTestRawContentBaseURL(t *testing.T, url string) {
 	t.Cleanup(func() { skillRawContentBaseURL = old })
 }
 
+func setTestExecutablePath(t *testing.T, executable string) {
+	t.Helper()
+	old := skillExecutablePath
+	skillExecutablePath = func() (string, error) { return executable, nil }
+	t.Cleanup(func() { skillExecutablePath = old })
+}
+
 // --- skillSpec / manifest ---------------------------------------------------
 
 func TestSkillSpecByName(t *testing.T) {
@@ -525,7 +532,66 @@ func TestEmbeddedSkillFiles_NilFS(t *testing.T) {
 	}
 }
 
-// --- resolveSkillFiles: fetch, all-or-nothing fallback ----------------------
+// --- resolveSkillFiles: bundle, fetch, all-or-nothing fallback --------------
+
+func TestResolveSkillFiles_ReleaseBundleWins(t *testing.T) {
+	setTestVersion(t, "v2.0.0")
+	binDir := t.TempDir()
+	setTestExecutablePath(t, filepath.Join(binDir, "fused-cli"))
+
+	spec, _ := skillSpecByName("fused-cli")
+	root := filepath.Join(binDir, "skills", "2.0.0", spec.name)
+	for _, relPath := range spec.manifest {
+		path := filepath.Join(root, filepath.FromSlash(relPath))
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("bundled: "+relPath), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	setTestRawContentBaseURL(t, srv.URL)
+
+	files, source, err := resolveSkillFiles(spec)
+	if err != nil {
+		t.Fatalf("resolveSkillFiles: %v", err)
+	}
+	if !strings.HasPrefix(source, "release bundle:") {
+		t.Errorf("expected release bundle source, got %q", source)
+	}
+	if files["SKILL.md"] != "bundled: SKILL.md" {
+		t.Errorf("expected bundled content, got %q", files["SKILL.md"])
+	}
+	if requests != 0 {
+		t.Errorf("release bundle should avoid network requests, got %d", requests)
+	}
+}
+
+func TestResolveSkillFiles_IncompleteReleaseBundleErrors(t *testing.T) {
+	setTestVersion(t, "v2.0.0")
+	binDir := t.TempDir()
+	setTestExecutablePath(t, filepath.Join(binDir, "fused-cli"))
+
+	spec, _ := skillSpecByName("fused-cli")
+	root := filepath.Join(binDir, "skills", "2.0.0", spec.name)
+	if err := os.MkdirAll(root, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "SKILL.md"), []byte("partial"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := resolveSkillFiles(spec); err == nil || !strings.Contains(err.Error(), "read bundled") {
+		t.Fatalf("expected an incomplete bundle error, got %v", err)
+	}
+}
 
 func TestResolveSkillFiles_GithubSuccess(t *testing.T) {
 	spec, _ := skillSpecByName("fused-cli")
@@ -568,6 +634,7 @@ func TestResolveSkillFiles_PartialFetchFailureFallsBackToEmbedded(t *testing.T) 
 		"skills/dev/fused-config/SKILL.md":                         &fstest.MapFile{Data: []byte("embedded SKILL.md")},
 		"skills/dev/fused-config/reference/execution-policies.md":  &fstest.MapFile{Data: []byte("embedded execution-policies")},
 		"skills/dev/fused-config/reference/connection-profiles.md": &fstest.MapFile{Data: []byte("embedded connection-profiles")},
+		"skills/dev/fused-config/reference/import-overlays.md":     &fstest.MapFile{Data: []byte("embedded import-overlays")},
 		"skills/dev/fused-config/reference/openapi-postman.md":     &fstest.MapFile{Data: []byte("embedded openapi-postman")},
 	}
 	t.Cleanup(func() { EmbeddedSkillFS = oldFS })

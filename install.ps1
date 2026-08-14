@@ -7,7 +7,7 @@ $ErrorActionPreference = "Stop"
 
 $Repo    = "Usefused/cli"
 $Binary  = "fused-cli"
-$InstallDir = "$env:LOCALAPPDATA\Programs\fused-cli"
+$InstallDir = if ($env:FUSED_CLI_INSTALL_DIR) { $env:FUSED_CLI_INSTALL_DIR } else { "$env:LOCALAPPDATA\Programs\fused-cli" }
 
 # Detect architecture
 $Arch = if ([System.Environment]::Is64BitOperatingSystem) { "x86_64" } else {
@@ -47,6 +47,13 @@ try {
     Write-Host "=> Extracting archive..."
     Expand-Archive -Path $ZipPath -DestinationPath $TmpDir -Force
 
+    $SkillVersion = $TargetVersion.TrimStart("v")
+    $SkillsSource = Join-Path $TmpDir "skills\$SkillVersion"
+    $HasBundledSkills = Test-Path (Join-Path $SkillsSource "fused-cli\SKILL.md")
+    if (-not $HasBundledSkills) {
+        Write-Host "=> This older release has no bundled skills; the CLI will use its fallback source."
+    }
+
     # Create install directory and move binary
     if (-not (Test-Path $InstallDir)) {
         New-Item -ItemType Directory -Path $InstallDir | Out-Null
@@ -55,6 +62,17 @@ try {
     $BinaryPath = Join-Path $TmpDir "${Binary}.exe"
     Write-Host "=> Installing to $InstallDir..."
     Move-Item -Path $BinaryPath -Destination (Join-Path $InstallDir "${Binary}.exe") -Force
+
+    # Keep the immutable skill snapshot beside the executable so skill
+    # installation remains offline and tied to this CLI release.
+    if ($HasBundledSkills) {
+        $SkillsDest = Join-Path $InstallDir "skills\$SkillVersion"
+        if (-not (Test-Path $SkillsDest)) {
+            New-Item -ItemType Directory -Path $SkillsDest -Force | Out-Null
+        }
+        Copy-Item -Path (Join-Path $SkillsSource "*") -Destination $SkillsDest -Recurse -Force
+        Write-Host "=> Installed bundled skills to $SkillsDest"
+    }
 } finally {
     Remove-Item -Recurse -Force $TmpDir -ErrorAction SilentlyContinue
 }

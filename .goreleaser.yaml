@@ -18,7 +18,8 @@ builds:
       - arm64
 
 archives:
-  - format: tar.gz
+  - formats:
+      - tar.gz
     name_template: >-
       {{ .ProjectName }}_
       {{- title .Os }}_
@@ -28,7 +29,12 @@ archives:
       {{- if .Arm }}v{{ .Arm }}{{ end }}
     format_overrides:
       - goos: windows
-        format: zip
+        formats:
+          - zip
+    files:
+      # The workflow stages skills/dev at this immutable version before the
+      # build, so the archive and embedded fallback always contain the same files.
+      - "skills/{{ .Version }}/**/*"
 
 checksum:
   name_template: 'checksums.txt'
