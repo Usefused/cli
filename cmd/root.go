@@ -98,7 +98,9 @@ func init() {
 	RootCmd.PersistentFlags().StringVar(&EngineURL, "engine-url", "", "Fused Engine URL (overrides config & FUSED_ENGINE_URL)")
 	RootCmd.PersistentFlags().StringVarP(&ConfigFile, "file", "f", "", "Path to a Fused config file (disables .fused/ discovery)")
 	RootCmd.PersistentFlags().BoolVar(&NoInput, "no-input", false, "Fail instead of prompting for input (also enabled by CI=true)")
-	RootCmd.PersistentFlags().DurationVar(&RequestTimeout, "timeout", api.DefaultTimeout, "Maximum duration for an Engine request")
+	// The root default remains responsive for routine calls; import commands
+	// choose their larger bounded default only when this flag was not supplied.
+	RootCmd.PersistentFlags().DurationVar(&RequestTimeout, "timeout", api.DefaultTimeout, "Maximum duration for an Engine request (spec imports default to 20m unless set)")
 	RootCmd.PersistentFlags().StringVar(&RequestID, "request-id", "", "Attach an audit correlation ID to Engine requests")
 	RootCmd.PersistentFlags().BoolVar(&showReadme, "readme", false, "Print the CLI onboarding README and exit")
 }

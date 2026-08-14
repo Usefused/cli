@@ -77,7 +77,7 @@ func loadProviderConnectionProfile() (map[string]interface{}, error) {
 
 func resolveProviderProfileTarget(client interface {
 	GetServiceInfo(string) (*api.ServiceInfo, error)
-	ServiceVersions(string) ([]api.ServiceVersion, error)
+	ServiceVersionSummaries(string) ([]api.ServiceVersionSummary, error)
 }, serviceRef, requestedVersion string) (string, string, string, error) {
 	service, err := client.GetServiceInfo(serviceRef)
 	if err != nil {
@@ -86,7 +86,9 @@ func resolveProviderProfileTarget(client interface {
 	if service == nil {
 		return "", "", "", fmt.Errorf("service %s not found", serviceRef)
 	}
-	versions, err := client.ServiceVersions(serviceRef)
+	// Publishing a profile needs only the exact version ID; fetching policy and
+	// documentation payloads would make this mutation depend on an unrelated read.
+	versions, err := client.ServiceVersionSummaries(serviceRef)
 	if err != nil {
 		return "", "", "", err
 	}

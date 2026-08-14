@@ -148,7 +148,9 @@ func processServiceIntent(client *api.Client, svcIntent api.IntentService, wsCfg
 	if version == "" {
 		// Not enabled locally yet -- fall back to Registry's latest version
 		// so intent-based discovery can add a brand-new service on its own.
-		versions, err := client.ServiceVersions(key)
+		// Intent discovery needs only the newest version name, so it must not
+		// pull every version's documentation and execution-policy payload.
+		versions, err := client.ServiceVersionSummaries(key)
 		if err != nil || len(versions) == 0 {
 			fmt.Printf("   -> Could not find any versions for %q\n", s.Name)
 			return 0, false

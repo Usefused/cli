@@ -87,8 +87,9 @@ var importApplyCmd = &cobra.Command{
 	Short: "Apply a previously planned spec import",
 	Long: `Commits the plan produced by "import plan": a new service is created live
 immediately; an existing provider version is replaced by a new internal
-	revision, while a different provider version is created alongside it. Defaults
-to the most recent local plan receipt.`,
+revision, while a different provider version is created alongside it. Defaults
+to the most recent local plan receipt. Spec import plan/apply requests allow 20
+minutes unless --timeout is explicitly set.`,
 	Args: cobra.NoArgs,
 	RunE: WithTelemetry("cli.import.apply", func(cmd *cobra.Command, args []string) error {
 		return runImportApply(cmd, importSpecApplyOptions{

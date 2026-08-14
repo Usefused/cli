@@ -1,10 +1,12 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"strings"
 	"time"
@@ -20,6 +22,11 @@ import (
 // configs: "import apply" always means "apply the most recent import plan",
 // there's no directory of many import specs to disambiguate between.
 const defaultImportReceiptPath = ".fused/.state/import.plan.json"
+
+// defaultSpecImportTimeout gives bounded parser and set-based persistence work
+// enough time without weakening the one-minute feedback loop for ordinary CLI
+// reads. Large reviewed contracts can legitimately contain thousands of rows.
+const defaultSpecImportTimeout = 20 * time.Minute
 
 type importSpecPlanOptions struct {
 	name    string
@@ -41,6 +48,44 @@ type importSpecApplyOptions struct {
 	planID      string
 	reviewHash  string
 	receiptPath string
+}
+
+// importApplyOutcomeUnknownError distinguishes a lost response from a proven
+// mutation failure. Import plans are one-shot, so callers must never use the
+// generic retryable timeout classification to replay the same receipt.
+type importApplyOutcomeUnknownError struct {
+	cause   error
+	timeout time.Duration
+	slug    string
+}
+
+// Error explains both sides of the ambiguous boundary without exposing the
+// Engine URL, credentials, source, or remote response body.
+func (e *importApplyOutcomeUnknownError) Error() string {
+	return fmt.Sprintf("import apply outcome is unknown after %s: %v. %s", e.timeout, e.cause, e.remediation())
+}
+
+// Unwrap preserves deadline inspection for logs while command classification
+// remains on the safer, non-retryable import-specific error.
+func (e *importApplyOutcomeUnknownError) Unwrap() error {
+	return e.cause
+}
+
+// remediation directs recovery through read-only activation checks because a
+// blind retry can only conflict after a late server-side commit.
+func (e *importApplyOutcomeUnknownError) remediation() string {
+	slug := safeImportSlug(e.slug)
+	return fmt.Sprintf("Do not automatically reuse this one-shot receipt. Verify activation with `fused-cli workspace services list -q %s`; if absent, inspect `fused-cli service show %s` and use the normal workspace plan/apply flow. For future large imports, set `--timeout` above %s.", slug, slug, e.timeout)
+}
+
+// safeImportSlug prevents a locally edited receipt from injecting terminal or
+// shell syntax into recovery guidance.
+func safeImportSlug(slug string) string {
+	slug = strings.TrimSpace(slug)
+	if slug != "" && validRequestID(slug) {
+		return slug
+	}
+	return "<slug>"
 }
 
 // importPlanReceipt mirrors planReceipt's shape (config_runner.go) for the
@@ -68,7 +113,9 @@ func runImportPlan(cmd *cobra.Command, specArg string, opts importSpecPlanOption
 		attribute.Bool("strict_mode", req.Strict),
 		attribute.Bool("overlay_present", req.OverlayContent != nil),
 	)
-	client, err := getAPIClient()
+	// Import parsing receives its own larger bounded default because source size,
+	// not ordinary control-plane latency, determines the legitimate work here.
+	client, err := getAPIClientWithTimeout(specImportTimeout(cmd))
 	if err != nil {
 		return err
 	}
@@ -337,7 +384,10 @@ func runImportApply(cmd *cobra.Command, opts importSpecApplyOptions) error {
 	if err != nil {
 		return err
 	}
-	client, err := getAPIClient()
+	timeout := specImportTimeout(cmd)
+	// Apply uses the same import-specific budget as plan so reviewed large
+	// contracts are not cut off while their bounded SQL batches are committing.
+	client, err := getAPIClientWithTimeout(timeout)
 	if err != nil {
 		return err
 	}
@@ -349,11 +399,49 @@ func runImportApply(cmd *cobra.Command, opts importSpecApplyOptions) error {
 	}
 	resp, err := client.ApplySpecImport(receipt.PlanID, receipt.ReviewHash)
 	if err != nil {
+		if isRequestTimeout(err) {
+			// The Registry transaction may have committed before the proxy response
+			// was lost, so this outcome is deliberately not marked retryable.
+			trace.SpanFromContext(cmd.Context()).SetAttributes(
+				attribute.String("outcome", "unknown"),
+				attribute.Int64("timeout_ms", timeout.Milliseconds()),
+			)
+			return &importApplyOutcomeUnknownError{cause: err, timeout: timeout, slug: receipt.Slug}
+		}
 		return err
 	}
 	recordAppliedChange(cmd.Context(), cmd.CommandPath(), "service_import")
 	printImportApplyResult(cmd.OutOrStdout(), resp)
 	return nil
+}
+
+// specImportTimeout honors an explicit global flag while giving import plan
+// and apply a larger default than short control-plane requests.
+func specImportTimeout(cmd *cobra.Command) time.Duration {
+	if timeoutFlagChanged(cmd) {
+		return RequestTimeout
+	}
+	return defaultSpecImportTimeout
+}
+
+// timeoutFlagChanged checks both local and inherited flag sets because Cobra
+// permits a persistent flag before or after the import subcommands.
+func timeoutFlagChanged(cmd *cobra.Command) bool {
+	if cmd == nil {
+		return false
+	}
+	flag := cmd.Flag("timeout")
+	return flag != nil && flag.Changed
+}
+
+// isRequestTimeout recognizes both context deadlines and transport timeout
+// implementations without misclassifying an operator cancellation as unknown.
+func isRequestTimeout(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var timeoutError net.Error
+	return errors.As(err, &timeoutError) && timeoutError.Timeout()
 }
 
 // resolveImportApplyReceipt mirrors receiptForApply's --plan-id/receipt-file

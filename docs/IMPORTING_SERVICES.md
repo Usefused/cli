@@ -20,6 +20,15 @@ The plan is reviewable and the apply step commits the exact planned source.
 `--target` accepts `all`, `endpoints`, or `webhooks` and defaults to
 `endpoints`.
 
+Plan and apply allow 20 minutes by default for large reviewed specifications.
+Use `--timeout 30m` (or another explicit duration) when the deployment needs a
+larger bound. If apply times out, its outcome is unknown because the Registry
+may have committed before the Engine proxy lost the response. Do not replay the
+same one-shot receipt automatically. Check `workspace services list -q <slug>`
+and `service show <slug>`; if Registry committed but activation is absent, add
+the exact version to workspace configuration and use normal workspace
+plan/apply.
+
 ## URLs and other source types
 
 ```bash

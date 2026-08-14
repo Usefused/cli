@@ -1,13 +1,17 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/Usefused/cli/internal/api"
 	"github.com/spf13/cobra"
@@ -297,6 +301,8 @@ func TestImportPlanRegistersOverlayFlag(t *testing.T) {
 	}
 }
 
+// TestRunImportPlanRecordsStrictMode keeps import telemetry useful for audits
+// while proving overlay bytes and review identities stay out of span data.
 func TestRunImportPlanRecordsStrictMode(t *testing.T) {
 	server, _ := newImportPlanTestServer(t)
 	defer server.Close()
@@ -321,23 +327,29 @@ func TestRunImportPlanRecordsStrictMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runImportPlan: %v", err)
 	}
-	value, ok := importPlanSpanAttribute(exporter.GetSpans(), "strict_mode")
-	if !ok || value != true {
-		t.Fatalf("strict_mode OTEL attribute = %#v, present=%v", value, ok)
+	spans := exporter.GetSpans()
+	assertImportPlanSpanAttribute(t, spans, "strict_mode", true)
+	assertImportPlanSpanAttribute(t, spans, "overlay_present", true)
+	assertImportPlanSpanAttribute(t, spans, "adapter_version", "openapi-v2")
+	assertImportPlanSpanAttribute(t, spans, "outcome", "create_service")
+	assertImportPlanTelemetrySecretSafe(t, spans, overlayPath)
+}
+
+// assertImportPlanSpanAttribute keeps the telemetry contract table-driven so
+// adding a bounded field does not increase the orchestration test's branches.
+func assertImportPlanSpanAttribute(t *testing.T, spans tracetest.SpanStubs, key string, want any) {
+	t.Helper()
+	value, ok := importPlanSpanAttribute(spans, key)
+	if !ok || value != want {
+		t.Fatalf("%s OTEL attribute = %#v, present=%v, want %#v", key, value, ok, want)
 	}
-	value, ok = importPlanSpanAttribute(exporter.GetSpans(), "overlay_present")
-	if !ok || value != true {
-		t.Fatalf("overlay_present OTEL attribute = %#v, present=%v", value, ok)
-	}
-	value, ok = importPlanSpanAttribute(exporter.GetSpans(), "adapter_version")
-	if !ok || value != "openapi-v2" {
-		t.Fatalf("adapter_version OTEL attribute = %#v, present=%v", value, ok)
-	}
-	value, ok = importPlanSpanAttribute(exporter.GetSpans(), "outcome")
-	if !ok || value != "create_service" {
-		t.Fatalf("outcome OTEL attribute = %#v, present=%v", value, ok)
-	}
-	for _, span := range exporter.GetSpans() {
+}
+
+// assertImportPlanTelemetrySecretSafe checks every attribute because a new
+// span or field must not silently expose the local overlay or review identity.
+func assertImportPlanTelemetrySecretSafe(t *testing.T, spans tracetest.SpanStubs, overlayPath string) {
+	t.Helper()
+	for _, span := range spans {
 		for _, value := range span.Attributes {
 			if strings.Contains(value.Value.Emit(), overlayPath) || strings.Contains(value.Value.Emit(), "secret-marker") || strings.Contains(value.Value.Emit(), "review-1") {
 				t.Fatalf("sensitive overlay/review data reached OTEL: %s=%s", value.Key, value.Value.Emit())
@@ -523,6 +535,97 @@ func TestImportApplyUsesReceiptWithoutReplanning(t *testing.T) {
 	}
 	if !strings.Contains(out, "revision 2") {
 		t.Errorf("expected apply result naming the internal revision, got %q", out)
+	}
+}
+
+// TestSpecImportTimeoutUsesLargeDefaultAndExplicitOverride protects the split
+// between ordinary one-minute requests and source-size-dependent import work.
+func TestSpecImportTimeoutUsesLargeDefaultAndExplicitOverride(t *testing.T) {
+	if got := specImportTimeout(&cobra.Command{}); got != 20*time.Minute {
+		t.Fatalf("default spec import timeout = %s, want 20m", got)
+	}
+
+	previous := RequestTimeout
+	t.Cleanup(func() { RequestTimeout = previous })
+	for _, args := range [][]string{{"--timeout", "37s", "apply"}, {"apply", "--timeout", "37s"}} {
+		RequestTimeout = api.DefaultTimeout
+		root := &cobra.Command{Use: "fused-cli"}
+		apply := &cobra.Command{Use: "apply"}
+		root.PersistentFlags().DurationVar(&RequestTimeout, "timeout", api.DefaultTimeout, "test timeout")
+		root.AddCommand(apply)
+		root.SetArgs(args)
+		apply.RunE = func(cmd *cobra.Command, _ []string) error {
+			if got := specImportTimeout(cmd); got != 37*time.Second {
+				t.Fatalf("explicit spec import timeout = %s, want 37s", got)
+			}
+			return nil
+		}
+		if err := root.Execute(); err != nil {
+			t.Fatalf("execute %v: %v", args, err)
+		}
+	}
+}
+
+// TestImportApplyTimeoutIsOutcomeUnknownAndNotRetried proves the CLI neither
+// claims failure nor replays a one-shot mutation after losing its response.
+func TestImportApplyTimeoutIsOutcomeUnknownAndNotRetried(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		requests.Add(1)
+		time.Sleep(100 * time.Millisecond)
+	}))
+	defer server.Close()
+	setImportTestAPI(t, server.URL)
+
+	receiptPath := writeImportTimeoutReceipt(t, server.URL)
+
+	previous := RequestTimeout
+	RequestTimeout = 10 * time.Millisecond
+	t.Cleanup(func() { RequestTimeout = previous })
+	command := &cobra.Command{Use: "apply"}
+	command.SetContext(context.Background())
+	command.Flags().Duration("timeout", api.DefaultTimeout, "test timeout")
+	if err := command.Flags().Set("timeout", RequestTimeout.String()); err != nil {
+		t.Fatal(err)
+	}
+
+	err := runImportApply(command, importSpecApplyOptions{receiptPath: receiptPath})
+	assertUnknownImportApplyTimeout(t, command, err, requests.Load())
+}
+
+// writeImportTimeoutReceipt preserves the real receipt boundary so the test
+// exercises slug-based recovery guidance instead of constructing hidden state.
+func writeImportTimeoutReceipt(t *testing.T, engineURL string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "receipt.json")
+	receipt := importPlanReceipt{Slug: "large-api", PlanID: "plan-large", ReviewHash: "review-large", EngineURL: engineURL}
+	data, err := json.Marshal(receipt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// assertUnknownImportApplyTimeout verifies both the human and structured
+// contracts while keeping retry count explicit.
+func assertUnknownImportApplyTimeout(t *testing.T, command *cobra.Command, err error, requests int32) {
+	t.Helper()
+	var unknown *importApplyOutcomeUnknownError
+	if !errors.As(err, &unknown) || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("apply timeout = %T %v, want outcome-unknown deadline", err, err)
+	}
+	if requests != 1 {
+		t.Fatalf("apply request count = %d, want one", requests)
+	}
+	if !strings.Contains(err.Error(), "workspace services list -q large-api") || !strings.Contains(err.Error(), "Do not automatically reuse") {
+		t.Fatalf("timeout remediation = %q", err)
+	}
+	classified := classifyCommandError(command, err)
+	if classified.Code != "import_apply_outcome_unknown" || classified.Retryable {
+		t.Fatalf("classified timeout = %#v", classified)
 	}
 }
 
