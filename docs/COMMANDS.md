@@ -1,7 +1,9 @@
 # Fused CLI Command Reference
 
-The full list of commands and flags for `fused-cli`. For installation, configuration, and a
-walkthrough of common workflows, see the main [README](../README.md).
+The full list of commands and flags for `fused-cli`. Start with the main
+[README](../README.md), then use the focused guides for
+[setup and operation](SETUP.md), [service imports](IMPORTING_SERVICES.md), and
+[config as code](CONFIG_AS_CODE.md).
 
 ## Global Flags
 All commands support the following global flags:
@@ -14,7 +16,7 @@ All commands support the following global flags:
 | `--no-input` | | Fail instead of prompting; also enabled by `CI=true` | `false` |
 | `--timeout` | | Maximum duration for an Engine request | `1m0s` |
 | `--request-id` | | Attach an audit correlation ID to every Engine request | `""` |
-| `--readme` | | Print the full CLI reference (this file plus the README) and exit | `false` |
+| `--readme` | | Print the concise CLI onboarding README and exit | `false` |
 
 All Engine requests have a finite timeout and are cancelled when the CLI
 receives SIGINT or SIGTERM. `CI=true` and `FUSED_NO_UPDATE_CHECK=1` disable
@@ -116,6 +118,40 @@ without invoking `sdk prompt` and starting a second agent.
 
 ## `config`
 Manage your local CLI configuration (`set`, `get`, `list`, `reset`). Inherits global flags.
+
+## `skill`
+
+List, inspect, or install the Fused skills bundled with this CLI. Installed
+skills teach supported coding agents the relevant discovery, configuration,
+credential, and plan/apply workflows.
+
+### `skill list`
+
+List every bundled skill. Pass `--json` for structured name and summary fields.
+
+### `skill print [skill-file]`
+
+Print `SKILL.md` or one referenced skill file. `--skill` defaults to
+`fused-cli`; pass `--json` for structured skill, file, and content fields.
+
+### `skill install --for <agent>`
+
+Install all bundled skills into the selected agent's normal skill/rules
+directory. Supported agents are `codex`, `claude`, `antigravity`, `cursor`, and
+`windsurf`.
+
+| Argument | Short | Description | Default |
+|----------|-------|-------------|---------|
+| `--for` | | Target agent or app (required) | `""` |
+| `--skill` | | Install one named skill instead of all skills | `""` |
+| `--scope` | | `user` or `project`; Cursor and Windsurf support project only | target default |
+| `--path` | | Exact destination; requires `--skill` | `""` |
+
+The command writes files only; it does not inject a skill into an already
+running agent context. Binary release archives include `skills/<version>/`, and
+the official installers preserve it beside the executable. `skill install`
+reads that immutable local snapshot first, avoiding network drift; GitHub and
+embedded content remain fallbacks for older and `go install` installations.
 
 ## `service versions <service-slug>`
 List Registry versions visible to the current account for a service slug. Supports provider-qualified slugs such as `@provider/slug`.

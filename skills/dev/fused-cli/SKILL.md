@@ -132,6 +132,12 @@ Running a group without an
 action or passing an unexpected positional argument is an error; use the
 group's `--help` output to choose the exact subcommand.
 
+`fused-cli skill install` installs from the immutable `skills/<version>/`
+snapshot shipped beside a release binary when available. This is intentionally
+the first source so agent instructions work offline and stay aligned with the
+installed CLI; network and embedded copies support older or source-built
+installations.
+
 ## Build an SDK or MCP from a business goal
 
 For an SDK requested inside a coding agent, use `fused-sdk`. It performs the
