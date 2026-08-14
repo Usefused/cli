@@ -375,7 +375,9 @@ func runServiceVersions(cmd *cobra.Command, service string) error {
 	if err != nil {
 		return err
 	}
-	versions, err := client.ServiceVersions(service)
+	// Version browsing needs identity and compatibility only. The full policy
+	// projection is reserved for workspace sync, which actually round-trips it.
+	versions, err := client.ServiceVersionSummaries(service)
 	if err != nil {
 		return err
 	}
@@ -386,7 +388,9 @@ func runServiceVersions(cmd *cobra.Command, service string) error {
 	return nil
 }
 
-func printServiceVersions(out io.Writer, service string, versions []cliapi.ServiceVersion) {
+// printServiceVersions renders the lean server projection without rebuilding a
+// second list from full version objects in CLI memory.
+func printServiceVersions(out io.Writer, service string, versions []cliapi.ServiceVersionSummary) {
 	if len(versions) == 0 {
 		fmt.Fprintf(out, "No versions found for service %s.\n", service)
 		return

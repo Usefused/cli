@@ -14,7 +14,7 @@ All commands support the following global flags:
 | `--engine-url` | | Fused Engine URL (overrides config & `FUSED_ENGINE_URL`) | `""` |
 | `--file` | `-f` | Path to a Fused config file (disables `.fused/` discovery) | `""` |
 | `--no-input` | | Fail instead of prompting; also enabled by `CI=true` | `false` |
-| `--timeout` | | Maximum duration for an Engine request | `1m0s` |
+| `--timeout` | | Maximum duration for an Engine request; spec imports use `20m0s` unless explicitly set | `1m0s` |
 | `--request-id` | | Attach an audit correlation ID to every Engine request | `""` |
 | `--readme` | | Print the concise CLI onboarding README and exit | `false` |
 
@@ -155,7 +155,9 @@ embedded content remain fallbacks for older and `go install` installations.
 
 ## `service versions <service-slug>`
 List Registry versions visible to the current account for a service slug. Supports provider-qualified slugs such as `@provider/slug`.
-Pass `--json` to return the version objects directly.
+The command requests only version identity, status, and execution-contract
+compatibility fields; it does not download documentation or execution policies.
+Pass `--json` to return those bounded summary objects directly.
 
 ## `service show <service-slug>`
 Show the description, base URL, servers, and supported authentication methods
@@ -715,6 +717,11 @@ Usage: `fused-cli import plan [spec-path]` or `fused-cli import plan --url <http
 
 ## `import apply`
 Commit the exact source and optional overlay reviewed by `import plan`. The receipt's combined review hash authorizes the reviewed result; source and overlay hashes are informational. Service, provider version, contract rows, immutable internal revision, and plan completion are written atomically.
+
+Import plan/apply requests use a 20-minute timeout unless the global `--timeout`
+flag is explicitly set. A timeout leaves the apply outcome unknown and must not
+automatically replay the one-shot receipt; verify workspace and Registry state
+as directed by the error.
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|

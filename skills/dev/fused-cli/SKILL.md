@@ -98,7 +98,8 @@ saved API key has no managed-login provenance and is left unchanged.
   directory discovery
 - `--no-input` -- fail with remediation rather than opening a prompt;
   `CI=true` enables this automatically
-- `--timeout <duration>` -- bound Engine requests (default `1m`)
+- `--timeout <duration>` -- bound Engine requests (default `1m`; reviewed
+  `import plan` and `import apply` use `20m` unless this flag is set explicitly)
 - `--request-id <request-id>` -- attach a non-secret audit correlation ID to every
   Engine request
 - `--readme` -- print the full CLI reference and exit
@@ -244,6 +245,15 @@ background enrichment retries transient failures, and a periodic repair sweep
 recovers interrupted work. Do not re-run plan/apply or wait/poll merely for
 that optional enrichment.
 
+Large reviewed specifications receive a 20-minute plan/apply request budget by
+default; an explicit global `--timeout` overrides it. If apply reaches that
+deadline, treat `import_apply_outcome_unknown` as non-retryable: the Registry
+transaction may have committed even though Engine never received the response
+needed for automatic activation. Do not replay the one-shot receipt. Verify
+with `workspace services list -q <slug>`, inspect Registry state with `service
+show <slug>`, and use the normal workspace plan/apply flow when activation is
+missing. Create a fresh import plan before another import attempt.
+
 Read import diagnostics by stable `code`, `disposition`, source format/version,
 and JSON pointer. `captured` means the source meaning survived, `diagnosed`
 means it was preserved or bounded but is not fully executable, and
@@ -269,6 +279,13 @@ capability must remain visible so Registry/Engine can reject execution with
 `execution_capability_required`. Re-importing or stripping the field is not a
 remediation; use an Engine version that declares support or publish a contract
 whose execution semantics are actually implemented.
+
+Use `service versions` for bounded browsing and target resolution. Its GraphQL
+selection contains only version identity, status, and the execution envelope;
+do not add documentation, authentication, or policy objects to that list path.
+Full version contracts belong only to workflows that actually round-trip them,
+such as workspace synchronization, and their Registry reads must remain
+set-based rather than issuing one singular resolver per service.
 
 A 2xx apply through Engine also activates the exact imported version in that
 workspace and persists the Registry slug used by later SDK/MCP config. If the

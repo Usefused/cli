@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	cliapi "github.com/Usefused/cli/internal/api"
 	"github.com/spf13/cobra"
@@ -88,6 +89,30 @@ func TestRecordTelemetryErrorUsesSafeStructuredFields(t *testing.T) {
 	}
 	if _, exposed := attributes["error.server_detail"]; exposed {
 		t.Fatalf("server detail was attached: %#v", attributes)
+	}
+}
+
+// TestRecordTelemetryErrorMarksUnknownImportApplyNonRetryable keeps agent
+// automation from translating an ambiguous one-shot mutation into a retry.
+func TestRecordTelemetryErrorMarksUnknownImportApplyNonRetryable(t *testing.T) {
+	exporter := tracetest.NewInMemoryExporter()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
+	_, span := provider.Tracer("test").Start(context.Background(), "import-apply")
+	recordTelemetryError(span, &importApplyOutcomeUnknownError{
+		cause: context.DeadlineExceeded, timeout: 20 * time.Minute, slug: "large-api",
+	})
+	span.End()
+
+	spans := exporter.GetSpans()
+	if len(spans) != 1 || spans[0].Status.Description != "import_apply_outcome_unknown" {
+		t.Fatalf("unknown apply span = %#v", spans)
+	}
+	attributes := map[string]interface{}{}
+	for _, value := range spans[0].Attributes {
+		attributes[string(value.Key)] = value.Value.AsInterface()
+	}
+	if attributes["error.code"] != "import_apply_outcome_unknown" || attributes["error.retryable"] != false {
+		t.Fatalf("unknown apply attributes = %#v", attributes)
 	}
 }
 

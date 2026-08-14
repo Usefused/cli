@@ -1127,6 +1127,19 @@ type ServiceVersion struct {
 	IncomingWebhookConfig *ServiceIncomingWebhookConfig `json:"incoming_webhook_config"`
 }
 
+// ServiceVersionSummary is the bounded list projection for identity and
+// execution compatibility. Keeping it separate from ServiceVersion prevents a
+// routine list from fetching documentation and complete policy JSON.
+type ServiceVersionSummary struct {
+	ExecutionContractEnvelope
+	ID        string `json:"id"`
+	ServiceID string `json:"service_id"`
+	Name      string `json:"name"`
+	Status    string `json:"status"`
+	CreatedAt string `json:"created_at"`
+	IsPublic  bool   `json:"is_public"`
+}
+
 type ServiceServer struct {
 	URL         string           `json:"url"`
 	Name        string           `json:"name,omitempty"`
@@ -1348,6 +1361,31 @@ func (c *Client) ServiceVersions(serviceSlug string) ([]ServiceVersion, error) {
 	`
 	var resp struct {
 		ServiceVersions []ServiceVersion `json:"serviceVersions"`
+	}
+	slug, provider := splitProviderQualifiedServiceRef(serviceSlug)
+	err := c.GraphQL(query, map[string]interface{}{"serviceId": slug, "provider": provider}, &resp)
+	return resp.ServiceVersions, err
+}
+
+// ServiceVersionSummaries uses a deliberately lean GraphQL selection because
+// version listing and target resolution never need documentation or policies.
+func (c *Client) ServiceVersionSummaries(serviceSlug string) ([]ServiceVersionSummary, error) {
+	query := `
+		query ServiceVersionSummaries($serviceId: String!, $provider: String) {
+			serviceVersions(serviceId: $serviceId, provider: $provider) {
+				contract_version
+				required_capabilities
+				id
+				service_id
+				name
+				status
+				created_at
+				is_public
+			}
+		}
+	`
+	var resp struct {
+		ServiceVersions []ServiceVersionSummary `json:"serviceVersions"`
 	}
 	slug, provider := splitProviderQualifiedServiceRef(serviceSlug)
 	err := c.GraphQL(query, map[string]interface{}{"serviceId": slug, "provider": provider}, &resp)

@@ -55,9 +55,11 @@ identity remains active after login.
 
 ## Automation-safe execution
 
-Engine requests time out after one minute by default. Override this with
-`--timeout`; use `--request-id` for an audit correlation ID. SIGINT and SIGTERM
-cancel outstanding requests.
+Engine requests time out after one minute by default. Reviewed `import plan`
+and `import apply` requests use a 20-minute default because large contracts can
+require longer bounded parser and persistence work. Override either default
+with `--timeout`; use `--request-id` for an audit correlation ID. SIGINT and
+SIGTERM cancel outstanding requests.
 
 Use `--no-input` in scripts and agent runs. `CI=true` enables the same
 non-interactive behaviour and disables release update checks;

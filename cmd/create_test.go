@@ -112,11 +112,13 @@ func newGraphQLTestServer(t *testing.T, responders map[string]string, workspaceS
 }
 
 func TestProcessServiceIntent_AddsNewEndpoints(t *testing.T) {
+	// Intent discovery consumes the lean summary field because it needs only the
+	// version name before searching endpoints.
 	server := newGraphQLTestServer(t, map[string]string{
-		"searchServices":  `{"searchServices":[{"id":"svc-1","name":"Stripe"}]}`,
-		"servicesByIds":   `{"servicesByIds":[{"id":"svc-1","slug":"stripe","provider":null,"is_owner":true,"is_public":false}]}`,
-		"serviceVersions": `{"serviceVersions":[{"id":"ver-1","service_id":"svc-1","name":"1.0","status":"active"}]}`,
-		"searchEndpoints": `{"searchEndpoints":[{"id":"ep-1","name":"Create Refund","path":"/refunds","method":"POST","service_id":"svc-1"}]}`,
+		"searchServices":          `{"searchServices":[{"id":"svc-1","name":"Stripe"}]}`,
+		"servicesByIds":           `{"servicesByIds":[{"id":"svc-1","slug":"stripe","provider":null,"is_owner":true,"is_public":false}]}`,
+		"ServiceVersionSummaries": `{"serviceVersions":[{"id":"ver-1","service_id":"svc-1","name":"1.0","status":"active"}]}`,
+		"searchEndpoints":         `{"searchEndpoints":[{"id":"ep-1","name":"Create Refund","path":"/refunds","method":"POST","service_id":"svc-1"}]}`,
 	}, "[]")
 	defer server.Close()
 
@@ -164,10 +166,12 @@ func TestProcessServiceIntent_ServiceNotFound(t *testing.T) {
 }
 
 func TestProcessServiceIntent_NoVersionsAvailable(t *testing.T) {
+	// An empty summary is the bounded signal that intent discovery cannot pin a
+	// Registry version; no full policy read is needed for this branch.
 	server := newGraphQLTestServer(t, map[string]string{
-		"searchServices":  `{"searchServices":[{"id":"svc-1","name":"Stripe"}]}`,
-		"servicesByIds":   `{"servicesByIds":[{"id":"svc-1","slug":"stripe","provider":null,"is_owner":true,"is_public":false}]}`,
-		"serviceVersions": `{"serviceVersions":[]}`,
+		"searchServices":          `{"searchServices":[{"id":"svc-1","name":"Stripe"}]}`,
+		"servicesByIds":           `{"servicesByIds":[{"id":"svc-1","slug":"stripe","provider":null,"is_owner":true,"is_public":false}]}`,
+		"ServiceVersionSummaries": `{"serviceVersions":[]}`,
 	}, "[]")
 	defer server.Close()
 
@@ -184,12 +188,14 @@ func TestProcessServiceIntent_NoVersionsAvailable(t *testing.T) {
 }
 
 func TestSearchAndAddEndpoints_MergesAcrossMultipleIntents(t *testing.T) {
+	// Repeated intents share the same summary response without expanding into
+	// documentation and policy payloads for either lookup.
 	server := newGraphQLTestServer(t, map[string]string{
-		"parseSDKIntent":  `{"parseSDKIntent":{"services":[{"name":"stripe","endpoint_query":"refunds"},{"name":"plunk","endpoint_query":"emails"}]}}`,
-		"searchServices":  `{"searchServices":[{"id":"svc-1","name":"Stripe"}]}`,
-		"servicesByIds":   `{"servicesByIds":[{"id":"svc-1","slug":"stripe","provider":null,"is_owner":true,"is_public":false}]}`,
-		"serviceVersions": `{"serviceVersions":[{"id":"ver-1","service_id":"svc-1","name":"1.0","status":"active"}]}`,
-		"searchEndpoints": `{"searchEndpoints":[{"id":"ep-1","name":"Create Refund","path":"/refunds","method":"POST","service_id":"svc-1"}]}`,
+		"parseSDKIntent":          `{"parseSDKIntent":{"services":[{"name":"stripe","endpoint_query":"refunds"},{"name":"plunk","endpoint_query":"emails"}]}}`,
+		"searchServices":          `{"searchServices":[{"id":"svc-1","name":"Stripe"}]}`,
+		"servicesByIds":           `{"servicesByIds":[{"id":"svc-1","slug":"stripe","provider":null,"is_owner":true,"is_public":false}]}`,
+		"ServiceVersionSummaries": `{"serviceVersions":[{"id":"ver-1","service_id":"svc-1","name":"1.0","status":"active"}]}`,
+		"searchEndpoints":         `{"searchEndpoints":[{"id":"ep-1","name":"Create Refund","path":"/refunds","method":"POST","service_id":"svc-1"}]}`,
 	}, `[{"service_id":"svc-1","version":"1.0"}]`)
 	defer server.Close()
 

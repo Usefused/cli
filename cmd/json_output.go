@@ -94,6 +94,16 @@ func classifyCommandError(cmd *cobra.Command, err error) jsonErrorResult {
 		Code: "command_failed", Message: err.Error(), Category: "cli", Command: cmd.CommandPath(),
 		Remediation: "Review the message and run '" + cmd.CommandPath() + " --help' if the required input is unclear.",
 	}
+	var unknownApply *importApplyOutcomeUnknownError
+	if errors.As(err, &unknownApply) {
+		// Why: generic timeout remediation says retry, which is unsafe after a
+		// one-shot apply may already have committed.
+		result.Code, result.Category = "import_apply_outcome_unknown", "indeterminate"
+		result.Message = "The import apply response timed out after the server may have committed the reviewed plan."
+		result.Remediation = unknownApply.remediation()
+		result.Details = map[string]any{"timeout_ms": unknownApply.timeout.Milliseconds()}
+		return result
+	}
 	var strictError *cliapi.SpecImportStrictError
 	if errors.As(err, &strictError) {
 		result.Code, result.Message, result.Category = strictError.Code, strictError.Message, "validation"

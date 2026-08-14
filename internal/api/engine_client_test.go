@@ -340,6 +340,44 @@ func TestServiceVersionsSplitsProviderQualifiedSlug(t *testing.T) {
 	}
 }
 
+// TestServiceVersionSummariesAvoidHeavyContractProjection guards the latency
+// boundary: list calls must not request documentation or full policy objects.
+func TestServiceVersionSummariesAvoidHeavyContractProjection(t *testing.T) {
+	var query string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Query string `json:"query"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		query = body.Query
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"serviceVersions":[{"contract_version":2,"required_capabilities":[],"id":"ver-1","service_id":"svc-1","name":"2026-08-14","status":"public","created_at":"2026-08-14T00:00:00Z","is_public":true}]}}`))
+	}))
+	defer srv.Close()
+
+	versions, err := api.NewClient(srv.URL, "test-key").ServiceVersionSummaries("billing")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertLeanServiceVersionSummary(t, query, versions)
+}
+
+// assertLeanServiceVersionSummary checks both the required compatibility
+// fields and the absence of expensive unrelated selections.
+func assertLeanServiceVersionSummary(t *testing.T, query string, versions []api.ServiceVersionSummary) {
+	t.Helper()
+	for _, forbidden := range []string{"documentation", "rate_limit", "retry_config", "pagination", "incoming_webhook_config"} {
+		if strings.Contains(query, forbidden) {
+			t.Fatalf("summary query requested %s: %s", forbidden, query)
+		}
+	}
+	if len(versions) != 1 || versions[0].ID != "ver-1" || versions[0].ContractVersion != 2 || versions[0].RequiredCapabilities == nil {
+		t.Fatalf("summary response = %#v", versions)
+	}
+}
+
 func TestUpdateWorkspacePlanActionPatchesConfigPlanActions(t *testing.T) {
 	var reqMethod, reqPath string
 	var reqBody struct {
