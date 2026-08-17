@@ -63,7 +63,7 @@ fused-cli workspace plan
 fused-cli workspace apply
 
 fused-cli sdk plan -f .fused/sdks/my-sdk.yaml
-fused-cli sdk apply -f .fused/sdks/my-sdk.yaml
+fused-cli sdk apply -f .fused/sdks/my-sdk.yaml --json
 ```
 
 Plan output contains the complete Engine change summary. A saved receipt is

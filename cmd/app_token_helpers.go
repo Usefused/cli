@@ -26,6 +26,9 @@ func issueAppToken(cmd *cobra.Command, kind appTokenKind, target string, request
 		return err
 	}
 	recordAppliedChange(cmd.Context(), cmd.CommandPath(), string(kind)+"_token")
+	if wantsJSON(cmd) {
+		return writeJSON(cmd, result)
+	}
 	fmt.Fprintf(cmd.OutOrStdout(), "Token generated: %s\n", result.Token)
 	fmt.Fprintln(cmd.OutOrStdout(), "Make sure to copy it now; it won't be shown again.")
 	return nil

@@ -19,7 +19,7 @@ func TestAgentReadCommandsExposeJSON(t *testing.T) {
 		workspaceServicesListCmd, workspaceHasCmd, workspaceServiceVersionsCmd, workspaceServiceOperationsCmd, workspaceServiceWebhooksCmd,
 		bucketListCmd, bucketShowCmd, bucketServicesCmd, bucketSecretsCmd, bucketValuesCmd, bucketConnectionsCmd, bucketSDKsCmd,
 		secretListCmd, valueListCmd, sdkListCmd, sdkValidateCmd, sdkShowCmd, sdkServicesCmd, sdkBucketsCmd,
-		mcpListCmd, mcpValidateCmd, sdkTokenListCmd, mcpTokenListCmd, connectGetCmd, workspaceConnectionResourcesListCmd,
+		sdkActivityCmd, sdkInvokeCmd, mcpListCmd, mcpValidateCmd, sdkTokenListCmd, mcpTokenListCmd, connectGetCmd, workspaceConnectionResourcesListCmd,
 		validateCmd, webhookValidateCmd, whoAmICmd, workspaceAccessListCmd, teamListCmd, teamShowCmd,
 		teamEligibleOwnersCmd, teamBuildAccessCmd, teamMemberListCmd, userListCmd, userShowCmd, configGetCmd, configListCmd, skillListCmd, skillPrintCmd,
 	}
@@ -31,9 +31,18 @@ func TestAgentReadCommandsExposeJSON(t *testing.T) {
 }
 
 func TestMutationCommandsDoNotInheritJSON(t *testing.T) {
-	for _, command := range []*cobra.Command{bucketCreateCmd, secretSetCmd, sdkApplyCmd, mcpApplyCmd, workspaceApplyCmd} {
+	for _, command := range []*cobra.Command{bucketCreateCmd, secretSetCmd, mcpApplyCmd, workspaceApplyCmd} {
 		if command.Flags().Lookup(jsonOutputFlag) != nil {
 			t.Errorf("%s unexpectedly exposes --json", command.CommandPath())
+		}
+	}
+}
+
+// TestSDKMutationsNeededByAgentsExposeStableJSON verifies agent-facing mutation flags.
+func TestSDKMutationsNeededByAgentsExposeStableJSON(t *testing.T) {
+	for _, command := range []*cobra.Command{sdkApplyCmd, sdkDownloadCmd, sdkTokenGenerateCmd} {
+		if command.Flags().Lookup(jsonOutputFlag) == nil {
+			t.Errorf("%s does not expose --json", command.CommandPath())
 		}
 	}
 }
@@ -122,6 +131,28 @@ func TestWriteCommandErrorPreservesStructuredEngineFields(t *testing.T) {
 	}
 	if envelope.Error.Details["server_detail"] != apiError.Details.ServerDetail {
 		t.Fatalf("server detail = %#v", envelope.Error.Details)
+	}
+}
+
+// TestSDKApplyJSONErrorPreservesEngineContractAndFailedStage verifies nested error merging.
+func TestSDKApplyJSONErrorPreservesEngineContractAndFailedStage(t *testing.T) {
+	command := sdkApplyCmd
+	old := sdkApplyJSON
+	t.Cleanup(func() { sdkApplyJSON = old; _ = command.Flags().Set(jsonOutputFlag, "false") })
+	sdkApplyJSON = true
+	_ = command.Flags().Set(jsonOutputFlag, "true")
+	apiError := &cliapi.APIError{
+		Code: "registry_request_failed", Message: "The Registry could not complete SDK generation.",
+		Category: "dependency", Retryable: true, HTTPStatus: http.StatusBadGateway,
+	}
+	apiError.Details.Stage = "registry_generation"
+	err := &sdkApplyStageError{Stage: "apply", SDKName: "payments", Err: apiError}
+	result := classifyCommandError(command, err)
+	if result.Code != apiError.Code || !result.Retryable || result.HTTPStatus != http.StatusBadGateway {
+		t.Fatalf("result = %#v", result)
+	}
+	if result.Details["stage"] != "registry_generation" || result.Details["sdk"] != "payments" {
+		t.Fatalf("details = %#v", result.Details)
 	}
 }
 

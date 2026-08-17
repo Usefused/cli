@@ -60,10 +60,65 @@ type planOptions struct {
 type applyOptions struct {
 	filter      configKindFilter
 	download    bool
+	jsonOut     bool
 	planID      string
 	receiptPath string
+	output      io.Writer
 	auditCtx    context.Context
 	auditAction string
+}
+
+type sdkApplyOutput struct {
+	ConfigKey      string                 `json:"config_key"`
+	PlanID         string                 `json:"plan_id"`
+	Status         string                 `json:"status"`
+	SDKID          string                 `json:"sdk_id"`
+	VersionID      string                 `json:"version_id"`
+	ExecutionToken string                 `json:"execution_token,omitempty"`
+	Generation     sdkApplyStageOutput    `json:"generation"`
+	Download       sdkApplyDownloadOutput `json:"download"`
+}
+
+type sdkApplyStageOutput struct {
+	Status string `json:"status"`
+	JobID  string `json:"job_id,omitempty"`
+}
+
+type sdkApplyDownloadOutput struct {
+	Status string `json:"status"`
+	Path   string `json:"path,omitempty"`
+}
+
+type sdkApplyStageError struct {
+	Stage     string
+	SDKName   string
+	SDKID     string
+	VersionID string
+	JobID     string
+	Err       error
+}
+
+// Error reports the failed SDK lifecycle stage without discarding the Engine error.
+func (err *sdkApplyStageError) Error() string {
+	return fmt.Sprintf("SDK %s stage failed for %s: %v", err.Stage, err.SDKName, err.Err)
+}
+
+// Unwrap exposes the underlying Engine or local filesystem failure.
+func (err *sdkApplyStageError) Unwrap() error { return err.Err }
+
+// jsonDetails returns stable stage context for the CLI JSON error envelope.
+func (err *sdkApplyStageError) jsonDetails() map[string]any {
+	details := map[string]any{"stage": err.Stage, "sdk": err.SDKName}
+	if err.SDKID != "" {
+		details["sdk_id"] = err.SDKID
+	}
+	if err.VersionID != "" {
+		details["version_id"] = err.VersionID
+	}
+	if err.JobID != "" {
+		details["job_id"] = err.JobID
+	}
+	return details
 }
 
 type workspaceApplyPayload struct {
@@ -284,7 +339,9 @@ func runConfigApply(opts applyOptions) error {
 	if err := validateApplyOptions(opts, len(configs)); err != nil {
 		return err
 	}
-	printResolvedConfigPaths(configs)
+	if !opts.jsonOut {
+		printResolvedConfigPaths(configs)
+	}
 	client, err := getAPIClient()
 	if err != nil {
 		return err
@@ -310,6 +367,9 @@ func applyConfigs(client *api.Client, configs []*configfile.ParsedConfig, opts a
 	if err != nil {
 		return err
 	}
+	if opts.jsonOut {
+		return applySDKConfigsJSON(client, prepared, opts)
+	}
 	for _, item := range prepared {
 		if err := applyPreparedConfig(client, item, opts.download); err != nil {
 			return err
@@ -317,6 +377,58 @@ func applyConfigs(client *api.Client, configs []*configfile.ParsedConfig, opts a
 		recordAppliedChange(opts.auditCtx, opts.auditAction, string(item.config.Kind))
 	}
 	return nil
+}
+
+// applySDKConfigsJSON applies SDK configs and emits one stable JSON result array.
+func applySDKConfigsJSON(client *api.Client, prepared []preparedConfigApply, opts applyOptions) error {
+	results := make([]sdkApplyOutput, 0, len(prepared))
+	for _, item := range prepared {
+		if item.config.Kind != configfile.KindSDK {
+			return errors.New("structured apply output is currently available only for sdk apply")
+		}
+		result, err := applyPreparedSDKJSON(client, item.config, item.receipt, opts.download)
+		if err != nil {
+			return err
+		}
+		results = append(results, result)
+		recordAppliedChange(opts.auditCtx, opts.auditAction, string(item.config.Kind))
+	}
+	output := opts.output
+	if output == nil {
+		output = os.Stdout
+	}
+	return json.NewEncoder(output).Encode(results)
+}
+
+// applyPreparedSDKJSON preserves apply identity and one-time token data across later stages.
+func applyPreparedSDKJSON(client *api.Client, cfg *configfile.ParsedConfig, receipt planReceipt, download bool) (sdkApplyOutput, error) {
+	resp, err := client.ApplySDKConfig(receipt.PlanID, receipt.SourceHash)
+	if err != nil {
+		return sdkApplyOutput{}, &sdkApplyStageError{Stage: "apply", SDKName: cfg.SDK.Name, Err: err}
+	}
+	result := sdkApplyOutput{
+		ConfigKey: cfg.ConfigKey, PlanID: resp.PlanID, Status: resp.Status,
+		SDKID: resp.AppFamilyID, VersionID: resp.AppID, ExecutionToken: resp.ExecutionToken,
+		Generation: sdkApplyStageOutput{Status: "completed", JobID: resp.JobID},
+		Download:   sdkApplyDownloadOutput{Status: "not_requested"},
+	}
+	if !download {
+		return result, nil
+	}
+	if err := waitForSDKGeneration(client, resp.JobID); err != nil {
+		return sdkApplyOutput{}, &sdkApplyStageError{
+			Stage: "generation", SDKName: cfg.SDK.Name, SDKID: resp.AppFamilyID,
+			VersionID: resp.AppID, JobID: resp.JobID, Err: err,
+		}
+	}
+	if err := downloadSDKByIDQuiet(client, resp.AppID, cfg.SDK.Name, "."); err != nil {
+		return sdkApplyOutput{}, &sdkApplyStageError{
+			Stage: "download", SDKName: cfg.SDK.Name, SDKID: resp.AppFamilyID,
+			VersionID: resp.AppID, JobID: resp.JobID, Err: err,
+		}
+	}
+	result.Download = sdkApplyDownloadOutput{Status: "completed", Path: filepath.Join("fused-sdks", cfg.SDK.Name)}
+	return result, nil
 }
 
 func prepareConfigApplies(configs []*configfile.ParsedConfig, opts applyOptions, engineURL string) ([]preparedConfigApply, error) {
@@ -686,6 +798,16 @@ func handleSDKGenerationStreamError(ch chan error, err error, ok bool) (chan err
 }
 
 func downloadSDKByID(client *api.Client, appID, sdkName, outDir string) error {
+	if err := downloadSDKByIDQuiet(client, appID, sdkName, outDir); err != nil {
+		return err
+	}
+	extractDir := filepath.Join(outDir, "fused-sdks", sdkName)
+	fmt.Printf("Downloaded and extracted sdk:%s to %s\n", sdkName, extractDir)
+	return nil
+}
+
+// downloadSDKByIDQuiet downloads and extracts an exact SDK version without human output.
+func downloadSDKByIDQuiet(client *api.Client, appID, sdkName, outDir string) error {
 	if strings.TrimSpace(appID) == "" {
 		return fmt.Errorf("sdk ID is required for download")
 	}
@@ -697,7 +819,6 @@ func downloadSDKByID(client *api.Client, appID, sdkName, outDir string) error {
 	if err := extractSDKZip(data, extractDir); err != nil {
 		return fmt.Errorf("failed to extract sdk:%s: %w", sdkName, err)
 	}
-	fmt.Printf("Downloaded and extracted sdk:%s to %s\n", sdkName, extractDir)
 	return nil
 }
 

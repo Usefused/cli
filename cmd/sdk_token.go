@@ -61,5 +61,5 @@ func runSDKTokenRevoke(cmd *cobra.Command, target, name string) error {
 func init() {
 	sdkCmd.AddCommand(sdkTokenCmd)
 	sdkTokenCmd.AddCommand(sdkTokenGenerateCmd, sdkTokenListCmd, sdkTokenRevokeCmd)
-	addJSONOutputFlag(sdkTokenListCmd)
+	addJSONOutputFlag(sdkTokenGenerateCmd, sdkTokenListCmd)
 }

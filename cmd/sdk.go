@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -26,6 +27,7 @@ var sdkPlanJSON bool
 var sdkPlanReceiptOut string
 var sdkPlanOwnerTeam string
 var sdkApplyDownload bool
+var sdkApplyJSON bool
 var sdkApplyPlanID string
 var sdkApplyReceiptPath string
 
@@ -59,7 +61,10 @@ var sdkApplyCmd = &cobra.Command{
 	Short: "Apply SDK configuration",
 	Args:  cobra.NoArgs,
 	RunE: WithTelemetry("cli.sdk.apply", func(cmd *cobra.Command, _ []string) error {
-		return runConfigApply(withApplyAudit(cmd, applyOptions{filter: filterSDK, download: sdkApplyDownload, planID: sdkApplyPlanID, receiptPath: sdkApplyReceiptPath}))
+		return runConfigApply(withApplyAudit(cmd, applyOptions{
+			filter: filterSDK, download: sdkApplyDownload, jsonOut: sdkApplyJSON,
+			planID: sdkApplyPlanID, receiptPath: sdkApplyReceiptPath, output: cmd.OutOrStdout(),
+		}))
 	}),
 }
 
@@ -318,10 +323,9 @@ func validateExactAppTarget(target sdkDownloadTarget, action string) error {
 }
 
 var sdkDownloadCmd = &cobra.Command{
-	Use:    "download [sdk-name@version-or-version-id]",
-	Short:  "Download the generated SDK for a config",
-	Hidden: true,
-	Args:   cobra.MaximumNArgs(1),
+	Use:   "download [sdk-name@version-or-version-id]",
+	Short: "Download the generated SDK for a config",
+	Args:  cobra.MaximumNArgs(1),
 	// Why: Write to OTEL to audit user/agent-triggered mutative execution.
 	RunE: WithTelemetry("cli.sdk.download", func(cmd *cobra.Command, args []string) error {
 		if err := validateSDKDownloadArgs(args); err != nil {
@@ -333,45 +337,58 @@ var sdkDownloadCmd = &cobra.Command{
 			return err
 		}
 
-		return runSDKDownloadTargets(sdksToDownload)
+		return runSDKDownloadTargets(cmd, sdksToDownload)
 	}),
 }
 
-func runSDKDownloadTargets(targets []sdkDownloadTarget) error {
+type sdkDownloadOutput struct {
+	SDK       string `json:"sdk"`
+	VersionID string `json:"version_id"`
+	Status    string `json:"status"`
+	Path      string `json:"path"`
+}
+
+// runSDKDownloadTargets downloads exact SDK versions and renders one output mode.
+func runSDKDownloadTargets(cmd *cobra.Command, targets []sdkDownloadTarget) error {
 	client, err := getAPIClient()
 	if err != nil {
 		return err
 	}
+	results := make([]sdkDownloadOutput, 0, len(targets))
 	for _, target := range targets {
-		if err := downloadSDKTarget(client, target); err != nil {
+		result, err := downloadSDKTarget(client, target)
+		if err != nil {
 			return err
 		}
+		results = append(results, result)
+		if !wantsJSON(cmd) {
+			fmt.Fprintf(cmd.OutOrStdout(), "Downloaded and extracted sdk:%s to %s\n", result.SDK, result.Path)
+		}
+	}
+	if wantsJSON(cmd) {
+		return writeJSON(cmd, results)
 	}
 	return nil
 }
 
-func downloadSDKTarget(client *api.Client, target sdkDownloadTarget) error {
-	data, err := downloadSDKByName(client, target)
+// downloadSDKTarget resolves, downloads, and extracts one exact SDK version.
+func downloadSDKTarget(client *api.Client, target sdkDownloadTarget) (sdkDownloadOutput, error) {
+	appID, err := client.ResolveSDKAppReference(target.Name, target.Version)
 	if err != nil {
-		return fmt.Errorf("failed to download sdk:%s: %w", target.Name, err)
+		return sdkDownloadOutput{}, &sdkApplyStageError{Stage: "resolve", SDKName: target.Name, Err: err}
+	}
+	if strings.TrimSpace(appID) == "" {
+		return sdkDownloadOutput{}, &sdkApplyStageError{Stage: "resolve", SDKName: target.Name, Err: errors.New("generated SDK not found")}
+	}
+	data, err := client.DownloadSDK(appID)
+	if err != nil {
+		return sdkDownloadOutput{}, &sdkApplyStageError{Stage: "download", SDKName: target.Name, VersionID: appID, Err: err}
 	}
 	extractDir := filepath.Join(sdkDownloadOutDir, "fused-sdks", target.Name)
 	if err := extractSDKZip(data, extractDir); err != nil {
-		return fmt.Errorf("failed to extract sdk:%s: %w", target.Name, err)
+		return sdkDownloadOutput{}, &sdkApplyStageError{Stage: "extract", SDKName: target.Name, VersionID: appID, Err: err}
 	}
-	fmt.Printf("Downloaded and extracted sdk:%s to %s\n", target.Name, extractDir)
-	return nil
-}
-
-func downloadSDKByName(client *api.Client, target sdkDownloadTarget) ([]byte, error) {
-	appID, err := client.ResolveSDKAppReference(target.Name, target.Version)
-	if err != nil {
-		return nil, err
-	}
-	if strings.TrimSpace(appID) == "" {
-		return nil, fmt.Errorf("generated SDK not found")
-	}
-	return client.DownloadSDK(appID)
+	return sdkDownloadOutput{SDK: target.Name, VersionID: appID, Status: "completed", Path: extractDir}, nil
 }
 
 var sdkServiceCmd = commandGroup("service", "Manage services in SDK config")
@@ -829,9 +846,11 @@ func init() {
 	sdkPlanCmd.Flags().StringVar(&sdkPlanReceiptOut, "receipt-out", "", "Write the plan receipt to this path")
 	sdkPlanCmd.Flags().StringVar(&sdkPlanOwnerTeam, "owner-team", "", "Optional owning team slug; defaults to the authenticated person")
 	sdkApplyCmd.Flags().BoolVar(&sdkApplyDownload, "download", false, "Download generated SDKs after apply")
+	sdkApplyCmd.Flags().BoolVar(&sdkApplyJSON, "json", false, "Print structured apply, generation, and download outcomes as JSON")
 	sdkApplyCmd.Flags().StringVar(&sdkApplyPlanID, "plan-id", "", "Apply a specific remote plan ID")
 	sdkApplyCmd.Flags().StringVar(&sdkApplyReceiptPath, "receipt", "", "Read a plan receipt from this path")
 	sdkDownloadCmd.Flags().StringVarP(&sdkDownloadOutDir, "out", "o", ".", "Output directory for the SDK")
+	addJSONOutputFlag(sdkDownloadCmd)
 
 	sdkCmd.AddCommand(sdkServiceCmd)
 	sdkServiceCmd.AddCommand(sdkAddServiceCmd, sdkRemoveServiceCmd)

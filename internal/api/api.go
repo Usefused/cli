@@ -241,8 +241,12 @@ type APIError struct {
 	Category  string `json:"category"`
 	Retryable bool   `json:"retryable"`
 	Details   struct {
-		Missing      []string `json:"missing"`
-		ServerDetail string   `json:"server_detail,omitempty"`
+		Missing              []string `json:"missing"`
+		ServerDetail         string   `json:"server_detail,omitempty"`
+		ApplyLeaseExpiresAt  string   `json:"apply_lease_expires_at,omitempty"`
+		RetryAfterSeconds    int      `json:"retry_after_seconds,omitempty"`
+		Stage                string   `json:"stage,omitempty"`
+		DependencyHTTPStatus int      `json:"http_status,omitempty"`
 	} `json:"details,omitempty"`
 	Remediation string `json:"remediation,omitempty"`
 	TraceID     string `json:"trace_id,omitempty"`
@@ -258,6 +262,12 @@ func (e *APIError) Error() string {
 	}
 	if e.Details.ServerDetail != "" {
 		message += " Server detail: " + e.Details.ServerDetail
+	}
+	if e.Details.ApplyLeaseExpiresAt != "" {
+		message += " Apply lease expires: " + e.Details.ApplyLeaseExpiresAt + "."
+	}
+	if e.Details.RetryAfterSeconds > 0 {
+		message += fmt.Sprintf(" Retry after %d seconds.", e.Details.RetryAfterSeconds)
 	}
 	if e.Remediation != "" {
 		message += " " + e.Remediation
@@ -354,7 +364,10 @@ func parsedHTTPError(status int, payload apiErrorPayload) error {
 	var structured APIError
 	if len(payload.Error) > 0 && json.Unmarshal(payload.Error, &structured) == nil && structured.Code != "" && structured.Message != "" {
 		structured.HTTPStatus = status
-		structured.Details.ServerDetail = safeValidationDetail(status, structured.Details.ServerDetail)
+		// Structured Engine errors are the dedicated instance's reviewed public
+		// contract. Preserve their bounded detail across dependency/conflict
+		// statuses while retaining the local credential-material fail-closed gate.
+		structured.Details.ServerDetail = safeServerDetail(structured.Details.ServerDetail)
 		return &structured
 	}
 
