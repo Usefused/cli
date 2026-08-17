@@ -27,7 +27,8 @@ func (f *cliLoginAPIFixture) PollCLILogin(string, string) (api.CLILoginPollRespo
 	return f.poll, nil
 }
 
-func TestRunCLILoginSavesLocallyGeneratedCredentialAfterBrowserApproval(t *testing.T) {
+// TestRunCLILoginAllowsNoInputBrowserApproval verifies browser login needs no terminal prompt.
+func TestRunCLILoginAllowsNoInputBrowserApproval(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("FUSED_API_KEY", "")
 	t.Setenv("FUSED_LICENSE_KEY", "")
@@ -49,7 +50,7 @@ func TestRunCLILoginSavesLocallyGeneratedCredentialAfterBrowserApproval(t *testi
 	newCLILoginClient = func(string, api.ClientOptions) cliLoginAPI { return fixture }
 	var opened string
 	openLoginBrowser = func(_ context.Context, target string) error { opened = target; return nil }
-	EngineURL, NoInput, loginNoBrowser = "https://engine.example", false, false
+	EngineURL, NoInput, loginNoBrowser = "https://engine.example", true, false
 	output := &bytes.Buffer{}
 	command := &cobra.Command{Use: "login"}
 	command.SetOut(output)
@@ -72,12 +73,40 @@ func TestRunCLILoginSavesLocallyGeneratedCredentialAfterBrowserApproval(t *testi
 	}
 }
 
-func TestRunCLILoginRejectsNonInteractiveMode(t *testing.T) {
-	previous := NoInput
-	NoInput = true
-	t.Cleanup(func() { NoInput = previous })
+// TestRunCLILoginAllowsNonInteractiveNoBrowserEnrollment verifies remote approval enrollment.
+func TestRunCLILoginAllowsNonInteractiveNoBrowserEnrollment(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("FUSED_API_KEY", "")
+	t.Setenv("FUSED_LICENSE_KEY", "")
+	fixture := &cliLoginAPIFixture{
+		start: api.CLILoginStartResponse{
+			TransactionID: "transaction", PollToken: "poll", BrowserToken: "browser",
+			ExpiresAt: time.Now().Add(time.Minute),
+		},
+		poll: api.CLILoginPollResponse{
+			Status: "authenticated", CredentialID: "credential", ExpiresAt: time.Now().Add(30 * 24 * time.Hour),
+		},
+	}
+	previousFactory, previousOpen := newCLILoginClient, openLoginBrowser
+	previousURL, previousNoInput, previousNoBrowser := EngineURL, NoInput, loginNoBrowser
+	t.Cleanup(func() {
+		newCLILoginClient, openLoginBrowser = previousFactory, previousOpen
+		EngineURL, NoInput, loginNoBrowser = previousURL, previousNoInput, previousNoBrowser
+	})
+	newCLILoginClient = func(string, api.ClientOptions) cliLoginAPI { return fixture }
+	openLoginBrowser = func(context.Context, string) error {
+		t.Fatal("browser should not be opened")
+		return nil
+	}
+	EngineURL, NoInput, loginNoBrowser = "https://engine.example", true, true
+	output := &bytes.Buffer{}
 	command := &cobra.Command{Use: "login"}
-	if err := runCLILogin(command); err == nil || !strings.Contains(err.Error(), "FUSED_API_KEY") {
-		t.Fatalf("non-interactive error = %v", err)
+	command.SetOut(output)
+	command.SetContext(t.Context())
+	if err := runCLILogin(command); err != nil {
+		t.Fatalf("runCLILogin: %v", err)
+	}
+	if !strings.Contains(output.String(), "Open this URL to sign in:") || !strings.Contains(output.String(), "browser_token=browser") {
+		t.Fatalf("output = %q", output.String())
 	}
 }

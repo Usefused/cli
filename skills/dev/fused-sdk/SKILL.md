@@ -31,6 +31,10 @@ and credential requirements are understood. Apply or download only when the
 user requested completion and no production, ownership, credential, or
 permission decision remains unresolved.
 Use `service operations --json` for bounded discovery, inspect body contracts only with `service operation show` opt-in flags, and run `sdk validate --json` after writing the config.
+Use `--json` on every SDK command whose confirmed help exposes it. In
+particular, never parse SDK/Version IDs or the one-time token from human apply
+text: use `sdk plan --json`, `sdk apply --json`, `sdk token generate --json`,
+`sdk download --json`, `sdk invoke --json`, and `sdk activity --json`.
 
 `kind: sdk`, managed by `fused-cli sdk ...`, declares a typed SDK package
 generated from a bucket's already-configured services.
@@ -155,6 +159,8 @@ fused-cli sdk sync <sdk-name>
 fused-cli sdk show <sdk-name@version-or-version-id>
 fused-cli sdk services <sdk-name@version-or-version-id>
 fused-cli sdk buckets <sdk-name-or-id>
+fused-cli sdk invoke <sdk-name@version-or-version-id> <operation>
+fused-cli sdk activity <sdk-name@version-or-version-id>
 fused-cli sdk token generate <sdk-name-or-id> <token-name>
 fused-cli sdk token list <sdk-name-or-id>
 fused-cli sdk token revoke <sdk-name-or-id> <token-name>
@@ -171,6 +177,33 @@ generated SDK's own runtime traffic) -- `generate` prints the token exactly
 once, so capture it immediately. Generating, listing, or revoking by SDK name
 or SDK ID affects the token set shared by every version of that SDK.
 
+For automation, run `sdk apply --json`; it returns an array of explicit apply,
+generation, and download outcomes and includes `execution_token` only on the
+one response where Engine created it. `--download` remains a convenience, but
+`sdk download` is a visible independent command. Prefer a separate apply and
+download when a pipeline needs to retry package transfer without replaying an
+apply. Structured failures identify the failed stage and retain SDK/Version IDs
+when apply succeeded before generation waiting or download failed.
+
+`sdk invoke` is the repeatable smoke-test/debug surface. It resolves one exact
+SDK version with the control credential, then uses the canonical SDK gRPC
+`Connect`/`Execute`/`Disconnect` path with an SDK-scoped execution token. Set
+`FUSED_ENGINE_GRPC_URL` (or pass `--grpc-url`) and place the token in
+`FUSED_SDK_TOKEN` by default; `--token-env` selects another variable and
+`--token-stdin` avoids environment storage. Never pass the CLI key, License Key,
+or a provider credential as the execution token. Pass parameters as one JSON
+object with `--params '{...}'`, `--params @file.json`, or `--params -`; use
+`--environment` only for a declared provider environment. The command produces
+one logical Engine execution and does not implement local provider retries.
+
+`sdk activity` reads the canonical Engine execution receipts for one exact SDK
+version. Use `--all-versions` only when SDK-wide history is intended, and
+filter with `--status`, `--start`, `--end`, `--limit`, and `--offset`. Its JSON
+page contains receipt and trace IDs, provider status, total/provider latency,
+attempt counts, bounded timing dimensions, and failure classification. Query
+this command instead of calling Engine GraphQL directly or inventing another
+analytics path.
+
 `sdk download` resolves one exact app version. Engine downloads its leased ZIP
 from Registry; on a cache miss it may regenerate the same immutable package
 from Engine-local build metadata and the generator version pinned when that app
@@ -184,7 +217,9 @@ A new SDK plan requires `app.create`, `service.read`, and `bucket.read`.
 Planning an update requires `app.manage` plus the dependency reads. Apply
 requires `app.create` for a new SDK or `app.manage` for an existing
 one, together with `service.consume` for every selected service and `bucket.use`
-for the selected bucket. Download requires `app.read`; `sdk token`
+for the selected bucket. Download, invoke target resolution, and activity
+require `app.read`; activity also requires `audit.read`. Runtime invocation
+additionally requires a valid SDK-scoped execution token. `sdk token`
 generate/list/revoke requires `app.tokens.manage`.
 
 For team ownership, preflight the owner and every dependency before planning:
@@ -239,81 +274,8 @@ response-driven limits, idempotency predicates, and retry bounds across pages an
 
 Structured webhook verification, post-auth discovery, media-upload workflows, catalog composition, and OpenAPI 3.2 whole-query/sequential-media behavior are Engine-owned. Generated callers preserve exact `QUERY` or custom method tokens and pass a declared `querystring` value once in their one logical Engine call; they never expose `secret_ref`, sign, percent-encode whole queries, frame provider streams, advance workflows, or merge catalogues. Ordinary operation inputs and Fused selectors such as `resourceId` are the only caller surface.
 
-## Runtime timeout contract
+## Runtime behavior
 
-Generated clients expose `ExecutionTimeoutError` in TypeScript and Python.
-`timeoutMs` / `timeout_ms` defaults to 30 seconds and bounds `Connect`, buffered
-execution, and the wait for an SSE stream's first event. It is a caller-side
-deadline; it does not configure the service owner’s Engine policy.
-
-For long-lived SSE operations, configure `streamIdleTimeoutMs` /
-`stream_idle_timeout_ms` for the gap between events and
-`maxStreamDurationMs` / `max_stream_duration_ms` for an optional total stream
-cap. If neither stream setting is supplied, an established stream may remain
-open until the provider, Engine, consumer, or Engine execution policy closes
-it. Stopping iteration cancels the underlying gRPC call.
-
-Service owners set the independent Engine cap in workspace configuration:
-
-```yaml
-services:
-  jira:
-    execution_policy:
-      timeout_ms: 45000  # 1..86400000; omitted means no Engine cap
-```
-
-An exact service-version execution policy overrides the service-level timeout.
-If the Engine policy expires, the client receives `ExecutionTimeoutError` with
-code `execution_timeout` and the enforced `timeout_ms`. If the caller deadline
-expires first, the client still receives the same typed class with its own
-configured budget; Engine telemetry must not misattribute it to policy expiry.
-
-## SDK runtime: shared gRPC channel
-
-Every generated SDK opens **exactly one gRPC channel** to the Engine when
-`FusedSDK` is instantiated. All services in the SDK share that channel over
-a single HTTP/2 connection -- there is no per-service connection overhead.
-
-### Configuring the Engine endpoint
-
-The channel target is resolved in this order (first non-empty value wins):
-
-1. `engine_url` / `engineUrl` passed directly to `FusedSDK(...)`.
-2. `FUSED_ENGINE_GRPC_URL` environment variable.
-3. `FUSED_ENGINE_URL` environment variable.
-4. Default: `http://127.0.0.1:50051`.
-
-> **Local dev**: the Fused Engine binds REST to port **8081** and gRPC to
-> **8082** by default. Always point `engine_url` / `FUSED_ENGINE_GRPC_URL` at
-> the gRPC port; connecting to the REST port returns HTTP 405.
-
-### Python
-
-```python
-import os
-from src import FusedSDK
-
-sdk = FusedSDK({
-    "engine_url": os.environ.get("FUSED_ENGINE_GRPC_URL"),  # e.g. http://localhost:8082
-    "token": os.environ["FUSED_SDK_TOKEN"],
-})
-
-# Async context manager closes the channel on exit:
-async with FusedSDK({"engine_url": "http://localhost:8082"}) as sdk:
-    result = await sdk.async_jira.issues.list()
-
-await sdk.close()  # manual close
-```
-
-### TypeScript
-
-```typescript
-import { FusedSDK } from 'your-sdk-package';
-
-const sdk = new FusedSDK({
-  engineUrl: process.env.FUSED_ENGINE_GRPC_URL, // e.g. http://localhost:8082
-  token: process.env.FUSED_SDK_TOKEN,
-});
-
-process.on('SIGTERM', () => sdk.close()); // release channel on shutdown
-```
+For generated-client timeouts, SSE lifetime controls, the shared gRPC channel,
+and Engine endpoint precedence, read `reference/runtime.md` only when configuring
+or diagnosing SDK runtime behavior.

@@ -94,6 +94,16 @@ func classifyCommandError(cmd *cobra.Command, err error) jsonErrorResult {
 		Code: "command_failed", Message: err.Error(), Category: "cli", Command: cmd.CommandPath(),
 		Remediation: "Review the message and run '" + cmd.CommandPath() + " --help' if the required input is unclear.",
 	}
+	var invokeError *sdkInvokeError
+	if errors.As(err, &invokeError) {
+		result.Code, result.Message, result.Category = invokeError.code, invokeError.message, invokeError.category
+		result.Details = invokeError.details
+		return result
+	}
+	var applyError *sdkApplyStageError
+	if errors.As(err, &applyError) {
+		result.Details = applyError.jsonDetails()
+	}
 	var unknownApply *importApplyOutcomeUnknownError
 	if errors.As(err, &unknownApply) {
 		// Why: generic timeout remediation says retry, which is unsafe after a
@@ -117,7 +127,7 @@ func classifyCommandError(cmd *cobra.Command, err error) jsonErrorResult {
 		result.Code, result.Message = apiError.Code, apiError.Message
 		result.Category, result.Retryable = apiError.Category, apiError.Retryable
 		result.Remediation, result.TraceID, result.HTTPStatus = apiError.Remediation, apiError.TraceID, apiError.HTTPStatus
-		result.Details = apiErrorJSONDetails(apiError)
+		result.Details = mergeJSONDetails(result.Details, apiErrorJSONDetails(apiError))
 		return result
 	}
 	if isCommandUsageError(err.Error()) {
@@ -134,6 +144,21 @@ func classifyCommandError(cmd *cobra.Command, err error) jsonErrorResult {
 	return result
 }
 
+// mergeJSONDetails combines CLI stage context with authoritative Engine details.
+func mergeJSONDetails(base, additional map[string]any) map[string]any {
+	if len(base) == 0 && len(additional) == 0 {
+		return nil
+	}
+	merged := make(map[string]any, len(base)+len(additional))
+	for key, value := range base {
+		merged[key] = value
+	}
+	for key, value := range additional {
+		merged[key] = value
+	}
+	return merged
+}
+
 // apiErrorJSONDetails preserves every reviewed diagnostic field without
 // exposing arbitrary response JSON that the API client deliberately rejected.
 func apiErrorJSONDetails(apiError *cliapi.APIError) map[string]any {
@@ -143,6 +168,18 @@ func apiErrorJSONDetails(apiError *cliapi.APIError) map[string]any {
 	}
 	if apiError.Details.ServerDetail != "" {
 		details["server_detail"] = apiError.Details.ServerDetail
+	}
+	if apiError.Details.ApplyLeaseExpiresAt != "" {
+		details["apply_lease_expires_at"] = apiError.Details.ApplyLeaseExpiresAt
+	}
+	if apiError.Details.RetryAfterSeconds > 0 {
+		details["retry_after_seconds"] = apiError.Details.RetryAfterSeconds
+	}
+	if apiError.Details.Stage != "" {
+		details["stage"] = apiError.Details.Stage
+	}
+	if apiError.Details.DependencyHTTPStatus > 0 {
+		details["dependency_http_status"] = apiError.Details.DependencyHTTPStatus
 	}
 	if len(details) == 0 {
 		return nil

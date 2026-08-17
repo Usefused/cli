@@ -290,3 +290,30 @@ func TestEngineGraphQLFormatsPermissionDeniedContract(t *testing.T) {
 		t.Fatalf("normal denial leaked advanced diagnostics: %q", message)
 	}
 }
+
+// TestStructuredEngineErrorPreservesApplyLeaseTiming verifies bounded retry diagnostics.
+func TestStructuredEngineErrorPreservesApplyLeaseTiming(t *testing.T) {
+	err := newHTTPError(http.StatusConflict, []byte(`{
+		"error": {
+			"code": "plan_apply_in_progress",
+			"message": "plan_apply_in_progress: this plan is already being applied",
+			"category": "conflict",
+			"retryable": true,
+			"details": {
+				"apply_lease_expires_at": "2026-08-17T17:00:00Z",
+				"retry_after_seconds": 42,
+				"stage": "apply"
+			}
+		}
+	}`))
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("error type = %T", err)
+	}
+	if apiErr.Code != "plan_apply_in_progress" || !apiErr.Retryable || apiErr.Details.RetryAfterSeconds != 42 || apiErr.Details.Stage != "apply" {
+		t.Fatalf("error = %#v", apiErr)
+	}
+	if !strings.Contains(apiErr.Error(), "Apply lease expires") || !strings.Contains(apiErr.Error(), "Retry after 42 seconds") {
+		t.Fatalf("human error = %q", apiErr.Error())
+	}
+}

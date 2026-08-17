@@ -67,14 +67,16 @@ fused-cli config list
 fused-cli config reset      # deletes the local config file entirely
 ```
 
-`login` always opens the selected Engine's sign-in page. Choose managed Fused
+`login` normally opens the selected Engine's sign-in page. Choose managed Fused
 Auth (email, social, or enterprise SSO) or enter an existing Engine API key in
 that page. The CLI locally generates the resulting `fsk_` credential, while the
 Engine stores only its hash and binds it to the authenticated Engine subject;
 the browser never receives the generated credential. Use `--no-browser` to
-print the URL for an interactive remote/headless session. `--no-input` and
-`CI=true` reject browser login; automation should continue using `--key`,
-`FUSED_API_KEY`, or `FUSED_LICENSE_KEY`.
+print the URL for a remote/headless session. `login --no-input` is valid because
+browser approval needs no terminal prompt; combine it with `--no-browser` to
+approve from another device. Unattended automation should continue using
+`--key` or `FUSED_API_KEY`; do not leave a login poll waiting for human approval
+in CI.
 
 The local config stores `engine-url`, `api-key`, non-settable provenance
 metadata, and expiry metadata for Engine-issued managed CLI credentials. A saved key
@@ -82,6 +84,10 @@ takes precedence over ambient credential variables; use `--key` for an
 intentional one-command override.
 
 Use `whoami` to inspect the effective credential selected by that precedence.
+Agents must use `whoami --json` before a production mutation when more than one
+of saved login, `FUSED_API_KEY`, or `FUSED_LICENSE_KEY` may be present; branch
+on `local_credential_source` and the returned Engine identity instead of
+guessing from the shell environment.
 It prints only non-secret identity, account/workspace, source, authentication
 method, and expiry data. Use `logout` to revoke the saved managed CLI login and
 clear its local key/expiry metadata. Logout intentionally ignores `--key` and
@@ -97,7 +103,8 @@ saved API key has no managed-login provenance and is left unchanged.
 - `-f, --file <path>` -- point at a specific config file, disabling `.fused/`
   directory discovery
 - `--no-input` -- fail with remediation rather than opening a prompt;
-  `CI=true` enables this automatically
+  `CI=true` enables this automatically. Browser login is allowed because it
+  polls an explicit approval URL without reading terminal input.
 - `--timeout <duration>` -- bound Engine requests (default `1m`; reviewed
   `import plan` and `import apply` use `20m` unless this flag is set explicitly)
 - `--request-id <request-id>` -- attach a non-secret audit correlation ID to every
@@ -132,6 +139,15 @@ is a real Cobra subcommand. For example, use `sdk service add <service-slug>`,
 Running a group without an
 action or passing an unexpected positional argument is an error; use the
 group's `--help` output to choose the exact subcommand.
+
+## Structured output for agents
+
+Use `--json` whenever the confirmed command help exposes it. This includes
+read/list/show/validate commands, plan commands, `sdk apply`, `sdk download`,
+`sdk token generate`, `sdk invoke`, and `sdk activity`. Do not scrape IDs, one-time tokens,
+receipt fields, retry timing, or execution results from human output. A command
+without `--json` must be treated as a human-only mutation unless its domain
+skill documents a stable alternative.
 
 `fused-cli skill install` installs from the immutable `skills/<version>/`
 snapshot shipped beside a release binary when available. This is intentionally
@@ -205,6 +221,21 @@ evidence for the resources that changed before a later failure. CLI-managed
 config and receipt writes use validated same-directory atomic replacement and
 preserve an existing file's permission mode.
 
+`sdk apply --json` returns explicit apply, Registry-generation, and download
+outcomes, including the one-time execution token when one was created. If a
+stage fails, stderr remains the standard structured error envelope and
+`error.details.stage` identifies `apply`, `generation`, or `download`; a
+successful apply's SDK and Version IDs are included when a later stage failed.
+`sdk download` is a distinct visible command, so prefer separate `sdk apply
+--json` and `sdk download <name@version> --json` steps when automation needs
+independent retry boundaries.
+
+An active apply lease returns `plan_apply_in_progress` with HTTP `Retry-After`,
+`error.details.retry_after_seconds`, and
+`error.details.apply_lease_expires_at`. Respect that bounded delay; do not poll
+aggressively or treat the 409 as a permanent lock. A changed revision instead
+requires a new plan.
+
 ## Importing a provider API
 
 Registry search and import are separate permissions: `service search --q`
@@ -227,11 +258,11 @@ and response bodies only when needed.
 For a command using `--json`, treat a non-zero exit as a structured failure and
 decode stderr as `{ "ok": false, "error": { ... } }`. Branch on `error.code`
 and `error.retryable`; show `error.remediation` to the user and retain
-`error.trace_id` for support. Validation failures may also include the Engine's
-bounded `error.details.server_detail`; display it locally because the Engine
-owner needs the parser or contract decision to correct their input, but never
-copy it into OTEL, analytics, or durable receipts. Arbitrary response bodies,
-credential-shaped strings, and non-validation server messages remain hidden.
+`error.trace_id` for support. Engine errors may also include bounded reviewed
+fields such as `error.details.server_detail`, dependency stage/status, or
+apply-lease timing. Render those fields because this CLI talks to the user's
+dedicated Engine, but never copy them into OTEL, analytics, or durable receipts.
+Arbitrary proxy bodies and credential-shaped strings remain hidden.
 Do not retry when `retryable` is false and do not parse the human error string
 to recover fields already present in the object.
 

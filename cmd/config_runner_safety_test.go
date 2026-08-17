@@ -89,6 +89,30 @@ func TestApplyPreparedSDKPrintsOneTimeExecutionToken(t *testing.T) {
 	}
 }
 
+// TestApplyPreparedSDKJSONPreservesIDsTokenAndStageOutcomes verifies the automation contract.
+func TestApplyPreparedSDKJSONPreservesIDsTokenAndStageOutcomes(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/sdk-config/apply" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"applied","plan_id":"plan-1","app_family_id":"sdk-1","app_id":"version-1","job_id":"job-1","execution_token":"shown-once"}`))
+	}))
+	defer server.Close()
+
+	cfg := &configfile.ParsedConfig{ConfigKey: "sdk:security:1.0.0", SDK: &configfile.SDKConfig{Name: "security"}}
+	result, err := applyPreparedSDKJSON(api.NewClient(server.URL, "fsk_test"), cfg, planReceipt{PlanID: "plan-1", SourceHash: "hash"}, false)
+	if err != nil {
+		t.Fatalf("applyPreparedSDKJSON: %v", err)
+	}
+	if result.SDKID != "sdk-1" || result.VersionID != "version-1" || result.ExecutionToken != "shown-once" {
+		t.Fatalf("identity output = %#v", result)
+	}
+	if result.Generation.Status != "completed" || result.Generation.JobID != "job-1" || result.Download.Status != "not_requested" {
+		t.Fatalf("stage output = %#v", result)
+	}
+}
+
 func TestPrintPlanResultJSONIncludesSummaryAndNotifications(t *testing.T) {
 	planned := []plannedConfig{{
 		receipt: planReceipt{

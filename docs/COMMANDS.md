@@ -23,7 +23,7 @@ receives SIGINT or SIGTERM. `CI=true` and `FUSED_NO_UPDATE_CHECK=1` disable
 release update checks. A command that would prompt fails with remediation when
 `--no-input` or `CI=true` is active.
 
-## Structured output for read commands
+## Structured output for agents
 
 Read-only inspection commands accept `--json` without changing their default
 human-readable output. This includes service and workspace discovery,
@@ -39,7 +39,8 @@ Commands backed by an API page return:
 Exact-object and non-paged reads return the object or array directly. Sensitive
 reads keep the same safe projection as human output: secret values, decrypted
 connect credentials, and execution-token values are never returned by list
-commands. Plan commands retain their existing `--json` plan-result contract.
+commands. Plan commands retain their existing `--json` plan-result contract;
+SDK apply, token generation, invocation, and activity also provide stable JSON.
 
 When a command using `--json` fails, stdout remains reserved for successful
 output and stderr receives one JSON object before the CLI exits non-zero:
@@ -447,6 +448,7 @@ Apply an SDK generation plan or deploy an MCP server plan.
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
 | `--download` | | Download generated SDKs after `sdk apply`; unavailable for MCP | `false` |
+| `--json` | | Print SDK apply, generation, and download outcomes as JSON; unavailable for MCP | `false` |
 | `--plan-id` | | Apply a specific remote plan ID | `""` |
 | `--receipt` | | Read a specific plan receipt | `""` |
 
@@ -494,6 +496,30 @@ fused-cli sdk download security-sdk@1.2.0
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
 | `--out` | `-o` | Output directory for the SDK | `"."` |
+| `--json` | | Print SDK, Version ID, status, and output path as JSON | `false` |
+
+## `sdk invoke <sdk-name@version-or-version-id> <operation>`
+
+Invoke one operation through the same gRPC transport used by generated SDKs.
+The SDK execution token comes from `FUSED_SDK_TOKEN`, a variable named by
+`--token-env`, or stdin with `--token-stdin`; management and provider
+credentials are never substituted.
+
+| Argument | Short | Description | Default |
+|----------|-------|-------------|---------|
+| `--grpc-url` | | SDK execution gRPC URL (or `FUSED_ENGINE_GRPC_URL`) | `""` |
+| `--params` | | JSON object, `@file`, or `-` for stdin | `"{}"` |
+| `--token-env` | | Environment variable containing the execution token | `"FUSED_SDK_TOKEN"` |
+| `--token-stdin` | | Read the execution token from stdin | `false` |
+| `--environment` | | Named provider environment selector | `""` |
+| `--idempotency-key` | | Stable logical-request key; generated when omitted | `""` |
+| `--json` | | Print the result and execution timing as JSON | `false` |
+
+## `sdk activity <sdk-name@version-or-version-id>`
+
+List canonical Engine execution receipts. Use `--all-versions` for the entire
+SDK and `--status`, `--start`, or `--end` to narrow the page. Requires both
+`app.read` and `audit.read`.
 
 ## `sdk service add <service-slug>`
 Add a service to an SDK configuration.
@@ -519,7 +545,8 @@ Remove OpenAPI operation IDs from an existing SDK configuration. Inherits global
 
 ## `sdk token generate <sdk-name-or-id> <token-name>`
 Generate a named execution token that works across every active or deprecated
-version of the SDK.
+version of the SDK. Pass `--json` to receive the one-time token and metadata as
+a structured object.
 
 ## `sdk token list <sdk-name-or-id>`
 List execution-token metadata for an SDK, including expired tokens that may

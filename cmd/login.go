@@ -48,9 +48,6 @@ func init() {
 }
 
 func runCLILogin(cmd *cobra.Command) error {
-	if err := requireInteractive("use --key, FUSED_API_KEY, or FUSED_LICENSE_KEY for automation"); err != nil {
-		return err
-	}
 	engineURL, err := normalizedLoginEngineURL()
 	if err != nil {
 		return err

@@ -16,8 +16,10 @@ fused-cli --engine-url "http://localhost:8081" login
 
 The browser flow creates the resulting `fsk_` key locally; the Engine stores
 only its hash and binds it to the authenticated subject. Use `--no-browser` to
-print the approval URL for an interactive remote session. Automation should
-use `--key`, `FUSED_API_KEY`, or `FUSED_LICENSE_KEY` instead.
+print the approval URL for an interactive remote session. `login --no-input`
+is valid because browser approval does not require terminal input; combine it
+with `--no-browser` to print the URL for approval elsewhere. Unattended
+automation should use `--key`, `FUSED_API_KEY`, or `FUSED_LICENSE_KEY` instead.
 
 Inspect or revoke the saved login without revealing its credential:
 
@@ -65,9 +67,10 @@ Use `--no-input` in scripts and agent runs. `CI=true` enables the same
 non-interactive behaviour and disables release update checks;
 `FUSED_NO_UPDATE_CHECK=1` disables only the update check.
 
-Read-only commands accept `--json`. Paginated output contains `items`, `total`,
-`limit`, and `offset`. A command using `--json` writes a structured error to
-stderr on failure and exits non-zero.
+Agent-readable commands expose `--json`, including reads, plans, SDK apply and
+download, token generation, invocation, and activity. Paginated output contains
+`items`, `total`, `limit`, and `offset`. A command using `--json` writes a
+structured error to stderr on failure and exits non-zero.
 
 ## Credentials and buckets
 
