@@ -13,11 +13,10 @@ declared dependencies, compensate successful direct dependencies after a graph
 execution failure or dependency skip, and return every forward and rollback
 outcome.
 
-Unified Operations belong only in a TypeScript or Python `kind: sdk` config.
-They wrap operations already selected under `services`; they do not grant a new
-authorization scope or carry provider credentials. Read `fused-sdk` for SDK
-identity, operation selection, plan/apply, download, and tokens. Read
-`fused-bucket` when OAuth/OIDC connections or credentials are not ready.
+Use Unified Operations only in TypeScript or Python `kind: sdk` configs. They
+wrap operations already selected under `services`; they grant no new scope and
+carry no credentials. Read `fused-sdk` for lifecycle and `fused-bucket` for
+OAuth/OIDC or credential readiness.
 
 ## Properties and where they are used
 
@@ -95,9 +94,8 @@ missing field or array item, for example `${input.body?}`. YAML aliases, merge
 keys, custom tags, timestamps, and non-string object keys are not portable JSON
 and are rejected.
 
-The Registry's credential-free generator descriptor receives schemas, exact
-operation identities, `depends_on`, and rollback identity. Forward, output,
-and rollback DynamicValue mappings remain Engine-local.
+The Registry's credential-free descriptor receives schemas, exact operation,
+dependency, and rollback identities. DynamicValue mappings remain Engine-local.
 
 ### Output behavior
 
@@ -137,11 +135,9 @@ active rollback operation. Any preflight failure rejects the RPC with
 zero physical calls and no `{results, rollbacks}` envelope; inactive rollback
 declarations are not preflighted.
 
-The generated call returns `{results, rollbacks}`. Forward results preserve
-target order and have `success`, `error`, or `skipped` status. Rollback results
-have `success` or `error`, plus `triggeredBy`/`triggered_by`. The Engine waits
-for all eligible forward calls and compensations; one provider failure does not
-erase another provider's result.
+The call returns `{results, rollbacks}`. Forward results preserve target order
+with `success`, `error`, or `skipped`; rollbacks use `success` or `error` plus
+`triggeredBy`/`triggered_by`. One provider failure does not erase another result.
 
 For bucket-scoped Jira OAuth—including the workspace profile, timeout, SDK bucket, token transport, and selector—read `reference/jira-oauth.md`.
 
@@ -231,13 +227,10 @@ const outcome = await sdk.unified.research.createIssue(
   {query: "release readiness", projectKey: "OPS", issueSummary: "Review readiness"},
   {
     targets: ["jira_projects", "jira_issue_types", "nimble", "jira"],
-    selectors: {
-      jira: {endUserRef: "customer-42"},
-    },
+    selectors: {jira: {endUserRef: "customer-42"}},
     idempotencyKey: "jira-research-2026-08-19",
   },
 );
-
 for (const result of outcome.results) console.log(result.target, result.status);
 for (const rollback of outcome.rollbacks) console.log(rollback.target, rollback.status);
 ```
@@ -256,15 +249,11 @@ outcome = sdk.unified.research.create_issue(
 
 ## Permissions and team access
 
-Unified Operations use SDK control-plane permissions: `app.create`,
-`app.manage`, `service.consume`, `bucket.use`, and `app.tokens.manage` as
+Unified Operations use `app.create`, `app.manage`, `service.consume`, `bucket.use`, and `app.tokens.manage` as
 described by `fused-sdk`. A generated call needs the SDK identity plus execution
-token, authorized for every selected forward and active rollback operation; it
-does not require `app.read` or a separate Unified scope. CLI download/invoke
-lookup requires `app.read`; Activity additionally requires `audit.read`.
-
-For team ownership, use `team eligible-owners`, `team build-access`,
-`team access service`, `team access bucket`, and `team access app` as described
-by `fused-cli`'s `reference/access-management.md`. On denial, report the
-missing permission and resource. Never self-grant, switch credentials, or
-broaden access.
+token authorized for every selected forward and active rollback operation; it
+does not need a separate Unified scope. CLI lookup needs `app.read`; Activity
+also needs `audit.read`. For team ownership, use `team eligible-owners`,
+`team build-access`, and `team access app` per `fused-cli`'s `reference/access-management.md`.
+On denial, report the missing permission and resource. Never self-grant, switch
+credentials, or broaden access.
