@@ -327,6 +327,10 @@ func workspaceEnabledVersionIDs(service api.WorkspaceService) map[string]bool {
 // which Versions entry this profile list gets attached to.
 func workspaceConnectionProfileIntent(profile api.WorkspaceConnectProfile) map[string]interface{} {
 	intent := map[string]interface{}{"auth_type": profile.AuthType}
+	if authName := workspaceConnectionProfileAuthName(profile); authName != "" {
+		// The outer selector lets Engine resolve the same named Registry stream after sync replaces an inline body with profile_id.
+		intent["auth_name"] = authName
+	}
 	// is_public reflects a prior successful, owner-gated publish recorded by
 	// the Engine (MarkWorkspaceProfilePublished only runs after
 	// PublishConnectionProfile succeeds), so sync can round-trip it here
@@ -340,6 +344,12 @@ func workspaceConnectionProfileIntent(profile api.WorkspaceConnectProfile) map[s
 	}
 	intent["profile"] = profile.Profile
 	return intent
+}
+
+// workspaceConnectionProfileAuthName recovers the exact scheme identity from the safe profile snapshot without introducing another Engine sync field.
+func workspaceConnectionProfileAuthName(profile api.WorkspaceConnectProfile) string {
+	authName, _ := profile.Profile["auth_name"].(string)
+	return strings.TrimSpace(authName)
 }
 
 // workspaceServiceConfigKey requires Registry slug identity so sync never

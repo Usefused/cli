@@ -710,6 +710,7 @@ services:
                   mode: force
                   operations: [listProjects, listCreateIssueTypes, getCreateFieldMetadata, createIssue]
 `), "workspace.yaml")
+	// Valid raw entries must survive CLI parsing without Engine-owned reinterpretation.
 	if err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
@@ -718,6 +719,38 @@ services:
 	profile := decodeJiraProfileFixture(t, version.ConnectionProfiles)
 	if !reflect.DeepEqual(profile, expectedJiraProfileFixture()) {
 		t.Fatalf("inline Jira profile changed: %#v", profile)
+	}
+}
+
+// TestWorkspaceConnectionProfileRetainsOuterAuthName proves the raw CLI transport preserves Registry selection identity beside an inline profile.
+func TestWorkspaceConnectionProfileRetainsOuterAuthName(t *testing.T) {
+	parsed, err := configfile.Parse([]byte(`
+apiVersion: fused/v1
+kind: workspace
+services:
+  jira:
+    service_id: "00000000-0000-0000-0000-000000000001"
+    versions:
+      - version: "2026-08-01"
+        connection_profiles:
+          - auth_type: oauth
+            auth_name: JiraOAuth
+            profile:
+              auth_type: oauth
+              auth_name: JiraOAuth
+`), "workspace.yaml")
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	entry := parsed.Workspace.Services["jira"].Versions[0].ConnectionProfiles[0]
+	// The outer selector is separate from the nested runtime profile identity.
+	if entry["auth_name"] != "JiraOAuth" {
+		t.Fatalf("outer auth_name changed during parsing: %#v", entry)
+	}
+	payload, err := json.Marshal(parsed.Workspace)
+	// Plan marshaling must carry the same selector to Engine unchanged.
+	if err != nil || !strings.Contains(string(payload), `"auth_name":"JiraOAuth"`) {
+		t.Fatalf("outer auth_name changed during JSON transport: payload=%s err=%v", payload, err)
 	}
 }
 
