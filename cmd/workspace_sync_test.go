@@ -334,13 +334,13 @@ func TestMergeWorkspaceConnectConfigsFromRemotePreservesRegistryIdentity(t *test
 	updated, err := mergeWorkspaceConnectConfigsFromRemote(cfg, []api.WorkspaceService{service}, []api.WorkspaceConnectConfig{{
 		BucketName: "customers", ServiceID: service.ServiceID, AuthType: "oauth", Enabled: true,
 		RedirectURI: "https://engine.example.com/callback", HasClientID: true, HasClientSecret: true,
-		Profiles: []api.WorkspaceConnectProfile{{ServiceVersionID: "ver-1", RegistryProfileID: profileID, Profile: map[string]interface{}{"auth_type": "oauth"}}},
+		Profiles: []api.WorkspaceConnectProfile{{ServiceVersionID: "ver-1", RegistryProfileID: profileID, Profile: map[string]interface{}{"auth_type": "oauth", "auth_name": "jiraOAuth"}}},
 	}})
 	if err != nil || !reflect.DeepEqual(updated, []string{"jira"}) {
 		t.Fatalf("merge Registry profile: updated=%v err=%v", updated, err)
 	}
 	profiles := cfg.Services["jira"].Versions[0].ConnectionProfiles
-	if len(profiles) != 1 || profiles[0]["profile_id"] != profileID || profiles[0]["profile"] != nil {
+	if len(profiles) != 1 || profiles[0]["profile_id"] != profileID || profiles[0]["profile"] != nil || profiles[0]["auth_name"] != "jiraOAuth" {
 		t.Fatalf("Registry profile identity was not preserved: %#v", profiles)
 	}
 }

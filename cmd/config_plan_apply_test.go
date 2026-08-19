@@ -53,6 +53,43 @@ services:
 	}
 }
 
+// TestWorkspacePlanPreservesConnectionProfileAuthName pins the raw YAML-to-Engine selector transport used for named Registry streams.
+func TestWorkspacePlanPreservesConnectionProfileAuthName(t *testing.T) {
+	dir := t.TempDir()
+	path := writeSprintConfig(t, dir, "workspace.yaml", `
+apiVersion: fused/v1
+kind: workspace
+services:
+  jira:
+    service_id: "00000000-0000-0000-0000-000000000001"
+    versions:
+      - version: "2026-08-01"
+        connection_profiles:
+          - auth_type: oauth
+            auth_name: jiraOAuth
+            profile_id: "00000000-0000-0000-0000-000000000002"
+`)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		// The captured Engine request is the public boundary this test protects.
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		config := body["config"].(map[string]any)
+		services := config["services"].(map[string]any)
+		versions := services["jira"].(map[string]any)["versions"].([]any)
+		profiles := versions[0].(map[string]any)["connection_profiles"].([]any)
+		// Named Registry identity must remain adjacent to auth_type and profile_id.
+		if profiles[0].(map[string]any)["auth_name"] != "jiraOAuth" {
+			t.Fatalf("connection profile auth_name changed: %#v", profiles)
+		}
+		_, _ = w.Write([]byte(`{"plan_id":"plan-workspace","config_key":"workspace","source_hash":"` + body["source_hash"].(string) + `","summary":{}}`))
+	}))
+	defer server.Close()
+
+	runCommandInDir(t, dir, server.URL, []string{"workspace", "plan", "-f", path})
+}
+
 func TestWorkspacePlanAndApplyPreserveNamedSameFamilyAuth(t *testing.T) {
 	t.Setenv("PRIMARY_API_KEY", "primary-secret")
 	t.Setenv("SECONDARY_API_KEY", "secondary-secret")

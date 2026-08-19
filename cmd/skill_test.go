@@ -207,7 +207,7 @@ func TestFusedUnifiedOperationsSkillDocumentsItsAuthoringContract(t *testing.T) 
 		"`depends_on`",
 		"`rollback.operation`",
 		"`${response.github.iid ?? response.linkedin.id}`",
-		"`selectors.<target>.endUserRef`",
+		"`selectors.<service>.endUserRef`",
 		"`end_user_ref`",
 		"`{results, rollbacks}`",
 		"zero physical calls",
