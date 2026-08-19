@@ -3,6 +3,8 @@ package cmd
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -89,6 +91,38 @@ func TestRecordTelemetryErrorUsesSafeStructuredFields(t *testing.T) {
 	}
 	if _, exposed := attributes["error.server_detail"]; exposed {
 		t.Fatalf("server detail was attached: %#v", attributes)
+	}
+}
+
+// TestRecordTelemetryErrorUsesVersionRequiredCode proves a versionless import
+// remains diagnosable without exporting its source, version, or remediation.
+func TestRecordTelemetryErrorUsesVersionRequiredCode(t *testing.T) {
+	exporter := tracetest.NewInMemoryExporter()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
+	_, span := provider.Tracer("test").Start(context.Background(), "import-plan")
+	apiError := &cliapi.APIError{
+		Code: "import_version_required", Message: "private-source-name", Category: "validation",
+		Remediation: "use-private-version", Retryable: false,
+	}
+	recordTelemetryError(span, apiError)
+	span.End()
+	spans := exporter.GetSpans()
+	// The typed contract may export only the bounded code and retryability.
+	if len(spans) != 1 || spans[0].Status.Description != "import_version_required" || len(spans[0].Events) != 0 {
+		t.Fatalf("typed import span = %#v", spans)
+	}
+	attributes := map[string]interface{}{}
+	// Attribute collection makes every emitted value available to the denylist.
+	for _, value := range spans[0].Attributes {
+		attributes[string(value.Key)] = value.Value.AsInterface()
+	}
+	if attributes["error.code"] != "import_version_required" || attributes["error.retryable"] != false {
+		t.Fatalf("typed import attributes = %#v", attributes)
+	}
+	// Remote message and remediation must never become telemetry dimensions.
+	encoded := fmt.Sprint(attributes)
+	if strings.Contains(encoded, "private-source-name") || strings.Contains(encoded, "use-private-version") {
+		t.Fatalf("import telemetry leaked remote text: %#v", attributes)
 	}
 }
 

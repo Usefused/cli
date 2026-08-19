@@ -10,11 +10,28 @@ points at. It owns runtime credential material keyed by service --
 services declare what's *enabled*, buckets declare what credentials a
 selected app/runtime *uses*.
 
-A workspace commonly has more than one bucket for the same service -- e.g.
-a `staging` bucket and a `production` bucket each holding a different
-Stripe API key, or a per-customer bucket in a multi-tenant setup. Bucket
-read/value commands and workspace connect take bucket names (or full UUIDs as
-an automation fallback); secret set/delete may omit `--bucket` to use the default.
+A workspace can have more than one bucket for the same service when an explicit
+environment, tenant, or enterprise isolation boundary requires separate
+credentials. Bucket read/value commands and workspace connect take bucket names
+(or full UUIDs as an automation fallback); secret set/delete may omit `--bucket`
+to use the default.
+
+Choose a bucket before writing configuration or credentials:
+
+1. Run `fused-cli bucket list`. Treat the result as buckets visible through
+   `bucket.read`; a listed bucket is not necessarily usable.
+2. Choose visible `default` as the candidate when it fits the requested work,
+   or choose another visible candidate when it fits better. Use `bucket show`
+   or `bucket services` when the name alone is insufficient.
+3. Run the intended plan, apply, or connect action with that exact candidate.
+   A successful `bucket.use` check permits selection. On denial, stop and report
+   the candidate and missing permission; never create a fallback bucket.
+4. Create a bucket only when the user explicitly requests it or states an
+   enterprise, tenant, or environment isolation requirement, and only with
+   workspace `bucket.manage`. Creation does not grant `bucket.use`; run the
+   intended action afterward and stop on denial. Never self-grant.
+
+Never create a bucket merely because a guide or copied example names one.
 
 Ownership and access are separate. A team can manage a bucket while a platform
 administrator grants everyone bounded use with `fused-cli workspace access
@@ -38,9 +55,9 @@ cannot do is **create the bucket itself**: apply resolves each
 `buckets.<name>` key against an existing bucket by name, and if no bucket
 with that name exists yet, apply fails outright with "bucket not found" --
 it never creates one implicitly. **The only way to create a bucket is
-`fused-cli bucket create <bucket-name>`** below. Always create the
-bucket first if it might not exist yet, before declaring `buckets.<name>...`
-in workspace.yaml or running any `--bucket <name>` command against it.
+`fused-cli bucket create <bucket-name>`** below. For an explicitly requested or
+stated isolation bucket, create it under the policy above before declaring
+`buckets.<name>...` in workspace.yaml or running any `--bucket <name>` command.
 
 A service's OAuth/OIDC app registration (`connect`) is never a workspace.yaml
 field -- it's set only via `fused-cli connect set <slug>` below, an immediate
@@ -49,7 +66,7 @@ touches.
 
 Every command list below may be behind the CLI's actual flags/subcommands --
 run `fused-cli <command> --help` (e.g. `fused-cli bucket --help`, `fused-cli
-secret --help`, `fused-cli connection resources --help`) to confirm before
+secret --help`, `fused-cli workspace connection resources --help`) to confirm before
 relying on one (see `fused-cli` skill).
 
 ## `${bucket...}` reference syntax across contexts
@@ -89,7 +106,7 @@ fused-cli bucket sdks <bucket-name-or-id>
 
 Don't confuse `bucket connections <bucket-name-or-id>` (every end user who has connected
 to *any* service through this bucket, and whether their token is
-healthy/refreshing/failing) with `connection resources` below (for *one*
+healthy/refreshing/failing) with `workspace connection resources` below (for *one*
 already-connected user, which provider tenants their token can reach) --
 they're different scopes of the word "connection."
 
@@ -246,9 +263,9 @@ submitted resources and picks a default automatically when there's exactly
 one:
 
 ```shell
-fused-cli connection resources list <connection-id>
-fused-cli connection resources set-default <connection-id> <resource-id>
-fused-cli connection resources rediscover <connection-id>
+fused-cli workspace connection resources list <connection-id> --json
+fused-cli workspace connection resources set-default <connection-id> <resource-id>
+fused-cli workspace connection resources rediscover <connection-id>
 ```
 
 With several resources and no default set, a call must pass an explicit
@@ -261,7 +278,7 @@ actually get injected into a request (`${resource.base_url}`,
 
 ## Registry-level connection profile baseline
 
-`fused-cli connection-profile set <service-ref> --version <v> --auth-type <type> --file <path>`
+`fused-cli service connection-profile set <service-ref> --version <v> --auth-type <type> --file <path>`
 publishes an immutable, versioned profile at the Registry level
 (provider-owner or curator only) -- this is distinct from a workspace's own
 bucket credentials and is covered in `fused-config`.

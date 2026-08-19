@@ -38,7 +38,6 @@ execution_policy:
           methods: [POST]
           operation_kinds: [write]
           statuses: [{min: 429, max: 429}, {min: 500, max: 599}]
-          errors: [connect_timeout, connection_reset]
           body_replayability: replayable
           idempotency_key: {requirement: required, header: Idempotency-Key}
           required_provider_headers: []

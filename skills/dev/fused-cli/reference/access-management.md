@@ -131,8 +131,8 @@ fused-cli team access workspace clear platform
 
 fused-cli team access service grant platform github use
 fused-cli team access service revoke platform github use
-fused-cli team access bucket grant platform company-credentials manage
-fused-cli team access bucket revoke platform company-credentials manage
+fused-cli team access bucket grant platform <bucket> manage
+fused-cli team access bucket revoke platform <bucket> manage
 fused-cli team access app grant platform <sdk-or-mcp-id> use
 fused-cli team access app revoke platform <sdk-or-mcp-id> use
 ```
@@ -168,8 +168,8 @@ MCP server share a name.
 
 ```shell
 fused-cli workspace access list [--resource bucket|app]
-fused-cli workspace access bucket grant company-credentials
-fused-cli workspace access bucket revoke company-credentials
+fused-cli workspace access bucket grant <bucket>
+fused-cli workspace access bucket revoke <bucket>
 fused-cli workspace access app grant <sdk-or-mcp-id>
 fused-cli workspace access app revoke <sdk-or-mcp-id>
 ```

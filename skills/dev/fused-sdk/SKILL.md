@@ -39,6 +39,12 @@ text: use `sdk plan --json`, `sdk apply --json`, `sdk token generate --json`,
 `kind: sdk`, managed by `fused-cli sdk ...`, declares a typed SDK package
 generated from a bucket's already-configured services.
 
+Run `bucket list`, treat its results as visible through `bucket.read` rather
+than proven usable, and choose visible `default` or another visible candidate.
+Let SDK plan/apply check `bucket.use` on that exact candidate. On denial, stop
+and report it; never create a fallback. Follow `fused-bucket` for the narrow
+conditions that permit creation.
+
 Each service map key is the persisted Registry slug of an activated workspace
 service. Confirm it with `fused-cli workspace services list -q <slug> --json`; Registry
 visibility alone does not grant activation or `service.consume` scope.
@@ -109,6 +115,15 @@ exactly one of the two is required, never both/neither. Be aware `sdk sync`
 sorted operation list; a service configured with `select_all: true` does
 not come back as `select_all: true` after a sync, even if nothing else
 about it changed.
+
+## Unified Operations
+
+TypeScript and Python SDK configs may declare top-level `unified_operations`
+over operations selected by the same immutable SDK version. Go SDKs and
+`kind: mcp` configs cannot declare them. Read `fused-unified-operations` for
+the result-oriented property contract, DynamicValue contexts, dependency and
+rollback graph, normalized/provider-specific outputs, runtime targets,
+OAuth/OIDC selectors, and the generated `{results, rollbacks}` response.
 
 ## Identity, versions, and authentication
 

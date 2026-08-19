@@ -77,12 +77,11 @@ type AuthConnectionPageResponse struct {
 }
 
 type BucketResponse struct {
-	ID          string `json:"id"`
-	WorkspaceID string `json:"workspace_id"`
-	Name        string `json:"name"`
-	IsDefault   bool   `json:"is_default"`
-	CreatedAt   string `json:"created_at"`
-	UpdatedAt   string `json:"updated_at"`
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	IsDefault bool   `json:"is_default"`
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
 }
 
 func (c *Client) ListBucketSummariesPage(opts PageOptions) (*BucketSummaryPageResponse, error) {
@@ -199,10 +198,11 @@ func (c *Client) ListBucketSDKPage(bucketID string, opts PageOptions) (*BucketSD
 	return &resp.Page, err
 }
 
+// ListSDKBuckets returns the Engine-projected buckets linked to one immutable SDK identity.
 func (c *Client) ListSDKBuckets(appFamilyID string) ([]BucketResponse, error) {
 	query := `
 		query SDKBuckets($appFamilyId: String!) {
-			sdkBuckets(app_family_id: $appFamilyId) { id workspace_id name is_default created_at updated_at }
+			sdkBuckets(app_family_id: $appFamilyId) { id name is_default created_at updated_at }
 		}
 	`
 	var resp struct {

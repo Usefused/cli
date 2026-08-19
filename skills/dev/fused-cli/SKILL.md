@@ -120,9 +120,10 @@ instead of `--review`).
 
 ## Command surface drifts faster than these skills -- verify with `--help`
 
-Every command list in this skill and its seven domain skills
-(`fused-workspace`, `fused-sdk`, `fused-mcp`, `fused-webhook`, `fused-bucket`,
-`fused-config`, `fused-notifications`) reflects the subcommands/flags that existed when that file was last
+Every command list in this skill and its eight domain skills
+(`fused-workspace`, `fused-sdk`, `fused-unified-operations`, `fused-mcp`,
+`fused-webhook`, `fused-bucket`, `fused-config`, `fused-notifications`) reflects
+the subcommands/flags that existed when that file was last
 updated -- not a live source of truth. Before running any subcommand you
 haven't just confirmed, run `fused-cli <command> --help` (e.g. `fused-cli
 workspace service --help`, `fused-cli sdk token --help`) to see its actual
@@ -473,6 +474,14 @@ before a plan receipt is written. Informational diagnostics remain allowed in
 strict mode. Correct the source or explicit import metadata rather than
 silencing a diagnostic by guessing provider behavior.
 
+Postman and other sources may omit a provider version. Supply the provider's
+actual identity with `fused-cli import plan <path> --name <name> --slug <slug>
+--version <version>`. If it is omitted, Registry returns the structured
+`import_version_required` validation error; human output includes the
+remediation and `--json` preserves its code/category/retryable fields. The CLI
+must not prompt, invent a default, write a receipt, apply, or retry implicitly;
+rerun `import plan` with the explicit version.
+
 Use `import docs` when the source is a human-readable docs page and the agent
 must discover endpoint candidates. By default it selects every discovered
 endpoint, then extracts schemas and commits the service. Selection is an
@@ -518,14 +527,22 @@ fused-cli workspace plan
 fused-cli workspace apply
 ```
 
-Then register the OAuth app under the bucket that will hold the resulting
-user tokens -- `auth`/`connect` live under `buckets.<bucket>.service_config.
-<slug>`, not under the service itself (see `fused-bucket`). Registering the
-app is a separate, immediate admin action, not a workspace.yaml field:
+Then run `fused-cli bucket list`. Treat its results as visible through
+`bucket.read`, not proven usable, and choose visible `default` or another
+visible candidate. Run connect with that exact candidate; on `bucket.use`
+denial, stop and report it instead of creating a fallback. Create only for an
+explicit user request or stated enterprise, tenant, or environment isolation
+requirement with workspace `bucket.manage`; creation does not grant
+`bucket.use`, and self-granting is forbidden. Register the OAuth app under the
+selected bucket, which will also hold the resulting user tokens.
+`auth`/`connect` live under `buckets.<bucket>.service_config.<slug>`, not under
+the service itself (see `fused-bucket`). Registration is a separate, immediate
+admin action, not a workspace.yaml field. This ordinary example uses `default`:
 
 ```shell
+fused-cli bucket list
 printf '%s' 'client_id=...;client_secret=...;redirect_uri=https://engine.example.com/workspace/connect/callback' | \
-  fused-cli connect set jira --bucket company-credentials --value-stdin
+  fused-cli connect set jira --bucket default --value-stdin
 ```
 
 (Omit the value and add `-i` to be prompted per field instead, or see
@@ -537,7 +554,7 @@ requiring every field on every apply, one supporting partial updates) was
 duplicated decision-making with no upside.
 
 ```shell
-fused-cli connect get jira --bucket company-credentials
+fused-cli connect get jira --bucket default
 ```
 
 Checks what's actually registered (`auth_type`/`enabled`/`redirect_uri` plus
@@ -552,7 +569,7 @@ add one explicitly.
 Start one user's OAuth session (see `fused-bucket`):
 
 ```shell
-fused-cli workspace service connect jira --bucket company-credentials \
+fused-cli workspace service connect jira --bucket default \
   --user-ref user_123 --scope read:jira-work --scope write:jira-work --scope offline_access
 ```
 
@@ -560,8 +577,8 @@ If that user has more than one Jira site, confirm/set which one is default
 (see `fused-bucket`):
 
 ```shell
-fused-cli connection resources list <connection-id>
-fused-cli connection resources set-default <connection-id> <resource-id>
+fused-cli workspace connection resources list <connection-id> --json
+fused-cli workspace connection resources set-default <connection-id> <resource-id>
 ```
 
 Generate an SDK against that same bucket (see `fused-sdk`):
@@ -573,7 +590,7 @@ kind: sdk
 name: jira-sdk
 version: "1.0.0"
 language: typescript
-bucket: customer-accounts
+bucket: default
 services:
   jira:
     version: "2026-07-01"
@@ -609,11 +626,12 @@ workspace/bucket/connect steps above do not change.
 |---|---|
 | `fused-workspace` | The service allowlist: enabling services/versions, execution policy, deprecations |
 | `fused-sdk` | Generating a typed SDK package from selected operations/webhooks |
+| `fused-unified-operations` | Defining one generated SDK operation across multiple services: mappings, dependencies, rollback, outputs, call-time targets, and connected-auth selectors |
 | `fused-mcp` | Generating an Engine-hosted MCP server from selected operations (MCP cannot select webhooks) |
 | `fused-webhook` | Registering inbound webhook ingress (`kind: webhook`) and attaching it to an SDK via `webhook_attachment` so that SDK receives delivery |
 | `fused-bucket` | Credential containers: secrets, static values, registering a service's OAuth/OIDC app, starting an OAuth connect session, managing a connected user's resources |
 | `fused-config` | Cross-cutting config owned by no single concept above: execution policy (rate limits/retries/pagination/outbound webhook verification, local-workspace-effect vs. Registry-publish), connection profiles (auth + dynamic request routing), and the OpenAPI/Postman `x-fused-connect` equivalent |
 | `fused-notifications` | Reading, not authoring: what a `plan`/`apply` notification block means, `registry_*` vs. `workspace_*` types, severity, and how/where one gets marked read or dismissed (UI only, not `fused-cli`) |
 
-Read only the skill(s) relevant to the task at hand -- don't load all seven
+Read only the skill(s) relevant to the task at hand -- don't load all eight
 for a single-domain question.

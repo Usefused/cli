@@ -42,8 +42,11 @@ override lists fail to parse so no policy can be detached from its version.
 `service_config`/`secrets` -- **it cannot create the bucket itself.** Apply
 resolves `<bucket-name>` against a bucket that must already exist and fails
 with "bucket not found" if it doesn't; it never creates one implicitly. Run
-`fused-cli bucket create <bucket-name>` first (see `fused-bucket`) for any bucket
-name you're about to reference here.
+`bucket list`, treat listed buckets as visible through `bucket.read` rather than
+proven usable, and choose visible `default` or another visible candidate. Let
+the intended plan/apply check permissions on that exact candidate; on denial,
+stop and report it instead of creating a fallback. Follow `fused-bucket` before
+creating an explicitly requested or stated isolation bucket.
 
 A bucket service's static `auth` uses `auth_type` for the credential type
 and optional `auth_name` for the exact provider scheme. `auth_name` is required

@@ -673,6 +673,129 @@ func TestWorkspaceConnectionProfileValidatesOAuth2FlowSelection(t *testing.T) {
 	}
 }
 
+// TestWorkspaceVersionRetainsInlineOAuthProfileWithTimeout proves the live Jira config shape survives CLI parsing.
+func TestWorkspaceVersionRetainsInlineOAuthProfileWithTimeout(t *testing.T) {
+	parsed, err := configfile.Parse([]byte(`
+apiVersion: fused/v1
+kind: workspace
+services:
+  jira:
+    service_id: "00000000-0000-0000-0000-000000000001"
+    versions:
+      - version: "2026-08-01"
+        service_version_id: "00000000-0000-0000-0000-000000000002"
+        execution_policy: {timeout_ms: 60000}
+        connection_profiles:
+          - auth_type: oauth
+            profile:
+              auth_type: oauth
+              auth_name: JiraOAuth
+              oauth2_flow: authorizationCode
+              resource_discovery:
+                version: 1
+                stage: post_auth
+                operation_id: getAccessibleResources
+                server: api
+                id_path: "$[*].id"
+                name_path: "$[*].name"
+                scopes_path: "$[*].scopes"
+                base_url_template: "https://api.atlassian.com/ex/jira/{id}"
+                resource_type: jira_site
+                auto_run: after_oauth_callback
+                lifecycle: authoritative
+                allowed_hosts: [api.atlassian.com]
+              bindings:
+                - value: "${resource.base_url}"
+                  location: base_url
+                  mode: force
+                  operations: [listProjects, listCreateIssueTypes, getCreateFieldMetadata, createIssue]
+`), "workspace.yaml")
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	version := parsed.Workspace.Services["jira"].Versions[0]
+	assertJiraVersionPolicyFixture(t, version.ExecutionPolicy)
+	profile := decodeJiraProfileFixture(t, version.ConnectionProfiles)
+	if !reflect.DeepEqual(profile, expectedJiraProfileFixture()) {
+		t.Fatalf("inline Jira profile changed: %#v", profile)
+	}
+}
+
+type jiraProfileFixture struct {
+	AuthType          string                       `json:"auth_type"`
+	AuthName          string                       `json:"auth_name"`
+	OAuth2Flow        string                       `json:"oauth2_flow"`
+	ResourceDiscovery jiraResourceDiscoveryFixture `json:"resource_discovery"`
+	Bindings          []jiraBindingFixture         `json:"bindings"`
+}
+
+type jiraResourceDiscoveryFixture struct {
+	Version         int      `json:"version"`
+	Stage           string   `json:"stage"`
+	OperationID     string   `json:"operation_id"`
+	Server          string   `json:"server"`
+	IDPath          string   `json:"id_path"`
+	NamePath        string   `json:"name_path"`
+	ScopesPath      string   `json:"scopes_path"`
+	BaseURLTemplate string   `json:"base_url_template"`
+	ResourceType    string   `json:"resource_type"`
+	AutoRun         string   `json:"auto_run"`
+	Lifecycle       string   `json:"lifecycle"`
+	AllowedHosts    []string `json:"allowed_hosts"`
+}
+
+type jiraBindingFixture struct {
+	Value      string   `json:"value"`
+	Location   string   `json:"location"`
+	Mode       string   `json:"mode"`
+	Operations []string `json:"operations"`
+}
+
+// assertJiraVersionPolicyFixture requires only the intended local timeout.
+func assertJiraVersionPolicyFixture(t *testing.T, policy *configfile.ExecutionPolicy) {
+	t.Helper()
+	if policy == nil || policy.TimeoutMs == nil || *policy.TimeoutMs != 60000 {
+		t.Fatalf("timeout-only version policy was not retained: %#v", policy)
+	}
+	if policy.Retry != nil || policy.RetryConfig != nil {
+		t.Fatalf("unexpected retry policy: %#v", policy)
+	}
+}
+
+// decodeJiraProfileFixture extracts the exact inline profile from raw CLI config data.
+func decodeJiraProfileFixture(t *testing.T, intents []map[string]interface{}) jiraProfileFixture {
+	t.Helper()
+	if len(intents) != 1 || intents[0]["auth_type"] != "oauth" {
+		t.Fatalf("inline OAuth profile intent was not retained: %#v", intents)
+	}
+	encoded, err := json.Marshal(intents[0]["profile"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var profile jiraProfileFixture
+	if err := json.Unmarshal(encoded, &profile); err != nil {
+		t.Fatal(err)
+	}
+	return profile
+}
+
+// expectedJiraProfileFixture returns the tenant-neutral routing contract owned by workspace YAML.
+func expectedJiraProfileFixture() jiraProfileFixture {
+	return jiraProfileFixture{
+		AuthType: "oauth", AuthName: "JiraOAuth", OAuth2Flow: "authorizationCode",
+		ResourceDiscovery: jiraResourceDiscoveryFixture{
+			Version: 1, Stage: "post_auth", OperationID: "getAccessibleResources", Server: "api",
+			IDPath: "$[*].id", NamePath: "$[*].name", ScopesPath: "$[*].scopes",
+			BaseURLTemplate: "https://api.atlassian.com/ex/jira/{id}", ResourceType: "jira_site",
+			AutoRun: "after_oauth_callback", Lifecycle: "authoritative", AllowedHosts: []string{"api.atlassian.com"},
+		},
+		Bindings: []jiraBindingFixture{{
+			Value: "${resource.base_url}", Location: "base_url", Mode: "force",
+			Operations: []string{"listProjects", "listCreateIssueTypes", "getCreateFieldMetadata", "createIssue"},
+		}},
+	}
+}
+
 func writeOAuth2FlowWorkspace(t *testing.T, authType, flow string) string {
 	t.Helper()
 	return writeFile(t, t.TempDir(), "workspace.yaml", fmt.Sprintf(`

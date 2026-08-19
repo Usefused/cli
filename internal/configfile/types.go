@@ -272,6 +272,10 @@ type AppConfig struct {
 	// delivered/generated for each service.
 	WebhookAttachment string                `yaml:"webhook_attachment,omitempty" json:"webhook_attachment,omitempty"`
 	Services          map[string]AppService `yaml:"services" json:"services"`
+	// UnifiedOperations is SDK-only declarative composition. It stays beside
+	// Services because bindings refer to opaque configured service keys in this
+	// exact immutable app version; Engine resolves those keys during plan.
+	UnifiedOperations map[string]UnifiedOperation `yaml:"unified_operations,omitempty" json:"unified_operations,omitempty"`
 }
 
 type SDKConfig = AppConfig
@@ -325,6 +329,42 @@ type AppConnect struct {
 }
 
 type SDKService = AppService
+
+// UnifiedOperation declares one typed SDK wrapper over selected provider
+// operations. Input and output schemas remain ordinary JSON-compatible values;
+// semantic schema and expression validation belongs to Engine plan.
+type UnifiedOperation struct {
+	Description string                             `yaml:"description,omitempty" json:"description,omitempty"`
+	Input       map[string]DynamicValue            `yaml:"input" json:"input"`
+	Bindings    map[string]UnifiedOperationBinding `yaml:"bindings" json:"bindings"`
+	Output      *UnifiedOperationOutput            `yaml:"output,omitempty" json:"output,omitempty"`
+}
+
+// UnifiedOperationBinding supports either the compact operationId scalar or
+// an expanded alias that can select a service independently of the binding key.
+type UnifiedOperationBinding struct {
+	Service   string                    `yaml:"service,omitempty" json:"service,omitempty"`
+	Operation string                    `yaml:"operation" json:"operation"`
+	Input     map[string]DynamicValue   `yaml:"input,omitempty" json:"input,omitempty"`
+	DependsOn []string                  `yaml:"depends_on,omitempty" json:"depends_on,omitempty"`
+	Rollback  *UnifiedOperationRollback `yaml:"rollback,omitempty" json:"rollback,omitempty"`
+	Output    *UnifiedOperationOutput   `yaml:"output,omitempty" json:"output,omitempty"`
+	compact   bool
+}
+
+// UnifiedOperationRollback declares the same-service operation used to
+// compensate a successful binding when a direct dependent fails.
+type UnifiedOperationRollback struct {
+	Operation string                  `yaml:"operation" json:"operation"`
+	Input     map[string]DynamicValue `yaml:"input,omitempty" json:"input,omitempty"`
+}
+
+// UnifiedOperationOutput maps a successful provider response into a declared
+// JSON schema. Root and binding-level outputs are mutually exclusive.
+type UnifiedOperationOutput struct {
+	Schema  map[string]DynamicValue `yaml:"schema" json:"schema"`
+	Mapping map[string]DynamicValue `yaml:"mapping" json:"mapping"`
+}
 
 // ParsedConfig is a container for the parsed configuration.
 type ParsedConfig struct {

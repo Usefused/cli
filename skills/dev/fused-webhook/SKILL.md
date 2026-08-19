@@ -58,11 +58,15 @@ sibling to `name`/`bucket` -- not nested under `services`, since one
 `kind: webhook` config can span services the attaching config also uses)
 plus a per-service explicit event allowlist:
 
+The ordinary attachment example chooses visible `default` as its candidate.
+SDK plan/apply must pass `bucket.use` for that exact bucket, or the action stops
+without creating a fallback.
+
 ```yaml
 apiVersion: fused/v1
 kind: sdk
 name: jira-sdk
-bucket: customer-accounts
+bucket: default
 webhook_attachment: team-x-webhooks
 services:
   jira:

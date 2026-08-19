@@ -15,12 +15,18 @@ It never builds, archives, or downloads a code package. Its config shares servic
 selection fields with SDK configs so validation remains consistent where the
 runtime capabilities overlap.
 
+Run `bucket list`, treat its results as visible through `bucket.read` rather
+than proven usable, and choose visible `default` or another visible candidate.
+Let MCP plan/apply check `bucket.use` on that exact candidate. On denial, stop
+and report it; never create a fallback. Follow `fused-bucket` for the narrow
+conditions that permit creation.
+
 ```yaml
 apiVersion: fused/v1
 kind: mcp
 name: customer-support
 version: "1.0.0"
-bucket: customer-accounts
+bucket: default
 services:
   <service-slug>:
     version: "v1"
