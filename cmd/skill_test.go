@@ -36,8 +36,9 @@ func setTestExecutablePath(t *testing.T, executable string) {
 
 // --- skillSpec / manifest ---------------------------------------------------
 
+// TestSkillSpecByName keeps every installable skill reachable by its public name.
 func TestSkillSpecByName(t *testing.T) {
-	for _, name := range []string{"fused-cli", "fused-workspace", "fused-sdk", "fused-mcp", "fused-bucket", "fused-config", "fused-webhook", "fused-notifications"} {
+	for _, name := range []string{"fused-cli", "fused-workspace", "fused-sdk", "fused-unified-operations", "fused-mcp", "fused-bucket", "fused-config", "fused-webhook", "fused-notifications"} {
 		if _, ok := skillSpecByName(name); !ok {
 			t.Errorf("expected a spec for %q", name)
 		}
@@ -147,6 +148,7 @@ func TestDevSkillsIncludePermissionAndDenialGuidance(t *testing.T) {
 		{name: "fused-cli", required: []string{"catalogue.read", "catalogue.import", "access.read", "access.manage", "team access service", "team access workspace"}},
 		{name: "fused-workspace", required: []string{"service.read", "service.manage", "workspace.update", "team access service", "team access bucket", "team access workspace"}},
 		{name: "fused-sdk", required: []string{"app.create", "app.manage", "app.read", "app.tokens.manage", "service.consume", "bucket.use", "team eligible-owners", "team build-access", "team access app"}},
+		{name: "fused-unified-operations", required: []string{"app.create", "app.manage", "app.read", "app.tokens.manage", "service.consume", "bucket.use", "team eligible-owners", "team build-access", "team access app"}},
 		{name: "fused-mcp", required: []string{"app.create", "app.manage", "app.read", "app.tokens.manage", "service.consume", "bucket.use", "team eligible-owners", "team build-access", "team access app"}},
 		{name: "fused-bucket", required: []string{"bucket.read", "bucket.manage", "credentials.manage", "connection.manage", "service.consume", "team access bucket", "team access service"}},
 		{name: "fused-webhook", required: []string{"app.create", "app.manage", "service.consume", "bucket.use", "team eligible-owners", "team build-access", "team access service", "team access bucket"}},
@@ -186,6 +188,37 @@ func TestDevSkillsIncludePermissionAndDenialGuidance(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestFusedUnifiedOperationsSkillDocumentsItsAuthoringContract prevents the
+// result-oriented skill from drifting back into a generic SDK overview.
+func TestFusedUnifiedOperationsSkillDocumentsItsAuthoringContract(t *testing.T) {
+	path := filepath.Join("..", "skills", "dev", "fused-unified-operations", "SKILL.md")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	content := string(data)
+	for _, token := range []string{
+		"## Result",
+		"## Properties and where they are used",
+		"`bindings.<target>.input`",
+		"`depends_on`",
+		"`rollback.operation`",
+		"`${response.github.iid ?? response.linkedin.id}`",
+		"`selectors.<target>.endUserRef`",
+		"`end_user_ref`",
+		"`{results, rollbacks}`",
+		"zero physical calls",
+		"## Complete example",
+	} {
+		if !strings.Contains(content, token) {
+			t.Errorf("missing Unified Operations guidance %q", token)
+		}
+	}
+	if lines := strings.Count(content, "\n") + 1; lines > 260 {
+		t.Errorf("Unified Operations skill is too large for focused loading: %d lines (limit 260)", lines)
 	}
 }
 

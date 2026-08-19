@@ -34,9 +34,10 @@ control, or generated SDK/MCP config.
 - Ask the user only when this choice, a provider ambiguity, credential ownership,
   or a destructive/production apply would materially change the result.
 
-Read `fused-sdk` or `fused-mcp` for the selected config shape. Read
-`fused-bucket` when credentials or OAuth are required, and `fused-config` for
-auth, connect scopes, connection profiles, or execution policy.
+Read `fused-sdk` or `fused-mcp` for the selected config shape. For one generated
+SDK method spanning multiple services, also read `fused-unified-operations`.
+Read `fused-bucket` when credentials or OAuth are required, and `fused-config`
+for auth, connect scopes, connection profiles, or execution policy.
 
 ## 3. Search the workspace first
 
@@ -157,10 +158,17 @@ add`; they operate on an existing config file and may require `-f`.
 ## 5. Prepare the bucket and authentication
 
 Determine whether each selected operation uses API key, bearer/basic auth,
-OAuth/OIDC, mTLS, or no authentication. Reuse an appropriate existing bucket or
-create one according to `fused-bucket`. Add secret material through stdin or an
-interactive prompt, never a command argument. For OAuth/OIDC, configure the app
-and start the connect flow; pause for the user's browser consent when required.
+OAuth/OIDC, mTLS, or no authentication. Run `fused-cli bucket list`; its result
+contains only buckets visible through `bucket.read` and does not prove
+`bucket.use`. Choose visible `default` or another visible candidate, then run
+plan/apply/connect with that exact candidate. On `bucket.use` denial, stop and
+report it; never create a fallback. Create only when the user explicitly asks or
+states an enterprise, tenant, or environment isolation requirement and the
+caller has workspace `bucket.manage`. Creation does not grant `bucket.use`;
+never self-grant. Follow `fused-bucket` for the complete policy. Add secret
+material through stdin or an interactive prompt, never a command argument. For
+OAuth/OIDC, configure the app and start the connect flow; pause for the user's
+browser consent when required.
 
 If the output will be team-owned, verify that team before planning. The team
 must appear in `eligible-owners` and have build access to every selected service

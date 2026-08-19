@@ -105,6 +105,13 @@ no preferred flow is inferred when several exist. Reviewed OAuth1 signing and
 HTTP challenge behavior use generic strategy objects, and a security alternative
 may select an exact declared server for one of its own schemes. Unknown challenge
 schemes remain strict diagnostics until a complete execution capability exists.
+OAuth2 token requests default to `application/x-www-form-urlencoded`. A scheme
+that requires JSON must declare
+`x-fused-token-request-media-type: application/json`; only those two exact
+values are valid. JSON token exchange adds required execution capability
+`auth.oauth2.token_request_media.v1`, so an incompatible Engine rejects the
+contract before authorization-code or refresh traffic begins. PKCE remains
+independent and is added only when `x-fused-pkce-required: true`.
 
 OpenAPI callbacks retain their runtime expression and parent operation, while
 3.1 top-level webhooks retain the same parameter, request, response, server,

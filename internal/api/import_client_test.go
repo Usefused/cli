@@ -221,6 +221,33 @@ func TestPlanSpecImport_HandlesError(t *testing.T) {
 	}
 }
 
+// TestPlanSpecImportDecodesVersionRequiredError proves versionless Postman
+// imports retain the Registry's actionable structured contract through Engine.
+func TestPlanSpecImportDecodesVersionRequiredError(t *testing.T) {
+	// The fake Engine preserves the Registry's nested envelope so this test owns
+	// only CLI transport and presentation behavior.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":{"message":"The imported source does not declare a version.","code":"import_version_required","category":"validation","retryable":false,"remediation":"Enter a version and try again."}}`))
+	}))
+	defer server.Close()
+
+	_, err := api.NewClient(server.URL, "test-key").PlanSpecImport(api.SpecImportPlanRequest{Name: "Versionless"})
+	var apiError *api.APIError
+	// The typed code lets human and JSON callers recover without parsing prose.
+	if !errors.As(err, &apiError) {
+		t.Fatalf("version error = %T %v, want APIError", err, err)
+	}
+	// The bounded Registry contract must survive the plan wrapper unchanged.
+	if apiError.Code != "import_version_required" || apiError.Category != "validation" || apiError.Retryable {
+		t.Fatalf("version error = %#v", apiError)
+	}
+	// Human output needs the correction while avoiding a fabricated default.
+	if !strings.Contains(err.Error(), "Enter a version and try again.") {
+		t.Fatalf("version remediation = %q", err)
+	}
+}
+
 // TestApplySpecImport_PostsToImportApplyEndpoint verifies ApplySpecImport
 // sends plan_id/review_hash to /integrations/import/apply.
 func TestApplySpecImport_PostsToImportApplyEndpoint(t *testing.T) {

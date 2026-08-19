@@ -65,6 +65,13 @@ Three related but distinct things, all under a bucket's
   both in the form and sends no Authorization header. Engine follows that
   reviewed contract for both authorization-code exchange and refresh and
   rejects an absent or unknown runtime method before contacting the provider.
+  Token request media is independent of client authentication:
+  `application/x-www-form-urlencoded` is the default, while
+  `application/json` must be declared by the imported
+  `x-fused-token-request-media-type` extension. JSON exchange requires Engine's
+  `auth.oauth2.token_request_media.v1` execution capability; an Engine missing
+  it rejects the service contract instead of attempting a differently encoded
+  token request.
   The same imported public policy can require PKCE, join requested scopes with
   a comma instead of a space, add reviewed fixed authorization/token
   parameters, and declare refresh-token rotation. Engine always owns and
@@ -197,11 +204,11 @@ Selection order when a workspace service doesn't inline a `profile`:
 Profiles are immutable revisions — a newer provider revision shows up as a
 plan change, it never silently changes production routing. Removing profile
 fields from a file is non-destructive; detaching is always explicit via
-`profile_mode: detach`, which can't be combined with `profile`/`profile_id`.
+`reset: true`, which can't be combined with `profile`/`profile_id`.
 
-Registry-level baseline publish: `fused-cli connection-profile set
-<service-ref> --version <v> --auth-type <type> --auth-name <name> --file <path>`
-(`--auth-name` is required when the type is ambiguous; owner/curator
+Registry-level baseline publish: `fused-cli service connection-profile set
+<service-ref> --version <v> --auth-type <type> --file <path>`. Put the exact
+`auth_name` inside the profile file when the type is ambiguous (owner/curator
 only — see `fused-bucket`). Every other workspace (a separate Engine
 deployment) still on the `baseline` layer for that exact auth identity
 gets a `registry_connection_profile_changed` notification the next time

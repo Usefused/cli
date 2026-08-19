@@ -278,10 +278,6 @@ func (e *APIError) Error() string {
 	return message
 }
 
-func formatHTTPErrorBody(status int, respBody []byte) string {
-	return newHTTPError(status, respBody).Error()
-}
-
 func newHTTPError(status int, respBody []byte) error {
 	var payload apiErrorPayload
 	if err := json.Unmarshal(respBody, &payload); err == nil {

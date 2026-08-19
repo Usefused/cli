@@ -77,7 +77,7 @@ func TestFormatHTTPAuthorizationErrors(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			message := formatHTTPErrorBody(test.status, []byte(test.body))
+			message := newHTTPError(test.status, []byte(test.body)).Error()
 			for _, value := range test.want {
 				if !strings.Contains(message, value) {
 					t.Errorf("message %q does not contain %q", message, value)
@@ -100,7 +100,7 @@ func TestAppOwnerErrorsUseAllowlistedProductMessages(t *testing.T) {
 		"app owner authorization denied":          "owning team",
 	}
 	for code, want := range tests {
-		message := formatHTTPErrorBody(http.StatusConflict, []byte(`{"error":`+strconv.Quote(code)+`}`))
+		message := newHTTPError(http.StatusConflict, []byte(`{"error":`+strconv.Quote(code)+`}`)).Error()
 		if !strings.Contains(message, want) {
 			t.Errorf("message for %q = %q", code, message)
 		}
@@ -110,7 +110,7 @@ func TestAppOwnerErrorsUseAllowlistedProductMessages(t *testing.T) {
 func TestBucketReadinessErrorKeepsActionableMissingAuthentication(t *testing.T) {
 	serviceID := "1795007d-37de-4c5c-bafa-07046a25d8f0"
 	body := `{"error":{"code":"bucket_credentials_missing","message":"The selected credential set is missing required authentication material.","category":"validation","retryable":false,"details":{"missing":["` + serviceID + ` (basic:basicAuth_username)","` + serviceID + ` (basic:basicAuth_password)"]},"remediation":"Add the required credentials and create the plan again."}}`
-	message := formatHTTPErrorBody(http.StatusBadRequest, []byte(body))
+	message := newHTTPError(http.StatusBadRequest, []byte(body)).Error()
 
 	for _, want := range []string{"bucket_credentials_missing", "required authentication", "basicAuth_username", "basicAuth_password", "create the plan again"} {
 		if !strings.Contains(message, want) {
@@ -121,7 +121,7 @@ func TestBucketReadinessErrorKeepsActionableMissingAuthentication(t *testing.T) 
 
 func TestStructuredEngineErrorReturnsMessageAndTrace(t *testing.T) {
 	body := `{"error":{"code":"registry_request_failed","message":"The Registry could not complete SDK generation.","category":"dependency","retryable":true,"details":{"http_status":503},"remediation":"Retry the request.","trace_id":"0123456789abcdef0123456789abcdef"}}`
-	message := formatHTTPErrorBody(http.StatusServiceUnavailable, []byte(body))
+	message := newHTTPError(http.StatusServiceUnavailable, []byte(body)).Error()
 
 	for _, want := range []string{"registry_request_failed", "Registry could not complete SDK generation", "Retry the request", "0123456789abcdef0123456789abcdef"} {
 		if !strings.Contains(message, want) {
@@ -175,7 +175,7 @@ func TestUnstructuredAndCredentialBearingErrorDetailsAreNotReturned(t *testing.T
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			message := formatHTTPErrorBody(test.status, []byte(test.body))
+			message := newHTTPError(test.status, []byte(test.body)).Error()
 			if !strings.Contains(message, test.want) {
 				t.Fatalf("message %q does not contain stable category %q", message, test.want)
 			}
@@ -205,7 +205,7 @@ func TestValidationErrorDetailsAreBoundedAndStructured(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			message := formatHTTPErrorBody(http.StatusBadRequest, []byte(test.body))
+			message := newHTTPError(http.StatusBadRequest, []byte(test.body)).Error()
 			if test.want != "" && !strings.Contains(message, test.want) {
 				t.Fatalf("message %q does not contain %q", message, test.want)
 			}

@@ -36,7 +36,8 @@ plan/apply.
 fused-cli import plan \
   --url https://developer.example.com/asyncapi.yaml \
   --name "Events API" \
-  --slug events-api
+  --slug events-api \
+  --version 2026-08
 
 # Google Discovery document.
 fused-cli import plan \
@@ -51,6 +52,13 @@ fused-cli import docs \
   --slug docs-api \
   --version 1.0
 ```
+
+Postman collections commonly omit `info.version`. If `--version` is also
+omitted, planning stops with `import_version_required`, writes no receipt, and
+suggests rerunning the same command with the provider's actual version. The CLI
+never invents a version or retries the plan implicitly. Use `--json` to retain
+the stable code, validation category, retryability, and remediation for CI or
+agent workflows.
 
 `import docs` discovers endpoints from human-readable documentation. It imports
 all discovered endpoints by default; use `--review` or `--select` to narrow the

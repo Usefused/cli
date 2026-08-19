@@ -82,18 +82,35 @@ func TestSearchEndpointsPageSendsLimitOffset(t *testing.T) {
 	}
 }
 
+// TestWorkspaceWebhooksAndAppTokensUseEngineGraphQL verifies both reads share the Engine endpoint.
 func TestWorkspaceWebhooksAndAppTokensUseEngineGraphQL(t *testing.T) {
 	var paths []string
 	var queries []string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		paths = append(paths, r.URL.Path)
+	srv := httptest.NewServer(workspaceAndTokenHandler(t, &paths, &queries))
+	defer srv.Close()
+
+	client := api.NewClient(srv.URL, "fsk_test")
+	if webhooks, err := client.ListWorkspaceWebhooks("svc-1"); err != nil || len(webhooks) != 1 {
+		t.Fatalf("ListWorkspaceWebhooks = %#v, %v", webhooks, err)
+	}
+	if tokens, err := client.ListAppTokens("family-1"); err != nil || len(tokens) != 1 || tokens[0].LastUsedAt != nil || tokens[0].ExpiresAt == nil {
+		t.Fatalf("ListAppTokens = %#v, %v", tokens, err)
+	}
+	assertEngineGraphQLPaths(t, paths, queries)
+}
+
+// workspaceAndTokenHandler returns exact GraphQL fixtures for two neighboring reads.
+func workspaceAndTokenHandler(t *testing.T, paths, queries *[]string) http.HandlerFunc {
+	t.Helper()
+	return func(w http.ResponseWriter, r *http.Request) {
+		*paths = append(*paths, r.URL.Path)
 		var body struct {
 			Query string `json:"query"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatalf("decode graphql body: %v", err)
 		}
-		queries = append(queries, body.Query)
+		*queries = append(*queries, body.Query)
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case strings.Contains(body.Query, "workspaceWebhooks"):
@@ -106,16 +123,12 @@ func TestWorkspaceWebhooksAndAppTokensUseEngineGraphQL(t *testing.T) {
 		default:
 			t.Fatalf("unexpected query: %s", body.Query)
 		}
-	}))
-	defer srv.Close()
+	}
+}
 
-	client := api.NewClient(srv.URL, "fsk_test")
-	if webhooks, err := client.ListWorkspaceWebhooks("svc-1"); err != nil || len(webhooks) != 1 {
-		t.Fatalf("ListWorkspaceWebhooks = %#v, %v", webhooks, err)
-	}
-	if tokens, err := client.ListAppTokens("family-1"); err != nil || len(tokens) != 1 || tokens[0].LastUsedAt != nil || tokens[0].ExpiresAt == nil {
-		t.Fatalf("ListAppTokens = %#v, %v", tokens, err)
-	}
+// assertEngineGraphQLPaths rejects a fallback to Registry GraphQL for either read.
+func assertEngineGraphQLPaths(t *testing.T, paths, queries []string) {
+	t.Helper()
 	for _, path := range paths {
 		if path != "/engine/graphql" {
 			t.Fatalf("expected all reads to use /engine/graphql, paths=%#v queries=%#v", paths, queries)
@@ -123,7 +136,8 @@ func TestWorkspaceWebhooksAndAppTokensUseEngineGraphQL(t *testing.T) {
 	}
 }
 
-func TestSDKBucketsUseAppFamilyScope(t *testing.T) {
+// TestSDKBucketsUseAppFamilyScopeAndCurrentSchema protects the exact Engine GraphQL transport contract.
+func TestSDKBucketsUseAppFamilyScopeAndCurrentSchema(t *testing.T) {
 	var variables map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
@@ -135,6 +149,10 @@ func TestSDKBucketsUseAppFamilyScope(t *testing.T) {
 		}
 		if !strings.Contains(body.Query, "sdkBuckets(app_family_id: $appFamilyId)") || strings.Contains(body.Query, "artifact_id") {
 			t.Fatalf("SDK bucket query is not family scoped: %s", body.Query)
+		}
+		// Bucket intentionally hides workspace ownership, so requesting the retired field rejects the entire query.
+		if strings.Contains(body.Query, "workspace_id") {
+			t.Fatalf("SDK bucket query requested a field absent from Engine Bucket: %s", body.Query)
 		}
 		variables = body.Variables
 		_, _ = w.Write([]byte(`{"data":{"sdkBuckets":[{"id":"bucket-1","name":"prod","is_default":false,"created_at":"2026-08-05T10:00:00Z","updated_at":"2026-08-05T10:00:00Z"}]}}`))

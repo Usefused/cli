@@ -31,6 +31,80 @@ fused-cli sdk operation add okta listLogEvents getUser -f .fused/sdks/my-sdk.yam
 fused-cli sdk validate -f .fused/sdks/my-sdk.yaml --json
 ```
 
+### Unified Operations
+
+TypeScript and Python SDK configs may add top-level `unified_operations`. A
+binding key is an exact key from `services` (including a provider-qualified key
+such as `@acme/github`), and its `operation` is the exact, case-sensitive
+OpenAPI `operationId` selected for that service. Do not qualify an operationId
+with the service slug.
+
+```yaml
+unified_operations:
+  issues.create:
+    description: Create the same issue in selected providers
+    input:
+      type: object
+      required: [title]
+      properties:
+        title: {type: string}
+        body: {type: string}
+    bindings:
+      jira:
+        operation: createProject
+        rollback:
+          operation: deleteProject
+          input:
+            projectId: ${response.jira.id}
+      github:
+        operation: createIssue
+        depends_on: [jira]
+        input:
+          title: ${input.title}
+          body: ${input.body?}
+      gitlab: createIssue # compact pass-through form
+    output:
+      schema:
+        type: object
+        properties:
+          id: {type: string}
+          provider: {type: string}
+      mapping:
+        id: ${response.github.id ?? response.gitlab.iid}
+        provider: ${target}
+```
+
+An expanded binding accepts `operation`, optional `input`, `depends_on`,
+`rollback`, and `output`. A binding without `depends_on` is ready to run in
+parallel. A binding with dependencies waits for those exact binding targets to
+succeed; missing targets, repeated targets, self-dependencies, and cycles are
+rejected before plan. Its forward `input` may reference `${response.<target>}`
+only for targets directly listed in its own `depends_on`.
+
+`rollback` names an exact operation already selected for the same service and
+may map its input from the original Unified input and its own successful binding
+response only. If a binding fails, Engine compensates only its successful direct
+`depends_on` targets that declare a rollback. It does not recursively compensate
+ancestors or unrelated bindings. In the example, a GitHub failure can invoke
+Jira's rollback because GitHub directly names Jira.
+
+DynamicValue documents preserve JSON nulls, booleans, exact numbers, strings,
+arrays, and objects across forward and rollback inputs; a `${...}` expression
+must occupy its complete scalar. YAML aliases, merge keys, custom tags,
+timestamps, and non-string object keys are rejected because they are not
+portable JSON values.
+
+A root `output` supplies one schema and mapping for all bindings. Otherwise,
+individual expanded bindings may declare provider-specific outputs. Do not mix
+root and binding-level outputs in one operation. Every output requires both
+`schema` and `mapping`.
+
+The CLI bounds this source contract to 64 Unified Operations, 16 bindings per
+operation, 512 expressions, 10,000 DynamicValue nodes, depth 32, and 1 MiB of
+encoded Unified definition data. Engine plan validates expression grammar and
+bounds, exact endpoints, dependency/dataflow rules, output-schema syntax, and
+generated-name collisions.
+
 ## Workspace configuration
 
 Create `.fused/workspace.yaml`:
@@ -131,6 +205,6 @@ validates origins, termination, repeated values, and hard limits, then streams
 successful provider pages. Quota, concurrency, and retry policies follow the
 same Engine-owned boundary; generated clients make one logical Engine request.
 
-See the bundled `fused-config`, `fused-workspace`, `fused-sdk`, and `fused-mcp`
-skills for task-specific guidance, or use the [command reference](COMMANDS.md)
-for every plan/apply/sync flag.
+See the bundled `fused-config`, `fused-workspace`, `fused-sdk`,
+`fused-unified-operations`, and `fused-mcp` skills for task-specific guidance,
+or use the [command reference](COMMANDS.md) for every plan/apply/sync flag.

@@ -41,10 +41,43 @@ func (discovery *ResourceDiscoveryConfig) UnmarshalJSON(payload []byte) error {
 }
 
 type ResourceInputConfig struct {
-	Fields          []ResourceInputField `json:"fields" yaml:"fields"`
-	BaseURLTemplate string               `json:"base_url_template" yaml:"base_url_template"`
-	ResourceType    string               `json:"resource_type" yaml:"resource_type"`
-	AllowedHosts    []string             `json:"allowed_hosts,omitempty" yaml:"allowed_hosts,omitempty"`
+	Fields          []ResourceInputField         `json:"fields" yaml:"fields"`
+	BaseURLTemplate string                       `json:"base_url_template" yaml:"base_url_template"`
+	ResourceType    string                       `json:"resource_type" yaml:"resource_type"`
+	AllowedHosts    []string                     `json:"allowed_hosts,omitempty" yaml:"allowed_hosts,omitempty"`
+	DiscoveryMatch  *ResourceInputDiscoveryMatch `json:"discovery_match,omitempty" yaml:"discovery_match,omitempty"`
+}
+
+// ResourceInputDiscoveryMatch identifies the provider-returned metadata field
+// that must equal the customer-derived resource URL.
+type ResourceInputDiscoveryMatch struct {
+	MetadataKey string `json:"metadata_key" yaml:"metadata_key"`
+}
+
+// UnmarshalJSON keeps the nested input contract closed so CLI round-trips
+// cannot silently erase fields introduced by a newer control plane.
+func (input *ResourceInputConfig) UnmarshalJSON(payload []byte) error {
+	type wireResourceInput ResourceInputConfig
+	var decoded wireResourceInput
+	// Unknown nested fields fail before the CLI can rewrite an incomplete contract.
+	if err := contractjson.DecodeStrict(payload, &decoded, "resource input"); err != nil {
+		return err
+	}
+	*input = ResourceInputConfig(decoded)
+	return nil
+}
+
+// UnmarshalJSON keeps match semantics closed because an ignored field could
+// turn a customer constraint into a different resource selection rule.
+func (match *ResourceInputDiscoveryMatch) UnmarshalJSON(payload []byte) error {
+	type wireDiscoveryMatch ResourceInputDiscoveryMatch
+	var decoded wireDiscoveryMatch
+	// Match rules remain version-locked with the CLI that transports them.
+	if err := contractjson.DecodeStrict(payload, &decoded, "resource input discovery match"); err != nil {
+		return err
+	}
+	*match = ResourceInputDiscoveryMatch(decoded)
+	return nil
 }
 
 type ResourceInputField struct {

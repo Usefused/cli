@@ -283,7 +283,10 @@ func validateAppConfig(cfg *AppConfig, kind ConfigKind) error {
 	if len(cfg.Services) == 0 {
 		return fmt.Errorf("%s config requires at least one service", kind)
 	}
-	return validateAppServices(cfg.Services, kind, cfg.WebhookAttachment)
+	if err := validateAppServices(cfg.Services, kind, cfg.WebhookAttachment); err != nil {
+		return err
+	}
+	return validateUnifiedOperations(cfg, kind)
 }
 
 // validateAppServices keeps per-service rules separate from app
