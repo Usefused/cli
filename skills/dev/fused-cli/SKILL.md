@@ -145,10 +145,23 @@ group's `--help` output to choose the exact subcommand.
 
 Use `--json` whenever the confirmed command help exposes it. This includes
 read/list/show/validate commands, plan commands, `sdk apply`, `sdk download`,
-`sdk token generate`, `sdk invoke`, and `sdk activity`. Do not scrape IDs, one-time tokens,
+`sdk openapi`, `sdk token generate`, `sdk invoke`, and `sdk activity`. Do not scrape IDs, one-time tokens,
 receipt fields, retry timing, or execution results from human output. A command
 without `--json` must be treated as a human-only mutation unless its domain
 skill documents a stable alternative.
+
+`fused-cli sdk openapi <sdk-name@version-or-version-id>` resolves one exact
+immutable SDK version with the ordinary control credential and `app.read`, then
+GETs `/apps/{app_id}/openapi`. It always atomically writes YAML (or JSON with
+`--format json`); `--operation` filters one exact physical or Unified name,
+`--out` selects the file, and `--json` prints metadata rather than the document.
+The export pins the real `POST /v1/apps/{app_id}/executions` route, whose Bearer
+credential is the SDK-wide execution token—not the CLI control key. Output is
+derived from at most 16 MiB of Engine JSON and its server URL is the configured
+Engine. The CLI verifies the returned Version ID and real POST path before
+replacement, including its matching `app_id` enum and request-branch count.
+JSON metadata includes `operation_count` and `sha256:<64 lowercase hex>` of the
+final rendered file bytes.
 
 `fused-cli skill install` installs from the immutable `skills/<version>/`
 snapshot shipped beside a release binary when available. This is intentionally

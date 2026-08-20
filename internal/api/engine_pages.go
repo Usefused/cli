@@ -53,22 +53,28 @@ type BucketSDKSummaryPageResponse struct {
 }
 
 type AuthConnectionResponse struct {
-	ID                 string   `json:"id"`
-	BucketID           string   `json:"bucket_id"`
-	ServiceID          string   `json:"service_id"`
-	EndUserRef         string   `json:"end_user_ref"`
-	AuthType           string   `json:"auth_type"`
-	TokenType          string   `json:"token_type"`
-	Scopes             []string `json:"scopes"`
-	ExpiresAt          string   `json:"expires_at"`
-	LastUsedAt         string   `json:"last_used_at"`
-	RefreshState       string   `json:"refresh_state"`
-	LastFailureCode    string   `json:"last_failure_code"`
-	LastFailureAt      string   `json:"last_failure_at"`
-	LastFailureTraceID string   `json:"last_failure_trace_id"`
-	CreatedAt          string   `json:"created_at"`
-	UpdatedAt          string   `json:"updated_at"`
-	CreatedByAppID     string   `json:"created_by_app_id"`
+	ID                    string   `json:"id"`
+	BucketID              string   `json:"bucket_id"`
+	ServiceID             string   `json:"service_id"`
+	ServiceVersionID      string   `json:"service_version_id"`
+	EndUserRef            string   `json:"end_user_ref"`
+	AuthType              string   `json:"auth_type"`
+	AuthName              string   `json:"auth_name"`
+	TokenType             string   `json:"token_type"`
+	Scopes                []string `json:"scopes"`
+	ExpiresAt             string   `json:"expires_at"`
+	RefreshTokenExpiresAt string   `json:"refresh_token_expires_at"`
+	LastUsedAt            string   `json:"last_used_at"`
+	LastRefreshAttemptAt  string   `json:"last_refresh_attempt_at"`
+	LastRefreshedAt       string   `json:"last_refreshed_at"`
+	RefreshRetryNotBefore string   `json:"refresh_retry_not_before"`
+	RefreshState          string   `json:"refresh_state"`
+	LastFailureCode       string   `json:"last_failure_code"`
+	LastFailureAt         string   `json:"last_failure_at"`
+	LastFailureTraceID    string   `json:"last_failure_trace_id"`
+	CreatedAt             string   `json:"created_at"`
+	UpdatedAt             string   `json:"updated_at"`
+	CreatedByAppID        string   `json:"created_by_app_id"`
 }
 
 type AuthConnectionPageResponse struct {
@@ -147,12 +153,19 @@ func (c *Client) ListSecretMetaPage(bucketID string, opts PageOptions) (*SecretM
 	return &resp.Page, err
 }
 
+// ListAuthConnectionPage returns safe refresh lifecycle metadata for the
+// bucket-authorized connection page without requesting credential material.
 func (c *Client) ListAuthConnectionPage(bucketID string, serviceID string, endUserRef string, opts PageOptions) (*AuthConnectionPageResponse, error) {
 	query := `
 		query AuthConnectionPage($bucketId: String!, $serviceId: String, $endUserRef: String, $limit: Int!, $offset: Int!) {
 			authConnectionPage(bucket_id: $bucketId, service_id: $serviceId, end_user_ref: $endUserRef, limit: $limit, offset: $offset) {
 				total
-				items { id bucket_id service_id end_user_ref auth_type token_type scopes expires_at last_used_at refresh_state last_failure_code last_failure_at last_failure_trace_id created_at updated_at created_by_app_id }
+				items {
+					id bucket_id service_id service_version_id end_user_ref created_by_app_id
+					auth_type auth_name token_type scopes expires_at refresh_token_expires_at last_used_at
+					last_refresh_attempt_at last_refreshed_at refresh_retry_not_before
+					refresh_state last_failure_code last_failure_at last_failure_trace_id created_at updated_at
+				}
 			}
 		}
 	`

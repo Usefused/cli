@@ -1,6 +1,6 @@
 ---
 name: fused-sdk
-description: "Build, generate, configure, or manage a typed Fused SDK directly inside a coding agent using fused-cli sdk. Use when the user gives Codex, Claude Code, Cursor, Windsurf, or Antigravity a business goal for an SDK; when editing a kind: sdk config; or when selecting operations, receiving webhooks, scoping auth, managing immutable versions/runtime tokens, or running SDK plan/apply/validate/download/sync commands. This is the coding-agent entry point: never invoke sdk prompt, because it starts a separate Fused agent. For Engine-hosted MCP runtime behavior read fused-mcp instead."
+description: "Build, generate, configure, manage, or export OpenAPI for a typed Fused SDK directly inside a coding agent using fused-cli sdk. Use when the user gives Codex, Claude Code, Cursor, Windsurf, or Antigravity a business goal for an SDK; when editing a kind: sdk config; or when selecting operations, receiving webhooks, scoping auth, managing immutable versions/runtime tokens, or running SDK plan/apply/validate/download/sync commands. This is the coding-agent entry point: never invoke sdk prompt, because it starts a separate Fused agent. For Engine-hosted MCP runtime behavior read fused-mcp instead."
 ---
 
 # SDK package config
@@ -108,6 +108,12 @@ do not wrap it in a caller-authored object or spread an array into numeric
 keys. Object and referenced-object inputs retain their named option fields,
 while sequential-media arrays retain the existing ordered `body` option so
 Engine can apply JSONL/JSON-seq framing.
+Operation selection always uses the exact imported `operationId`. Generated
+language members are safe identifiers: an empty or numeric-leading operation
+becomes `operation...` in TypeScript and `operation_...` in Python, while the
+wire request still carries the original operation ID. Use the generated member
+shown by the package or service-detail example; do not rewrite the configured
+operation ID to match it.
 
 `select_all: true` is the alternative to listing `operations` explicitly --
 exactly one of the two is required, never both/neither. Be aware `sdk sync`
@@ -170,6 +176,7 @@ fused-cli sdk plan
 fused-cli sdk apply
 fused-cli sdk validate
 fused-cli sdk download <sdk-name@version-or-version-id>
+fused-cli sdk openapi <sdk-name@version-or-version-id> [--operation <exact-operation-id>] [-o <path>] [--format yaml|json]
 fused-cli sdk sync <sdk-name>
 fused-cli sdk show <sdk-name@version-or-version-id>
 fused-cli sdk services <sdk-name@version-or-version-id>
@@ -200,16 +207,32 @@ download when a pipeline needs to retry package transfer without replaying an
 apply. Structured failures identify the failed stage and retain SDK/Version IDs
 when apply succeeded before generation waiting or download failed.
 
-`sdk invoke` is the repeatable smoke-test/debug surface. It resolves one exact
-SDK version with the control credential, then uses the canonical SDK gRPC
-`Connect`/`Execute`/`Disconnect` path with an SDK-scoped execution token. Set
-`FUSED_ENGINE_GRPC_URL` (or pass `--grpc-url`) and place the token in
+`sdk openapi` resolves one exact Version ID with the control credential and
+`app.read`, then GETs `/apps/{app_id}/openapi`; the execution token cannot authorize it.
+It atomically writes YAML or JSON; `--operation` is one exact physical or Unified name.
+`--json` reports metadata only: `operation_count` and `sha256:<64 lowercase hex>` of final file bytes.
+Before replacement it accepts only OpenAPI 3.1.x with matching `x-fused-app-id`,
+the real POST path and matching `app_id` enum, and count-consistent request branches.
+That POST uses the SDK-wide execution-token Bearer scheme; no credential is embedded.
+The default is `<safe-sdk-name>-<version>.openapi.yaml` (or `<app-id>.openapi.yaml`
+for UUID input); `--out` changes it. Input is capped at 16 MiB and uses the configured Engine URL.
+
+`sdk invoke` is the repeatable JSON smoke-test/debug surface. It resolves one
+exact SDK version with the control credential, then calls
+`POST /v1/apps/{app_id}/executions` on the globally configured Engine using only
+the SDK execution token as `Authorization: Bearer`. Place that token in
 `FUSED_SDK_TOKEN` by default; `--token-env` selects another variable and
 `--token-stdin` avoids environment storage. Never pass the CLI key, License Key,
-or a provider credential as the execution token. Pass parameters as one JSON
-object with `--params '{...}'`, `--params @file.json`, or `--params -`; use
-`--environment` only for a declared provider environment. The command produces
-one logical Engine execution and does not implement local provider retries.
+or a provider credential as the execution token. Pass one duplicate-free JSON
+value with `--params` (physical operations require an object), a
+physical selector with `--selector`, or Unified targets and service selectors
+with 1–16 repeatable, explicit, unique `--target` values plus `--selectors`;
+Unified execution never defaults to every declared target. Each JSON option
+also accepts an `@file`. `--environment` is backward-compatible physical
+`selector.environment` sugar. This REST command supports one buffered JSON
+provider document up to 1 MiB and a bounded 17 MiB Unified aggregate; generated
+SDKs retain their broader gRPC transports. The command produces one logical
+Engine execution and does not implement local provider retries or redirects.
 
 `sdk activity` reads the canonical Engine execution receipts for one exact SDK
 version. Use `--all-versions` only when SDK-wide history is intended, and
@@ -232,8 +255,8 @@ A new SDK plan requires `app.create`, `service.read`, and `bucket.read`.
 Planning an update requires `app.manage` plus the dependency reads. Apply
 requires `app.create` for a new SDK or `app.manage` for an existing
 one, together with `service.consume` for every selected service and `bucket.use`
-for the selected bucket. Download, invoke target resolution, and activity
-require `app.read`; activity also requires `audit.read`. Runtime invocation
+for the selected bucket. Download, OpenAPI export, invoke target resolution,
+and activity require `app.read`; activity also requires `audit.read`. Runtime invocation
 additionally requires a valid SDK-scoped execution token. `sdk token`
 generate/list/revoke requires `app.tokens.manage`.
 
