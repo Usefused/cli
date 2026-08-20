@@ -406,13 +406,27 @@ header, cookie, and whole-query parameters retain schema/content and
 location/style-aware serialization metadata.
 Request content retains every declared media representation in source order,
 including exact vendor `+json`, form, multipart, text, XML, and binary media
-types. A reviewed `default_media_type` selects the generated SDK input shape;
-the alternatives and complete Encoding Objects remain in the runtime contract.
+types. When the source declares several executable representations without a
+default, Registry selects one deterministically (`application/json`, vendor
+`+json`, form, multipart, then schema-backed raw), emits
+`multiple_request_media_types`, and persists that exact choice as
+`default_media_type`. A reviewed import overlay can override the choice. Use
+`--strict` when this inference must block publication instead. The alternatives
+and complete Encoding Objects remain in the runtime contract.
 Binary raw payloads and binary multipart parts cross the Fused boundary as
 strict base64 strings and are decoded immediately before the provider request.
 Raw bodies use the declared `body` payload argument; ambiguous extra body
 arguments are rejected. There is no fallback that guesses JSON when request
 content is absent or declares an unknown serialization.
+
+One provider operation with a wire shape the runtime cannot reproduce is
+omitted rather than weakening the whole imported service or publishing a
+bodyless operation. Its `unsupported_oas_feature` diagnostic names the exact
+operation and remains visible in `import plan --json`; `--strict` rejects the
+plan. Executable and unknown `x-fused-*` extensions always remain exact and
+strict. Very large sets of inert provider `x-*` metadata may be represented in
+the plan by a deterministic count/hash summary so passive documentation does
+not block otherwise executable operations.
 
 Each imported schema carries canonical raw JSON, dialect, SHA-256 content hash,
 one Registry-derived SDK/runtime projection, and bounded projection diagnostics.
