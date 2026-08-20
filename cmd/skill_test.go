@@ -249,6 +249,39 @@ func TestFusedSDKSkillKeepsIDEAgentWorkflowLocalAndCompact(t *testing.T) {
 	}
 }
 
+// TestAppOpenAPIExportIsDiscoverableAcrossCLIReferenceAndSkills keeps the
+// exact-version, control-authenticated export distinct from runtime execution.
+func TestAppOpenAPIExportIsDiscoverableAcrossCLIReferenceAndSkills(t *testing.T) {
+	tests := []struct {
+		path     string
+		required []string
+	}{
+		{path: filepath.Join("..", "docs", "COMMANDS.md"), required: []string{
+			"## `sdk openapi <sdk-name@version-or-version-id>`", "GET /apps/{app_id}/openapi", "`app.read`",
+			"POST /v1/apps/{app_id}/executions", "execution token", "atomically writes", "16 MiB", "`--operation`", "`--format`", "`--out`", "metadata only", "`operation_count`", "`sha256:<64 lowercase hex>`",
+		}},
+		{path: filepath.Join("..", "skills", "dev", "fused-sdk", "SKILL.md"), required: []string{
+			"sdk openapi <sdk-name@version-or-version-id>", "GETs `/apps/{app_id}/openapi`", "`app.read`",
+			"POST /v1/apps/{app_id}/executions", "metadata only", "execution-token Bearer", "`operation_count`", "`sha256:<64 lowercase hex>`",
+		}},
+		{path: filepath.Join("..", "skills", "dev", "fused-cli", "SKILL.md"), required: []string{
+			"sdk openapi <sdk-name@version-or-version-id>", "GETs `/apps/{app_id}/openapi`", "`app.read`",
+			"POST /v1/apps/{app_id}/executions", "metadata rather than the document", "SDK-wide execution token", "`operation_count`", "`sha256:<64 lowercase hex>`",
+		}},
+	}
+	for _, test := range tests {
+		data, err := os.ReadFile(test.path)
+		if err != nil {
+			t.Fatalf("read %s: %v", test.path, err)
+		}
+		for _, token := range test.required {
+			if !strings.Contains(string(data), token) {
+				t.Errorf("%s is missing OpenAPI export contract %q", test.path, token)
+			}
+		}
+	}
+}
+
 func TestDevAppSkillsDocumentVersionedLifecycle(t *testing.T) {
 	tests := []struct {
 		name     string

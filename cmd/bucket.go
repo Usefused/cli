@@ -190,6 +190,8 @@ func runBucketValues(cmd *cobra.Command, nameOrID string) error {
 	return nil
 }
 
+// runBucketConnections renders safe connection and managed-refresh state for
+// one bucket while leaving all token material inside Engine storage.
 func runBucketConnections(cmd *cobra.Command, nameOrID string) error {
 	client, bucketID, err := bucketClientAndID(nameOrID)
 	if err != nil {
@@ -207,9 +209,12 @@ func runBucketConnections(cmd *cobra.Command, nameOrID string) error {
 		return writeJSONPage(cmd, page.Items, page.Total, bucketConnectionsFlags)
 	}
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 8, 2, ' ', 0)
-	fmt.Fprintln(w, "USER_REF\tSERVICE_ID\tAUTH_TYPE\tREFRESH_STATE\tLAST_FAILURE\tTRACE_ID\tID")
+	fmt.Fprintln(w, "USER_REF\tSERVICE_ID\tSERVICE_VERSION_ID\tAUTH_TYPE\tAUTH_NAME\tREFRESH_STATE\tLAST_REFRESHED\tNEXT_RETRY\tLAST_FAILURE\tTRACE_ID\tID")
 	for _, conn := range page.Items {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", conn.EndUserRef, conn.ServiceID, conn.AuthType, conn.RefreshState, conn.LastFailureCode, conn.LastFailureTraceID, conn.ID)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			conn.EndUserRef, conn.ServiceID, conn.ServiceVersionID, conn.AuthType, conn.AuthName,
+			conn.RefreshState, conn.LastRefreshedAt, conn.RefreshRetryNotBefore,
+			conn.LastFailureCode, conn.LastFailureTraceID, conn.ID)
 	}
 	w.Flush()
 	printPageSummary(cmd.OutOrStdout(), page.Total, bucketConnectionsFlags)

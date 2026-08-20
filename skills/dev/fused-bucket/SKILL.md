@@ -255,6 +255,27 @@ Omitting `--scope` requests the service's declared scope catalogue. OIDC
 subsets must include `openid`. This is the same validation the SDK's
 `sdk.auth.startConnectSession(...)` call uses.
 
+The user does not refresh a connected access token through `fused-cli` or the
+generated SDK. Engine refreshes eligible OAuth/OIDC connections at startup and
+hourly. It schedules from the earlier of access-token or provider-declared
+refresh-token expiry, then persists a post-success eligibility boundary so
+staggered Engine replicas do not rotate the same new grant again. Refresh uses
+the exact service version and named auth scheme captured during consent. A
+normal provider call only performs the same refresh as a fallback when the
+access token is due or expired and background work did not finish.
+Access-token expiry alone is not a reconnect: Engine can rotate it while the
+refresh token remains valid. If refresh material is missing, Engine lets a
+still-valid access token finish its lifetime; once it expires—or if the refresh
+token is expired, revoked, or rejected—the connection becomes
+`reconnect_required`. Start the ordinary connect flow again for that same
+bucket, service, auth name, and stable user reference. Never interpret an
+unexpected provider 401/403 as permission to replay a mutation.
+
+Refresh concurrency is an Engine operator setting, not bucket or workspace
+configuration. `engine.connected_auth_refresh_workers` (or
+`FUSED_ENGINE_CONNECTED_AUTH_REFRESH_WORKERS`) accepts 1 through 64 workers and
+defaults to 4.
+
 ## Managing a connected user's resources
 
 One OAuth token can front several provider tenants (sites, shops, portals,

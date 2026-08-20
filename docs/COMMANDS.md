@@ -498,22 +498,52 @@ fused-cli sdk download security-sdk@1.2.0
 | `--out` | `-o` | Output directory for the SDK | `"."` |
 | `--json` | | Print SDK, Version ID, status, and output path as JSON | `false` |
 
-## `sdk invoke <sdk-name@version-or-version-id> <operation>`
+## `sdk openapi <sdk-name@version-or-version-id>`
 
-Invoke one operation through the same gRPC transport used by generated SDKs.
-The SDK execution token comes from `FUSED_SDK_TOKEN`, a variable named by
-`--token-env`, or stdin with `--token-stdin`; management and provider
-credentials are never substituted.
+Export an OpenAPI 3.1 document for one exact immutable SDK version. The CLI
+resolves the Version ID with its ordinary control credential and `app.read`,
+then calls `GET /apps/{app_id}/openapi`; an SDK execution token does not
+authorize this export. The document describes the real
+`POST /v1/apps/{app_id}/executions` route, pins that path to the resolved
+Version ID, and declares the SDK execution token as the runtime Bearer
+credential.
+
+The command always atomically writes a file and never writes the document to
+stdout. YAML is the default; JSON is available for consumers that require it.
+The generated server URL is the configured Engine URL. Redirects are rejected,
+and the CLI accepts at most 16 MiB from the Engine. Before replacing the file,
+the CLI verifies that the document identifies the resolved Version ID and
+contains the actual app-execution POST path with the matching `app_id` enum and
+a request-branch count consistent with the declared operation count.
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
-| `--grpc-url` | | SDK execution gRPC URL (or `FUSED_ENGINE_GRPC_URL`) | `""` |
-| `--params` | | JSON object, `@file`, or `-` for stdin | `"{}"` |
+| `--operation` | | Export one exact physical or Unified operation name; surrounding whitespace is rejected and the value is case-sensitive, non-empty, and at most 512 bytes | `""` |
+| `--out` | `-o` | Atomic output file path | `<safe-sdk-name>-<version>.openapi.<format>`; Version ID input uses `<version-id>.openapi.<format>` |
+| `--format` | | Output format: `yaml` or `json` | `"yaml"` |
+| `--json` | | Print export metadata only (SDK, version, Version ID, operation, `operation_count`, format, path, bytes, `sha256:<64 lowercase hex>`, server URL, and status) | `false` |
+
+## `sdk invoke <sdk-name@version-or-version-id> <operation>`
+
+Invoke one JSON operation through the Engine REST execution route configured by
+the global `--engine-url` / `FUSED_ENGINE_URL` setting. The SDK execution token
+comes from `FUSED_SDK_TOKEN`, a variable named by `--token-env`, or stdin with
+`--token-stdin`; management and provider credentials are never substituted.
+Generated SDKs retain their broader gRPC transports; this CLI smoke-test surface
+accepts only buffered JSON provider responses up to 1 MiB each and bounds a
+Unified aggregate response at 17 MiB.
+
+| Argument | Short | Description | Default |
+|----------|-------|-------------|---------|
+| `--params` | | One duplicate-free JSON value, `@file`, or `-` for stdin; physical operations require an object | `"{}"` |
 | `--token-env` | | Environment variable containing the execution token | `"FUSED_SDK_TOKEN"` |
 | `--token-stdin` | | Read the execution token from stdin | `false` |
-| `--environment` | | Named provider environment selector | `""` |
+| `--environment` | | Physical provider environment selector; sugar for `--selector` | `""` |
+| `--target` | | Required for Unified: explicit unique target; repeat 1–16 times. Omit for physical operations. | `[]` |
+| `--selector` | | Strict physical selector JSON object or `@file` | `""` |
+| `--selectors` | | Strict Unified service-selector map or `@file` | `""` |
 | `--idempotency-key` | | Stable logical-request key; generated when omitted | `""` |
-| `--json` | | Print the result and execution timing as JSON | `false` |
+| `--json` | | Print Engine endpoint, inferred kind, results, rollbacks, and timing | `false` |
 
 ## `sdk activity <sdk-name@version-or-version-id>`
 
