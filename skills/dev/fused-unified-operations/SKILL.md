@@ -160,8 +160,8 @@ language: typescript
 bucket: default
 services:
   jira:
-    operations: [listProjects, listCreateIssueTypes, createIssue]
-    auth: {type: oauth, name: JiraOAuth}
+    operations: [searchProjects, getCreateIssueMetaIssueTypes, createIssue]
+    auth: {type: oauth, name: OAuth2}
     connect: {scopes: ["read:jira-work", "write:jira-work", offline_access]}
   nimble:
     operations: [search]
@@ -181,11 +181,11 @@ unified_operations:
     bindings:
       jira_projects:
         service: jira
-        operation: listProjects
+        operation: searchProjects
         input: {query: "${input.projectKey}"}
       jira_issue_types:
         service: jira
-        operation: listCreateIssueTypes
+        operation: getCreateIssueMetaIssueTypes
         depends_on: [jira_projects]
         input:
           projectIdOrKey: "${response.jira_projects.values.0.key}"
