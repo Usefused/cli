@@ -143,6 +143,9 @@ have no discovery endpoint at all, in which case `resource_input` replaces
         {
           "name": "subdomain",
           "label": "Zendesk subdomain",
+          "type": "text",
+          "placeholder": "acme",
+          "description": "Enter the part before .zendesk.com.",
           "required": true,
           "pattern": "^[a-z0-9-]+$"
         }
@@ -162,6 +165,14 @@ have no discovery endpoint at all, in which case `resource_input` replaces
   "item": []
 }
 ```
+
+Imported `resource_input.fields` use the same minimal typed contract as a
+workspace profile: `text` (also the omitted-type default) or `select`, with
+non-secret string values only. Text fields may add placeholder/help copy and a
+server-side RE2 pattern. Select fields declare ordered
+`{"value":"...","label":"..."}` options; Engine rejects values outside that
+allowlist. These fields never acquire password, secret, numeric, boolean, or
+browser URL semantics.
 
 ## Who can publish what
 
