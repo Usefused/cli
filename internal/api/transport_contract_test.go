@@ -54,7 +54,7 @@ func assertTransportContractFixture(t *testing.T, fixture transportContractFixtu
 // assertOAuthEdgePolicy keeps reviewed OAuth controls distinct from flow URLs.
 func assertOAuthEdgePolicy(t *testing.T, auth api.AuthConfig) {
 	t.Helper()
-	if !auth.PKCERequired || auth.ScopesDelimiter != "comma" || auth.ExtraAuthParams["prompt"] != "consent" || auth.ExtraTokenParams["audience"] != "records" || !auth.RefreshTokenRotates {
+	if !auth.PKCERequired || auth.ScopesDelimiter != "comma" || auth.ExtraAuthParams["prompt"] != "consent" || auth.ExtraTokenParams["audience"] != "records" || !auth.RefreshTokenRequired || !auth.RefreshTokenRotates {
 		t.Fatalf("OAuth edge policy changed: %#v", auth)
 	}
 	flow, ok := auth.OAuth2Flows["authorizationCode"]
@@ -101,7 +101,7 @@ func TestGetServiceInfoProjectsAndDecodesTransportContract(t *testing.T) {
 	server := newGraphQLContractServer(t, func(query string) any {
 		assertGraphQLFields(t, query, []string{
 			"basic_password_mode", "token_endpoint_auth_method", "open_id_connect_url", "oauth2_metadata_url", "deprecated",
-			"pkce_required", "scopes_delimiter", "extra_auth_params", "extra_token_params", "refresh_token_rotates",
+			"pkce_required", "scopes_delimiter", "extra_auth_params", "extra_token_params", "refresh_token_required", "refresh_token_rotates",
 			"oauth2_flows", "strategy", "policy_provenance",
 			"variables { name default enum required }", "environment", "is_default",
 		})

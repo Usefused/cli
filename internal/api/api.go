@@ -1180,6 +1180,7 @@ type AuthConfig struct {
 	ScopesDelimiter         string                        `json:"scopes_delimiter,omitempty"`
 	ExtraAuthParams         map[string]string             `json:"extra_auth_params,omitempty"`
 	ExtraTokenParams        map[string]string             `json:"extra_token_params,omitempty"`
+	RefreshTokenRequired    bool                          `json:"refresh_token_required,omitempty"`
 	RefreshTokenRotates     bool                          `json:"refresh_token_rotates,omitempty"`
 	OAuth2Flows             map[string]OAuth2FlowContract `json:"oauth2_flows,omitempty"`
 	Strategy                *AuthRuntimeStrategy          `json:"strategy,omitempty"`
@@ -1246,6 +1247,7 @@ const serviceAuthConfigGraphQLFields = `
 	scopes_delimiter
 	extra_auth_params
 	extra_token_params
+	refresh_token_required
 	refresh_token_rotates
 	oauth2_flows
 	strategy

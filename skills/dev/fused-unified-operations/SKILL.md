@@ -1,6 +1,6 @@
 ---
 name: fused-unified-operations
-description: "Configure or review Fused SDK Unified Operations that expose one typed TypeScript or Python operation over multiple selected services. Use when authoring unified_operations, bindings, depends_on, rollback, DynamicValue input/output mappings, normalized or provider-specific outputs, runtime targets/selectors, OAuth/OIDC routing, or interpreting results and rollbacks."
+description: "Configure or review Fused SDK Unified Operations that expose one typed TypeScript or Python operation over multiple selected services. Use when authoring unified_operations, bindings, depends_on, rollback, recursive typed outputs, runtime targets/selectors, OAuth/OIDC routing, or interpreting transformed results and rollbacks."
 ---
 
 # Fused Unified Operations
@@ -10,13 +10,12 @@ description: "Configure or review Fused SDK Unified Operations that expose one t
 Produce one generated SDK method that can call an explicit set of provider
 operations, make ready targets eligible for bounded concurrency, wait for
 declared dependencies, compensate successful direct dependencies after a graph
-execution failure or dependency skip, and return every forward and rollback
-outcome.
+execution failure or dependency skip, and optionally return one exact
+operation-level transformed value.
 
-Use Unified Operations only in TypeScript or Python `kind: sdk` configs. They
-wrap operations already selected under `services`; they grant no new scope and
-carry no credentials. Read `fused-sdk` for lifecycle and `fused-bucket` for
-OAuth/OIDC or credential readiness.
+Use Unified Operations only in TypeScript or Python `kind: sdk` configs. They wrap
+selected `services`, grant no new scope, and carry no credentials. Read `fused-sdk`
+for lifecycle and `fused-bucket` for OAuth/OIDC or credential readiness.
 
 ## Properties and where they are used
 
@@ -29,11 +28,10 @@ OAuth/OIDC or credential readiness.
 | `description` | Operation | Optional descriptive metadata retained with the immutable definition; generated method comments are currently fixed. |
 | `input` | Operation | Required JSON Schema for the generated method input. |
 | `bindings` | Operation | Required map of public execution-step names to selected provider operations. Maximum 16 bindings. |
-| `output` | Operation | Optional normalized schema and mapping applied to every successful target. Do not combine it with binding-level outputs. |
+| `output` | Operation | Optional final recursive projection. Its constructed object is the generated method's exact success return value. It may be combined with binding outputs. |
 
-An SDK may declare at most 64 Unified Operations. Each binding key is a unique
-execution-step name used by `depends_on`, `${response.<step>}`, caller
-`targets`, and returned `result.target`. It does not need to match a service key.
+An SDK may declare at most 64 Unified Operations. Each binding key is a unique execution-step name
+used by `depends_on`, `${response.<step>}`, caller `targets`, and returned `result.target`; it need not match a service key.
 An expanded binding may select a configured service explicitly; omission uses
 the binding key as the service key. Quote a provider-qualified service such as
 `"@acme/github"` when it starts with `@` in YAML.
@@ -49,7 +47,7 @@ the binding key as the service key. Quote a provider-qualified service such as
 | `depends_on` | Expanded binding | Makes this target wait for the named targets. Without it, ready bindings are eligible to run concurrently. |
 | `rollback.operation` | Expanded binding | Exact selected operation on the same service used to compensate this binding after a direct consumer has a graph execution failure or dependency skip. |
 | `rollback.input` | `rollback` | Maps the original Unified input and this binding's successful response into the rollback request. |
-| `output` | Expanded binding | Optional provider-specific output schema and mapping. Use only when the operation has no root output. |
+| `output` | Expanded binding | Optional recursive projection for that provider result. It uses the same constructed-object root as operation output and may be combined with it. |
 
 `depends_on` values are exact binding keys. Self-dependencies, duplicates,
 unknown targets, and cycles are invalid. A caller's `targets` must be
@@ -65,45 +63,57 @@ up to four physical calls at a time. After all forwards settle, rollback is
 direct, deduplicated, reverse-dependency ordered, and all-settled. A consumer's
 input-mapping, physical-call, or canonical-response failure—or its dependency
 skip—can compensate only successful direct dependencies that declare rollback.
-Output mapping, schema, or encoding errors occur after graph success: they
-neither trigger rollback nor block dependants, which consume the retained raw
-canonical provider response. Planned rollback dependency edges set reverse
-order; independent rollbacks may run concurrently under the same cap, and one
-rollback error does not block another. Unused declarations remain inert. Do not
-invent `on_failure` or fallback; application code owns fallback.
+Binding output mapping, validation, or encoding errors occur after its provider
+call succeeds: they neither trigger rollback nor block dependants, which consume
+the retained raw canonical provider response. Planned rollback dependency edges
+set reverse order; independent rollbacks may run concurrently under the same
+cap, and one rollback error does not block another. Unused declarations remain
+inert. Do not invent `on_failure` or fallback; application code owns fallback.
 
 ### DynamicValue properties
 
-`bindings.<target>.input`, `rollback.input`, and `output.mapping` are
-DynamicValue documents; the operation-level `input` is instead JSON Schema.
-DynamicValue preserves JSON nulls, booleans, exact numbers, strings, arrays,
-and objects. An expression must occupy its complete scalar: `${input.title}`
-is valid; `prefix-${input.title}` is not. Function calls and operators other
-than `??` and the terminal `?` marker are invalid.
+`bindings.<target>.input`, `rollback.input`, and output `value`/property shorthand
+are DynamicValue documents; operation-level `input` is JSON Schema. DynamicValue
+preserves every JSON type. A complete `${response.drive.files}` stays an array;
+mixed strings interpolate non-null scalars, as in `File ${response.drive.files.2.id}`.
+Objects, arrays, or null fail interpolation before dispatch. Use `$${` for a
+literal `${`. Functions and operators other than `??` and terminal `?` fail.
 
 | Mapping location | Values it may read |
 |---|---|
 | `bindings.<target>.input` | `${input.*}`, `${target}`, and `${response.<direct-dependency>.*}` only. |
 | `bindings.<target>.rollback.input` | `${input.*}`, `${target}`, and that target's `${response.<target>.*}` only. |
-| Root `output.mapping` | `${input.*}`, `${target}`, and `${response.<declared-target>.*}`. Only the current target response is present at evaluation time. |
-| Binding `output.mapping` | `${input.*}`, `${target}`, and that binding's `${response.<target>.*}`. |
+| Operation output property/value | `${input.*}` and `${response.<declared-target>.*}` after selected bindings settle. A target with binding output exposes that transformed value; otherwise it exposes raw provider JSON. |
+| Binding output property/value | `${input.*}`, `${target}`, and that binding's raw `${response.<target>.*}`. |
 
-Use `??` to select the first present, non-null value, for example
-`${response.github.iid ?? response.linkedin.id}`. A terminal `?` omits a
-missing field or array item, for example `${input.body?}`. YAML aliases, merge
-keys, custom tags, timestamps, and non-string object keys are not portable JSON
-and are rejected.
+Use `??` to select the first present non-null value, for example
+`${response.github.iid ?? response.linkedin.id}`. Terminal `?` omits a missing
+value and contributes empty text inside interpolation. Forward input response
+references retain direct `depends_on`; output scopes follow the table above.
+Non-JSON YAML constructs are rejected.
 
 The Registry's credential-free descriptor receives schemas, exact operation,
 dependency, and rollback identities. DynamicValue mappings remain Engine-local.
 
 ### Output behavior
 
-A root `output` gives every successful target the same declared shape and
-cannot be combined with binding outputs. Without a root output, each binding
-independently uses its own declared `output` or falls back to the selected
-provider operation's generated response type. Every declared output requires
-both `schema` and `mapping`.
+Use only the recursive output tree; `{schema, mapping}` is invalid. Operation
+and binding roots are constructed `type: object` nodes with `properties`, and
+they may coexist. Operation output is the exact method return value without a
+`data` or `{results, rollbacks}` success wrapper; binding outputs run first and
+become its response values.
+
+Scalar shorthand such as `name: "${response.drive.name}"` infers its type from
+the authored JSON scalar; expanded scalars use `{type, value}`. A nested object
+either has mapping-bearing `properties`, or one pass-through `value` plus
+schema-only `properties`/`required`. Arrays use one `value` plus optional
+schema-only `items`. Schema-only scalar leaves have `type` but no `value`, and
+`additionalProperties`, when present on an output object, is boolean.
+
+Final operation-output mapping, validation, or encoding failure throws the
+generated Unified output error with bounded forward and rollback diagnostics.
+Without operation output, binding output replaces only its target's `data` in
+the ordinary all-settled success envelope.
 
 ### Generated-call properties
 
@@ -135,116 +145,77 @@ active rollback operation. Any preflight failure rejects the RPC with
 zero physical calls and no `{results, rollbacks}` envelope; inactive rollback
 declarations are not preflighted.
 
-The call returns `{results, rollbacks}`. Forward results preserve target order
-with `success`, `error`, or `skipped`; rollbacks use `success` or `error` plus
-`triggeredBy`/`triggered_by`. One provider failure does not erase another result.
+Without operation output, the call returns `{results, rollbacks}`. Forward
+results preserve target order with `success`, `error`, or `skipped`; rollbacks
+use `success` or `error` plus `triggeredBy`/`triggered_by`. One provider failure
+does not erase another result. With operation output, the exact transformed
+object replaces that success envelope as described above.
 
 For bucket-scoped Jira OAuth—including the workspace profile, timeout, SDK bucket, token transport, and selector—read `reference/jira-oauth.md`.
 
 ## Complete example
 
-This operation runs Jira project lookup and Nimble search concurrently. Jira
-issue-type lookup starts after project lookup, and issue creation starts only
-after its three direct dependencies succeed. Three binding steps share the one
-configured `jira` service and therefore the one `jira` selector. The example
-chooses visible `default` as its candidate; SDK plan/apply must pass
-`bucket.use` for that exact bucket, or the action stops without creating a
-fallback.
+This operation normalizes GitHub first, then builds one exact result from that
+binding output and GitLab's raw provider response.
 
 ```yaml
 apiVersion: fused/v1
 kind: sdk
-name: jira-research
+name: issues
 version: "1.0.0"
 language: typescript
-bucket: default
 services:
-  jira:
-    operations: [searchProjects, getCreateIssueMetaIssueTypes, createIssue]
-    auth: {type: oauth, name: OAuth2}
-    connect: {scopes: ["read:jira-work", "write:jira-work", offline_access]}
-  nimble:
-    operations: [search]
-    auth: {type: bearer, name: NimbleToken}
+  github: {operations: [createIssue, deleteIssue]}
+  gitlab: {operations: [createIssue]}
 
 unified_operations:
-  research.createIssue:
-    description: Research a topic and create a Jira issue
+  issues.create:
     input:
       type: object
-      additionalProperties: false
-      required: [query, projectKey, issueSummary]
-      properties:
-        query: {type: string}
-        projectKey: {type: string}
-        issueSummary: {type: string}
+      required: [title]
+      properties: {title: {type: string}}
     bindings:
-      jira_projects:
-        service: jira
-        operation: searchProjects
-        input: {query: "${input.projectKey}"}
-      jira_issue_types:
-        service: jira
-        operation: getCreateIssueMetaIssueTypes
-        depends_on: [jira_projects]
-        input:
-          projectIdOrKey: "${response.jira_projects.values.0.key}"
-      nimble:
-        operation: search
-        input:
-          query: "${input.query}"
-          max_results: 1
-      jira:
+      github:
         operation: createIssue
-        depends_on: [jira_projects, jira_issue_types, nimble]
-        input:
-          fields:
-            project: {key: "${response.jira_projects.values.0.key}"}
-            issuetype: {id: "${response.jira_issue_types.issueTypes.0.id}"}
-            summary: "${input.issueSummary}"
-            description:
-              type: doc
-              version: 1
-              content:
-                - type: paragraph
-                  content:
-                    - type: text
-                      text: "${response.nimble.results.0.description ?? response.nimble.results.0.content ?? response.nimble.results.0.url}"
+        input: {title: "${input.title}"}
+        rollback: {operation: deleteIssue, input: {id: "${response.github.id}"}}
+        output:
+          type: object
+          properties:
+            id: "${response.github.id}"
+            issue:
+              type: object
+              value: "${response.github}"
+              required: [title]
+              properties: {title: {type: string}}
+      gitlab: createIssue
+    output:
+      type: object
+      required: [primary_id, title, provider_ids]
+      properties:
+        primary_id: "${response.github.id}"
+        title: "${response.github.issue.title}"
+        provider_ids:
+          type: array
+          value: ["${response.github.id}", "${response.gitlab.iid}"]
+          items: {type: string}
 ```
 
 Validate and plan before apply:
 
 ```shell
-fused-cli sdk validate -f .fused/sdks/jira-research.yaml --json
-fused-cli sdk plan -f .fused/sdks/jira-research.yaml --json
+fused-cli sdk validate -f .fused/sdks/issues.yaml --json
+fused-cli sdk plan -f .fused/sdks/issues.yaml --json
 ```
 
-The generated TypeScript call targets binding keys and routes all three Jira
-steps through one connected user selected by the configured service key:
+The configured object is the exact TypeScript return type and value:
 
 ```typescript
-const outcome = await sdk.unified.research.createIssue(
-  {query: "release readiness", projectKey: "OPS", issueSummary: "Review readiness"},
-  {
-    targets: ["jira_projects", "jira_issue_types", "nimble", "jira"],
-    selectors: {jira: {endUserRef: "customer-42"}},
-    idempotencyKey: "jira-research-2026-08-19",
-  },
+const result = await sdk.unified.issues.create(
+  {title: "Fix login"},
+  {targets: ["github", "gitlab"], idempotencyKey: "issue-42"},
 );
-for (const result of outcome.results) console.log(result.target, result.status);
-for (const rollback of outcome.rollbacks) console.log(rollback.target, rollback.status);
-```
-
-Python uses the same target keys with snake_case selector fields; the async
-surface is `sdk.async_unified`:
-
-```python
-outcome = sdk.unified.research.create_issue(
-    {"query": "release readiness", "projectKey": "OPS", "issueSummary": "Review readiness"},
-    ["jira_projects", "jira_issue_types", "nimble", "jira"],
-    selectors={"jira": {"end_user_ref": "customer-42"}},
-    idempotency_key="jira-research-2026-08-19",
-)
+console.log(result.primary_id, result.title, result.provider_ids);
 ```
 
 ## Permissions and team access

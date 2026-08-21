@@ -41,21 +41,35 @@ unified_operations:
           note: null
       gitlab: createIssue
     output:
-      schema:
-        type: object
-        properties:
-          id: {type: string}
-      mapping:
+      type: object
+      required: [id, provider]
+      additionalProperties: false
+      properties:
         id: ${response.github.id ?? response.gitlab.iid}
-        provider: ${target}
+        provider: {type: string, value: "${target}"}
+        issue:
+          type: object
+          value: ${response.github.issue}
+          required: [number]
+          properties:
+            number: {type: integer}
+            author:
+              type: object
+              properties:
+                login: {type: string}
+        labels:
+          type: array
+          value: ${response.github.labels}
+          items: {type: string}
   issues.get:
     input: {type: object}
     bindings:
       github:
         operation: getIssue
         output:
-          schema: {type: object}
-          mapping: {id: "${response.github.id}"}
+          type: object
+          properties:
+            id: "${response.github.id}"
 `), "sdk.yaml")
 	if err != nil {
 		t.Fatalf("Parse() error = %v", err)
@@ -78,11 +92,29 @@ unified_operations:
 	if create.Output == nil || parsed.SDK.UnifiedOperations["issues.get"].Bindings["github"].Output == nil {
 		t.Fatalf("root and binding output forms were not preserved: %#v", parsed.SDK.UnifiedOperations)
 	}
+	encoded, err := json.Marshal(create.Output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), `"Fields"`) || !strings.Contains(string(encoded), `"id":"${response.github.id ?? response.gitlab.iid}"`) {
+		t.Fatalf("recursive output changed on JSON marshal: %s", encoded)
+	}
+	yamlValue, err := yaml.Marshal(parsed.SDK)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reparsed, err := configfile.Parse(yamlValue, "sdk.yaml")
+	if err != nil {
+		t.Fatalf("reparse output YAML: %v\n%s", err, yamlValue)
+	}
+	if got := reparsed.SDK.UnifiedOperations["issues.create"].Output; !reflect.DeepEqual(got, create.Output) {
+		t.Fatalf("recursive output changed across YAML round trip\ngot:  %#v\nwant: %#v", got, create.Output)
+	}
 }
 
 // TestSDKUnifiedOperationsJSONAndYAMLRoundTripDynamicValues preserves exact JSON leaves.
 func TestSDKUnifiedOperationsJSONAndYAMLRoundTripDynamicValues(t *testing.T) {
-	document := `{"apiVersion":"fused/v1","kind":"sdk","name":"engineering-sdk","version":"1.0.0","language":"python","services":{"github":{"operations":["createIssue"]}},"unified_operations":{"issues.create":{"input":{"type":"object"},"bindings":{"github":{"operation":"createIssue","input":{"title":"${input.title}","enabled":true,"count":9007199254740993,"ratio":0.1234567890123456789,"nullable":null,"tags":["one",2]}}}}}}`
+	document := `{"apiVersion":"fused/v1","kind":"sdk","name":"engineering-sdk","version":"1.0.0","language":"python","services":{"github":{"operations":["createIssue"]}},"unified_operations":{"issues.create":{"input":{"type":"object"},"bindings":{"github":{"operation":"createIssue","input":{"title":"${input.title}","enabled":true,"count":9007199254740993,"ratio":0.1234567890123456789,"nullable":null,"tags":["one",2]}}},"output":{"type":"object","properties":{"id":"${response.github.id}","attempts":{"type":"integer","value":9007199254740993}}}}}}`
 	parsed, err := configfile.Parse([]byte(document), "sdk.json")
 	if err != nil {
 		t.Fatalf("Parse() error = %v", err)
@@ -111,6 +143,10 @@ func TestSDKUnifiedOperationsJSONAndYAMLRoundTripDynamicValues(t *testing.T) {
 	got := reparsed.SDK.UnifiedOperations["issues.create"].Bindings["github"].Input
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("DynamicValues changed across YAML round trip\ngot:  %#v\nwant: %#v", got, want)
+	}
+	wantOutput := parsed.SDK.UnifiedOperations["issues.create"].Output
+	if gotOutput := reparsed.SDK.UnifiedOperations["issues.create"].Output; !reflect.DeepEqual(gotOutput, wantOutput) {
+		t.Fatalf("JSON-authored output changed across YAML round trip\ngot:  %#v\nwant: %#v", gotOutput, wantOutput)
 	}
 }
 
@@ -381,6 +417,10 @@ func TestSDKUnifiedOperationsRejectsUnavailableResponseDataflow(t *testing.T) {
 			"github: {operation: createIssue, input: {id: \"${response.gitlab.id}\"}}\n      gitlab: createIssue",
 			"response target \"gitlab\" is not available",
 		},
+		"interpolated forward sibling": {
+			"github: {operation: createIssue, input: {title: \"Issue ${response.gitlab.id}\"}}\n      gitlab: createIssue",
+			"response target \"gitlab\" is not available",
+		},
 		"rollback sibling": {
 			"github: {operation: createIssue, rollback: {operation: createIssue, input: {id: \"${response.gitlab.id}\"}}}\n      gitlab: createIssue",
 			"binding \"github\" rollback input",
@@ -396,6 +436,37 @@ func TestSDKUnifiedOperationsRejectsUnavailableResponseDataflow(t *testing.T) {
 			assertUnifiedConfigError(t, document, test.want)
 		})
 	}
+}
+
+// TestSDKUnifiedOperationsValidatesOutputResponseScope allows a service-level
+// projection to read every binding while a binding projection reads only itself.
+func TestSDKUnifiedOperationsValidatesOutputResponseScope(t *testing.T) {
+	valid := unifiedSDKWithGitLab(`
+unified_operations:
+  issues.create:
+    input: {type: object}
+    bindings:
+      github:
+        operation: createIssue
+        output:
+          type: object
+          properties: {id: "${response.github.id}"}
+      gitlab: createIssue
+    output:
+      type: object
+      properties:
+        github_id: "${response.github.id}"
+        gitlab_id: "${response.gitlab.id}"
+`)
+	if _, err := configfile.Parse([]byte(valid), "sdk.yaml"); err != nil {
+		t.Fatalf("valid root and binding output scopes were rejected: %v", err)
+	}
+
+	bindingSibling := strings.Replace(valid, `${response.github.id}`, `${response.gitlab.id}`, 1)
+	assertUnifiedConfigError(t, bindingSibling, `binding "github" output`)
+
+	unknownRoot := strings.Replace(valid, `${response.gitlab.id}`, `${response.jira.id}`, 1)
+	assertUnifiedConfigError(t, unknownRoot, "response reference must name a binding target")
 }
 
 // TestSDKUnifiedOperationsRejectsTransitiveResponseDataflow keeps declared
@@ -446,9 +517,9 @@ func TestSDKUnifiedOperationsValidatesRollbackShapeAndSelection(t *testing.T) {
 	}
 }
 
-// TestSDKUnifiedOperationsRejectsInvalidRollbackDynamicValue applies the same
-// portable expression rules to compensation inputs as forward inputs.
-func TestSDKUnifiedOperationsRejectsInvalidRollbackDynamicValue(t *testing.T) {
+// TestSDKUnifiedOperationsAllowsRollbackInterpolation applies the same scalar
+// interpolation grammar to compensation inputs as forward inputs.
+func TestSDKUnifiedOperationsAllowsRollbackInterpolation(t *testing.T) {
 	document := strings.Replace(unifiedSDKDocument(`
 unified_operations:
   issues.create:
@@ -460,7 +531,9 @@ unified_operations:
           operation: deleteIssue
           input: {issueId: "delete-${response.github.id}"}
 `), "operations: [createIssue]", "operations: [createIssue, deleteIssue]", 1)
-	assertUnifiedConfigError(t, document, "must occupy the complete scalar")
+	if _, err := configfile.Parse([]byte(document), "sdk.yaml"); err != nil {
+		t.Fatalf("rollback interpolation was rejected: %v", err)
+	}
 }
 
 // TestSDKUnifiedOperationsAllowsUnusedRollback confirms compensation remains
@@ -480,9 +553,10 @@ unified_operations:
 	}
 }
 
-// TestSDKUnifiedOperationsRejectsRootAndBindingOutputs enforces one output model.
-func TestSDKUnifiedOperationsRejectsRootAndBindingOutputs(t *testing.T) {
-	_, err := configfile.Parse([]byte(unifiedSDKDocument(`
+// TestSDKUnifiedOperationsAllowsRootAndBindingOutputs keeps service and binding
+// projections independent while both use the same constructed-object root.
+func TestSDKUnifiedOperationsAllowsRootAndBindingOutputs(t *testing.T) {
+	parsed, err := configfile.Parse([]byte(unifiedSDKDocument(`
 unified_operations:
   issues.create:
     input: {type: object}
@@ -490,14 +564,18 @@ unified_operations:
       github:
         operation: createIssue
         output:
-          schema: {type: object}
-          mapping: {id: "${response.github.id}"}
+          type: object
+          properties: {id: "${response.github.id}"}
     output:
-      schema: {type: object}
-      mapping: {id: "${response.github.id}"}
+      type: object
+      properties: {id: "${response.github.id}"}
 `)), "sdk.yaml")
-	if err == nil || !strings.Contains(err.Error(), "cannot combine root output") {
-		t.Fatalf("expected mutually exclusive output error, got %v", err)
+	if err != nil {
+		t.Fatalf("root and binding outputs were rejected: %v", err)
+	}
+	operation := parsed.SDK.UnifiedOperations["issues.create"]
+	if operation.Output == nil || operation.Bindings["github"].Output == nil {
+		t.Fatalf("root and binding outputs were not preserved: %#v", operation)
 	}
 }
 
@@ -516,7 +594,7 @@ unified_operations:
   issues.create:
     input: {type: object}
     bindings: {github: createIssue}
-    output: {schema: {type: object}, mapping: {}, transform: script}
+    output: {type: object, properties: {}, transform: script}
 `,
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -524,6 +602,107 @@ unified_operations:
 			if err == nil || !strings.Contains(err.Error(), "unknown field") {
 				t.Fatalf("expected closed-object error, got %v", err)
 			}
+		})
+	}
+}
+
+// TestSDKUnifiedOperationsRejectsLegacyAndMalformedOutputs makes the recursive
+// contract the only authoring form and keeps mapping-bearing and schema-only
+// object properties distinct.
+func TestSDKUnifiedOperationsRejectsLegacyAndMalformedOutputs(t *testing.T) {
+	tests := map[string]struct {
+		output string
+		want   string
+	}{
+		"legacy schema mapping": {
+			`{schema: {type: object}, mapping: {id: "${response.github.id}"}}`,
+			"unknown field",
+		},
+		"scalar root": {
+			`{type: string, value: "${response.github.id}"}`,
+			"root output must be a constructed object",
+		},
+		"pass-through root": {
+			`{type: object, value: "${response.github}"}`,
+			"root output must be a constructed object",
+		},
+		"constructed object missing properties": {
+			`{type: object}`,
+			"root output must be a constructed object",
+		},
+		"scalar property missing value": {
+			`{type: object, properties: {id: {type: string}}}`,
+			"string output requires value",
+		},
+		"object shorthand": {
+			`{type: object, properties: {issue: {id: "${response.github.id}"}}}`,
+			"output shorthand must be scalar",
+		},
+		"array shorthand": {
+			`{type: object, properties: {ids: ["${response.github.id}"]}}`,
+			"output shorthand must be scalar",
+		},
+		"pass-through schema carries mapping": {
+			`{type: object, properties: {issue: {type: object, value: "${response.github}", properties: {id: {type: string, value: "${response.github.id}"}}}}}`,
+			"output schema cannot declare value",
+		},
+		"pass-through undeclared required": {
+			`{type: object, properties: {issue: {type: object, value: "${response.github}", properties: {id: {type: string}}, required: [name]}}}`,
+			`required property "name" is not declared`,
+		},
+		"array missing value": {
+			`{type: object, properties: {items: {type: array, items: {type: string}}}}`,
+			"array output requires value",
+		},
+		"array items mapping": {
+			`{type: object, properties: {items: {type: array, value: "${response.github.items}", items: {type: string, value: "${input.item}"}}}}`,
+			"output schema cannot declare value",
+		},
+		"duplicate required": {
+			`{type: object, properties: {id: "${response.github.id}"}, required: [id, id]}`,
+			`required property "id" is duplicated`,
+		},
+		"null required": {
+			`{type: object, properties: {id: "${response.github.id}"}, required: null}`,
+			"output required must be an array",
+		},
+		"blank required": {
+			`{type: object, properties: {id: "${response.github.id}"}, required: [" "]}`,
+			"output required entries must be non-empty strings",
+		},
+		"additional properties type": {
+			`{type: object, properties: {}, additionalProperties: string}`,
+			"additionalProperties must be boolean",
+		},
+		"schema unknown type": {
+			`{type: object, properties: {issue: {type: object, value: "${response.github}", properties: {id: {type: identifier}}}}}`,
+			"output schema requires a valid type",
+		},
+		"schema unknown key": {
+			`{type: object, properties: {issue: {type: object, value: "${response.github}", properties: {id: {type: string, format: uuid}}}}}`,
+			`unknown field "format"`,
+		},
+		"scalar schema properties": {
+			`{type: object, properties: {issue: {type: object, value: "${response.github}", properties: {id: {type: string, properties: {nested: {type: string}}}}}}}`,
+			"output type cannot declare properties",
+		},
+		"array schema required": {
+			`{type: object, properties: {issue: {type: object, value: "${response.github}", properties: {tags: {type: array, required: [id], items: {type: string}}}}}}`,
+			"output type cannot declare required",
+		},
+		"object schema items": {
+			`{type: object, properties: {issue: {type: object, value: "${response.github}", properties: {metadata: {type: object, items: {type: string}}}}}}`,
+			"output type cannot declare items",
+		},
+		"schema additional properties type": {
+			`{type: object, properties: {issue: {type: object, value: "${response.github}", properties: {metadata: {type: object, properties: {}, additionalProperties: string}}}}}`,
+			"additionalProperties must be boolean",
+		},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			fragment := "unified_operations:\n  issues.create:\n    input: {type: object}\n    bindings: {github: createIssue}\n    output: " + test.output + "\n"
+			assertUnifiedConfigError(t, unifiedSDKDocument(fragment), test.want)
 		})
 	}
 }
@@ -675,7 +854,7 @@ func TestSDKUnifiedOperationsEnforcesStructuralBounds(t *testing.T) {
 	})
 
 	t.Run("expression interpolation", func(t *testing.T) {
-		assertUnifiedConfigError(t, unifiedSDKDocument(`
+		parsed, err := configfile.Parse([]byte(unifiedSDKDocument(`
 unified_operations:
   issues.create:
     input: {}
@@ -683,7 +862,26 @@ unified_operations:
       github:
         operation: createIssue
         input: {title: "prefix ${input.title}"}
-`), "must occupy the complete scalar")
+`)), "sdk.yaml")
+		if err != nil {
+			t.Fatalf("interpolation was rejected: %v", err)
+		}
+		got := parsed.SDK.UnifiedOperations["issues.create"].Bindings["github"].Input["title"].Raw
+		if got != "prefix ${input.title}" {
+			t.Fatalf("interpolation = %#v", got)
+		}
+	})
+
+	t.Run("malformed interpolation", func(t *testing.T) {
+		assertUnifiedConfigError(t, unifiedSDKDocument(`
+unified_operations:
+  issues.create:
+    input: {}
+    bindings:
+      github:
+        operation: createIssue
+        input: {title: "prefix ${input.title"}
+`), "unterminated interpolation")
 	})
 
 	t.Run("expression count", func(t *testing.T) {

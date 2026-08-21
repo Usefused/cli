@@ -397,12 +397,20 @@ introspectable GraphQL endpoints. Swagger 2 is converted through the shared
 OpenAPI adapter. Google Discovery is mapped natively into the same canonical
 endpoint contract: nested resources, JSON request/response schemas, Google
 OAuth scopes, API-key shape, and pageToken/nextPageToken pagination are
-preserved. Reserved resource-name path expansion preserves embedded `/`
-characters while escaping unsafe segment characters. Media upload/download and
-resumable or multipart-related workflows remain explicit plan diagnostics until
-their distinct wire protocols are reviewed; do not treat those warnings as
-ordinary JSON upload support. Do not pre-convert either format in the CLI or
-infer provider-specific fixes. `import plan`
+preserved. Adapter v2 also publishes `access_type=offline`, `prompt=consent`,
+and `refresh_token_required=true` as credential-free OAuth policy. A consumer
+of a public Gmail or Drive service receives that durable-consent behavior
+automatically; keep it out of SDK YAML and application code, which declare only
+scopes and routing selectors. A receipt pinned to `google-discovery/v1` must be
+discarded and planned again because apply cannot acquire v2 semantics after
+review. Re-import an existing v1-backed service with the same slug and provider
+version to publish a corrected internal revision, then reconnect existing
+delegated users once against that revision. Reserved resource-name path
+expansion preserves embedded `/` characters while escaping unsafe segment
+characters. Media upload/download and resumable or multipart-related workflows
+remain explicit plan diagnostics until their distinct wire protocols are
+reviewed; do not treat those warnings as ordinary JSON upload support. Do not
+pre-convert either format in the CLI or infer provider-specific fixes. `import plan`
 reports the Registry-authoritative `source_format`, which apply re-detects and
 must match before mutation. `--url` is still a spec URL here:
 Registry first tries a bounded `GET`, then GraphQL introspection if the GET
@@ -652,7 +660,7 @@ workspace/bucket/connect steps above do not change.
 | Skill | Covers |
 |---|---|
 | `fused-workspace` | The service allowlist: enabling services/versions, execution policy, deprecations |
-| `fused-sdk` | Generating a typed SDK package from selected operations/webhooks |
+| `fused-sdk` | Generating a typed SDK package and constructing physical or Unified Engine execution API calls |
 | `fused-unified-operations` | Defining one generated SDK operation across multiple services: mappings, dependencies, rollback, outputs, call-time targets, and connected-auth selectors |
 | `fused-mcp` | Generating an Engine-hosted MCP server from selected operations (MCP cannot select webhooks) |
 | `fused-webhook` | Registering inbound webhook ingress (`kind: webhook`) and attaching it to an SDK via `webhook_attachment` so that SDK receives delivery |

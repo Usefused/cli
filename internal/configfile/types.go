@@ -331,8 +331,8 @@ type AppConnect struct {
 type SDKService = AppService
 
 // UnifiedOperation declares one typed SDK wrapper over selected provider
-// operations. Input and output schemas remain ordinary JSON-compatible values;
-// semantic schema and expression validation belongs to Engine plan.
+// operations. Input is JSON Schema while output is the recursive projection
+// authoring tree compiled by Engine plan.
 type UnifiedOperation struct {
 	Description string                             `yaml:"description,omitempty" json:"description,omitempty"`
 	Input       map[string]DynamicValue            `yaml:"input" json:"input"`
@@ -359,11 +359,10 @@ type UnifiedOperationRollback struct {
 	Input     map[string]DynamicValue `yaml:"input,omitempty" json:"input,omitempty"`
 }
 
-// UnifiedOperationOutput maps a successful provider response into a declared
-// JSON schema. Root and binding-level outputs are mutually exclusive.
+// UnifiedOperationOutput preserves one recursive typed result definition.
+// Custom marshaling keeps property shorthand on the wire without a wrapper.
 type UnifiedOperationOutput struct {
-	Schema  map[string]DynamicValue `yaml:"schema" json:"schema"`
-	Mapping map[string]DynamicValue `yaml:"mapping" json:"mapping"`
+	Fields map[string]DynamicValue `yaml:"-" json:"-"`
 }
 
 // ParsedConfig is a container for the parsed configuration.

@@ -64,14 +64,21 @@ unified_operations:
           body: ${input.body?}
       gitlab: createIssue # compact pass-through form
     output:
-      schema:
-        type: object
-        properties:
-          id: {type: string}
-          provider: {type: string}
-      mapping:
+      type: object
+      required: [id, issue]
+      properties:
         id: ${response.github.id ?? response.gitlab.iid}
-        provider: ${target}
+        issue:
+          type: object
+          value: ${response.github.issue}
+          required: [number]
+          properties:
+            number: {type: integer}
+            title: {type: string}
+        labels:
+          type: array
+          value: ${response.github.labels}
+          items: {type: string}
 ```
 
 An expanded binding accepts `operation`, optional `input`, `depends_on`,
@@ -89,15 +96,25 @@ ancestors or unrelated bindings. In the example, a GitHub failure can invoke
 Jira's rollback because GitHub directly names Jira.
 
 DynamicValue documents preserve JSON nulls, booleans, exact numbers, strings,
-arrays, and objects across forward and rollback inputs; a `${...}` expression
-must occupy its complete scalar. YAML aliases, merge keys, custom tags,
-timestamps, and non-string object keys are rejected because they are not
-portable JSON values.
+arrays, and objects across forward, rollback, and output mappings. A complete
+`${...}` retains its JSON type, while strings may also interpolate scalar
+values. YAML aliases, merge keys, custom tags, timestamps, and non-string
+object keys are rejected because they are not portable JSON values.
 
-A root `output` supplies one schema and mapping for all bindings. Otherwise,
-individual expanded bindings may declare provider-specific outputs. Do not mix
-root and binding-level outputs in one operation. Every output requires both
-`schema` and `mapping`.
+The only output form is a recursive typed tree; the removed `{schema, mapping}`
+form is invalid. Operation and binding outputs both have a constructed
+`type: object` root with `properties`, and they may coexist. A scalar property
+may use mapping shorthand as above or expanded `{type, value}`. Nested objects
+may either construct mapping-bearing properties or pass through one `value`
+with schema-only `properties`/`required`. Arrays use one `value` plus an optional
+schema-only `items` shape.
+
+When the operation declares output, the generated method returns exactly that
+object with no `data` wrapper. Binding outputs run first and become the values
+read by the operation output; a binding without output contributes its raw
+provider JSON. Without operation output, the generated method retains the
+all-settled results/rollbacks envelope and any binding output becomes that
+target's normalized result data.
 
 The CLI bounds this source contract to 64 Unified Operations, 16 bindings per
 operation, 512 expressions, 10,000 DynamicValue nodes, depth 32, and 1 MiB of
@@ -201,9 +218,11 @@ the service-level default, while endpoint policy remains more specific.
 
 Version 3 supports composed token, offset, page, RFC Link, next-URL,
 conditional path, derived cursor, and GraphQL pagination strategies. Engine
-validates origins, termination, repeated values, and hard limits, then streams
-successful provider pages. Quota, concurrency, and retry policies follow the
-same Engine-owned boundary; generated clients make one logical Engine request.
+validates origins, termination, repeated values, and hard limits, then returns
+one aggregate document after the provider page loop succeeds. A generated SDK
+invocation may only lower the maximum page count for that call. Quota,
+concurrency, and retry policies follow the same Engine-owned boundary;
+generated clients make one logical Engine request.
 
 See the bundled `fused-config`, `fused-workspace`, `fused-sdk`,
 `fused-unified-operations`, and `fused-mcp` skills for task-specific guidance,
