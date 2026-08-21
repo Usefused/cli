@@ -30,6 +30,7 @@ type ResourceDiscoveryConfig struct {
 	AllowedHosts    []string `json:"allowed_hosts,omitempty" yaml:"allowed_hosts,omitempty"`
 }
 
+// UnmarshalJSON rejects discovery members the current CLI cannot preserve.
 func (discovery *ResourceDiscoveryConfig) UnmarshalJSON(payload []byte) error {
 	type wireDiscovery ResourceDiscoveryConfig
 	var decoded wireDiscovery
@@ -80,11 +81,54 @@ func (match *ResourceInputDiscoveryMatch) UnmarshalJSON(payload []byte) error {
 	return nil
 }
 
+const (
+	// ResourceInputFieldTypeText renders a native non-secret string input.
+	ResourceInputFieldTypeText = "text"
+	// ResourceInputFieldTypeSelect renders a native allowlisted string select.
+	ResourceInputFieldTypeSelect = "select"
+)
+
+// ResourceInputField declares one non-secret string control. An omitted type
+// remains omitted in transport and is normalized to text by authoritative validators.
 type ResourceInputField struct {
-	Name     string `json:"name" yaml:"name"`
-	Label    string `json:"label,omitempty" yaml:"label,omitempty"`
-	Required bool   `json:"required,omitempty" yaml:"required,omitempty"`
-	Pattern  string `json:"pattern,omitempty" yaml:"pattern,omitempty"`
+	Name        string                `json:"name" yaml:"name"`
+	Label       string                `json:"label,omitempty" yaml:"label,omitempty"`
+	Type        string                `json:"type,omitempty" yaml:"type,omitempty"`
+	Placeholder string                `json:"placeholder,omitempty" yaml:"placeholder,omitempty"`
+	Description string                `json:"description,omitempty" yaml:"description,omitempty"`
+	Required    bool                  `json:"required,omitempty" yaml:"required,omitempty"`
+	Pattern     string                `json:"pattern,omitempty" yaml:"pattern,omitempty"`
+	Options     []ResourceInputOption `json:"options,omitempty" yaml:"options,omitempty"`
+}
+
+// ResourceInputOption keeps a select value distinct from its optional display label.
+type ResourceInputOption struct {
+	Value string `json:"value" yaml:"value"`
+	Label string `json:"label,omitempty" yaml:"label,omitempty"`
+}
+
+// UnmarshalJSON keeps field presentation and validation semantics closed during CLI transport.
+func (field *ResourceInputField) UnmarshalJSON(payload []byte) error {
+	type wireResourceInputField ResourceInputField
+	var decoded wireResourceInputField
+	// Strict decoding prevents newer field semantics from being dropped during a CLI rewrite.
+	if err := contractjson.DecodeStrict(payload, &decoded, "resource input field"); err != nil {
+		return err
+	}
+	*field = ResourceInputField(decoded)
+	return nil
+}
+
+// UnmarshalJSON keeps select-option labels and values lossless at the nested boundary.
+func (option *ResourceInputOption) UnmarshalJSON(payload []byte) error {
+	type wireResourceInputOption ResourceInputOption
+	var decoded wireResourceInputOption
+	// Unknown option members fail instead of producing a select with altered values.
+	if err := contractjson.DecodeStrict(payload, &decoded, "resource input option"); err != nil {
+		return err
+	}
+	*option = ResourceInputOption(decoded)
+	return nil
 }
 
 type Binding struct {
@@ -96,6 +140,7 @@ type Binding struct {
 	ProviderExtension bool     `json:"provider_extension,omitempty" yaml:"provider_extension,omitempty"`
 }
 
+// UnmarshalJSON rejects profile members the current CLI cannot preserve.
 func (profile *Profile) UnmarshalJSON(payload []byte) error {
 	type wireProfile Profile
 	var decoded wireProfile

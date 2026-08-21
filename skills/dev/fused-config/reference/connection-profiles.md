@@ -140,6 +140,48 @@ URL. The portable JSONPath subset is `$.field`, `$.nested.field`,
 endpoint — the caller supplies the routing value (e.g. a Zendesk subdomain)
 instead.
 
+### Typed resource input
+
+Resource input fields collect non-secret strings only. `type` accepts
+`text` or `select`; an omitted type means `text`:
+
+```yaml
+resource_input:
+  fields:
+    - name: subdomain
+      label: Zendesk subdomain
+      type: text
+      placeholder: acme
+      description: Enter the part before .zendesk.com.
+      required: true
+      pattern: "^[a-z0-9-]+$"
+    - name: region
+      label: Data region
+      type: select
+      description: Choose the provider region for this account.
+      options:
+        - value: eu
+          label: Europe
+        - value: us
+          label: United States
+  base_url_template: "https://{subdomain}.{region}.zendesk.example.com"
+  resource_type: zendesk_subdomain
+  allowed_hosts:
+    - "*.eu.zendesk.example.com"
+    - "*.us.zendesk.example.com"
+```
+
+`placeholder` is display-only and never supplies a missing value.
+`description` is safe help copy. Each select option has an exact string
+`value` plus an optional display `label`; Engine rejects a submitted value
+outside that declared option allowlist. Use `options` only for select fields.
+Text `pattern` uses server-side RE2 and is never copied to HTML `pattern`.
+
+Do not model passwords, secrets, numbers, booleans, or browser URL controls
+through resource input. Provider credentials belong in the selected bucket.
+Every resource-input value remains a string constrained by the profile,
+template, and allowed hosts.
+
 `auto_run` and `lifecycle` are effectively fixed-value fields today —
 `after_oauth_callback` and `authoritative` are the *only* values currently
 accepted (anything else, including omitting them, either normalizes to
