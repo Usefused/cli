@@ -113,8 +113,11 @@ unreviewed credential-bearing origin. All live config and import ingress accepts
 only the canonical v3 policy shape; older strategy objects are rejected.
 
 Do not repeat pagination in SDK or MCP config. Engine resolves endpoint policy
-first, then the effective version/service fallback, and streams every successful
-provider page as its own chunk to generated SDK and MCP consumers.
+first, then the effective version/service fallback. Generated clients submit
+one logical Engine call and receive one aggregate JSON document after every
+successful page completes. A generated SDK caller may set only a maximum-page
+invocation bound; Engine rejects invalid bounds and never accepts caller-owned
+continuation strategy, tokens, paths, templates, or next URLs.
 
 `retry_config` is also accepted as an ingress spelling for `retry` with the
 same canonical v3 shape. Setting both is rejected so one policy cannot mask a

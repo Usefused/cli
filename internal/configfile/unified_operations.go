@@ -141,23 +141,43 @@ func (r *UnifiedOperationRollback) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-// UnmarshalYAML keeps output objects closed while leaving schema and mapping
-// documents opaque for Engine's semantic compiler.
+// UnmarshalYAML preserves the recursive output DSL as an exact JSON-compatible
+// object; semantic node validation runs after the complete SDK is decoded.
 func (o *UnifiedOperationOutput) UnmarshalYAML(node *yaml.Node) error {
 	if node.Kind != yaml.MappingNode {
 		return fmt.Errorf("unified operation output must be a mapping")
 	}
-	if err := rejectUnknownMappingKeys(node, "unified operation output", "schema", "mapping"); err != nil {
+	decoded, err := decodeDynamicYAML(node, 0)
+	if err != nil {
 		return err
 	}
-	type plainOutput UnifiedOperationOutput
-	var decoded plainOutput
-	if err := node.Decode(&decoded); err != nil {
-		return err
+	fields, ok := decoded.Raw.(map[string]DynamicValue)
+	if !ok {
+		return fmt.Errorf("unified operation output must be an object")
 	}
-	*o = UnifiedOperationOutput(decoded)
+	o.Fields = fields
 	return nil
 }
+
+// UnmarshalJSON keeps JSON and YAML output definitions on one exact recursive contract.
+func (o *UnifiedOperationOutput) UnmarshalJSON(data []byte) error {
+	var decoded DynamicValue
+	if err := decoded.UnmarshalJSON(data); err != nil {
+		return err
+	}
+	fields, ok := decoded.Raw.(map[string]DynamicValue)
+	if !ok {
+		return fmt.Errorf("unified operation output must be an object")
+	}
+	o.Fields = fields
+	return nil
+}
+
+// MarshalJSON emits the authored recursive node without an extra transport wrapper.
+func (o UnifiedOperationOutput) MarshalJSON() ([]byte, error) { return json.Marshal(o.Fields) }
+
+// MarshalYAML preserves scalar property shorthand when configuration is rewritten.
+func (o UnifiedOperationOutput) MarshalYAML() (any, error) { return o.Fields, nil }
 
 // rejectUnknownMappingKeys preserves strict decoding inside custom YAML types.
 func rejectUnknownMappingKeys(node *yaml.Node, label string, allowed ...string) error {
@@ -354,21 +374,21 @@ func validateUnifiedOperation(name string, operation UnifiedOperation, services 
 		return err
 	}
 	for target, binding := range operation.Bindings {
-		if err := validateUnifiedBinding(name, target, binding, services, operation.Output != nil); err != nil {
+		if err := validateUnifiedBinding(name, target, binding, services); err != nil {
 			return err
 		}
 	}
 	if err := validateUnifiedDependencies(name, operation.Bindings); err != nil {
 		return err
 	}
-	if err := validateUnifiedDataflow(name, operation.Bindings); err != nil {
+	if err := validateUnifiedDataflow(name, operation); err != nil {
 		return err
 	}
 	return budget.addOperation(name, operation)
 }
 
 // validateUnifiedBinding checks one aliased forward call and its same-service rollback.
-func validateUnifiedBinding(name, target string, binding UnifiedOperationBinding, services map[string]AppService, hasRootOutput bool) error {
+func validateUnifiedBinding(name, target string, binding UnifiedOperationBinding, services map[string]AppService) error {
 	service, err := unifiedBindingService(name, target, binding.Service, services)
 	if err != nil {
 		return err
@@ -381,9 +401,6 @@ func validateUnifiedBinding(name, target string, binding UnifiedOperationBinding
 	}
 	if err := validateUnifiedRollback(name, target, binding.Rollback, service); err != nil {
 		return err
-	}
-	if hasRootOutput && binding.Output != nil {
-		return fmt.Errorf("sdk unified operation %q cannot combine root output with binding %q output", name, target)
 	}
 	return validateUnifiedOutput(name, fmt.Sprintf("binding %q", target), binding.Output)
 }
@@ -501,20 +518,35 @@ func sortedUnifiedBindingTargets(bindings map[string]UnifiedOperationBinding) []
 
 // validateUnifiedDataflow limits response namespaces to the scheduling edges
 // that make those responses available at execution time.
-func validateUnifiedDataflow(name string, bindings map[string]UnifiedOperationBinding) error {
+
+func validateUnifiedDataflow(name string, operation UnifiedOperation) error {
+	bindings := operation.Bindings
 	knownTargets := sortedUnifiedBindingTargets(bindings)
 	for _, target := range knownTargets {
 		binding := bindings[target]
 		if err := validateUnifiedDynamicTargets(binding.Input, knownTargets, binding.DependsOn); err != nil {
 			return fmt.Errorf("sdk unified operation %q binding %q input: %w", name, target, err)
 		}
-		if binding.Rollback == nil {
-			continue
+		if err := validateUnifiedBindingDataflow(name, target, binding, knownTargets); err != nil {
+			return err
 		}
+	}
+	if err := validateUnifiedOutputTargets(operation.Output, knownTargets, knownTargets); err != nil {
+		return fmt.Errorf("sdk unified operation %q root output: %w", name, err)
+	}
+	return nil
+}
+
+// validateUnifiedBindingDataflow applies the response scope owned by one graph step.
+func validateUnifiedBindingDataflow(name, target string, binding UnifiedOperationBinding, knownTargets []string) error {
+	if binding.Rollback != nil {
 		// A rollback compensates its own successful call, so no other provider response is available to it.
 		if err := validateUnifiedDynamicTargets(binding.Rollback.Input, knownTargets, []string{target}); err != nil {
 			return fmt.Errorf("sdk unified operation %q binding %q rollback input: %w", name, target, err)
 		}
+	}
+	if err := validateUnifiedOutputTargets(binding.Output, knownTargets, []string{target}); err != nil {
+		return fmt.Errorf("sdk unified operation %q binding %q output: %w", name, target, err)
 	}
 	return nil
 }
@@ -555,27 +587,72 @@ func validateUnifiedDynamicTargetSlice(values []DynamicValue, knownTargets, allo
 	return nil
 }
 
-// validateUnifiedExpressionTargets checks response operands while leaving the
-// complete expression grammar authoritative in Engine plan.
+// validateUnifiedExpressionTargets checks every complete or interpolated
+// response operand while leaving the expression grammar authoritative in plan.
 func validateUnifiedExpressionTargets(value string, knownTargets, allowedTargets []string) error {
-	if !strings.HasPrefix(value, "${") || !strings.HasSuffix(value, "}") {
-		return nil
+	scan, err := scanUnifiedTemplate(value)
+	if err != nil {
+		return err
 	}
-	expression := value[2 : len(value)-1]
-	for _, operand := range strings.Split(expression, "??") {
-		rest, ok := strings.CutPrefix(strings.TrimSpace(operand), "response.")
-		if !ok {
-			continue
-		}
-		target := unifiedResponseTarget(rest, knownTargets)
-		if target == "" {
-			return fmt.Errorf("response reference must name a binding target")
-		}
-		if !containsExactString(allowedTargets, target) {
-			return fmt.Errorf("response target %q is not available from the declared dependency edges", target)
+	for _, expression := range scan.expressions {
+		for _, operand := range strings.Split(expression, "??") {
+			rest, ok := strings.CutPrefix(strings.TrimSpace(operand), "response.")
+			if !ok {
+				continue
+			}
+			target := unifiedResponseTarget(rest, knownTargets)
+			if target == "" {
+				return fmt.Errorf("response reference must name a binding target")
+			}
+			if !containsExactString(allowedTargets, target) {
+				return fmt.Errorf("response target %q is not available from the declared dependency edges", target)
+			}
 		}
 	}
 	return nil
+}
+
+type unifiedTemplateScan struct {
+	expressions []string
+	partCount   int
+}
+
+// scanUnifiedTemplate recognizes `${...}` expressions and the `$${` literal
+// escape using the same bounded, non-recursive surface accepted by Engine.
+func scanUnifiedTemplate(value string) (unifiedTemplateScan, error) {
+	result := unifiedTemplateScan{}
+	literal := false
+	for index := 0; index < len(value); {
+		if strings.HasPrefix(value[index:], "$${") {
+			literal = true
+			index += 3
+			continue
+		}
+		if !strings.HasPrefix(value[index:], "${") {
+			literal = true
+			index++
+			continue
+		}
+		if literal {
+			result.partCount++
+			literal = false
+		}
+		end := strings.IndexByte(value[index+2:], '}')
+		if end < 0 {
+			return unifiedTemplateScan{}, fmt.Errorf("DynamicValue contains unterminated interpolation")
+		}
+		expression := value[index+2 : index+2+end]
+		if expression == "" || expression != strings.TrimSpace(expression) || strings.Contains(expression, "${") {
+			return unifiedTemplateScan{}, fmt.Errorf("DynamicValue contains invalid interpolation")
+		}
+		result.expressions = append(result.expressions, expression)
+		result.partCount++
+		index += end + 3
+	}
+	if literal {
+		result.partCount++
+	}
+	return result, nil
 }
 
 // unifiedResponseTarget chooses the longest exact target prefix so dotted or
@@ -605,15 +682,372 @@ func containsExactString(values []string, wanted string) bool {
 	return false
 }
 
-// validateUnifiedOutput requires complete schema/mapping pairs.
+// validateUnifiedOutput admits only the recursive typed output contract.
 func validateUnifiedOutput(name, location string, output *UnifiedOperationOutput) error {
 	if output == nil {
 		return nil
 	}
-	if output.Schema == nil || output.Mapping == nil {
-		return fmt.Errorf("sdk unified operation %q %s output requires schema and mapping", name, location)
+	if err := validateUnifiedOutputNode(output.Fields, true, 0); err != nil {
+		return fmt.Errorf("sdk unified operation %q %s output is invalid: %w", name, location, err)
 	}
 	return nil
+}
+
+// validateUnifiedOutputNode checks one expanded node without attempting Engine expression compilation.
+func validateUnifiedOutputNode(fields map[string]DynamicValue, root bool, depth int) error {
+	if depth > MaxUnifiedValueDepth {
+		return fmt.Errorf("output exceeds maximum depth %d", MaxUnifiedValueDepth)
+	}
+	if err := validateUnifiedOutputKeys(fields); err != nil {
+		return err
+	}
+	typeName, ok := unifiedOutputString(fields["type"])
+	if !ok || !validUnifiedOutputType(typeName) {
+		return fmt.Errorf("output requires a valid type")
+	}
+	if root && !isConstructedUnifiedOutputObject(fields, typeName) {
+		return fmt.Errorf("root output must be a constructed object with properties")
+	}
+	return validateUnifiedOutputNodeShape(fields, typeName, depth)
+}
+
+// isConstructedUnifiedOutputObject distinguishes the operation/binding root
+// from nested pass-through objects that carry a value expression.
+func isConstructedUnifiedOutputObject(fields map[string]DynamicValue, typeName string) bool {
+	if typeName != "object" {
+		return false
+	}
+	_, hasValue := fields["value"]
+	_, hasProperties := unifiedOutputMap(fields["properties"])
+	return !hasValue && hasProperties
+}
+
+// validateUnifiedOutputKeys keeps the authoring surface closed to misspelled schema or mapping fields.
+func validateUnifiedOutputKeys(fields map[string]DynamicValue) error {
+	allowed := map[string]struct{}{
+		"type": {}, "value": {}, "properties": {}, "required": {}, "items": {}, "additionalProperties": {},
+	}
+	for _, key := range sortedUnifiedDynamicKeys(fields) {
+		if _, ok := allowed[key]; !ok {
+			return fmt.Errorf("output contains unknown field %q", key)
+		}
+	}
+	return nil
+}
+
+// validateUnifiedOutputNodeShape applies the mutually exclusive scalar, object, and array forms.
+func validateUnifiedOutputNodeShape(fields map[string]DynamicValue, typeName string, depth int) error {
+	_, hasValue := fields["value"]
+	properties, hasProperties := unifiedOutputMap(fields["properties"])
+	switch typeName {
+	case "object":
+		if hasValue {
+			return validateUnifiedOutputObjectValueFields(fields, properties, hasProperties, depth+1)
+		}
+		if !hasProperties {
+			return fmt.Errorf("constructed object output requires properties")
+		}
+		return validateUnifiedOutputProperties(fields, properties, depth+1)
+	case "array":
+		if !hasValue || hasProperties {
+			return fmt.Errorf("array output requires value and cannot declare properties")
+		}
+		return validateUnifiedOutputArrayFields(fields)
+	default:
+		if !hasValue || hasProperties {
+			return fmt.Errorf("%s output requires value and cannot declare properties", typeName)
+		}
+		return rejectUnifiedOutputStructuralFields(fields, "required", "items", "additionalProperties")
+	}
+}
+
+// validateUnifiedOutputObjectValueFields rejects construction-only fields on a pass-through object.
+func validateUnifiedOutputObjectValueFields(fields, properties map[string]DynamicValue, hasProperties bool, depth int) error {
+	if err := rejectUnifiedOutputStructuralFields(fields, "items"); err != nil {
+		return err
+	}
+	if err := validateUnifiedOutputAdditionalProperties(fields); err != nil {
+		return err
+	}
+	if hasProperties {
+		if err := validateUnifiedOutputSchemaProperties(properties, depth); err != nil {
+			return err
+		}
+	}
+	return validateUnifiedOutputRequired(fields, properties)
+}
+
+// validateUnifiedOutputArrayFields accepts an optional schema-only items node.
+func validateUnifiedOutputArrayFields(fields map[string]DynamicValue) error {
+	if err := rejectUnifiedOutputStructuralFields(fields, "required", "additionalProperties"); err != nil {
+		return err
+	}
+	items, present := fields["items"]
+	if present {
+		return validateUnifiedOutputItemSchema(items)
+	}
+	return nil
+}
+
+// validateUnifiedOutputProperties validates constructed fields plus object-required semantics.
+func validateUnifiedOutputProperties(fields map[string]DynamicValue, properties map[string]DynamicValue, depth int) error {
+	if err := rejectUnifiedOutputStructuralFields(fields, "items"); err != nil {
+		return err
+	}
+	if err := validateUnifiedOutputAdditionalProperties(fields); err != nil {
+		return err
+	}
+	for _, name := range sortedUnifiedDynamicKeys(properties) {
+		property := properties[name]
+		if name == "" {
+			return fmt.Errorf("output property name cannot be empty")
+		}
+		if nested, expanded := unifiedOutputExpandedNode(property); expanded {
+			if err := validateUnifiedOutputNode(nested, false, depth); err != nil {
+				return fmt.Errorf("property %q: %w", name, err)
+			}
+			continue
+		}
+		if err := validateUnifiedOutputShorthand(property, depth); err != nil {
+			return fmt.Errorf("property %q: %w", name, err)
+		}
+	}
+	return validateUnifiedOutputRequired(fields, properties)
+}
+
+// validateUnifiedOutputShorthand admits only concise scalar leaves; object and
+// array properties must select their recursive contract explicitly.
+func validateUnifiedOutputShorthand(value DynamicValue, depth int) error {
+	if depth > MaxUnifiedValueDepth {
+		return fmt.Errorf("output exceeds maximum depth %d", MaxUnifiedValueDepth)
+	}
+	switch value.Raw.(type) {
+	case string, bool, json.Number, nil:
+		return nil
+	default:
+		return fmt.Errorf("output shorthand must be scalar; object and array properties require type")
+	}
+}
+
+// validateUnifiedOutputRequired rejects null, duplicate, or undeclared required names.
+func validateUnifiedOutputRequired(fields, properties map[string]DynamicValue) error {
+	value, present := fields["required"]
+	if !present {
+		return nil
+	}
+	items, ok := value.Raw.([]DynamicValue)
+	if !ok {
+		return fmt.Errorf("output required must be an array of property names")
+	}
+	seen := make(map[string]struct{}, len(items))
+	for _, item := range items {
+		name, ok := item.Raw.(string)
+		if !ok || strings.TrimSpace(name) == "" {
+			return fmt.Errorf("output required entries must be non-empty strings")
+		}
+		if _, exists := properties[name]; !exists {
+			return fmt.Errorf("output required property %q is not declared", name)
+		}
+		if _, exists := seen[name]; exists {
+			return fmt.Errorf("output required property %q is duplicated", name)
+		}
+		seen[name] = struct{}{}
+	}
+	return nil
+}
+
+// validateUnifiedOutputItemSchema keeps array items schema-only while leaving
+// the full JSON Schema vocabulary for Engine's authoritative validator.
+func validateUnifiedOutputItemSchema(value DynamicValue) error {
+	return validateUnifiedOutputSchemaNode(value, 0)
+}
+
+// validateUnifiedOutputSchemaNode checks pass-through object properties and
+// array items without requiring a mapping value at their scalar leaves.
+func validateUnifiedOutputSchemaNode(value DynamicValue, depth int) error {
+	if depth > MaxUnifiedValueDepth {
+		return fmt.Errorf("output schema exceeds maximum depth %d", MaxUnifiedValueDepth)
+	}
+	fields, typeName, err := unifiedOutputSchemaFields(value)
+	if err != nil {
+		return err
+	}
+	return validateUnifiedOutputSchemaShape(fields, typeName, depth)
+}
+
+// unifiedOutputSchemaFields admits an explicitly typed schema node with no mapping value.
+func unifiedOutputSchemaFields(value DynamicValue) (map[string]DynamicValue, string, error) {
+	fields, ok := unifiedOutputMap(value)
+	if !ok {
+		return nil, "", fmt.Errorf("output schema must be an object")
+	}
+	if _, exists := fields["value"]; exists {
+		return nil, "", fmt.Errorf("output schema cannot declare value")
+	}
+	if err := validateUnifiedOutputKeys(fields); err != nil {
+		return nil, "", err
+	}
+	typeName, ok := unifiedOutputString(fields["type"])
+	if !ok || !validUnifiedOutputType(typeName) {
+		return nil, "", fmt.Errorf("output schema requires a valid type")
+	}
+	return fields, typeName, nil
+}
+
+// validateUnifiedOutputSchemaShape scopes recursive schema controls to their type.
+func validateUnifiedOutputSchemaShape(fields map[string]DynamicValue, typeName string, depth int) error {
+	switch typeName {
+	case "object":
+		return validateUnifiedOutputSchemaObject(fields, depth)
+	case "array":
+		return validateUnifiedOutputArraySchema(fields, depth)
+	default:
+		return rejectUnifiedOutputStructuralFields(fields, "properties", "required", "items", "additionalProperties")
+	}
+}
+
+// validateUnifiedOutputSchemaObject validates optional recursive object metadata.
+func validateUnifiedOutputSchemaObject(fields map[string]DynamicValue, depth int) error {
+	if err := rejectUnifiedOutputStructuralFields(fields, "items"); err != nil {
+		return err
+	}
+	properties, hasProperties := unifiedOutputMap(fields["properties"])
+	if _, exists := fields["properties"]; exists && !hasProperties {
+		return fmt.Errorf("output schema properties must be an object")
+	}
+	if hasProperties {
+		if err := validateUnifiedOutputSchemaProperties(properties, depth+1); err != nil {
+			return err
+		}
+	}
+	if err := validateUnifiedOutputRequired(fields, properties); err != nil {
+		return err
+	}
+	return validateUnifiedOutputAdditionalProperties(fields)
+}
+
+// validateUnifiedOutputArraySchema validates optional recursive array metadata.
+func validateUnifiedOutputArraySchema(fields map[string]DynamicValue, depth int) error {
+	if err := rejectUnifiedOutputStructuralFields(fields, "properties", "required", "additionalProperties"); err != nil {
+		return err
+	}
+	if items, exists := fields["items"]; exists {
+		return validateUnifiedOutputSchemaNode(items, depth+1)
+	}
+	return nil
+}
+
+// validateUnifiedOutputSchemaProperties recursively validates metadata-only
+// children without admitting a value expression inside pass-through schemas.
+func validateUnifiedOutputSchemaProperties(properties map[string]DynamicValue, depth int) error {
+	for _, name := range sortedUnifiedDynamicKeys(properties) {
+		property := properties[name]
+		if name == "" {
+			return fmt.Errorf("output schema property name cannot be empty")
+		}
+		if err := validateUnifiedOutputSchemaNode(property, depth); err != nil {
+			return fmt.Errorf("output schema property %q: %w", name, err)
+		}
+	}
+	return nil
+}
+
+// sortedUnifiedDynamicKeys makes recursive validation failures deterministic
+// despite Go map iteration order.
+func sortedUnifiedDynamicKeys(values map[string]DynamicValue) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// validateUnifiedOutputAdditionalProperties admits only the implemented boolean schema option.
+func validateUnifiedOutputAdditionalProperties(fields map[string]DynamicValue) error {
+	value, exists := fields["additionalProperties"]
+	if !exists {
+		return nil
+	}
+	if _, ok := value.Raw.(bool); !ok {
+		return fmt.Errorf("output additionalProperties must be boolean")
+	}
+	return nil
+}
+
+// validateUnifiedOutputTargets walks only mapping-bearing output fields; array
+// item schemas are metadata and therefore cannot create response dependencies.
+func validateUnifiedOutputTargets(output *UnifiedOperationOutput, knownTargets, allowedTargets []string) error {
+	if output == nil {
+		return nil
+	}
+	return validateUnifiedOutputNodeTargets(output.Fields, knownTargets, allowedTargets)
+}
+
+// validateUnifiedOutputNodeTargets visits only executable value/shorthand
+// nodes, leaving schema-only properties and items outside response dataflow.
+func validateUnifiedOutputNodeTargets(fields map[string]DynamicValue, knownTargets, allowedTargets []string) error {
+	if value, exists := fields["value"]; exists {
+		return validateUnifiedDynamicTargets(value, knownTargets, allowedTargets)
+	}
+	properties, _ := unifiedOutputMap(fields["properties"])
+	for _, name := range sortedUnifiedDynamicKeys(properties) {
+		property := properties[name]
+		if nested, expanded := unifiedOutputExpandedNode(property); expanded {
+			if err := validateUnifiedOutputNodeTargets(nested, knownTargets, allowedTargets); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := validateUnifiedDynamicTargets(property, knownTargets, allowedTargets); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// rejectUnifiedOutputStructuralFields keeps fields scoped to the node kinds that implement them.
+func rejectUnifiedOutputStructuralFields(fields map[string]DynamicValue, names ...string) error {
+	for _, name := range names {
+		if _, exists := fields[name]; exists {
+			return fmt.Errorf("output type cannot declare %s", name)
+		}
+	}
+	return nil
+}
+
+// unifiedOutputExpandedNode identifies only mappings that explicitly opt into a typed node.
+func unifiedOutputExpandedNode(value DynamicValue) (map[string]DynamicValue, bool) {
+	fields, ok := value.Raw.(map[string]DynamicValue)
+	if !ok {
+		return nil, false
+	}
+	_, expanded := fields["type"]
+	return fields, expanded
+}
+
+// unifiedOutputMap reads an authored object without coercing scalar shorthand
+// into an expanded node.
+func unifiedOutputMap(value DynamicValue) (map[string]DynamicValue, bool) {
+	fields, ok := value.Raw.(map[string]DynamicValue)
+	return fields, ok
+}
+
+// unifiedOutputString reads exact string controls such as the declared type.
+func unifiedOutputString(value DynamicValue) (string, bool) {
+	text, ok := value.Raw.(string)
+	return text, ok
+}
+
+// validUnifiedOutputType mirrors the JSON types supported by Engine output
+// compilation and generated client schema types.
+func validUnifiedOutputType(value string) bool {
+	switch value {
+	case "string", "number", "integer", "boolean", "object", "array", "null":
+		return true
+	default:
+		return false
+	}
 }
 
 type unifiedValueBudget struct {
@@ -625,7 +1059,7 @@ type unifiedValueBudget struct {
 func (b *unifiedValueBudget) addOperation(name string, operation UnifiedOperation) error {
 	values := []any{operation.Input}
 	if operation.Output != nil {
-		values = append(values, operation.Output.Schema, operation.Output.Mapping)
+		values = append(values, operation.Output.Fields)
 	}
 	for _, binding := range operation.Bindings {
 		values = append(values, binding.Input)
@@ -633,7 +1067,7 @@ func (b *unifiedValueBudget) addOperation(name string, operation UnifiedOperatio
 			values = append(values, binding.Rollback.Input)
 		}
 		if binding.Output != nil {
-			values = append(values, binding.Output.Schema, binding.Output.Mapping)
+			values = append(values, binding.Output.Fields)
 		}
 	}
 	for _, value := range values {
@@ -690,18 +1124,50 @@ func (b *unifiedValueBudget) walkSlice(values []DynamicValue, depth int) error {
 	return nil
 }
 
-// countExpression enforces complete-scalar syntax and the expression budget.
+// countExpression enforces interpolation source, expression, and compiled-node budgets.
 func (b *unifiedValueBudget) countExpression(value string) error {
 	if !strings.Contains(value, "${") {
 		return nil
 	}
-	if !strings.HasPrefix(value, "${") || !strings.HasSuffix(value, "}") {
-		return fmt.Errorf("DynamicValue expressions must occupy the complete scalar")
+	scan, err := scanUnifiedTemplate(value)
+	if err != nil {
+		return err
+	}
+	if len(scan.expressions) == 0 {
+		return nil
 	}
 	if len(value) > MaxUnifiedExpressionBytes {
 		return fmt.Errorf("DynamicValue expression exceeds %d bytes", MaxUnifiedExpressionBytes)
 	}
-	b.expressions++
+	// The scalar itself was already charged by walk. Mixed templates also
+	// compile one child node per canonical literal/expression segment.
+	if !isCompleteUnifiedExpression(value, scan) {
+		if err := b.addTemplateNodes(scan.partCount); err != nil {
+			return err
+		}
+	}
+	return b.addExpressions(len(scan.expressions))
+}
+
+// isCompleteUnifiedExpression distinguishes typed whole-value references from
+// mixed strings that require a template parent and child nodes.
+func isCompleteUnifiedExpression(value string, scan unifiedTemplateScan) bool {
+	return len(scan.expressions) == 1 && scan.partCount == 1 &&
+		strings.HasPrefix(value, "${") && strings.HasSuffix(value, "}")
+}
+
+// addTemplateNodes charges the child parts emitted by Engine's template compiler.
+func (b *unifiedValueBudget) addTemplateNodes(count int) error {
+	b.nodes += count
+	if b.nodes > MaxUnifiedValueNodes {
+		return fmt.Errorf("dynamic values exceed %d nodes", MaxUnifiedValueNodes)
+	}
+	return nil
+}
+
+// addExpressions charges every embedded reference against the shared budget.
+func (b *unifiedValueBudget) addExpressions(count int) error {
+	b.expressions += count
 	if b.expressions > MaxUnifiedExpressions {
 		return fmt.Errorf("dynamic values exceed %d expressions", MaxUnifiedExpressions)
 	}

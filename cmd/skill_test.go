@@ -101,6 +101,41 @@ func TestFusedCLISkillShipsBuildWorkflowReference(t *testing.T) {
 	t.Fatalf("fused-cli manifest does not include build workflow reference: %v", spec.manifest)
 }
 
+// TestFusedSDKSkillShipsEngineExecutionAPIReference keeps direct Engine calls
+// available after skill installation instead of only in the source checkout.
+func TestFusedSDKSkillShipsEngineExecutionAPIReference(t *testing.T) {
+	spec, ok := skillSpecByName("fused-sdk")
+	if !ok {
+		t.Fatal("fused-sdk skill is missing")
+	}
+	wantPath := "reference/engine-execution-api.md"
+	found := false
+	for _, path := range spec.manifest {
+		if path == wantPath {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("fused-sdk manifest does not include Engine execution reference: %v", spec.manifest)
+	}
+	data, err := os.ReadFile(filepath.Join("..", "skills", "dev", "fused-sdk", wantPath))
+	if err != nil {
+		t.Fatalf("read Engine execution reference: %v", err)
+	}
+	for _, contract := range []string{
+		"POST {ENGINE_URL}/v1/apps/{APP_ID}/executions",
+		"Authorization: Bearer {SDK_EXECUTION_TOKEN}",
+		"Physical operation request",
+		"Unified operation request",
+		"Idempotency-Key",
+	} {
+		if !strings.Contains(string(data), contract) {
+			t.Errorf("Engine execution reference is missing %q", contract)
+		}
+	}
+}
+
 func TestFusedCLISkillDocumentsImportTargetScope(t *testing.T) {
 	path := filepath.Join("..", "skills", "dev", "fused-cli", "SKILL.md")
 	data, err := os.ReadFile(path)

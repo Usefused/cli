@@ -64,6 +64,20 @@ agent workflows.
 all discovered endpoints by default; use `--review` or `--select` to narrow the
 result.
 
+Google Discovery adapter v2 automatically publishes the credential-free OAuth
+settings required for durable delegated access: `access_type=offline`,
+`prompt=consent`, and `refresh_token_required=true`. Consumer Engines receive
+those settings with a public Gmail or Drive service; SDK YAML should declare
+only the required scopes and routing selectors. Do not copy these authorization
+parameters into SDK configuration or application code.
+
+Import receipts are pinned to their reviewed adapter version. A stored
+`google-discovery/v1` receipt cannot be applied with v2 behavior; run `import
+plan` again and apply the new receipt. Re-import an already published v1-backed
+service with the same slug and provider version to create the corrected internal
+revision, then reconnect existing delegated users once so their connections are
+pinned to that revision and contain refresh material.
+
 ## Provider overlays
 
 ```bash

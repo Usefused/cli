@@ -29,6 +29,52 @@ code `execution_timeout` and the enforced `timeout_ms`. If the caller deadline
 expires first, the client still receives the same typed class with its own
 configured budget; Engine telemetry must not misattribute it to policy expiry.
 
+## Pagination invocation bounds
+
+Generated physical calls may tighten the Engine-owned page limit without
+copying pagination policy into application code:
+
+```typescript
+await sdk.YourService.yourListMethod({
+  pageSize: 100,
+  fused: {
+    endUserRef: 'customer-123',
+    pagination: { maxPages: 5 },
+  },
+});
+```
+
+```python
+await sdk.AsyncYourService.your_list_method({
+    "pageSize": 100,
+    "fused": {
+        "end_user_ref": "customer-123",
+        "pagination": {"max_pages": 5},
+    },
+})
+```
+
+The call still produces one aggregate response after one logical Engine
+execution. The requested bound must be strictly below the effective service
+policy maximum; equality is rejected. It cannot carry continuation tokens,
+paths, origins, templates, or next URLs.
+
+Generated Unified calls keep pagination separate from routing selectors:
+
+```typescript
+await sdk.unified.search.run(input, {
+  targets: ['gmail', 'drive'],
+  selectors: { gmail: { endUserRef: 'customer-123' } },
+  pagination: { gmail: { maxPages: 5 }, drive: { maxPages: 3 } },
+});
+```
+
+Python uses the equivalent keyword-only
+`pagination={"gmail": {"max_pages": 5}}`. Unknown targets, targets without an
+effective pagination policy, zero, and values equal to or above the effective
+limit fail at the Engine boundary. Invocation bounds never belong in
+`sdk.yaml`.
+
 ## Shared gRPC channel
 
 Every generated SDK opens exactly one gRPC channel to the Engine when `FusedSDK`

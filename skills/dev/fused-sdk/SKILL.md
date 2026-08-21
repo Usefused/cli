@@ -1,22 +1,20 @@
 ---
 name: fused-sdk
-description: "Build, generate, configure, manage, or export OpenAPI for a typed Fused SDK directly inside a coding agent using fused-cli sdk. Use when the user gives Codex, Claude Code, Cursor, Windsurf, or Antigravity a business goal for an SDK; when editing a kind: sdk config; or when selecting operations, receiving webhooks, scoping auth, managing immutable versions/runtime tokens, or running SDK plan/apply/validate/download/sync commands. This is the coding-agent entry point: never invoke sdk prompt, because it starts a separate Fused agent. For Engine-hosted MCP runtime behavior read fused-mcp instead."
+description: "Build, generate, configure, manage, or call a typed Fused SDK directly inside a coding agent using fused-cli sdk or the Engine execution REST API. Use when the user gives Codex, Claude Code, Cursor, Windsurf, or Antigravity a business goal for an SDK; when editing a kind: sdk config; when constructing a physical or Unified Engine operation request; or when selecting operations, receiving webhooks, scoping auth, managing immutable versions/runtime tokens, or running SDK plan/apply/validate/download/sync commands. This is the coding-agent entry point: never invoke sdk prompt, because it starts a separate Fused agent. For Engine-hosted MCP runtime behavior read fused-mcp instead."
 ---
 
 # SDK package config
 
 ## IDE-agent workflow boundary
 
-Never run `fused-cli sdk prompt` from a coding-agent task. That command is the
-alternative user-invoked path that starts the Fused-hosted agent. Run the
-deterministic CLI workflow yourself. Do not delegate the work to another agent
-or call an AI, chat, prompt, or intent endpoint as a fallback.
+Never run `fused-cli sdk prompt` from a coding-agent task. That user-invoked
+command starts the Fused-hosted agent. Run the deterministic CLI workflow
+yourself. Do not delegate the work to another agent or call an AI endpoint.
 
 Maintain one compact working-facts record: CLI/Engine context, config paths,
-SDK name/version/language, exact service slugs/versions/operation IDs, bucket,
-ownership, and unresolved credential, consent, permission, or production
-decisions. Read local config first and reuse successful checks. Inspect only
-the relevant CLI `--help` branch. Do not load every sibling skill up front:
+SDK identity, exact service/operation selections, bucket, ownership, and open
+credential or permission decisions. Reuse local facts and read only the
+relevant CLI `--help` branch. Do not load every sibling skill up front:
 
 - read `fused-workspace` only when service activation is required;
 - read `fused-bucket` only when credentials or OAuth are unresolved;
@@ -24,30 +22,27 @@ the relevant CLI `--help` branch. Do not load every sibling skill up front:
 - read `fused-cli` and `reference/access-management.md` only for setup or
   permission remediation.
 
-If the user starts with a business goal and no complete config, read the
-`fused-cli` skill's `reference/build-sdk-or-mcp.md` and follow its SDK path.
-Return here once Engine setup, workspace-first service discovery, activation,
-and credential requirements are understood. Apply or download only when the
-user requested completion and no production, ownership, credential, or
-permission decision remains unresolved.
+For a business goal without a complete config, follow the `fused-cli` skill's
+`reference/build-sdk-or-mcp.md` SDK path, then return here after Engine setup,
+service activation, and credential requirements are known. Apply or download
+only when requested and no authority or production decision remains open.
 Use `service operations --json` for bounded discovery, inspect body contracts only with `service operation show` opt-in flags, and run `sdk validate --json` after writing the config.
 Use `--json` on every SDK command whose confirmed help exposes it. In
 particular, never parse SDK/Version IDs or the one-time token from human apply
 text: use `sdk plan --json`, `sdk apply --json`, `sdk token generate --json`,
 `sdk download --json`, `sdk invoke --json`, and `sdk activity --json`.
 
-`kind: sdk`, managed by `fused-cli sdk ...`, declares a typed SDK package
-generated from a bucket's already-configured services.
+`kind: sdk`, managed by `fused-cli sdk ...`, declares a typed SDK package from
+a bucket's already-configured services.
 
-Run `bucket list`, treat its results as visible through `bucket.read` rather
-than proven usable, and choose visible `default` or another visible candidate.
-Let SDK plan/apply check `bucket.use` on that exact candidate. On denial, stop
-and report it; never create a fallback. Follow `fused-bucket` for the narrow
-conditions that permit creation.
+Run `bucket list`; its results prove `bucket.read` visibility, not use. Choose
+visible `default` or another candidate and let SDK plan/apply check its exact
+`bucket.use`. On denial, stop without creating a fallback. Follow
+`fused-bucket` for the narrow conditions that permit creation.
 
-Each service map key is the persisted Registry slug of an activated workspace
-service. Confirm it with `fused-cli workspace services list -q <slug> --json`; Registry
-visibility alone does not grant activation or `service.consume` scope.
+Each service map key is an activated service's persisted Registry slug. Confirm
+it with `fused-cli workspace services list -q <slug> --json`; Registry
+visibility alone grants neither activation nor `service.consume`.
 ```yaml
 apiVersion: fused/v1
 kind: sdk
@@ -125,11 +120,10 @@ about it changed.
 ## Unified Operations
 
 TypeScript and Python SDK configs may declare top-level `unified_operations`
-over operations selected by the same immutable SDK version. Go SDKs and
-`kind: mcp` configs cannot declare them. Read `fused-unified-operations` for
-the result-oriented property contract, DynamicValue contexts, dependency and
-rollback graph, normalized/provider-specific outputs, runtime targets,
-OAuth/OIDC selectors, and the generated `{results, rollbacks}` response.
+over operations in the same immutable SDK version; Go and `kind: mcp` cannot.
+Read `fused-unified-operations` for graph, mapping, selector, and output rules.
+A configured root `output` is the exact success value with no wrapper; only an
+operation without it returns the all-settled `{results, rollbacks}` envelope.
 
 ## Identity, versions, and authentication
 
@@ -232,7 +226,7 @@ also accepts an `@file`. `--environment` is backward-compatible physical
 `selector.environment` sugar. This REST command supports one buffered JSON
 provider document up to 1 MiB and a bounded 17 MiB Unified aggregate; generated
 SDKs retain their broader gRPC transports. The command produces one logical
-Engine execution and does not implement local provider retries or redirects.
+Engine execution and does not implement local provider retries or redirects. For direct HTTP request construction, read [reference/engine-execution-api.md](reference/engine-execution-api.md).
 
 `sdk activity` reads the canonical Engine execution receipts for one exact SDK
 version. Use `--all-versions` only when SDK-wide history is intended, and
@@ -303,8 +297,13 @@ writing the local file. Use the original config to publish a new SDK version,
 then retry `sdk sync`; do not infer missing security policy from endpoint IDs.
 
 Generated SDK calls only ever carry Fused selectors (`endUserRef`, `authType`, `resourceId`) -- never a raw provider token, API key, or provider base URL. For execution-contract negotiation, keep each pinned service version's `contract_version` and `required_capabilities` intact: Registry and Engine accept additive documentation fields but fail closed on unsupported execution semantics. Never bypass that error by dropping fields or adding provider-specific client logic; upgrade Engine or publish semantics implemented end to end. These identifiers describe provider execution, not SDK operation grants or token allowlists.
-Pagination is inherited automatically from the selected endpoint and its effective service-version policy. Do not add token, offset, page, RFC Link, next-URL, conditional-path, derived-cursor, or GraphQL-template fields to SDK config. Generated TypeScript and Python clients make one Engine call;
-Engine owns v3 continuation state, origin/repetition checks, hard limits, and per-page streaming so language runtimes cannot disagree about termination.
+Pagination comes from the endpoint and effective service-version policy. Do not
+put strategy or invocation bounds in `sdk.yaml`. Generated clients make one
+Engine call; Engine owns continuation and aggregation. Physical calls may only
+lower the limit with `fused.pagination.maxPages`/`max_pages`; Unified uses a
+target-keyed `pagination` map beside `targets` and `selectors`. It remains one
+buffered graph call whose success is the configured output or, without one,
+the all-settled envelope. Never loop pages or pass continuation tokens locally.
 
 Quota, concurrency, and retry v3 policy is inherited and enforced only by Engine. Generated TypeScript and Python clients never maintain local windows,
 buckets, semaphores, retry loops, jitter, or sleeps. Do not add those policy fields to SDK config or replay provider calls: Engine coordinates identities,

@@ -62,9 +62,10 @@ var skillSpecs = []skillSpec{
 	},
 	{
 		name:    "fused-sdk",
-		summary: "Generating a typed SDK package: operation/webhook selection, auth/connect scoping",
+		summary: "Generating or calling a typed SDK: operation selection, execution REST, auth/connect scoping",
 		manifest: []string{
 			"SKILL.md",
+			"reference/engine-execution-api.md",
 		},
 	},
 	{
