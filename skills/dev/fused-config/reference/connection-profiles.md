@@ -45,11 +45,16 @@ Three related but distinct things, all under a bucket's
   static credential and an app registration could silently overwrite each
   other if both were ever configured for the same service+bucket. `connect
   set` writes to its own dedicated storage instead, so that collision cannot
-  happen. It also supports partial updates — e.g. `fused-cli connect set jira
-  'redirect_uri=https://...'` rotates only `redirect_uri` without resupplying
+  happen. It also supports partial updates — e.g. `printf '%s'
+  'redirect_uri=https://...' | fused-cli connect set jira --bucket <bucket>
+  --value-stdin` rotates only `redirect_uri` without resupplying
   `client_id`/`client_secret`, since the admin API never returns decrypted
-  values for a caller to resend anyway. A declarative workspace.yaml
-  `connect:` block used to exist alongside this command but was removed —
+  values for a caller to resend anyway. Credential values are never accepted
+  in argv, so the whole registration goes over stdin as one `;`-delimited
+  value or through `--interactive`; a key present but blank is rejected as an
+  attempt to erase a credential, while an omitted key means leave-as-is. A
+  declarative workspace.yaml `connect:` block used to exist alongside this
+  command but was removed —
   it always required every field on every apply, which `connect set`'s
   partial-update support made strictly worse, and having two ways to
   register the same app was the exact kind of duplicated decision-making

@@ -93,10 +93,23 @@ func TestWorkspaceWebhooksAndAppTokensUseEngineGraphQL(t *testing.T) {
 	if webhooks, err := client.ListWorkspaceWebhooks("svc-1"); err != nil || len(webhooks) != 1 {
 		t.Fatalf("ListWorkspaceWebhooks = %#v, %v", webhooks, err)
 	}
-	if tokens, err := client.ListAppTokens("family-1"); err != nil || len(tokens) != 1 || tokens[0].LastUsedAt != nil || tokens[0].ExpiresAt == nil {
+	assertAppTokenLifecycleResponse(t, client)
+	assertEngineGraphQLPaths(t, paths, queries)
+}
+
+func assertAppTokenLifecycleResponse(t *testing.T, client *api.Client) {
+	t.Helper()
+	tokens, err := client.ListAppTokens("family-1")
+	if err != nil || len(tokens) != 1 {
 		t.Fatalf("ListAppTokens = %#v, %v", tokens, err)
 	}
-	assertEngineGraphQLPaths(t, paths, queries)
+	token := tokens[0]
+	if token.LastUsedAt != nil || token.ExpiresAt == nil || token.Status != "revoked" || token.BindingMode != "fixed" {
+		t.Fatalf("token lifecycle = %#v", token)
+	}
+	if token.ExecutionCount != 4 || token.SessionCount != 2 || token.TerminatedAt == nil {
+		t.Fatalf("token usage = %#v", token)
+	}
 }
 
 // workspaceAndTokenHandler returns exact GraphQL fixtures for two neighboring reads.
@@ -119,7 +132,7 @@ func workspaceAndTokenHandler(t *testing.T, paths, queries *[]string) http.Handl
 			if !strings.Contains(body.Query, "app_family_id: $appFamilyId") {
 				t.Fatalf("app token query is not family scoped: %s", body.Query)
 			}
-			w.Write([]byte(`{"data":{"appTokens":[{"id":"tok-1","app_family_id":"family-1","name":"agent","allow":["issues.list"],"expires_at":"2026-07-21T01:00:00Z","created_at":"2026-07-21T00:00:00Z","last_used_at":""}]}}`))
+			w.Write([]byte(`{"data":{"appTokens":[{"id":"tok-1","app_family_id":"family-1","name":"agent","allow":["issues.list"],"binding_mode":"fixed","status":"revoked","expires_at":"2026-07-21T01:00:00Z","created_at":"2026-07-21T00:00:00Z","last_used_at":"","execution_count":4,"session_count":2,"issued_by_subject_id":"subject-1","terminated_at":"2026-07-21T02:00:00Z","termination_reason":"revoked"}]}}`))
 		default:
 			t.Fatalf("unexpected query: %s", body.Query)
 		}

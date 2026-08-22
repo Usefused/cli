@@ -16,11 +16,9 @@ SDK identity, exact service/operation selections, bucket, ownership, and open
 credential or permission decisions. Reuse local facts and read only the
 relevant CLI `--help` branch. Do not load every sibling skill up front:
 
-- read `fused-workspace` only when service activation is required;
-- read `fused-bucket` only when credentials or OAuth are unresolved;
+- read `fused-workspace` only when service activation is required; read `fused-bucket` only when credentials or OAuth are unresolved;
 - read `fused-config` only for auth, connect scopes, injections, or policy;
-- read `fused-cli` and `reference/access-management.md` only for setup or
-  permission remediation.
+- read `fused-cli` and `reference/access-management.md` only for setup or permission remediation.
 
 For a business goal without a complete config, follow the `fused-cli` skill's
 `reference/build-sdk-or-mcp.md` SDK path, then return here after Engine setup,
@@ -32,9 +30,7 @@ particular, never parse SDK/Version IDs or the one-time token from human apply
 text: use `sdk plan --json`, `sdk apply --json`, `sdk token generate --json`,
 `sdk download --json`, `sdk invoke --json`, and `sdk activity --json`.
 
-`kind: sdk`, managed by `fused-cli sdk ...`, declares a typed SDK package from
-a bucket's already-configured services.
-
+`kind: sdk`, managed by `fused-cli sdk ...`, declares a typed SDK package from a bucket's already-configured services.
 Run `bucket list`; its results prove `bucket.read` visibility, not use. Choose
 visible `default` or another candidate and let SDK plan/apply check its exact
 `bucket.use`. On denial, stop without creating a fallback. Follow
@@ -88,6 +84,8 @@ declared OR branch at runtime. `connect.scopes` narrows OAuth/OIDC consent
 -- an application can request fewer scopes per user but never more than
 declared here. Credential material itself never lives in this file -- it's
 resolved from `bucket` at generation/dispatch time (see `fused-bucket`).
+
+Ordinary `sdk plan` is read-only. `sdk plan --interactive` may respond only to typed `bucket_credentials_missing`: show the exact YAML-resolved bucket, securely prompt for the reported static secret or OAuth/OIDC app-registration fields, confirm the write, and retry once. Never collect an end-user provider token, create/substitute a bucket, or prompt with `--json`, `--no-input`, or `CI=true`; denied credential writes stop without fallback or self-grant (see `fused-bucket`).
 
 The selected operation's imported `security_requirements` is authoritative:
 alternatives are OR, schemes within one alternative are AND, and an empty
@@ -162,11 +160,12 @@ one. Those lifecycle actions are available through Engine's App UI/API.
 ## Commands
 
 This list may be behind the CLI's actual flags/subcommands -- run
-`fused-cli sdk <subcommand> --help` to confirm before relying on one (see
-`fused-cli` skill).
+`fused-cli sdk <subcommand> --help` to confirm before relying on one. The
+`fused-cli` skill documents init's batched server-variable enrichment.
 
 ```shell
-fused-cli sdk plan
+fused-cli sdk init <name> [--extend] [--service '<service>=<version>'] [--operation '<service>=<operationId>']
+fused-cli sdk plan [--interactive]
 fused-cli sdk apply
 fused-cli sdk validate
 fused-cli sdk download <sdk-name@version-or-version-id>
@@ -177,7 +176,7 @@ fused-cli sdk services <sdk-name@version-or-version-id>
 fused-cli sdk buckets <sdk-name-or-id>
 fused-cli sdk invoke <sdk-name@version-or-version-id> <operation>
 fused-cli sdk activity <sdk-name@version-or-version-id>
-fused-cli sdk token generate <sdk-name-or-id> <token-name>
+fused-cli sdk token generate <sdk-name-or-id> <token-name> [--expires-in 4h]
 fused-cli sdk token list <sdk-name-or-id>
 fused-cli sdk token revoke <sdk-name-or-id> <token-name>
 fused-cli sdk service add <service-slug>
@@ -192,7 +191,7 @@ set api-key`, which authenticates CLI-to-Engine management calls, not a
 generated SDK's own runtime traffic) -- `generate` prints the token exactly
 once, so capture it immediately. Generating, listing, or revoking by SDK name
 or SDK ID affects the token set shared by every version of that SDK.
-
+Use `--expires-in <duration>` for temporary testing access and omit it for a non-expiring service credential; it limits time, not SDK operations. Do not invent or suggest SDK `--allow` or fixed-binding flags.
 For automation, run `sdk apply --json`; it returns an array of explicit apply,
 generation, and download outcomes and includes `execution_token` only on the
 one response where Engine created it. `--download` remains a convenience, but

@@ -90,7 +90,12 @@ func TestListAppsUsesEngineGraphQL(t *testing.T) {
 		if !strings.Contains(request.Query, "apps(kind: $kind") || request.Variables["kind"] != "mcp" {
 			t.Fatalf("unexpected app request: %#v", request)
 		}
-		_, _ = w.Write([]byte(`{"data":{"apps":{"total":1,"items":[{"app_family_id":"family-1","app_id":"app-1","name":"support","version":"1.0.0","kind":"mcp","status":"active","created_at":"now","selections":[]}]}}}`))
+		for _, field := range []string{"default_transport", "transport_urls", "streamable_http", "sse"} {
+			if !strings.Contains(request.Query, field) {
+				t.Fatalf("apps query does not request %s: %s", field, request.Query)
+			}
+		}
+		_, _ = w.Write([]byte(`{"data":{"apps":{"total":1,"items":[{"app_family_id":"family-1","app_id":"app-1","name":"support","version":"1.0.0","kind":"mcp","status":"active","created_at":"now","default_transport":"streamable_http","transport_urls":{"streamable_http":"https://public.engine.test/mcp/app-1","sse":"https://public.engine.test/mcp/app-1/sse"},"selections":[]}]}}}`))
 	}))
 	defer server.Close()
 
@@ -98,6 +103,12 @@ func TestListAppsUsesEngineGraphQL(t *testing.T) {
 	page, err := client.ListApps("mcp", PageOptions{Limit: 10, Offset: 2})
 	if err != nil || page.Total != 1 || len(page.Items) != 1 || page.Items[0].Kind != "mcp" {
 		t.Fatalf("ListApps = %#v, %v", page, err)
+	}
+	app := page.Items[0]
+	if app.DefaultTransport != "streamable_http" || app.TransportURLs == nil ||
+		app.TransportURLs.StreamableHTTP != "https://public.engine.test/mcp/app-1" ||
+		app.TransportURLs.SSE != "https://public.engine.test/mcp/app-1/sse" {
+		t.Fatalf("ListApps transport discovery = %#v", app)
 	}
 }
 

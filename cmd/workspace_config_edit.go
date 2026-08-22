@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/google/uuid"
 	"gopkg.in/yaml.v3"
 
 	"github.com/Usefused/cli/internal/configfile"
@@ -16,27 +15,34 @@ func addWorkspaceService(path, serviceName, serviceID, version string) error {
 	if path == "" {
 		return errors.New("workspace config edit requires -f")
 	}
-	if serviceID == "" {
-		if _, err := uuid.Parse(serviceName); err == nil {
-			serviceID = serviceName
-		}
-	}
 	cfg, err := loadWorkspaceConfigForEdit(path)
 	if err != nil {
 		return err
 	}
-	// version is optional here -- an empty Versions list is valid and means
-	// "resolve Registry's latest public version during planning" rather than
-	// "enable nothing"; only build an entry when the caller actually gave one.
-	versions := []configfile.WorkspaceServiceVersion(nil)
-	if version != "" {
-		versions = []configfile.WorkspaceServiceVersion{{Version: version}}
+	service := cfg.Services[serviceName]
+	if serviceID != "" {
+		if service.ServiceID != "" && service.ServiceID != serviceID {
+			return fmt.Errorf("service %s already has service_id %s; refusing to replace it with %s", serviceName, service.ServiceID, serviceID)
+		}
+		service.ServiceID = serviceID
+		cfg.Services[serviceName] = service
 	}
-	cfg.Services[serviceName] = configfile.WorkspaceService{
-		ServiceID: serviceID,
-		Versions:  versions,
-	}
+	mergeWorkspaceServiceSelection(cfg, serviceName, version)
 	return writeWorkspaceConfig(path, cfg)
+}
+
+// mergeWorkspaceServiceSelection is the one additive workspace-authoring rule
+// shared by `workspace service add` and `workspace init --extend`. Reusing it
+// prevents either command from erasing service policy or duplicating versions.
+func mergeWorkspaceServiceSelection(config *configfile.WorkspaceConfig, serviceName, version string) bool {
+	service, exists := config.Services[serviceName]
+	changed := !exists
+	if version != "" && !configWorkspaceServiceHasVersion(service, version) {
+		service.Versions = append(service.Versions, configfile.WorkspaceServiceVersion{Version: version})
+		changed = true
+	}
+	config.Services[serviceName] = service
+	return changed
 }
 
 func removeWorkspaceService(path, serviceName string) error {

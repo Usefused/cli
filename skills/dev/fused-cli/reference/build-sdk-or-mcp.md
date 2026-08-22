@@ -39,40 +39,30 @@ SDK method spanning multiple services, also read `fused-unified-operations`.
 Read `fused-bucket` when credentials or OAuth are required, and `fused-config`
 for auth, connect scopes, connection profiles, or execution policy.
 
-## 3. Search the workspace first
+## 3. Find the service once
 
-Always look for a suitable already-enabled service before querying the
-Registry:
+Use the combined search when you need to browse candidates:
 
 ```shell
-fused-cli workspace services list --q "<provider or product>" --json
-# Use this additional exact check when the Registry service name is known:
-fused-cli workspace has "<exact service name>"
+fused-cli service search --q "<provider, product, or capability>" --json
 ```
 
-Use `--json` on workspace service versions, operations, and webhooks as the
-selection is refined; agents should not parse their human-readable tables.
+The command searches Registry and performs one bounded Engine lookup. Read
+`workspace_status`: reuse `enabled`; treat `available_to_add` as a candidate
+that still needs workspace activation. Discovery requires `catalogue.read` and
+`service.read`, and results remain access-filtered. A missing result means "no
+suitable visible service," not proof that no service exists.
 
-Inspect the list's service names, slugs, and enabled versions against the
-user's requested provider and capability. If a suitable service is enabled,
-reuse its returned slug and stay within workspace commands:
+Use `workspace services list --json` only when the user needs the complete
+enabled set. Use `workspace has "<exact service name>"` only as an additional
+exact-name check; it does not match a slug. As the selection is refined, use
+`--json` so agents do not parse human-readable tables.
+
+For an enabled result, inspect its workspace contract:
 
 ```shell
 fused-cli workspace service versions <slug>
 fused-cli workspace service operations <slug> --version <version> --q "<capability>"
-```
-
-Workspace discovery requires `service.read` and is access-filtered. Do not
-query the Registry or try to add the service merely because the user did not
-know its slug; use the workspace search to resolve that first. If it returns no
-match, say "no suitable visible workspace service" rather than claiming the
-service is not enabled, because the caller may lack access to see it.
-
-Only when the workspace has no suitable service, search the Registry:
-
-```shell
-fused-cli service search --q "<provider, product, or capability>"
-fused-cli service search --q "<query>" --json
 ```
 
 The returned `slug` is reusable in later commands. Owned services use a bare
@@ -84,9 +74,8 @@ Registry service search currently returns at most 20 ranked matches and has no
 pagination flag. Refine `--q` when the intended provider is not in that set;
 do not assume later pages exist.
 
-Registry discovery requires `catalogue.read`. A search result proves that the
-service is visible to the caller; it does not prove that the caller may activate
-or consume it.
+A search result proves only visibility; it does not prove that the caller may
+activate or consume the service.
 
 Then inspect available versions and search operations using the user's own
 business terms:
@@ -115,14 +104,22 @@ and accepts future scope growth.
 
 `workspace has` matches the exact service name, not its slug.
 
-## 4. Activate the service in the workspace
+## 4. Add and activate only when needed
 
-Perform this step only for a service found through the Registry fallback. Skip
-activation when workspace search already found a suitable enabled service.
+Skip this step when the selected search result is already `enabled`. For an
+`available_to_add` result, use the existing workspace config and let one command
+resolve the workspace first, fall back to Registry, and merge the selected
+service without erasing its existing settings:
 
-Create or update a `kind: workspace` file under `.fused/`, following the
-`fused-workspace` skill. Include the chosen service and version. Preview and
-apply the workspace change before building an SDK or MCP that depends on it:
+```shell
+fused-cli workspace service add <query-or-slug> [--version <version>] -f <workspace-config-path>
+```
+
+A unique or exact result is added non-interactively. Use `--interactive` only
+when a person is present to choose among ambiguous Registry results and confirm
+the write. The command edits local intent; it does not activate the service.
+Preview and apply that workspace change before building an SDK or MCP that
+depends on it:
 
 ```shell
 fused-cli validate -f <workspace-config-path>
@@ -152,8 +149,7 @@ fused-cli team access service grant <team> <service> manage
 fused-cli team access workspace set <team> admin
 ```
 
-Inspect current `--help` before using editor commands such as `workspace service
-add`; they operate on an existing config file and may require `-f`.
+The editor operates on an existing config file and requires `-f`.
 
 ## 5. Prepare the bucket and authentication
 
@@ -200,7 +196,9 @@ connect scopes, or user connections are unresolved.
 
 ## 6. Author and apply the selected output
 
-For an SDK, create `.fused/sdks/<sdk-name>.yaml` using `fused-sdk`, then run:
+For an SDK, use service-bearing `sdk init` (or `--extend` for an existing draft)
+so the shared enrichment runs. Set every generated bucket-value key before plan
+using `fused-config`'s canonical OpenAPI/Postman reference, then run:
 
 ```shell
 fused-cli sdk validate
@@ -210,7 +208,8 @@ fused-cli sdk apply --download
 fused-cli sdk download <sdk-name>@<version>
 ```
 
-For MCP, create `.fused/mcps/<mcp-name>.yaml` using `fused-mcp`, then run:
+For MCP, use the same enrichment through service-bearing `mcp init` or
+`--extend`, then run:
 
 ```shell
 fused-cli mcp validate

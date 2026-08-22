@@ -66,8 +66,9 @@ HTTP(S) variable default/enum while the template remains bindable at runtime.
 Registry persists the effective server for every operation using OpenAPI
 precedence: operation-level `servers`, then path-level, then document-root.
 Variable declarations retain their default, enum, description, and required
-state; actual tenant values belong in workspace
-`execution_policy.server_variables`, never in Registry metadata.
+state; actual tenant values never enter Registry metadata. Workspace execution
+uses `execution_policy.server_variables`; an SDK/MCP app can instead use a
+validated non-secret `server_variable` injection from its own bucket.
 
 Parameters retain all five locations (`path`, `query`, `querystring`, `header`,
 `cookie`) plus
@@ -122,6 +123,34 @@ expressions are preserved but not executed. Safe namespaced `x-*` JSON carries
 Fused execution extensions.
 
 ## Postman
+
+A nested host such as `https://api-{{app_id}}.sendbird.com` becomes canonical
+`https://api-{app_id}.sendbird.com` with required `app_id` and no imported
+tenant default. A service-bearing `sdk init`/`mcp init`, including `--extend`,
+uses one batched Engine lookup to add only missing required `server_variable`
+bucket-value bindings. It preserves explicit injections and skips variables
+already owned by workspace policy or native `x-fused-connect` routing. JSON
+reports only `generated_binding_count` for enrichment; read service, variable,
+and key from the written config, which never contains the value. Configure each
+key once:
+
+```shell
+fused-cli value set sendbird-bucket sendbird env SENDBIRD_APP_ID your-app-id
+```
+
+```yaml
+bucket: sendbird-bucket
+services:
+  sendbird:
+    injections:
+      - {location: server_variable, name: app_id, value: "${bucket.env.SENDBIRD_APP_ID}", mode: force}
+```
+
+The command's `env` argument writes the bucket's non-secret value namespace;
+it is not an operating-system environment variable.
+`server_variable` accepts only a complete `${bucket.env.KEY}` reference; literals, interpolation, and secrets fail. (`${bucket.values.KEY}` remains an accepted alias, but prefer `env` -- it is what `init` generates and what every example here uses.) Set `name` to a variable declared by the selected service or operation server; required provider variables still fail closed at execution when unresolved.
+Omitted mode means `force`; `default` yields to connection-resource/workspace values but precedes the provider fallback, while `force` also overrides connection-resource input. Workspace policy is final.
+Runtime checks variable syntax/enum and the final URL. Hostnames must retain a fixed registrable anchor (`.sendbird.com` passes); whole-host/public-suffix templates fail closed. Resource routing still uses reviewed `allowed_hosts`.
 
 The same object sits as a collection-root sibling of `info`, `item`,
 `variable`, and `auth`. Discovery operation IDs refer to the normalized

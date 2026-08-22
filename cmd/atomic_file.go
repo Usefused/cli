@@ -9,6 +9,34 @@ import (
 
 type contentValidator func([]byte) error
 
+func atomicCreateFile(path string, data []byte, mode fs.FileMode, validate contentValidator) error {
+	if validate != nil {
+		if err := validate(data); err != nil {
+			return fmt.Errorf("refusing to create %s with invalid content: %w", path, err)
+		}
+	}
+	temp, err := createSiblingTemp(path, mode.Perm())
+	if err != nil {
+		return err
+	}
+	tempPath := temp.Name()
+	defer func() { _ = os.Remove(tempPath) }()
+	if err := writeAndSyncTemp(temp, data); err != nil {
+		return err
+	}
+	// Why: linking a completed sibling file publishes it atomically while
+	// O_EXCL-style existence checks ensure init can never replace another
+	// process's config between a preliminary stat and the final write.
+	if err := os.Link(tempPath, path); err != nil {
+		if os.IsExist(err) {
+			return fmt.Errorf("config %s already exists; pass --extend to merge into it", path)
+		}
+		return fmt.Errorf("create %s: %w", path, err)
+	}
+	syncDirectory(filepath.Dir(path))
+	return nil
+}
+
 func atomicWriteFile(path string, data []byte, defaultMode fs.FileMode, validate contentValidator) error {
 	mode, err := existingFileMode(path, defaultMode)
 	if err != nil {

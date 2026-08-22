@@ -26,6 +26,7 @@ var sdkListFlags listFlags
 var sdkPlanJSON bool
 var sdkPlanReceiptOut string
 var sdkPlanOwnerTeam string
+var sdkPlanInteractive bool
 var sdkApplyDownload bool
 var sdkApplyJSON bool
 var sdkApplyPlanID string
@@ -51,9 +52,26 @@ var sdkPlanCmd = &cobra.Command{
 	Use:   "plan",
 	Short: "Plan SDK configuration",
 	Args:  cobra.NoArgs,
-	RunE: WithTelemetry("cli.sdk.plan", func(_ *cobra.Command, _ []string) error {
-		return runConfigPlan(planOptions{filter: filterSDK, jsonOut: sdkPlanJSON, receiptOut: sdkPlanReceiptOut, ownerTeamSlug: sdkPlanOwnerTeam})
+	RunE: WithTelemetry("cli.sdk.plan", func(cmd *cobra.Command, _ []string) error {
+		if err := validateSDKPlanInteraction(); err != nil {
+			return err
+		}
+		return runConfigPlan(planOptions{
+			filter: filterSDK, jsonOut: sdkPlanJSON, receiptOut: sdkPlanReceiptOut,
+			ownerTeamSlug: sdkPlanOwnerTeam, interactive: sdkPlanInteractive,
+			output: cmd.OutOrStdout(), auditCtx: cmd.Context(), auditAction: cmd.CommandPath(),
+		})
 	}),
+}
+
+func validateSDKPlanInteraction() error {
+	if !sdkPlanInteractive {
+		return nil
+	}
+	if sdkPlanJSON {
+		return errors.New("--interactive cannot be combined with --json")
+	}
+	return requireInteractive("omit --interactive or unset --no-input/CI")
 }
 
 var sdkApplyCmd = &cobra.Command{
@@ -845,6 +863,7 @@ func init() {
 	sdkPlanCmd.Flags().BoolVar(&sdkPlanJSON, "json", false, "Print plan result JSON")
 	sdkPlanCmd.Flags().StringVar(&sdkPlanReceiptOut, "receipt-out", "", "Write the plan receipt to this path")
 	sdkPlanCmd.Flags().StringVar(&sdkPlanOwnerTeam, "owner-team", "", "Optional owning team slug; defaults to the authenticated person")
+	sdkPlanCmd.Flags().BoolVarP(&sdkPlanInteractive, "interactive", "i", false, "Securely configure missing credentials in the SDK's selected bucket and retry once")
 	sdkApplyCmd.Flags().BoolVar(&sdkApplyDownload, "download", false, "Download generated SDKs after apply")
 	sdkApplyCmd.Flags().BoolVar(&sdkApplyJSON, "json", false, "Print structured apply, generation, and download outcomes as JSON")
 	sdkApplyCmd.Flags().StringVar(&sdkApplyPlanID, "plan-id", "", "Apply a specific remote plan ID")

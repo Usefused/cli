@@ -2,8 +2,8 @@
 
 Use this reference when the user wants to call an SDK operation through the
 Engine HTTP API without `fused-cli sdk invoke` or a generated language client.
-The Engine call remains SDK-scoped: it uses an immutable app ID and that SDK
-family's execution token, never a provider credential or the CLI control key.
+The Engine call remains SDK-scoped: it uses an immutable app ID and that SDK's
+execution token, never a provider credential or the CLI control key.
 
 ## Resolve the exact contract
 
@@ -41,19 +41,22 @@ Content-Type: application/json
 Idempotency-Key: {STABLE_KEY}  # required for Unified; optional for physical
 ```
 
-The bearer value must be an SDK execution token created for the app family:
+The bearer value must be an execution token created for that SDK:
 
 ```shell
-fused-cli sdk token generate <sdk-name-or-id> <token-name> --json
+fused-cli sdk token generate <sdk-name-or-id> <token-name> --expires-in 4h --json
 ```
 
 Capture the returned token once in a secret input or environment variable.
+Use `--expires-in` when access is only required for a bounded test window; the
+token still authorizes the SDK's full operation surface until expiry.
 Never substitute `FUSED_API_KEY`, a License Key, an OAuth access token, an API
 key from a bucket, or any other provider credential. Never put the token in the
 URL, request body, logs, or committed files.
 
-The app ID in the path is one exact immutable SDK version. A valid family token
-cannot authorize a path belonging to a different SDK family.
+The app ID in the path is one exact immutable SDK version. A valid SDK token can
+authorize active or deprecated versions of that same SDK, but cannot cross into
+a different SDK.
 
 ## Physical operation request
 
@@ -238,7 +241,7 @@ connected-provider credentials.
 Before reporting the call complete, verify:
 
 - the path app ID matches the intended immutable SDK version;
-- the token is an SDK family execution token and appears only in the header;
+- the token is an SDK execution token and appears only in the header;
 - the operation and input match the exported OpenAPI branch;
 - physical calls use only `selector`, while Unified calls use `targets` and
   service-keyed `selectors`;

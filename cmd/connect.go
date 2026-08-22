@@ -3,6 +3,7 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/Usefused/cli/internal/api"
@@ -12,11 +13,10 @@ import (
 
 // connectCmd registers, rotates, or reads back a bucket's OAuth/OIDC app
 // registration (client_id/client_secret/redirect_uri) directly against the
-// Engine admin endpoint -- deliberately outside workspace.yaml/plan/apply,
-// the same way bucket secrets already are, since these are
-// credential-adjacent values rather than declarative service policy. See
-// fused-bucket skill for how this fits alongside `secret set` and
-// `workspace service connect <slug>`.
+// Engine admin endpoint. The values stay outside declarative config; explicit
+// interactive SDK planning may call this same mutation path after readiness
+// reports them missing. See fused-bucket for how registration differs from
+// `secret set` and an end-user `workspace service connect <slug>` flow.
 var connectCmd = &cobra.Command{
 	Use:   "connect",
 	Short: "Register, rotate, or check a bucket's OAuth/OIDC app registration for a service",
@@ -40,11 +40,7 @@ var connectSetCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		if err := runConnectSet(cmd, args[0], value); err != nil {
-			return err
-		}
-		recordAppliedChange(cmd.Context(), cmd.CommandPath(), "connect_config")
-		return nil
+		return runConnectSet(cmd, args[0], value)
 	}),
 }
 
@@ -119,15 +115,30 @@ func runConnectSet(cmd *cobra.Command, serviceSlug, value string) error {
 	if err != nil {
 		return err
 	}
-	fields, err := connectSetFields(authType, authName, value)
+	return setConnectConfig(client, bucketID, serviceID, authType, authName, value, cmd.OutOrStdout(), credentialMutationOptions{
+		auditCtx: cmd.Context(), auditAction: cmd.CommandPath(), resourceKind: "connect_config",
+	})
+}
+
+var collectConnectSetFields = connectSetFields
+
+// setConnectConfig is shared by the explicit connect command and SDK plan
+// remediation so both paths preserve partial-update rules, masked client-secret
+// input, the safe response projection, and mutation audit semantics.
+func setConnectConfig(client *api.Client, bucketID, serviceID, authType, authName, value string, out io.Writer, mutation credentialMutationOptions) error {
+	fields, err := collectConnectSetFields(authType, authName, value)
 	if err != nil {
+		return err
+	}
+	if err := authorizeCredentialMutation(mutation); err != nil {
 		return err
 	}
 	saved, err := client.UpsertConnectConfig(bucketID, serviceID, fields)
 	if err != nil {
 		return err
 	}
-	printConnectConfigResult(cmd, saved)
+	recordCredentialMutation(mutation)
+	printConnectConfigResult(out, saved)
 	return nil
 }
 
@@ -149,7 +160,7 @@ func runConnectGet(cmd *cobra.Command, serviceSlug string) error {
 	if wantsJSON(cmd) {
 		return writeJSON(cmd, cfg)
 	}
-	printConnectConfigResult(cmd, cfg)
+	printConnectConfigResult(cmd.OutOrStdout(), cfg)
 	return nil
 }
 
@@ -279,8 +290,11 @@ func connectAuthRequest(authType, authName string) api.ConnectConfigUpsertReques
 // printConnectConfigResult renders the same safe projection whether it just
 // came from a set (freshly saved) or a get (already on record) -- neither
 // caller needs a different message, only the fields themselves.
-func printConnectConfigResult(cmd *cobra.Command, cfg *api.ConnectConfigResponse) {
-	fmt.Fprintf(cmd.OutOrStdout(),
+func printConnectConfigResult(out io.Writer, cfg *api.ConnectConfigResponse) {
+	if out == nil {
+		out = io.Discard
+	}
+	fmt.Fprintf(out,
 		"Connect config for service %s (bucket %s): auth_type=%s auth_name=%s enabled=%t redirect_uri=%s has_client_id=%t has_client_secret=%t\n",
 		cfg.ServiceID, cfg.BucketID, cfg.AuthType, cfg.AuthName, cfg.Enabled, cfg.RedirectURI, cfg.HasClientID, cfg.HasClientSecret,
 	)

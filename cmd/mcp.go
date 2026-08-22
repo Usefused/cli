@@ -5,7 +5,6 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	cliapi "github.com/Usefused/cli/internal/api"
 	"github.com/Usefused/cli/internal/configfile"
 	"github.com/spf13/cobra"
 )
@@ -86,34 +85,23 @@ func runMCPList(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	results := mcpListResults(client.BaseURL, page.Items)
 	if wantsJSON(cmd) {
-		return writeJSONPage(cmd, results, page.Total, mcpListFlags)
+		return writeJSONPage(cmd, page.Items, page.Total, mcpListFlags)
 	}
 	writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 8, 2, ' ', 0)
-	fmt.Fprintln(writer, "NAME\tVERSION\tMCP_ID\tVERSION_ID\tSTATUS\tCREATED\tURL")
+	fmt.Fprintln(writer, "NAME\tVERSION\tMCP_ID\tVERSION_ID\tSTATUS\tCREATED\tDEFAULT_TRANSPORT\tSTREAMABLE HTTP (RECOMMENDED)\tSSE (LEGACY)")
 	for _, app := range page.Items {
-		// The runtime URL is Engine-local and deterministic for an exact app ID.
-		mcpURL := strings.TrimSuffix(client.BaseURL, "/") + "/mcp/" + app.AppID + "/sse"
-		fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", app.Name, app.Version, app.AppFamilyID, app.AppID, app.Status, app.CreatedAt, mcpURL)
+		streamableHTTP, sse := "", ""
+		if app.TransportURLs != nil {
+			streamableHTTP, sse = app.TransportURLs.StreamableHTTP, app.TransportURLs.SSE
+		}
+		fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			app.Name, app.Version, app.AppFamilyID, app.AppID, app.Status, app.CreatedAt,
+			app.DefaultTransport, streamableHTTP, sse)
 	}
 	_ = writer.Flush()
 	printPageSummary(cmd.OutOrStdout(), page.Total, mcpListFlags)
 	return nil
-}
-
-type mcpListResult struct {
-	cliapi.AppSummary
-	URL string `json:"url"`
-}
-
-func mcpListResults(baseURL string, apps []cliapi.AppSummary) []mcpListResult {
-	results := make([]mcpListResult, 0, len(apps))
-	for _, app := range apps {
-		url := strings.TrimSuffix(baseURL, "/") + "/mcp/" + app.AppID + "/sse"
-		results = append(results, mcpListResult{AppSummary: app, URL: url})
-	}
-	return results
 }
 
 var mcpDeactivateCmd = &cobra.Command{

@@ -110,7 +110,11 @@ func TestWriteCommandErrorPreservesStructuredEngineFields(t *testing.T) {
 		Code: "bucket_credentials_missing", Message: "Required authentication material is missing.",
 		Category: "validation", Remediation: "Add credentials and plan again.", TraceID: "trace-1", HTTPStatus: http.StatusBadRequest,
 	}
-	apiError.Details.Missing = []string{"basicAuth_username", "basicAuth_password"}
+	apiError.Details.Bucket = &cliapi.MissingCredentialBucket{ID: "bucket-1", Name: "production"}
+	apiError.Details.MissingCredentials = []cliapi.MissingCredentialRequirement{{
+		ServiceID: "service-1", Service: "Jira", AuthType: "basic", AuthName: "basicAuth",
+		RequiredFields: []cliapi.MissingCredentialField{{Name: "username", SecretKey: "basicAuth_username"}},
+	}}
 	apiError.Details.ServerDetail = `unknown field "items_path"`
 
 	var out bytes.Buffer
@@ -125,9 +129,12 @@ func TestWriteCommandErrorPreservesStructuredEngineFields(t *testing.T) {
 		envelope.Error.TraceID != "trace-1" || envelope.Error.HTTPStatus != http.StatusBadRequest {
 		t.Fatalf("error envelope = %#v", envelope)
 	}
-	missing, ok := envelope.Error.Details["missing"].([]any)
-	if !ok || len(missing) != 2 {
-		t.Fatalf("missing details = %#v", envelope.Error.Details)
+	missing, ok := envelope.Error.Details["missing_credentials"].([]any)
+	if !ok || len(missing) != 1 {
+		t.Fatalf("missing credential details = %#v", envelope.Error.Details)
+	}
+	if bucket, ok := envelope.Error.Details["bucket"].(map[string]any); !ok || bucket["name"] != "production" {
+		t.Fatalf("bucket details = %#v", envelope.Error.Details)
 	}
 	if envelope.Error.Details["server_detail"] != apiError.Details.ServerDetail {
 		t.Fatalf("server detail = %#v", envelope.Error.Details)

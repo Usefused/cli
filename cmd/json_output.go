@@ -163,8 +163,14 @@ func mergeJSONDetails(base, additional map[string]any) map[string]any {
 // exposing arbitrary response JSON that the API client deliberately rejected.
 func apiErrorJSONDetails(apiError *cliapi.APIError) map[string]any {
 	details := map[string]any{}
-	if len(apiError.Details.Missing) > 0 {
-		details["missing"] = apiError.Details.Missing
+	if apiError.Details.Bucket != nil {
+		details["bucket"] = apiError.Details.Bucket
+	}
+	if len(apiError.Details.MissingCredentials) > 0 {
+		details["missing_credentials"] = apiError.Details.MissingCredentials
+	}
+	if len(apiError.Details.RequiredPermissions) > 0 {
+		details["required_permissions"] = apiError.Details.RequiredPermissions
 	}
 	if apiError.Details.ServerDetail != "" {
 		details["server_detail"] = apiError.Details.ServerDetail

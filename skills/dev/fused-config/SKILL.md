@@ -70,7 +70,7 @@ Read only the file(s) relevant to the task at hand.
 |---|---|
 | `reference/execution-policies.md` | Rate limits, retries, pagination, a base_url override, Engine-local server-variable bindings, outbound webhook verification, per-version policy overrides, and the local-enforcement-vs-Registry-publish distinction |
 | `reference/connection-profiles.md` | Auth type, OAuth/OIDC resource discovery, dynamic request bindings, profile ownership/provenance |
-| `reference/openapi-postman.md` | OpenAPI server/parameter fidelity and declaring the same connection profile directly inside an OpenAPI or Postman source document instead of workspace config |
+| `reference/openapi-postman.md` | OpenAPI/Postman server fidelity, SDK/MCP server-variable bindings, and declaring connection profiles in the source document |
 | `reference/import-overlays.md` | Supplying reviewed, credential-free import facts missing from a machine-readable provider source |
 
 For the service allowlist, SDK/MCP selection, or bucket/secret commands
@@ -105,10 +105,14 @@ use a bucket secret (`fused-cli secret set <service-slug>` -- see
 whether `apply` runs from a laptop or CI. Binding literal values have the
 same bucket-secret path via `fused-cli value`.
 
-OAuth `connect` app registration's `client_secret` uses this same
-bucket-secret path -- `${bucket.secret.<key>}` -- resolved by the Engine at
-apply time against this connect config's own bucket, same as `auth` (see
-`reference/connection-profiles.md`).
+OAuth `connect` app registration is the exception, and does **not** follow
+that path. `client_id`/`client_secret`/`redirect_uri` are not bucket secrets
+and have no `${bucket...}` or `$ENV` reference form for anything to resolve.
+They are written directly by `fused-cli connect set <service-slug>
+--bucket <bucket> --interactive|--value-stdin` -- an immediate admin action
+with no plan/apply -- into storage separate from `auth`'s bucket secrets, so
+the two cannot overwrite each other. Credential values in argv are rejected
+(see `reference/connection-profiles.md` and `fused-bucket`).
 
 ## Permissions and team access
 

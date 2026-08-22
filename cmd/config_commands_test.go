@@ -14,6 +14,9 @@ import (
 
 func TestConfigCommandSurface(t *testing.T) {
 	tests := [][]string{
+		{"workspace", "init", "-f", "workspace.yaml"},
+		{"sdk", "init", "security", "-f", "sdk.yaml"},
+		{"mcp", "init", "support", "-f", "mcp.yaml", "--extend"},
 		{"plan", "-f", "fused.yaml"},
 		{"apply", "-f", "fused.yaml"},
 		{"validate", "-f", "fused.yaml"},
@@ -39,7 +42,7 @@ func TestConfigCommandSurface(t *testing.T) {
 		{"sdk", "show", "security@1.0.0"},
 		{"sdk", "services", "security@1.0.0"},
 		{"sdk", "buckets", "security"},
-		{"sdk", "token", "generate", "security", "local-dev"},
+		{"sdk", "token", "generate", "security", "external-test", "--expires-in", "4h"},
 		{"sdk", "token", "list", "security"},
 		{"sdk", "token", "revoke", "security", "local-dev"},
 		{"sdk", "service", "add", "okta", "-f", "fused.yaml", "--version", "2026-07-01"},

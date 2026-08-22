@@ -163,6 +163,23 @@ func TestRecordAppliedChangeIfSkipsNoOpMutation(t *testing.T) {
 	}
 }
 
+// TestRecordGeneratedBindingCountEmitsOnlySafeCardinality proves smart init
+// records its bounded decision without attaching generated binding metadata.
+func TestRecordGeneratedBindingCountEmitsOnlySafeCardinality(t *testing.T) {
+	exporter := tracetest.NewInMemoryExporter()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
+	ctx, span := provider.Tracer("test").Start(context.Background(), "scaffold")
+
+	recordGeneratedBindingCount(ctx, 2)
+	span.End()
+
+	spans := exporter.GetSpans()
+	// One integer is the complete telemetry contract for generated bindings.
+	if len(spans) != 1 || len(spans[0].Attributes) != 1 || string(spans[0].Attributes[0].Key) != "scaffold.generated_binding_count" || spans[0].Attributes[0].Value.AsInt64() != 2 {
+		t.Fatalf("scaffold attributes = %#v", spans)
+	}
+}
+
 func countAppliedChangeEvents(spans tracetest.SpanStubs) int {
 	count := 0
 	for _, span := range spans {

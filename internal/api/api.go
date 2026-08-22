@@ -241,24 +241,54 @@ type APIError struct {
 	Category  string `json:"category"`
 	Retryable bool   `json:"retryable"`
 	Details   struct {
-		Missing              []string `json:"missing"`
-		ServerDetail         string   `json:"server_detail,omitempty"`
-		ApplyLeaseExpiresAt  string   `json:"apply_lease_expires_at,omitempty"`
-		RetryAfterSeconds    int      `json:"retry_after_seconds,omitempty"`
-		Stage                string   `json:"stage,omitempty"`
-		DependencyHTTPStatus int      `json:"http_status,omitempty"`
+		Bucket               *MissingCredentialBucket       `json:"bucket,omitempty"`
+		MissingCredentials   []MissingCredentialRequirement `json:"missing_credentials,omitempty"`
+		RequiredPermissions  []string                       `json:"required_permissions,omitempty"`
+		ServerDetail         string                         `json:"server_detail,omitempty"`
+		ApplyLeaseExpiresAt  string                         `json:"apply_lease_expires_at,omitempty"`
+		RetryAfterSeconds    int                            `json:"retry_after_seconds,omitempty"`
+		Stage                string                         `json:"stage,omitempty"`
+		DependencyHTTPStatus int                            `json:"http_status,omitempty"`
 	} `json:"details,omitempty"`
 	Remediation string `json:"remediation,omitempty"`
 	TraceID     string `json:"trace_id,omitempty"`
 	HTTPStatus  int    `json:"-"`
 }
 
+// MissingCredentialBucket is the exact Engine-owned target for interactive
+// remediation. The ID is authoritative for writes while Name is safe display
+// context resolved from the app's declarative bucket selection.
+type MissingCredentialBucket struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// MissingCredentialRequirement describes absent auth material without ever
+// carrying a credential value. Static fields include their exact Engine secret
+// key; OAuth/OIDC use the connection field and omit SecretKey.
+type MissingCredentialRequirement struct {
+	ServiceID         string                   `json:"service_id"`
+	Service           string                   `json:"service,omitempty"`
+	AuthType          string                   `json:"auth_type"`
+	AuthName          string                   `json:"auth_name"`
+	BasicPasswordMode BasicPasswordMode        `json:"basic_password_mode,omitempty"`
+	RequiredFields    []MissingCredentialField `json:"required_fields"`
+}
+
+type MissingCredentialField struct {
+	Name      string `json:"name"`
+	SecretKey string `json:"secret_key,omitempty"`
+}
+
 func (e *APIError) Error() string {
 	// The detail is intentionally separate from the stable message so scripts can
 	// branch on the contract while an Engine owner still sees the parser decision.
 	message := e.Code + ": " + e.Message
-	if len(e.Details.Missing) > 0 {
-		message += " Missing: " + strings.Join(e.Details.Missing, ", ") + "."
+	if len(e.Details.RequiredPermissions) > 0 {
+		message += " Required permissions: " + strings.Join(e.Details.RequiredPermissions, ", ") + "."
+	}
+	if len(e.Details.MissingCredentials) > 0 {
+		message += fmt.Sprintf(" Missing credential requirements: %d.", len(e.Details.MissingCredentials))
 	}
 	if e.Details.ServerDetail != "" {
 		message += " Server detail: " + e.Details.ServerDetail
@@ -418,7 +448,7 @@ func genericHTTPError(status int) *APIError {
 func permissionDeniedError(status int, missing []PermissionRequirement) error {
 	message := formatPermissionDenied(missing)
 	apiErr := &APIError{Code: "permission_denied", Message: message, Category: "authorization", HTTPStatus: status}
-	apiErr.Details.Missing = safePermissionDescriptions(missing)
+	apiErr.Details.RequiredPermissions = safePermissionDescriptions(missing)
 	return apiErr
 }
 
@@ -1857,13 +1887,14 @@ type SDKConfigApplyResponse struct {
 }
 
 type MCPConfigApplyResponse struct {
-	Status         string `json:"status"`
-	PlanID         string `json:"plan_id"`
-	ConfigKey      string `json:"config_key"`
-	AppFamilyID    string `json:"app_family_id"`
-	AppID          string `json:"app_id"`
-	MCPURL         string `json:"mcp_url"`
-	ExecutionToken string `json:"execution_token"`
+	Status           string           `json:"status"`
+	PlanID           string           `json:"plan_id"`
+	ConfigKey        string           `json:"config_key"`
+	AppFamilyID      string           `json:"app_family_id"`
+	AppID            string           `json:"app_id"`
+	DefaultTransport string           `json:"default_transport"`
+	TransportURLs    MCPTransportURLs `json:"transport_urls"`
+	ExecutionToken   string           `json:"execution_token"`
 }
 
 // WebhookConfigApplyResponse mirrors webhookConfigApplyResponse

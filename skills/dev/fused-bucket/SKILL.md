@@ -60,9 +60,11 @@ stated isolation bucket, create it under the policy above before declaring
 `buckets.<name>...` in workspace.yaml or running any `--bucket <name>` command.
 
 A service's OAuth/OIDC app registration (`connect`) is never a workspace.yaml
-field -- it's set only via `fused-cli connect set <slug>` below, an immediate
-admin action against its own endpoint, not something `plan`/`apply` sees or
-touches.
+field -- it's an immediate admin action against its own endpoint. Use
+`fused-cli connect set <slug>` directly, or let an explicitly interactive SDK
+plan invoke the same secure write after Engine reports that the SDK's exact
+YAML-selected bucket is missing it. Ordinary plan/apply remains declarative and
+does not mutate this registration.
 
 Every command list below may be behind the CLI's actual flags/subcommands --
 run `fused-cli <command> --help` (e.g. `fused-cli bucket --help`, `fused-cli
@@ -76,7 +78,7 @@ rules -- easy to conflate since they look alike:
 
 | Context | Form | Bucket name | Can merge with surrounding text? |
 |---|---|---|---|
-| SDK/MCP `injections[].value` (`fused-sdk`/`fused-mcp`) | `${bucket.env\|values\|secrets.<key>}` | Always that SDK or MCP server's own `bucket:` -- cannot name another | Yes (e.g. `"Bearer ${bucket.secrets.KEY}"`) |
+| Ordinary SDK/MCP `injections[].value` (`fused-sdk`/`fused-mcp`) | `${bucket.env\|values\|secrets.<key>}` | Always that SDK or MCP server's own `bucket:` -- cannot name another | Yes (e.g. `"Bearer ${bucket.secrets.KEY}"`) |
 | `kind: webhook` `services.<slug>.secret` (`fused-webhook`) | `${bucket.<name>.env\|secret.<key>}` or `${bucket.env\|secret.<key>}` (default bucket) | Explicit (or defaults to `default`) -- webhook verification has no app/dispatch context to fall back on | No -- must be the entire field value |
 | Connection profile `${resource.*}` (`fused-config`) | `${resource.provider_resource_id\|base_url\|metadata.<key>}` | N/A -- not a bucket reference at all, resolves against the selected connection's resource | No -- must be the entire field value |
 
@@ -192,6 +194,15 @@ blocks requests when a secret passes its expiry.
 
 `value` stores arbitrary bucket-scoped values, including literal binding
 values a connection profile references (see `fused-config`).
+
+An explicit `fused-cli sdk plan --interactive` may offer the same static-secret
+or connect-registration setup when Engine returns typed
+`bucket_credentials_missing` details. The workflow must display and use the
+SDK YAML's resolved bucket, reuse the ordinary secure collector for each
+reported auth requirement, ask for confirmation before storage, and retry
+planning once. It never creates a bucket or selects a different one. JSON, CI, and
+`--no-input` runs remain non-interactive and return the structured error for
+automation instead.
 
 Prefer bucket secrets/values over local `_env`/`$VAR` handoffs for anything
 committed to source control -- a bucket secret is resolved server-side by
