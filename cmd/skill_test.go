@@ -175,6 +175,30 @@ func TestDevSkillsDocumentServicePublicationGate(t *testing.T) {
 	}
 }
 
+func TestWorkspaceSkillUsesSingleWorkspaceFirstAddWorkflow(t *testing.T) {
+	path := filepath.Join("..", "skills", "dev", "fused-workspace", "SKILL.md")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	content := string(data)
+	for _, token := range []string{
+		"single discovery-and-author",
+		"Only when absent",
+		"Registry result is added",
+		"permission error is not a miss",
+		"Do not require a separate `service search` command first",
+		"does not call an activation",
+		"authors local intent only",
+		"read-only combined view",
+		"available_to_add",
+	} {
+		if !strings.Contains(content, token) {
+			t.Errorf("workspace skill missing workspace-first add guidance %q", token)
+		}
+	}
+}
+
 func TestDevSkillsIncludePermissionAndDenialGuidance(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -273,6 +297,9 @@ func TestFusedSDKSkillKeepsIDEAgentWorkflowLocalAndCompact(t *testing.T) {
 		"fused-workspace",
 		"fused-bucket",
 		"fused-config",
+		"--expires-in <duration>",
+		"limits time, not SDK operations",
+		"Do not invent or suggest SDK `--allow` or fixed-binding flags",
 	}
 	for _, token := range required {
 		if !strings.Contains(content, token) {
@@ -281,6 +308,37 @@ func TestFusedSDKSkillKeepsIDEAgentWorkflowLocalAndCompact(t *testing.T) {
 	}
 	if lines := strings.Count(content, "\n") + 1; lines > 320 {
 		t.Errorf("fused-sdk is too large for progressive loading: %d lines (limit 320)", lines)
+	}
+}
+
+func TestSDKSkillsDocumentInteractivePlanCredentialBoundary(t *testing.T) {
+	paths := []string{
+		filepath.Join("..", "skills", "dev", "fused-sdk", "SKILL.md"),
+		filepath.Join("..", "skills", "dev", "fused-bucket", "SKILL.md"),
+	}
+	var combined strings.Builder
+	for _, path := range paths {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		combined.Write(data)
+		combined.WriteByte('\n')
+	}
+	// Why: the installed agent guidance must preserve the same secret and
+	// bucket boundary enforced by the interactive command, not teach a second
+	// setup path that creates buckets or collects end-user OAuth tokens.
+	for _, token := range []string{
+		"sdk plan --interactive",
+		"exact YAML-resolved bucket",
+		"retry once",
+		"never creates a bucket",
+		"OAuth/OIDC app-registration fields",
+		"Never collect an end-user provider token",
+	} {
+		if !strings.Contains(combined.String(), token) {
+			t.Errorf("interactive SDK plan guidance is missing %q", token)
+		}
 	}
 }
 
@@ -810,8 +868,11 @@ func TestSkillInstallCommand_InstallsFusedSDKForCodingAgent(t *testing.T) {
 	setTestRawContentBaseURL(t, srv.URL)
 
 	oldFS := EmbeddedSkillFS
+	// Offline installation is intentionally all-or-nothing, so the fixture must
+	// contain every manifested file rather than silently mixing skill versions.
 	EmbeddedSkillFS = fstest.MapFS{
-		"skills/dev/fused-sdk/SKILL.md": &fstest.MapFile{Data: []byte("---\nname: fused-sdk\ndescription: SDK workflow\n---\n\nNever run `fused-cli sdk prompt`.\n")},
+		"skills/dev/fused-sdk/SKILL.md":                          &fstest.MapFile{Data: []byte("---\nname: fused-sdk\ndescription: SDK workflow\n---\n\nNever run `fused-cli sdk prompt`.\n")},
+		"skills/dev/fused-sdk/reference/engine-execution-api.md": &fstest.MapFile{Data: []byte("Use the Engine execution token in the Authorization header.")},
 	}
 	t.Cleanup(func() { EmbeddedSkillFS = oldFS })
 
@@ -836,6 +897,13 @@ func TestSkillInstallCommand_InstallsFusedSDKForCodingAgent(t *testing.T) {
 	}
 	if !strings.Contains(string(installed), "Never run `fused-cli sdk prompt`") {
 		t.Errorf("installed skill lost the coding-agent routing boundary: %q", installed)
+	}
+	reference, err := os.ReadFile(filepath.Join(destination, "reference", "engine-execution-api.md"))
+	if err != nil {
+		t.Fatalf("read installed execution reference: %v", err)
+	}
+	if !strings.Contains(string(reference), "Authorization header") {
+		t.Errorf("installed skill lost its execution reference: %q", reference)
 	}
 	if !strings.Contains(output.String(), "Installed fused-sdk skill for OpenAI Codex") {
 		t.Errorf("unexpected install output: %q", output.String())

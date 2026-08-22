@@ -228,7 +228,7 @@ var workspaceServiceCmd = &cobra.Command{
 var workspaceServiceVersionsCmd = newWorkspaceServiceCommand("versions <service-slug>", "List enabled service versions", "cli.workspace.service.versions", runWorkspaceServiceVersions)
 var workspaceServiceOperationsCmd = newWorkspaceServiceCommand("operations <service-slug>", "List or search enabled service operations", "cli.workspace.service.operations", runWorkspaceServiceOperationsWithFlagVersion)
 var workspaceServiceWebhooksCmd = newWorkspaceServiceCommand("webhooks <service-slug>", "List workspace webhook registrations", "cli.workspace.service.webhooks", runWorkspaceServiceWebhooks)
-var workspaceServiceAddCmd = newWorkspaceServiceCommand("add <service-slug>", "Add a service to workspace configuration", "cli.workspace.service.add", runWorkspaceServiceAdd)
+var workspaceServiceAddCmd = newWorkspaceServiceCommand("add <service-query-or-slug>", "Find and add a service to workspace configuration", "cli.workspace.service.add", runWorkspaceServiceAdd)
 var workspaceServiceConnectCmd = newWorkspaceServiceCommand("connect <service-slug>", "Start an end-user connection", "cli.workspace.service.connect", runWorkspaceServiceConnectWithRequiredUser)
 var workspaceServiceDeleteCmd = newWorkspaceServiceCommand("delete <service-slug>", "Delete a service from workspace configuration", "cli.workspace.service.delete", runWorkspaceServiceDelete)
 var workspaceServiceDeprecateCmd = newWorkspaceServiceCommand("deprecate <service-slug>", "Schedule service deprecation", "cli.workspace.service.deprecate", runWorkspaceServiceDeprecateWithRequiredDate)
@@ -283,12 +283,23 @@ func runWorkspaceServiceDeprecateWithRequiredDate(cmd *cobra.Command, serviceSlu
 	return runWorkspaceServiceDeprecate(cmd, serviceSlug)
 }
 
-func runWorkspaceServiceAdd(cmd *cobra.Command, serviceSlug string) error {
-	if err := addWorkspaceService(ConfigFile, serviceSlug, workspaceServiceAddID, workspaceServiceAddVersion); err != nil {
+func runWorkspaceServiceAdd(cmd *cobra.Command, serviceQuery string) error {
+	if workspaceServiceAddInteractive {
+		if err := requireInteractive("omit --interactive to add a unique or exact service match automatically"); err != nil {
+			return err
+		}
+	}
+	target, err := resolveWorkspaceServiceAddTarget(serviceQuery, workspaceServiceAddID, workspaceServiceAddInteractive)
+	if err != nil {
+		return err
+	}
+	version := strings.TrimSpace(workspaceServiceAddVersion)
+	trace.SpanFromContext(cmd.Context()).SetAttributes(attribute.String("service_resolution_source", target.source))
+	if err := addWorkspaceService(ConfigFile, target.slug, target.configServiceID, version); err != nil {
 		return err
 	}
 	recordAppliedChange(cmd.Context(), cmd.CommandPath(), "workspace_config")
-	fmt.Fprintf(cmd.OutOrStdout(), "Added service %s with version %s\n", serviceSlug, workspaceServiceAddVersion)
+	fmt.Fprintln(cmd.OutOrStdout(), workspaceServiceAddResult(target, version))
 	return nil
 }
 
@@ -395,6 +406,7 @@ func runWorkspaceServiceVersionDeprecate(cmd *cobra.Command, serviceSlug, versio
 
 var workspaceServiceAddVersion string
 var workspaceServiceAddID string
+var workspaceServiceAddInteractive bool
 var workspaceServiceRemoveForce bool
 var workspaceServiceDeprecateAt string
 var workspaceServiceDeprecateReason string
@@ -850,6 +862,7 @@ func init() {
 
 	workspaceServiceAddCmd.Flags().StringVar(&workspaceServiceAddVersion, "version", "", "Version to enable; omitted resolves latest during plan")
 	workspaceServiceAddCmd.Flags().StringVar(&workspaceServiceAddID, "service-id", "", "Registry service UUID to store in workspace config")
+	workspaceServiceAddCmd.Flags().BoolVarP(&workspaceServiceAddInteractive, "interactive", "i", false, "Select and confirm a Registry service when it is not already enabled")
 
 	workspaceServiceConnectCmd.Flags().StringVar(&workspaceServiceConnectBucket, "bucket", "", "Workspace bucket name or UUID (required)")
 	workspaceServiceConnectCmd.Flags().StringVar(&workspaceServiceConnectUserRef, "user-ref", "", "Stable user reference (required)")

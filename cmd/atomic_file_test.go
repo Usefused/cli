@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -76,5 +77,37 @@ func TestAtomicWriteFileCreatesParentAndUsesDefaultMode(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0644 {
 		t.Fatalf("expected mode 0644, got %o", info.Mode().Perm())
+	}
+}
+
+func TestAtomicCreateFileRefusesExistingTarget(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "workspace.yaml")
+	if err := os.WriteFile(path, []byte("original\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	err := atomicCreateFile(path, []byte("replacement\n"), 0644, nil)
+	if err == nil || !strings.Contains(err.Error(), "--extend") {
+		t.Fatalf("expected an extend hint, got %v", err)
+	}
+	data, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(data) != "original\n" {
+		t.Fatalf("existing file was replaced: %q", data)
+	}
+}
+
+func TestAtomicCreateFileValidatesBeforePublishing(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sdk.yaml")
+	err := atomicCreateFile(path, []byte("invalid"), 0644, func([]byte) error {
+		return errors.New("invalid draft")
+	})
+	if err == nil || !strings.Contains(err.Error(), "invalid draft") {
+		t.Fatalf("expected validation error, got %v", err)
+	}
+	if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+		t.Fatalf("invalid target should not exist, got %v", statErr)
 	}
 }

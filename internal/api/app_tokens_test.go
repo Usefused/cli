@@ -8,35 +8,52 @@ import (
 )
 
 func TestAppTokenMutationsUseGenericFamilyScopedEndpoint(t *testing.T) {
-	requests := make([]*http.Request, 0, 2)
-	var generateInput AppTokenGenerateRequest
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests = append(requests, r.Clone(r.Context()))
-		w.Header().Set("Content-Type", "application/json")
-		if r.Method == http.MethodPost {
-			if err := json.NewDecoder(r.Body).Decode(&generateInput); err != nil {
-				t.Fatalf("decode generate input: %v", err)
-			}
-			_, _ = w.Write([]byte(`{"id":"token-1","app_family_id":"family-1","name":"agent","allow":["issues.list"],"expires_at":"2026-08-05T10:15:00Z","token":"shown-once","created_at":"2026-08-05T10:00:00Z"}`))
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
-	}))
+	capture := &appTokenMutationCapture{}
+	server := httptest.NewServer(appTokenMutationHandler(t, capture))
 	defer server.Close()
 
 	client := NewClient(server.URL, "test-key")
 	expiresIn := int64(900)
+	resourceID := "resource-1"
 	token, err := client.GenerateAppToken("family-1", AppTokenGenerateRequest{
-		Name:      "agent",
-		Allow:     []string{"issues.list"},
-		ExpiresIn: &expiresIn,
+		Name: "agent", Allow: []string{"issues.list"}, ExpiresIn: &expiresIn,
+		BindingMode: "fixed", Bindings: []AppTokenBindingRequest{{
+			ServiceSlug: "google-drive", AuthName: "google", EndUserRef: "customer-1", ResourceID: &resourceID,
+		}},
 	})
-	if err != nil || token.AppFamilyID != "family-1" {
+	if err != nil || token.AppFamilyID != "family-1" || token.BindingMode != "fixed" || token.BindingCount != 1 {
 		t.Fatalf("GenerateAppToken = %#v, %v", token, err)
 	}
 	if err := client.RevokeAppToken("family-1", "agent"); err != nil {
 		t.Fatalf("RevokeAppToken: %v", err)
 	}
+	assertAppTokenMutationRequests(t, capture.requests)
+	assertFixedTokenGenerateInput(t, capture.generateInput)
+}
+
+type appTokenMutationCapture struct {
+	requests      []*http.Request
+	generateInput AppTokenGenerateRequest
+}
+
+func appTokenMutationHandler(t *testing.T, capture *appTokenMutationCapture) http.Handler {
+	t.Helper()
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capture.requests = append(capture.requests, r.Clone(r.Context()))
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodPost {
+			if err := json.NewDecoder(r.Body).Decode(&capture.generateInput); err != nil {
+				t.Fatalf("decode generate input: %v", err)
+			}
+			_, _ = w.Write([]byte(`{"id":"token-1","app_family_id":"family-1","name":"agent","allow":["issues.list"],"binding_mode":"fixed","binding_count":1,"expires_at":"2026-08-05T10:15:00Z","token":"shown-once","created_at":"2026-08-05T10:00:00Z"}`))
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+}
+
+func assertAppTokenMutationRequests(t *testing.T, requests []*http.Request) {
+	t.Helper()
 	if len(requests) != 2 {
 		t.Fatalf("request count = %d, want 2", len(requests))
 	}
@@ -49,10 +66,22 @@ func TestAppTokenMutationsUseGenericFamilyScopedEndpoint(t *testing.T) {
 			t.Fatalf("token mutation query = %q", request.URL.RawQuery)
 		}
 	}
-	if generateInput.Name != "agent" || len(generateInput.Allow) != 1 || generateInput.Allow[0] != "issues.list" {
-		t.Fatalf("generate input = %#v", generateInput)
+}
+
+func assertFixedTokenGenerateInput(t *testing.T, input AppTokenGenerateRequest) {
+	t.Helper()
+	if input.Name != "agent" || len(input.Allow) != 1 || input.Allow[0] != "issues.list" || input.BindingMode != "fixed" {
+		t.Fatalf("generate input = %#v", input)
 	}
-	if generateInput.ExpiresIn == nil || *generateInput.ExpiresIn != 900 {
-		t.Fatalf("generate expiry = %#v", generateInput.ExpiresIn)
+	if input.ExpiresIn == nil || *input.ExpiresIn != 900 || len(input.Bindings) != 1 {
+		t.Fatalf("generate expiry/bindings = %#v/%#v", input.ExpiresIn, input.Bindings)
+	}
+	assertFixedTokenBinding(t, input.Bindings[0])
+}
+
+func assertFixedTokenBinding(t *testing.T, binding AppTokenBindingRequest) {
+	t.Helper()
+	if binding.ServiceSlug != "google-drive" || binding.AuthName != "google" || binding.EndUserRef != "customer-1" || binding.ResourceID == nil || *binding.ResourceID != "resource-1" {
+		t.Fatalf("generate fixed binding = %#v", binding)
 	}
 }

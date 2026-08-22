@@ -14,7 +14,7 @@ import (
 
 var serviceCmd = &cobra.Command{
 	Use:   "service",
-	Short: "Inspect Registry services",
+	Short: "Inspect workspace and Registry services",
 	Args:  cobra.NoArgs,
 	RunE:  requireSubcommand,
 }
@@ -137,16 +137,17 @@ var serviceVersionsCmd = &cobra.Command{
 }
 
 type serviceSearchResult struct {
-	Name      string `json:"name"`
-	Slug      string `json:"slug"`
-	ServiceID string `json:"service_id"`
-	IsOwner   bool   `json:"is_owner"`
-	IsPublic  bool   `json:"is_public"`
+	Name            string `json:"name"`
+	Slug            string `json:"slug"`
+	ServiceID       string `json:"service_id"`
+	IsOwner         *bool  `json:"is_owner,omitempty"`
+	IsPublic        *bool  `json:"is_public,omitempty"`
+	WorkspaceStatus string `json:"workspace_status"`
 }
 
 var serviceSearchCmd = &cobra.Command{
 	Use:   "search",
-	Short: "Search Registry services when the slug is unknown",
+	Short: "Search workspace and Registry services when the slug is unknown",
 	Args:  cobra.NoArgs,
 	RunE: WithTelemetry("cli.service.search", func(cmd *cobra.Command, _ []string) error {
 		query := strings.TrimSpace(serviceSearchQuery)
@@ -157,34 +158,47 @@ var serviceSearchCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		services, err := client.SearchServices(query)
+		results, err := searchServiceResults(client, query)
 		if err != nil {
 			return err
 		}
-		results := make([]serviceSearchResult, 0, len(services))
-		for _, service := range services {
-			results = append(results, serviceSearchResult{
-				Name:      service.Name,
-				Slug:      service.DisplaySlug(),
-				ServiceID: service.ID,
-				IsOwner:   service.IsOwner,
-				IsPublic:  service.IsPublic,
-			})
+		results, err = addWorkspaceStatusToServiceSearch(client, query, results)
+		if err != nil {
+			return err
 		}
 		if wantsJSON(cmd) {
 			return writeJSON(cmd, results)
 		}
 		if len(results) == 0 {
-			fmt.Fprintf(cmd.OutOrStdout(), "No Registry services found for query %q.\n", query)
+			fmt.Fprintf(cmd.OutOrStdout(), "No workspace or Registry services found for query %q.\n", query)
 			return nil
 		}
 		w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 8, 2, ' ', 0)
-		fmt.Fprintln(w, "NAME\tSLUG\tSERVICE_ID")
+		fmt.Fprintln(w, "NAME\tSLUG\tSERVICE_ID\tWORKSPACE")
 		for _, result := range results {
-			fmt.Fprintf(w, "%s\t%s\t%s\n", result.Name, result.Slug, result.ServiceID)
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", result.Name, result.Slug, result.ServiceID, result.WorkspaceStatus)
 		}
 		return w.Flush()
 	}),
+}
+
+// searchServiceResults is shared by read-only Registry discovery and the
+// workspace add fallback. Keeping the account-qualified slug projection here
+// ensures both commands hand users the exact same reusable service identity.
+func searchServiceResults(client *cliapi.Client, query string) ([]serviceSearchResult, error) {
+	services, err := client.SearchServices(query)
+	if err != nil {
+		return nil, err
+	}
+	results := make([]serviceSearchResult, 0, len(services))
+	for _, service := range services {
+		isOwner, isPublic := service.IsOwner, service.IsPublic
+		results = append(results, serviceSearchResult{
+			Name: service.Name, Slug: service.DisplaySlug(), ServiceID: service.ID,
+			IsOwner: &isOwner, IsPublic: &isPublic,
+		})
+	}
+	return results, nil
 }
 
 var serviceShowCmd = &cobra.Command{

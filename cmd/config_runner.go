@@ -10,12 +10,15 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/Usefused/cli/internal/api"
 	"github.com/Usefused/cli/internal/configfile"
+	"gopkg.in/yaml.v3"
 )
 
 type planReceipt struct {
@@ -55,6 +58,10 @@ type planOptions struct {
 	jsonOut       bool
 	receiptOut    string
 	ownerTeamSlug string
+	interactive   bool
+	output        io.Writer
+	auditCtx      context.Context
+	auditAction   string
 }
 
 type applyOptions struct {
@@ -152,7 +159,7 @@ func runConfigPlan(opts planOptions) error {
 	engineURL, _ := GetEngineURL()
 	var planned []plannedConfig
 	for _, cfg := range configs {
-		result, err := planOneConfig(client, cfg, engineURL, opts.ownerTeamSlug)
+		result, err := planConfigWithRemediation(client, cfg, engineURL, opts)
 		if err != nil {
 			return err
 		}
@@ -162,6 +169,25 @@ func runConfigPlan(opts planOptions) error {
 		}
 	}
 	return printPlanResult(planned, opts.jsonOut)
+}
+
+// planConfigWithRemediation retries only the explicit interactive SDK
+// credential workflow. Every other planner error retains the ordinary
+// read-only, single-request behavior expected by CI and automation.
+func planConfigWithRemediation(client *api.Client, cfg *configfile.ParsedConfig, engineURL string, opts planOptions) (plannedConfig, error) {
+	result, err := planOneConfig(client, cfg, engineURL, opts.ownerTeamSlug)
+	if err == nil || !opts.interactive || cfg.Kind != configfile.KindSDK {
+		return result, err
+	}
+	if !isBucketCredentialsMissing(err) {
+		return plannedConfig{}, err
+	}
+	if err := remediateSDKPlanCredentials(client, cfg, err, opts); err != nil {
+		return plannedConfig{}, err
+	}
+	// One bounded retry proves the newly stored material satisfies readiness
+	// without allowing a malformed Engine response to create a prompt loop.
+	return planOneConfig(client, cfg, engineURL, opts.ownerTeamSlug)
 }
 
 func planOneConfig(client *api.Client, cfg *configfile.ParsedConfig, engineURL, ownerTeamSlug string) (plannedConfig, error) {
@@ -645,7 +671,10 @@ func applyPreparedMCP(client *api.Client, cfg *configfile.ParsedConfig, receipt 
 		return fmt.Errorf("failed to apply MCP %s: %w", cfg.MCP.Name, err)
 	}
 	fmt.Printf("Successfully applied MCP %s@%s\n", cfg.MCP.Name, cfg.MCP.Version)
-	fmt.Printf("  MCP ID: %s\n  Version ID: %s\n  URL: %s\n", resp.AppFamilyID, resp.AppID, resp.MCPURL)
+	// Engine owns public URL projection so reverse-proxy origins and transport
+	// recommendations stay identical across apply, GraphQL, UI, and CLI.
+	fmt.Printf("  MCP ID: %s\n  Version ID: %s\n  Default transport: %s\n", resp.AppFamilyID, resp.AppID, resp.DefaultTransport)
+	fmt.Printf("  Streamable HTTP (recommended): %s\n  SSE (legacy): %s\n", resp.TransportURLs.StreamableHTTP, resp.TransportURLs.SSE)
 	if resp.ExecutionToken != "" {
 		fmt.Printf("  Token (shown once): %s\n", resp.ExecutionToken)
 	}
@@ -823,13 +852,16 @@ func downloadSDKByIDQuiet(client *api.Client, appID, sdkName, outDir string) err
 }
 
 func extractSDKZip(zipData []byte, outDir string) error {
-	if err := os.MkdirAll(outDir, 0755); err != nil {
-		return fmt.Errorf("create extract dir: %w", err)
-	}
-
 	zipReader, err := zip.NewReader(bytes.NewReader(zipData), int64(len(zipData)))
 	if err != nil {
 		return fmt.Errorf("read zip: %w", err)
+	}
+	skillName, hasRootSkill, err := generatedSDKSkillName(zipReader)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(outDir, 0755); err != nil {
+		return fmt.Errorf("create extract dir: %w", err)
 	}
 
 	for _, f := range zipReader.File {
@@ -865,6 +897,110 @@ func extractSDKZip(zipData []byte, outDir string) error {
 		if err != nil {
 			return err
 		}
+	}
+	if hasRootSkill {
+		if err := installExtractedSDKSkill(outDir, skillName); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+const maxGeneratedSDKSkillBytes = 1 << 20
+
+var generatedSDKSkillNamePattern = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
+
+// generatedSDKSkillName validates the package-root Agent Skill before any
+// archive content is extracted. This prevents malformed frontmatter from
+// selecting a path outside the shared SDK skill directory.
+func generatedSDKSkillName(reader *zip.Reader) (string, bool, error) {
+	var foundName string
+	found := false
+	for _, file := range reader.File {
+		name := strings.TrimPrefix(path.Clean(filepath.ToSlash(file.Name)), "/")
+		if name != "SKILL.md" || file.FileInfo().IsDir() {
+			continue
+		}
+		if found {
+			return "", true, errors.New("generated SDK archive contains multiple root SKILL.md files")
+		}
+		found = true
+		if file.UncompressedSize64 > maxGeneratedSDKSkillBytes {
+			return "", true, fmt.Errorf("generated SDK SKILL.md exceeds %d bytes", maxGeneratedSDKSkillBytes)
+		}
+		rc, err := file.Open()
+		if err != nil {
+			return "", true, fmt.Errorf("open generated SDK SKILL.md: %w", err)
+		}
+		content, readErr := io.ReadAll(io.LimitReader(rc, maxGeneratedSDKSkillBytes+1))
+		closeErr := rc.Close()
+		if readErr != nil {
+			return "", true, fmt.Errorf("read generated SDK SKILL.md: %w", readErr)
+		}
+		if closeErr != nil {
+			return "", true, fmt.Errorf("close generated SDK SKILL.md: %w", closeErr)
+		}
+		if len(content) > maxGeneratedSDKSkillBytes {
+			return "", true, fmt.Errorf("generated SDK SKILL.md exceeds %d bytes", maxGeneratedSDKSkillBytes)
+		}
+		skillName, err := parseGeneratedSDKSkillName(content)
+		if err != nil {
+			return "", true, err
+		}
+		foundName = skillName
+	}
+	return foundName, found, nil
+}
+
+func parseGeneratedSDKSkillName(content []byte) (string, error) {
+	normalized := strings.ReplaceAll(string(content), "\r\n", "\n")
+	lines := strings.Split(normalized, "\n")
+	if len(lines) < 3 || lines[0] != "---" {
+		return "", errors.New("generated SDK SKILL.md is missing YAML frontmatter")
+	}
+	closing := -1
+	for i := 1; i < len(lines); i++ {
+		if lines[i] == "---" {
+			closing = i
+			break
+		}
+	}
+	if closing < 2 {
+		return "", errors.New("generated SDK SKILL.md has malformed YAML frontmatter")
+	}
+	var frontmatter struct {
+		Name string `yaml:"name"`
+	}
+	if err := yaml.Unmarshal([]byte(strings.Join(lines[1:closing], "\n")), &frontmatter); err != nil {
+		return "", fmt.Errorf("parse generated SDK SKILL.md frontmatter: %w", err)
+	}
+	name := frontmatter.Name
+	if name != strings.TrimSpace(name) || len(name) == 0 || len(name) > 64 || !generatedSDKSkillNamePattern.MatchString(name) {
+		return "", fmt.Errorf("generated SDK SKILL.md has unsafe name %q", name)
+	}
+	return name, nil
+}
+
+func installExtractedSDKSkill(sdkDir, skillName string) error {
+	source := filepath.Join(sdkDir, "SKILL.md")
+	info, err := os.Stat(source)
+	if err != nil {
+		return fmt.Errorf("locate extracted generated SDK Agent Skill: %w", err)
+	}
+	content, err := os.ReadFile(source)
+	if err != nil {
+		return fmt.Errorf("read extracted generated SDK Agent Skill: %w", err)
+	}
+	skillDir := filepath.Join(filepath.Dir(sdkDir), ".agents", "skills", skillName)
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		return fmt.Errorf("create generated SDK Agent Skill directory: %w", err)
+	}
+	destination := filepath.Join(skillDir, "SKILL.md")
+	if err := atomicWriteFile(destination, content, info.Mode().Perm(), nil); err != nil {
+		return fmt.Errorf("install generated SDK Agent Skill: %w", err)
+	}
+	if err := os.Remove(source); err != nil {
+		return fmt.Errorf("remove package-root generated SDK Agent Skill: %w", err)
 	}
 	return nil
 }

@@ -72,6 +72,14 @@ operation allowlist and, when appropriate, a short lifetime. Anything absent
 from `--allow` is denied. A token can only narrow a version's own operation
 scope; it cannot grant an operation the MCP version does not expose.
 
+Choose the token's connected-user binding at issuance. A dynamic token accepts
+Fused selectors from an MCP client that can set connection headers. A fixed
+token resolves each declared service/auth/user/resource tuple against the MCP
+server's bucket at issuance and cannot be overridden by caller headers. Use a
+fixed token for clients that accept only `Authorization`, or whenever the token
+must be limited to one customer's connected account. Different services on one
+token may intentionally use different end-user references.
+
 The MCP token only authenticates the client to Engine. Provider credentials
 remain in the MCP's selected Engine bucket and are never sent by the MCP
 client. Engine-to-Registry authentication uses the License Key and is unrelated
@@ -80,25 +88,41 @@ to both. Registry stores no MCP runtime/config/package data.
 ## Commands
 
 This list may be behind the CLI's actual flags/subcommands -- run
-`fused-cli mcp <subcommand> --help` to confirm before relying on one (see
-`fused-cli` skill).
+`fused-cli mcp <subcommand> --help` to confirm before relying on one. The
+`fused-cli` skill documents init's batched server-variable enrichment.
 
 ```shell
+fused-cli mcp init <name> [--service '<service>=<version>'] [--operation '<service>=<operationId>']
+fused-cli mcp init <name> --extend --service '<service>=<version>' --select-all '<service>'
 fused-cli mcp plan
 fused-cli mcp apply
 fused-cli mcp validate
 fused-cli mcp list
 fused-cli mcp deactivate <mcp-name@version-or-version-id>
 fused-cli mcp token generate <mcp-name-or-id> <token-name> --allow <operation-id> --expires-in 15m
+fused-cli mcp token generate <mcp-name-or-id> <token-name> --expires-in 1h \
+  --fixed-binding '<service-slug>,<auth-name>,<end-user-ref>[,<resource-uuid>]'
+fused-cli mcp token generate <mcp-name-or-id> <token-name> \
+  --fixed-binding 'jira,JiraOAuth,jira-customer-a' \
+  --fixed-binding '@google/gmail,GoogleOAuth,google-customer-a'
 fused-cli mcp token list <mcp-name-or-id>
 fused-cli mcp token revoke <mcp-name-or-id> <token-name>
 ```
 
+Use `init` to create `.fused/mcps/<name>.yaml` without overwriting an existing
+file. Repeat it with `--extend` to add selections; the result is `extended` or
+idempotent `unchanged`, and conflicts stop before writing. An empty skeleton
+is intentionally incomplete until each service lists operations or uses
+`--select-all`. `--bucket` references an existing usable bucket and never
+creates one.
+
 `mcp apply` doesn't just validate config -- it stands up (or updates) a
 persistent, named Engine-hosted server with its own URL, which stays live
 until explicitly deactivated. `mcp list` shows each server's name, version, ID,
-and active state. The server URL is what
-you hand to an MCP client's SSE connection (see below). Deactivating one is
+active state, recommended Streamable HTTP URL, and legacy SSE URL. Give new
+clients the Streamable HTTP URL. Use the SSE URL only when a client explicitly
+requires the older transport (see below).
+Deactivating one is
 an irreversible hard deactivation of that exact version: Engine writes a
 tombstone, stops its runtime, and will not allow that MCP/version to be
 recreated. Sibling versions and shared tokens remain. Deactivation is immediate and
@@ -115,7 +139,15 @@ and securely distribute the newly issued token.
 no expiry; omit `--allow` for the full-access `*` default. Repeat `--allow` or
 pass a comma-separated list for multiple exact operation IDs. Applications
 that need dynamic agent sessions can use Engine's equivalent app-token API;
-the caller still needs `app.tokens.manage`.
+the caller still needs `app.tokens.manage`. Repeat `--fixed-binding` for each
+service/auth tuple that token may use; each tuple starts with the public service
+slug (bare `service` or provider-qualified `@provider/service`), never its
+internal UUID. Every repeat independently selects its auth name, end-user
+reference, and optional resource UUID. The CLI rejects malformed optional resource UUIDs;
+Engine resolves every slug and rejects duplicate or unavailable service/auth
+bindings atomically. `mcp token list` includes
+active/expired/revoked status, binding mode, and aggregate execution/session
+counts from retained history; it never reveals token plaintext or hashes.
 
 ## Permissions and team access
 
@@ -161,20 +193,49 @@ access bucket grant <bucket-name>` while its secrets remain platform-managed.
 
 ## Calling the running MCP
 
+Use the recommended Streamable HTTP URL returned by `mcp apply` or `mcp list`:
+
+```text
+https://<engine-host>/mcp/<version-id>
+```
+
+POST a JSON-RPC `initialize` request with `Authorization: Bearer <token>`.
+Engine returns `Mcp-Session-Id`; send that opaque header on subsequent POST,
+GET, and DELETE requests. Send the negotiated `MCP-Protocol-Version` when the
+client supports it. DELETE terminates only that session. Revoke access with
+`fused-cli mcp token revoke`; do not treat session deletion as token revocation.
+The same output also exposes the legacy SSE URL:
+
+```text
+https://<engine-host>/mcp/<version-id>/sse
+```
+
+It addresses the same immutable MCP version and uses the same execution token,
+but it is transitional compatibility and must not be recommended for new
+clients. Human output labels Streamable HTTP as recommended and SSE as legacy;
+JSON output uses `default_transport` and the typed `transport_urls` object.
+
 Pagination is inherited automatically from the selected endpoint and its
 effective service-version policy. Do not add pagination fields to MCP config or
 tool schemas. Engine performs the provider requests and streams each successful
 page as a separate execution chunk.
 
 Neither the tool schema nor its `call()` function accepts provider tokens,
-API keys, auth scheme names, or Fused user selectors as parameters -- those
-are configured once on the MCP client connection, not per call:
+API keys, auth scheme names, or Fused user selectors as parameters. For a
+dynamic token, configure selectors once on the MCP connection rather than on
+each tool call:
 
 ```text
-Authorization: Bearer <one-time MCP execution token>
+Authorization: Bearer <MCP execution token>
 X-Fused-End-User-Ref: user_123
 X-Fused-Resource-ID: <optional Fused connection-resource UUID>
 ```
+
+For a fixed token, omit both selector headers. Engine uses only the opaque
+connection/resource IDs resolved when the token was issued. Do not add a second
+temporary-token format or an MCP-client OAuth flow: SDK and MCP deliberately use
+the same execution-token contract, while provider OAuth remains inside
+the Engine bucket.
 
 Provider arguments come from the imported canonical request schema. Map-valued
 objects retain their `additional_properties` value schema, so validate each map

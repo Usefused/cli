@@ -36,30 +36,53 @@ var sdkTokenRevokeCmd = &cobra.Command{
 	}),
 }
 
+// runSDKTokenGenerate issues full-family SDK access with an optional time boundary.
 func runSDKTokenGenerate(cmd *cobra.Command, target, name string) error {
-	return issueAppToken(cmd, appTokenKindSDK, target, api.AppTokenGenerateRequest{Name: name})
-}
-
-func runSDKTokenList(cmd *cobra.Command, target string) error {
-	tokens, err := loadAppTokens(appTokenKindSDK, target)
+	request, err := sdkTokenGenerateRequest(cmd, name)
+	// Invalid lifetimes fail before family resolution or token mutation.
 	if err != nil {
 		return err
 	}
+	return issueAppToken(cmd, appTokenKindSDK, target, request)
+}
+
+// sdkTokenGenerateRequest deliberately adds expiry without introducing operation scope.
+func sdkTokenGenerateRequest(cmd *cobra.Command, name string) (api.AppTokenGenerateRequest, error) {
+	expiresIn, err := appTokenExpirySeconds(cmd)
+	// Parser failures remain local to CLI input validation and never reach Engine.
+	if err != nil {
+		return api.AppTokenGenerateRequest{}, err
+	}
+	return api.AppTokenGenerateRequest{Name: name, ExpiresIn: expiresIn}, nil
+}
+
+// runSDKTokenList exposes retained family-token metadata without revealing credential material.
+func runSDKTokenList(cmd *cobra.Command, target string) error {
+	tokens, err := loadAppTokens(appTokenKindSDK, target)
+	// Resolution or transport failure prevents presenting an incomplete token inventory.
+	if err != nil {
+		return err
+	}
+	// JSON output preserves the complete metadata contract for automation.
 	if wantsJSON(cmd) {
 		return writeJSON(cmd, tokens)
 	}
+	// Human output stays concise because SDK tokens do not expose operation scope controls.
 	for _, token := range tokens {
 		fmt.Fprintf(cmd.OutOrStdout(), "ID: %s, Name: %s, Created: %s\n", token.ID, token.Name, token.CreatedAt.Format("2006-01-02 15:04:05"))
 	}
 	return nil
 }
 
+// runSDKTokenRevoke removes one named family credential through the shared mutation path.
 func runSDKTokenRevoke(cmd *cobra.Command, target, name string) error {
 	return revokeAppToken(cmd, appTokenKindSDK, target, name)
 }
 
+// init registers SDK token actions and their action-specific flags.
 func init() {
 	sdkCmd.AddCommand(sdkTokenCmd)
 	sdkTokenCmd.AddCommand(sdkTokenGenerateCmd, sdkTokenListCmd, sdkTokenRevokeCmd)
 	addJSONOutputFlag(sdkTokenGenerateCmd, sdkTokenListCmd)
+	addAppTokenExpiryFlag(sdkTokenGenerateCmd)
 }

@@ -22,6 +22,14 @@ type AppSelection struct {
 	Injections              []InjectionConfig `json:"injections"`
 }
 
+// MCPTransportURLs is Engine-owned discovery for one immutable MCP version.
+// Keeping both endpoints typed prevents clients from treating transitional SSE
+// as equivalent to the recommended Streamable HTTP transport.
+type MCPTransportURLs struct {
+	StreamableHTTP string `json:"streamable_http"`
+	SSE            string `json:"sse"`
+}
+
 type AppRequiredAuth struct {
 	AuthType          string `json:"auth_type"`
 	AuthName          string `json:"auth_name"`
@@ -29,19 +37,21 @@ type AppRequiredAuth struct {
 }
 
 type AppSummary struct {
-	AppFamilyID           string         `json:"app_family_id"`
-	AppID                 string         `json:"app_id"`
-	Name                  string         `json:"name"`
-	Description           string         `json:"description"`
-	Version               string         `json:"version"`
-	Kind                  string         `json:"kind"`
-	Status                string         `json:"status"`
-	CreatedAt             string         `json:"created_at"`
-	TargetLanguage        string         `json:"target_language"`
-	GeneratorVersion      string         `json:"generator_version"`
-	Readme                string         `json:"readme"`
-	Selections            []AppSelection `json:"selections"`
-	PlannedDeactivationAt string         `json:"planned_deactivation_at"`
+	AppFamilyID           string            `json:"app_family_id"`
+	AppID                 string            `json:"app_id"`
+	Name                  string            `json:"name"`
+	Description           string            `json:"description"`
+	Version               string            `json:"version"`
+	Kind                  string            `json:"kind"`
+	Status                string            `json:"status"`
+	CreatedAt             string            `json:"created_at"`
+	TargetLanguage        string            `json:"target_language"`
+	GeneratorVersion      string            `json:"generator_version"`
+	Readme                string            `json:"readme"`
+	Selections            []AppSelection    `json:"selections"`
+	PlannedDeactivationAt string            `json:"planned_deactivation_at"`
+	DefaultTransport      string            `json:"default_transport,omitempty"`
+	TransportURLs         *MCPTransportURLs `json:"transport_urls,omitempty"`
 }
 
 type AppSummaryPage struct {
@@ -62,6 +72,7 @@ type AppServiceSummary struct {
 const appSummaryFields = `
 	app_family_id app_id name description version kind status created_at
 	target_language generator_version readme planned_deactivation_at
+	default_transport transport_urls { streamable_http sse }
 	selections {
 		service_id service_version_id definition_schema_version
 		endpoint_ids operation_names webhook_ids webhook_names

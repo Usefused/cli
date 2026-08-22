@@ -16,30 +16,64 @@ reachable. If `fused-cli` is failing with a connection error, or the user
 hasn't stood up an Engine yet at all, that's a different problem -- here's
 how to actually start one.
 
-`FUSED_LICENSE_KEY` is issued by Fused -- get it from the dashboard/account
-team at [usefused.com](https://usefused.com) if you don't have one.
+Prerequisites are **PostgreSQL 16+** and a `FUSED_LICENSE_KEY` issued by
+Fused -- get the key from the dashboard/account team at
+[usefused.com](https://usefused.com) if you don't have one. Engine accepts one
+standard Postgres DSN and creates or upgrades its own tables through it during
+startup.
 
 ```shell
-# Native binary
-curl -sL https://github.com/Usefused/engine/releases/latest/download/fused-engine_$(uname -s)_$(uname -m).tar.gz | tar -xz
+# Native binary. `latest/download` always resolves to the newest release; swap
+# it for `download/<tag>` when a build must be repeatable.
+OS=$(uname -s)
+ARCH=$(uname -m | sed 's/aarch64/arm64/')
+ARCHIVE="fused_${OS}_${ARCH}.tar.gz"
+BASE="https://github.com/Usefused/engine/releases/latest/download"
+
+curl -LO "${BASE}/${ARCHIVE}"
+curl -LO "${BASE}/checksums.txt"
+sha256sum --check --ignore-missing checksums.txt
+tar -xzf "${ARCHIVE}"
 mv fused-engine /usr/local/bin/
 
+export FUSED_DATABASE_URL="postgres://fused:password@localhost:5432/fused?sslmode=disable"
 export FUSED_LICENSE_KEY="<license key from the Fused dashboard>"
 fused-engine start
 ```
 
-Or via Docker (`fused-alpine` variant, headless -- no bundled UI):
+Or via Docker. Two variants are published: `ghcr.io/usefused/engine:latest`
+carries the embedded Admin UI, and `ghcr.io/usefused/engine:headless` is the
+API/runtime without it. Both are moving tags; every release also publishes
+`:<tag>` and `:<tag>-headless`, and production should pin one.
 
 ```shell
 docker pull ghcr.io/usefused/engine:latest
-docker run -e FUSED_LICENSE_KEY="<license key>" -p 8081:8081 -p 50051:50051 ghcr.io/usefused/engine:latest
+docker run \
+  -e FUSED_LICENSE_KEY="<license key>" \
+  -e FUSED_DATABASE_URL="postgres://..." \
+  -e FUSED_ENCRYPTION_KEY="$(openssl rand -base64 32)" \
+  -p 8081:8081 -p 50051:50051 \
+  ghcr.io/usefused/engine:latest
 ```
 
-Defaults: HTTP API + dashboard on `:8081`, SDK gRPC on `:50051`. Override via
+All three environment variables are required -- a container given only the
+license key will not come up. `FUSED_ENCRYPTION_KEY` is the 32-byte AES key
+protecting every at-rest secret; the value committed in `engine.yaml.example`
+is publicly known and must never be used outside local throwaway dev. A
+`ghcr.io` pull failing with `unauthorized` means the package isn't public yet
+-- `docker login ghcr.io` with a token carrying `read:packages`.
+
+Defaults: HTTP API + dashboard on `:8081`, SDK gRPC on `:50051`, plus an
+embedded NATS server on `:4222` when no external `NATS_URL` is set (external
+NATS is required to horizontally replicate Engine). Override ports via
 `--port`/`--grpc-port`/`--webhook-port` flags, environment variables, or
 `engine.yaml` (`--config` flag, default path `engine.yaml`) -- flags win over
-env vars win over the config file. The Engine will refuse to boot without a
-valid `FUSED_LICENSE_KEY`.
+env vars win over the config file. The license key itself resolves
+`--license-key`, then `FUSED_LICENSE_KEY` in a local `.env`, then
+`engine.license_key` in `engine.yaml`, then an inherited `FUSED_LICENSE_KEY`
+process variable; `FUSED_API_KEY` is never a license source. The Engine
+refuses to boot without a valid key and has no offline mode that bypasses the
+Registry handshake.
 
 Once it's up, point `fused-cli` at it (see "First-time setup" below), and
 check `curl http://<engine-host>:8081/health` if you need to confirm it's
@@ -211,6 +245,38 @@ kind: workspace   # or: sdk, mcp, webhook
 `fused-cli plan` / `fused-cli apply` (no subcommand) operate across every
 kind found under the target directory at once. `<kind> plan|apply` scopes to
 one kind.
+
+## Start or extend a config file
+
+Use each resource's `init` command for a deterministic local draft; do not hand-build the
+base fields or start `sdk prompt`:
+
+```shell
+fused-cli workspace init
+fused-cli sdk init <name> --service '<service>=<version>' --operation '<service>=<operationId>'
+fused-cli mcp init <name> --service '<service>=<version>' --select-all '<service>'
+```
+
+Result: the file is created under `.fused/` and reports its path. With no
+service flags, the result is an editable empty skeleton. Use `-f <path>` for a
+different target.
+
+To add another selection, repeat the same shape with `--extend`. Result:
+existing identity and selections remain, new entries are merged once, and an
+already-present entry reports `unchanged`. A conflicting name, app version,
+language, bucket, or service version stops before writing. Creation also stops
+when the path already exists.
+
+For SDK/MCP init or `--extend` with services, one batched Engine lookup adds
+only missing required bucket-backed `server_variable` injections. Preserve
+explicit injections and never duplicate workspace policy or native
+`x-fused-connect` routing. With `--json`, read `generated_binding_count`; read
+each service/variable/key from the written config and set its non-secret bucket
+value. Values never appear in output. Read
+`fused-config`'s `reference/openapi-postman.md` for the canonical example.
+
+`--bucket` references an existing bucket only. Omitting it preserves Engine
+default-bucket selection; this command never creates a bucket.
 
 ## How plan/apply staleness is caught
 

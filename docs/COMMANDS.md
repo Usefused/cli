@@ -120,6 +120,51 @@ without invoking `sdk prompt` and starting a second agent.
 ## `config`
 Manage your local CLI configuration (`set`, `get`, `list`, `reset`). Inherits global flags.
 
+## `workspace init` / `sdk init [name]` / `mcp init [name]`
+
+Create a config-as-code skeleton, or add selections to an existing config with
+`--extend`. The default targets are
+`.fused/workspace.yaml`, `.fused/sdks/<name>.yaml`, and
+`.fused/mcps/<name>.yaml`; use the global `-f` flag to choose another file.
+
+```bash
+# Editable empty skeletons
+fused-cli workspace init
+fused-cli sdk init google-workspace
+fused-cli mcp init support-agent
+
+# Complete selections during creation
+fused-cli sdk init google-workspace \
+  --service '@google/drive=v3' \
+  --operation '@google/drive=listFiles'
+
+# Add to the same file without replacing existing selections
+fused-cli sdk init google-workspace --extend \
+  --service 'gmail=v1' \
+  --operation 'gmail=listMessages'
+```
+
+`--service <key>=<version>`, `--operation <service>=<operationId>`, and
+`--select-all <service>` are repeatable. Workspace services may omit the
+version. New SDK/MCP configs default to version `1.0.0`; SDKs default to
+TypeScript. `--bucket` only references an existing bucket and is omitted by
+default—it never creates a bucket.
+
+Creation refuses to replace an existing path. Extension is additive and
+idempotent: it preserves existing selections, reports `unchanged` when the
+requested entries already exist, and rejects conflicting names, versions,
+languages, buckets, or service versions before writing. One file contains one
+typed YAML document.
+
+When SDK/MCP init or `--extend` includes services, the CLI queries Engine once
+and adds missing required bucket-backed `server_variable` injections. Existing
+injections remain authoritative, and workspace policy or native
+`x-fused-connect` routing is not duplicated. With `--json`, output reports
+`generated_binding_count`; read the generated service/variable/key from the
+written config, never from a returned value. See the `fused-config`
+OpenAPI/Postman reference for the canonical Sendbird binding and bucket-value
+setup.
+
 ## `skill`
 
 List, inspect, or install the Fused skills bundled with this CLI. Installed
@@ -153,6 +198,19 @@ running agent context. Binary release archives include `skills/<version>/`, and
 the official installers preserve it beside the executable. `skill install`
 reads that immutable local snapshot first, avoiding network drift; GitHub and
 embedded content remain fallbacks for older and `go install` installations.
+
+## `service search`
+Search workspace and Registry services together for read-only browsing. Pass a
+non-empty `--q <provider-or-product>` and optionally `--json`. Results already
+enabled in the workspace are listed first with `workspace_status: enabled`;
+Registry-only results use `workspace_status: available_to_add`. The CLI uses
+Registry's existing bounded search, then one Engine lookup limited to that
+query/result set—it does not load the full workspace. This combined view
+requires both `catalogue.read` and `service.read`.
+
+You do not need to run this before adding a service: `workspace service add
+<query-or-slug>` performs the same workspace-first resolution and Registry
+fallback itself.
 
 ## `service versions <service-slug>`
 List Registry versions visible to the current account for a service slug. Supports provider-qualified slugs such as `@provider/slug`.
@@ -438,9 +496,15 @@ deploys an MCP server.
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
-| `--json` | | Print plan result JSON, including summary and notifications, instead of writing the default receipt | `false` |
+| `--json` | | Print plan result JSON, including summary and notifications; the default receipt is still written | `false` |
+| `--interactive` | `-i` | For SDK plans only, securely configure credentials reported missing from the YAML-resolved bucket, confirm storage, then retry once; incompatible with `--json`, CI, and `--no-input` | `false` |
 | `--receipt-out` | | Write the plan receipt to a specific path | `""` |
 | `--owner-team` | | Optional owning team slug; defaults to the authenticated person | `""` |
+
+Interactive SDK planning never creates or substitutes a bucket. Static auth is
+stored through the ordinary secret path; OAuth/OIDC prompts for the bucket's
+client registration rather than an end-user provider token. MCP planning has
+no interactive credential-remediation flag.
 
 ## `sdk apply` / `mcp apply`
 Apply an SDK generation plan or deploy an MCP server plan.
@@ -492,6 +556,11 @@ directly. There is no implicit latest version.
 ```bash
 fused-cli sdk download security-sdk@1.2.0
 ```
+
+The package is extracted to `<out>/fused-sdks/<sdk-name>`. When the generated
+archive includes an Agent Skill, the CLI installs it centrally at
+`<out>/fused-sdks/.agents/skills/<skill-name>/SKILL.md` so all downloaded SDK
+skills share one discovery root.
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
@@ -575,8 +644,9 @@ Remove OpenAPI operation IDs from an existing SDK configuration. Inherits global
 
 ## `sdk token generate <sdk-name-or-id> <token-name>`
 Generate a named execution token that works across every active or deprecated
-version of the SDK. Pass `--json` to receive the one-time token and metadata as
-a structured object.
+version of the SDK. Use `--expires-in 4h` to grant temporary full-SDK execution
+access for testing; omit it for a non-expiring service token. Pass `--json` to
+receive the one-time token, absolute expiry, and metadata as a structured object.
 
 ## `sdk token list <sdk-name-or-id>`
 List execution-token metadata for an SDK, including expired tokens that may
@@ -678,19 +748,36 @@ List workspace services along with their enabled versions.
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
+| `--q` | `-q` | Filter visible workspace services by name or slug | `""` |
 | `--interactive` | `-i` | Interactive service selection | `false` |
+| `--json` | | Print visible workspace services as JSON | `false` |
 
 ## `workspace has`
 Check if a specific service is available in the workspace and output its enabled versions.
 Usage: `fused-cli workspace has <service-name>`
 
-## `workspace service add <service-slug>`
-Add a service to your Workspace configuration.
+## `workspace service add <service-query-or-slug>`
+Find and add a service to workspace configuration. The command first checks the
+access-filtered workspace service list. If there is no exact name or slug match,
+it searches the Registry using the same endpoint as `service search`. A unique
+or exact Registry match is added automatically. Pass `--interactive` to select
+among multiple matches and confirm the chosen Registry service before the file
+is written. In CI or with `--no-input`, omit `--interactive` and supply an exact
+slug, service ID, or a query with one unique result.
+
+A workspace lookup permission error is not treated as absence and never falls
+through to Registry search. Registry fallback requires `catalogue.read`. The
+command only authors the local YAML; it neither activates the service nor proves
+the caller has `service.manage` and `workspace.update`. Run `workspace plan`,
+review the resolved identity and permission checks, and then run `workspace
+apply` to activate it. `service search` remains available for explicit read-only
+browsing, but is not a prerequisite for this flow.
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
-| `--version` | | Default version to add | `""` |
-| `--service-id` | | Optional service ID to store when editing a local config directly | `""` |
+| `--version` | | Version to enable; omitted resolves latest during plan | `""` |
+| `--service-id` | | Registry service UUID to store in workspace config | `""` |
+| `--interactive` | `-i` | Select and confirm a Registry service when it is not already enabled | `false` |
 
 ## `workspace service delete <service-slug>`
 Delete a service from your Workspace configuration.

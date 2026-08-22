@@ -16,40 +16,67 @@ const (
 )
 
 type AppTokenGenerateRequest struct {
-	Name      string   `json:"name"`
-	Allow     []string `json:"allow,omitempty"`
-	ExpiresIn *int64   `json:"expires_in,omitempty"`
+	Name        string                   `json:"name"`
+	Allow       []string                 `json:"allow,omitempty"`
+	ExpiresIn   *int64                   `json:"expires_in,omitempty"`
+	BindingMode string                   `json:"binding_mode,omitempty"`
+	Bindings    []AppTokenBindingRequest `json:"bindings,omitempty"`
+}
+
+type AppTokenBindingRequest struct {
+	ServiceSlug string  `json:"service_slug"`
+	AuthName    string  `json:"auth_name"`
+	EndUserRef  string  `json:"end_user_ref"`
+	ResourceID  *string `json:"resource_id,omitempty"`
 }
 
 type AppTokenGenerateResponse struct {
-	ID          string     `json:"id"`
-	AppFamilyID string     `json:"app_family_id"`
-	Name        string     `json:"name"`
-	Allow       []string   `json:"allow"`
-	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
-	Token       string     `json:"token,omitempty"`
-	CreatedAt   time.Time  `json:"created_at"`
+	ID           string     `json:"id"`
+	AppFamilyID  string     `json:"app_family_id"`
+	Name         string     `json:"name"`
+	Allow        []string   `json:"allow"`
+	ExpiresAt    *time.Time `json:"expires_at,omitempty"`
+	BindingMode  string     `json:"binding_mode"`
+	BindingCount int        `json:"binding_count"`
+	Token        string     `json:"token,omitempty"`
+	CreatedAt    time.Time  `json:"created_at"`
 }
 
 type AppTokenResponse struct {
-	ID          string     `json:"id"`
-	AppFamilyID string     `json:"app_family_id"`
-	Name        string     `json:"name"`
-	Allow       []string   `json:"allow"`
-	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
-	CreatedAt   time.Time  `json:"created_at"`
-	LastUsedAt  *time.Time `json:"last_used_at,omitempty"`
+	ID                   string     `json:"id"`
+	AppFamilyID          string     `json:"app_family_id"`
+	Name                 string     `json:"name"`
+	Allow                []string   `json:"allow"`
+	ExpiresAt            *time.Time `json:"expires_at,omitempty"`
+	CreatedAt            time.Time  `json:"created_at"`
+	LastUsedAt           *time.Time `json:"last_used_at,omitempty"`
+	BindingMode          string     `json:"binding_mode"`
+	Status               string     `json:"status"`
+	ExecutionCount       int64      `json:"execution_count"`
+	SessionCount         int64      `json:"session_count"`
+	IssuedBySubjectID    string     `json:"issued_by_subject_id,omitempty"`
+	IssuedByCredentialID string     `json:"issued_by_credential_id,omitempty"`
+	TerminatedAt         *time.Time `json:"terminated_at,omitempty"`
+	TerminationReason    string     `json:"termination_reason,omitempty"`
 }
 
 func (t *AppTokenResponse) UnmarshalJSON(data []byte) error {
 	type rawAppTokenResponse struct {
-		ID          string   `json:"id"`
-		AppFamilyID string   `json:"app_family_id"`
-		Name        string   `json:"name"`
-		Allow       []string `json:"allow"`
-		ExpiresAt   string   `json:"expires_at"`
-		CreatedAt   string   `json:"created_at"`
-		LastUsedAt  string   `json:"last_used_at"`
+		ID                   string   `json:"id"`
+		AppFamilyID          string   `json:"app_family_id"`
+		Name                 string   `json:"name"`
+		Allow                []string `json:"allow"`
+		ExpiresAt            string   `json:"expires_at"`
+		CreatedAt            string   `json:"created_at"`
+		LastUsedAt           string   `json:"last_used_at"`
+		BindingMode          string   `json:"binding_mode"`
+		Status               string   `json:"status"`
+		ExecutionCount       int64    `json:"execution_count"`
+		SessionCount         int64    `json:"session_count"`
+		IssuedBySubjectID    string   `json:"issued_by_subject_id"`
+		IssuedByCredentialID string   `json:"issued_by_credential_id"`
+		TerminatedAt         string   `json:"terminated_at"`
+		TerminationReason    string   `json:"termination_reason"`
 	}
 	var raw rawAppTokenResponse
 	if err := json.Unmarshal(data, &raw); err != nil {
@@ -67,6 +94,10 @@ func (t *AppTokenResponse) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return fmt.Errorf("parse app token expires_at: %w", err)
 	}
+	terminatedAt, err := parseOptionalGraphQLTime(raw.TerminatedAt)
+	if err != nil {
+		return fmt.Errorf("parse app token terminated_at: %w", err)
+	}
 	*t = AppTokenResponse{
 		ID:          raw.ID,
 		AppFamilyID: raw.AppFamilyID,
@@ -75,6 +106,10 @@ func (t *AppTokenResponse) UnmarshalJSON(data []byte) error {
 		ExpiresAt:   expiresAt,
 		CreatedAt:   createdAt,
 		LastUsedAt:  lastUsedAt,
+		BindingMode: raw.BindingMode, Status: raw.Status,
+		ExecutionCount: raw.ExecutionCount, SessionCount: raw.SessionCount,
+		IssuedBySubjectID: raw.IssuedBySubjectID, IssuedByCredentialID: raw.IssuedByCredentialID,
+		TerminatedAt: terminatedAt, TerminationReason: raw.TerminationReason,
 	}
 	return nil
 }
@@ -123,7 +158,10 @@ func (c *Client) GenerateAppToken(appFamilyID string, input AppTokenGenerateRequ
 func (c *Client) ListAppTokens(appFamilyID string) ([]AppTokenResponse, error) {
 	query := `
 		query AppTokens($appFamilyId: String!) {
-			appTokens(app_family_id: $appFamilyId) { id app_family_id name allow expires_at created_at last_used_at }
+			appTokens(app_family_id: $appFamilyId) {
+				id app_family_id name allow binding_mode status expires_at created_at last_used_at
+				execution_count session_count issued_by_subject_id issued_by_credential_id terminated_at termination_reason
+			}
 		}
 	`
 	var resp struct {

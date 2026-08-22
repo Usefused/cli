@@ -108,6 +108,16 @@ func recordAppliedChangeIf(ctx context.Context, action, resourceKind string, cha
 	recordAppliedChange(ctx, action, resourceKind)
 }
 
+// recordGeneratedBindingCount keeps smart-init decisions diagnosable while
+// excluding service names, variable names, references, and provider values.
+func recordGeneratedBindingCount(ctx context.Context, count int) {
+	// A missing context cannot own a command span, so there is nowhere safe to attach metadata.
+	if ctx == nil {
+		return
+	}
+	trace.SpanFromContext(ctx).SetAttributes(attribute.Int("scaffold.generated_binding_count", count))
+}
+
 func withApplyAudit(cmd *cobra.Command, opts applyOptions) applyOptions {
 	opts.auditCtx = cmd.Context()
 	opts.auditAction = cmd.CommandPath()

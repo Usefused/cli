@@ -28,9 +28,6 @@ func newServiceInfoTestServer(t *testing.T, serviceJSON string) *httptest.Server
 func newServiceSearchTestServer(t *testing.T, servicesJSON string) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/graphql" {
-			t.Fatalf("unexpected path %s", r.URL.Path)
-		}
 		var body struct {
 			Query     string                 `json:"query"`
 			Variables map[string]interface{} `json:"variables"`
@@ -38,14 +35,24 @@ func newServiceSearchTestServer(t *testing.T, servicesJSON string) *httptest.Ser
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatalf("decode GraphQL body: %v", err)
 		}
-		if !strings.Contains(body.Query, "searchServices") {
-			t.Fatalf("expected searchServices query, got %q", body.Query)
-		}
-		if body.Variables["q"] != "billing" {
-			t.Fatalf("query variable = %#v, want billing", body.Variables["q"])
-		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"data":{"searchServices":` + servicesJSON + `}}`))
+		switch r.URL.Path {
+		case "/graphql":
+			if !strings.Contains(body.Query, "searchServices") {
+				t.Fatalf("expected searchServices query, got %q", body.Query)
+			}
+			if body.Variables["q"] != "billing" {
+				t.Fatalf("query variable = %#v, want billing", body.Variables["q"])
+			}
+			_, _ = w.Write([]byte(`{"data":{"searchServices":` + servicesJSON + `}}`))
+		case "/engine/graphql":
+			if !strings.Contains(body.Query, "workspaceServices") {
+				t.Fatalf("expected workspaceServices query, got %q", body.Query)
+			}
+			_, _ = w.Write([]byte(`{"data":{"workspaceServices":[]}}`))
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
 	}))
 }
 
@@ -237,8 +244,96 @@ func TestServiceSearch_JSONHasStableReusableFields(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &results); err != nil {
 		t.Fatalf("decode JSON output: %v\n%s", err, out)
 	}
-	if len(results) != 1 || results[0].Slug != "@acme/billing" || results[0].ServiceID != "svc-public" || !results[0].IsPublic {
+	if len(results) != 1 || results[0].Slug != "@acme/billing" || results[0].ServiceID != "svc-public" || results[0].IsPublic == nil || !*results[0].IsPublic || results[0].WorkspaceStatus != serviceWorkspaceAvailable {
 		t.Fatalf("unexpected search output: %#v", results)
+	}
+}
+
+func TestServiceSearchShowsEnabledAndAvailableRegistryServices(t *testing.T) {
+	dir := t.TempDir()
+	server, _ := newWorkspaceServiceDiscoveryServer(t, `[
+		{"service_id":"svc-owned","service_name":"Billing API","service_slug":"billing"}
+	]`, `[
+		{"id":"svc-public","name":"Acme Billing","slug":"billing","provider":{"handle":"acme"},"is_owner":false,"is_public":true},
+		{"id":"svc-owned","name":"Billing API","slug":"billing","provider":{"handle":"mine"},"is_owner":true,"is_public":false}
+	]`)
+	defer server.Close()
+
+	out := runCommandInDirOutput(t, dir, server.URL, []string{"service", "search", "--q", "billing"})
+	if !strings.Contains(out, "Billing API") || !strings.Contains(out, serviceWorkspaceEnabled) {
+		t.Fatalf("expected enabled workspace result, got %q", out)
+	}
+	if !strings.Contains(out, "@acme/billing") || !strings.Contains(out, serviceWorkspaceAvailable) {
+		t.Fatalf("expected Registry result available to add, got %q", out)
+	}
+	if strings.Index(out, "Billing API") > strings.Index(out, "Acme Billing") {
+		t.Fatalf("enabled workspace result should be listed first, got %q", out)
+	}
+}
+
+func TestServiceSearchIncludesExactWorkspaceOnlyResult(t *testing.T) {
+	dir := t.TempDir()
+	server, _ := newWorkspaceServiceDiscoveryServer(t, `[
+		{"service_id":"svc-workspace","service_name":"Private Billing","service_slug":"private-billing"}
+	]`, `[]`)
+	defer server.Close()
+
+	out := runCommandInDirOutput(t, dir, server.URL, []string{"service", "search", "--q", "private-billing", "--json"})
+	var results []serviceSearchResult
+	if err := json.Unmarshal([]byte(out), &results); err != nil {
+		t.Fatalf("decode combined search output: %v\n%s", err, out)
+	}
+	if len(results) != 1 || results[0].ServiceID != "svc-workspace" || results[0].WorkspaceStatus != serviceWorkspaceEnabled {
+		t.Fatalf("unexpected workspace-only result: %#v", results)
+	}
+	if strings.Contains(out, `"is_owner"`) || strings.Contains(out, `"is_public"`) {
+		t.Fatalf("workspace-only result must not invent Registry visibility metadata: %s", out)
+	}
+}
+
+func TestServiceSearchKeepsProviderCollisionsDistinct(t *testing.T) {
+	dir := t.TempDir()
+	server, _ := newWorkspaceServiceDiscoveryServer(t, `[
+		{"service_id":"svc-acme","service_name":"Acme Billing","service_slug":"@acme/billing"}
+	]`, `[
+		{"id":"svc-other","name":"Other Billing","slug":"billing","provider":{"handle":"other"},"is_owner":false,"is_public":true}
+	]`)
+	defer server.Close()
+
+	out := runCommandInDirOutput(t, dir, server.URL, []string{"service", "search", "--q", "@other/billing", "--json"})
+	var results []serviceSearchResult
+	if err := json.Unmarshal([]byte(out), &results); err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].ServiceID != "svc-other" || results[0].WorkspaceStatus != serviceWorkspaceAvailable {
+		t.Fatalf("provider collision contaminated search results: %#v", results)
+	}
+}
+
+func TestServiceSearchStopsWhenWorkspaceStatusIsUnauthorized(t *testing.T) {
+	dir := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/graphql" {
+			_, _ = w.Write([]byte(`{"data":{"searchServices":[{"id":"svc-public","name":"Acme Billing","slug":"billing","provider":{"handle":"acme"},"is_owner":false,"is_public":true}]}}`))
+			return
+		}
+		http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
+	}))
+	defer server.Close()
+
+	errText := runCommandInDirExpectError(t, dir, server.URL, []string{"service", "search", "--q", "billing"})
+	if !strings.Contains(strings.ToLower(errText), "forbidden") && !strings.Contains(errText, "403") {
+		t.Fatalf("expected workspace permission failure, got %q", errText)
+	}
+}
+
+func TestServiceSearchReportsEmptyCombinedResult(t *testing.T) {
+	server := newServiceSearchTestServer(t, `[]`)
+	defer server.Close()
+	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"service", "search", "--q", "billing"})
+	if !strings.Contains(out, `No workspace or Registry services found for query "billing".`) {
+		t.Fatalf("unexpected empty result message %q", out)
 	}
 }
 

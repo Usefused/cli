@@ -3,6 +3,43 @@
 Fused can manage workspace services, generated SDKs, MCP servers, and webhook
 registrations through YAML stored under `.fused/`.
 
+## Create or extend a config
+
+Use one deterministic command for workspace, SDK, and MCP files:
+
+```bash
+fused-cli workspace init
+fused-cli sdk init my-sdk \
+  --service okta=2026-07-09 \
+  --operation okta=listLogEvents
+fused-cli mcp init support-agent \
+  --service jira=1001.0.0 \
+  --select-all jira
+```
+
+The default output follows `.fused/` discovery; `-f <path>` overrides it. An
+existing file is never replaced implicitly. Repeat the command with
+`--extend` to merge another service or operation while preserving existing
+selections:
+
+```bash
+fused-cli sdk init my-sdk --extend \
+  --service stripe=2026-08-01 \
+  --operation stripe=createPayment
+```
+
+Running `init` without service flags creates an editable empty skeleton. SDK
+and MCP validation becomes actionable after each declared service also has an
+operation list or `--select-all`. The command does not create buckets; pass
+`--bucket` only after choosing an existing bucket the caller may use.
+
+A service-bearing SDK/MCP init or `--extend` makes one Engine query and adds
+only missing required server-variable bindings; explicit injections, workspace
+policy, and native `x-fused-connect` routing are preserved. JSON output reports
+`generated_binding_count`; use each key written into the config with
+`fused-cli value set`. The `fused-config` OpenAPI/Postman reference contains the
+single canonical Sendbird setup example and routing safety rules.
+
 ## SDK configuration
 
 Create `.fused/sdks/my-sdk.yaml`:
@@ -156,6 +193,13 @@ fused-cli workspace apply
 fused-cli sdk plan -f .fused/sdks/my-sdk.yaml
 fused-cli sdk apply -f .fused/sdks/my-sdk.yaml --json
 ```
+
+For terminal setup, `fused-cli sdk plan --interactive -f
+.fused/sdks/my-sdk.yaml` can securely fill only credentials Engine reports
+missing from that file's resolved `bucket`, confirm the immediate bucket write,
+and retry once. It never creates or falls back to another bucket. Automation
+should keep using ordinary or `--json` planning and handle the structured
+`bucket_credentials_missing` result.
 
 Plan output contains the complete Engine change summary. A saved receipt is
 bound to the exact config content and normalized Engine URL. Apply validates

@@ -26,7 +26,7 @@ func TestAppTokenHelpersShareTransportAndPreserveKindResolution(t *testing.T) {
 				t.Fatalf("app_family_id = %q", r.URL.Query().Get("app_family_id"))
 			}
 			if r.Method == http.MethodPost {
-				_, _ = w.Write([]byte(`{"id":"token-1","app_family_id":"family-1","name":"agent","allow":["*"],"token":"shown-once","created_at":"2026-08-10T12:00:00Z"}`))
+				_, _ = w.Write([]byte(`{"id":"token-1","app_family_id":"family-1","name":"agent","allow":["*"],"token":"shown-once","expires_at":"2026-08-10T13:00:00Z","created_at":"2026-08-10T12:00:00Z"}`))
 				return
 			}
 			w.WriteHeader(http.StatusNoContent)
@@ -48,6 +48,10 @@ func TestAppTokenHelpersShareTransportAndPreserveKindResolution(t *testing.T) {
 	}
 	if !strings.Contains(output.String(), "shown-once") {
 		t.Fatalf("issue output = %q", output.String())
+	}
+	// Human output must make the automatic access cutoff visible when copying the one-time token.
+	if !strings.Contains(output.String(), "Expires: 2026-08-10T13:00:00Z") {
+		t.Fatalf("issue output missing expiry = %q", output.String())
 	}
 
 	tokens, err := loadAppTokens(appTokenKindMCP, "mcp-name")

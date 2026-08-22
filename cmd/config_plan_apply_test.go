@@ -188,7 +188,7 @@ services:
 			}
 			_, _ = w.Write([]byte(`{"plan_id":"plan-mcp","config_key":"mcp:github-agent:1.0.0","source_hash":"` + sourceHash + `","summary":{}}`))
 		case "/mcp-config/apply":
-			_, _ = w.Write([]byte(`{"status":"applied","plan_id":"plan-mcp","config_key":"mcp:github-agent:1.0.0","app_family_id":"family-1","app_id":"runtime-1","mcp_url":"https://engine.example/mcp/runtime-1/sse","execution_token":"shown-once"}`))
+			_, _ = w.Write([]byte(`{"status":"applied","plan_id":"plan-mcp","config_key":"mcp:github-agent:1.0.0","app_family_id":"family-1","app_id":"runtime-1","default_transport":"streamable_http","transport_urls":{"streamable_http":"https://public.engine.test/mcp/runtime-1","sse":"https://public.engine.test/mcp/runtime-1/sse"},"execution_token":"shown-once"}`))
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
@@ -196,9 +196,18 @@ services:
 	defer server.Close()
 
 	runCommandInDir(t, dir, server.URL, []string{"mcp", "plan", "-f", path})
-	runCommandInDir(t, dir, server.URL, []string{"mcp", "apply", "-f", path})
+	applyOutput := runCommandInDirOutput(t, dir, server.URL, []string{"mcp", "apply", "-f", path})
 	if sourceHash == "" {
 		t.Fatal("MCP plan did not include a source hash")
+	}
+	for _, expected := range []string{
+		"Default transport: streamable_http",
+		"Streamable HTTP (recommended): https://public.engine.test/mcp/runtime-1",
+		"SSE (legacy): https://public.engine.test/mcp/runtime-1/sse",
+	} {
+		if !strings.Contains(applyOutput, expected) {
+			t.Fatalf("apply output %q is missing %q", applyOutput, expected)
+		}
 	}
 }
 
@@ -1059,13 +1068,22 @@ services:
 }
 
 func TestWorkspaceAddServiceWritesSlugOnlyYaml(t *testing.T) {
+	resetWorkspaceServiceAddState(t)
 	dir := t.TempDir()
 	path := writeSprintConfig(t, dir, "workspace.yaml", `
 apiVersion: fused/v1
 kind: workspace
 services: {}
 `)
-	runCommandInDir(t, dir, "", []string{"workspace", "service", "add", "okta", "-f", path, "--version", "2026-07-01"})
+	server, registryCalls := newWorkspaceServiceDiscoveryServer(t,
+		`[{"service_id":"00000000-0000-4000-8000-000000000001","service_name":"Okta","service_slug":"okta","version":"2026-07-01","enabled_versions":[]}]`,
+		`[]`,
+	)
+	defer server.Close()
+	runCommandInDir(t, dir, server.URL, []string{"workspace", "service", "add", "okta", "-f", path, "--version", "2026-07-01"})
+	if *registryCalls != 0 {
+		t.Fatalf("workspace hit should not search Registry, got %d calls", *registryCalls)
+	}
 
 	after, err := os.ReadFile(path)
 	if err != nil {

@@ -109,13 +109,18 @@ func TestAppOwnerErrorsUseAllowlistedProductMessages(t *testing.T) {
 
 func TestBucketReadinessErrorKeepsActionableMissingAuthentication(t *testing.T) {
 	serviceID := "1795007d-37de-4c5c-bafa-07046a25d8f0"
-	body := `{"error":{"code":"bucket_credentials_missing","message":"The selected credential set is missing required authentication material.","category":"validation","retryable":false,"details":{"missing":["` + serviceID + ` (basic:basicAuth_username)","` + serviceID + ` (basic:basicAuth_password)"]},"remediation":"Add the required credentials and create the plan again."}}`
-	message := newHTTPError(http.StatusBadRequest, []byte(body)).Error()
+	body := `{"error":{"code":"bucket_credentials_missing","message":"The selected credential set is missing required authentication material.","category":"validation","retryable":false,"details":{"bucket":{"id":"11111111-1111-4111-8111-111111111111","name":"production"},"missing_credentials":[{"service_id":"` + serviceID + `","service":"Jira","auth_type":"basic","auth_name":"basicAuth","basic_password_mode":"required","required_fields":[{"name":"username","secret_key":"basicAuth_username"},{"name":"password","secret_key":"basicAuth_password"}]}]},"remediation":"Add the required credentials and create the plan again."}}`
+	err := newHTTPError(http.StatusBadRequest, []byte(body))
+	message := err.Error()
 
-	for _, want := range []string{"bucket_credentials_missing", "required authentication", "basicAuth_username", "basicAuth_password", "create the plan again"} {
+	for _, want := range []string{"bucket_credentials_missing", "required authentication", "Missing credential requirements: 1", "create the plan again"} {
 		if !strings.Contains(message, want) {
 			t.Fatalf("message %q does not contain %q", message, want)
 		}
+	}
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.Details.Bucket == nil || apiErr.Details.Bucket.Name != "production" || len(apiErr.Details.MissingCredentials) != 1 {
+		t.Fatalf("typed readiness details = %#v", apiErr)
 	}
 }
 

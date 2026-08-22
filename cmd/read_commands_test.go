@@ -137,21 +137,7 @@ func TestSecretListUsesBucketScopedPagination(t *testing.T) {
 
 func TestSDKListUsesEnginePaginationAndFixedKind(t *testing.T) {
 	var sawVariables map[string]any
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body struct {
-			Query     string         `json:"query"`
-			Variables map[string]any `json:"variables"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Fatalf("decode graphql body: %v", err)
-		}
-		if !strings.Contains(body.Query, "apps(kind: $kind") {
-			t.Fatalf("expected apps query, got %s", body.Query)
-		}
-		sawVariables = body.Variables
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"data":{"apps":{"total":1,"items":[{"app_family_id":"family-1","app_id":"sdk-1","name":"security","version":"1.0.0","kind":"sdk","status":"inactive","created_at":"2026-07-21T00:00:00Z","selections":[]}]}}}`))
-	}))
+	server := httptest.NewServer(sdkListTestHandler(t, &sawVariables))
 	defer server.Close()
 
 	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"sdk", "list", "--limit", "10", "--offset", "20"})
@@ -164,19 +150,35 @@ func TestSDKListUsesEnginePaginationAndFixedKind(t *testing.T) {
 	}
 }
 
+func sdkListTestHandler(t *testing.T, sawVariables *map[string]any) http.Handler {
+	t.Helper()
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body := decodeGraphQLTestRequest(t, r)
+		if !strings.Contains(body.Query, "apps(kind: $kind") {
+			t.Fatalf("expected apps query, got %s", body.Query)
+		}
+		*sawVariables = body.Variables
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"apps":{"total":1,"items":[{"app_family_id":"family-1","app_id":"sdk-1","name":"security","version":"1.0.0","kind":"sdk","status":"inactive","created_at":"2026-07-21T00:00:00Z","selections":[]}]}}}`))
+	})
+}
+
 func TestSDKServicesUsesKindScopedHumanReferenceAtEngineBoundary(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body struct {
-			Query     string         `json:"query"`
-			Variables map[string]any `json:"variables"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Fatalf("decode graphql body: %v", err)
-		}
+	server := httptest.NewServer(sdkServicesTestHandler(t))
+	defer server.Close()
+
+	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"sdk", "services", "support@2.0.0"})
+	if !strings.Contains(out, "github") || !strings.Contains(out, "service-1") || !strings.Contains(out, "2") {
+		t.Fatalf("unexpected SDK services output: %q", out)
+	}
+}
+
+func sdkServicesTestHandler(t *testing.T) http.Handler {
+	t.Helper()
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body := decodeGraphQLTestRequest(t, r)
 		if strings.Contains(body.Query, "appReference") {
-			if body.Variables["reference"] != "support" || body.Variables["version"] != "2.0.0" || body.Variables["kind"] != "sdk" {
-				t.Fatalf("unexpected SDK reference: %#v", body.Variables)
-			}
+			assertSDKReferenceVariables(t, body.Variables)
 			_, _ = w.Write([]byte(`{"data":{"appReference":{"id":"app-1","kind":"app"}}}`))
 			return
 		}
@@ -184,12 +186,13 @@ func TestSDKServicesUsesKindScopedHumanReferenceAtEngineBoundary(t *testing.T) {
 			t.Fatalf("unexpected app services request: %#v", body)
 		}
 		_, _ = w.Write([]byte(`{"data":{"appServices":[{"service_id":"service-1","service_slug":"github","service_name":"GitHub","version":"v1","select_all":false,"endpoint_count":2,"webhook_count":1}]}}`))
-	}))
-	defer server.Close()
+	})
+}
 
-	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"sdk", "services", "support@2.0.0"})
-	if !strings.Contains(out, "github") || !strings.Contains(out, "service-1") || !strings.Contains(out, "2") {
-		t.Fatalf("unexpected SDK services output: %q", out)
+func assertSDKReferenceVariables(t *testing.T, variables map[string]any) {
+	t.Helper()
+	if variables["reference"] != "support" || variables["version"] != "2.0.0" || variables["kind"] != "sdk" {
+		t.Fatalf("unexpected SDK reference: %#v", variables)
 	}
 }
 
@@ -226,62 +229,122 @@ func TestSDKShowUsesPublicIDLabels(t *testing.T) {
 
 func TestMCPListUsesEnginePaginationAndFixedKind(t *testing.T) {
 	var sawVariables map[string]any
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body struct {
-			Query     string         `json:"query"`
-			Variables map[string]any `json:"variables"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Fatalf("decode graphql body: %v", err)
-		}
-		if !strings.Contains(body.Query, "apps(kind: $kind") {
-			t.Fatalf("expected MCP apps query, got %s", body.Query)
-		}
-		sawVariables = body.Variables
-		_, _ = w.Write([]byte(`{"data":{"apps":{"total":1,"items":[{"app_family_id":"family-1","app_id":"mcp-1","name":"support","version":"1.0.0","kind":"mcp","status":"active","created_at":"now","selections":[]}]}}}`))
-	}))
+	server := httptest.NewServer(mcpListTestHandler(t, &sawVariables))
 	defer server.Close()
 
 	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"mcp", "list", "--limit", "5", "--offset", "10"})
-	if sawVariables["kind"] != "mcp" || sawVariables["limit"] != float64(5) || sawVariables["offset"] != float64(10) {
-		t.Fatalf("unexpected MCP list variables: %#v", sawVariables)
+	assertMCPListVariables(t, sawVariables)
+	assertMCPListOutput(t, out)
+}
+
+func assertMCPListVariables(t *testing.T, variables map[string]any) {
+	t.Helper()
+	if variables["kind"] != "mcp" || variables["limit"] != float64(5) || variables["offset"] != float64(10) {
+		t.Fatalf("unexpected MCP list variables: %#v", variables)
 	}
+}
+
+func assertMCPListOutput(t *testing.T, out string) {
+	t.Helper()
 	if !strings.Contains(out, "support") || !strings.Contains(out, "mcp-1") || !strings.Contains(out, "family-1") ||
-		!strings.Contains(out, "MCP_ID") || !strings.Contains(out, "VERSION_ID") || !strings.Contains(out, "/mcp/mcp-1/sse") {
+		!strings.Contains(out, "MCP_ID") || !strings.Contains(out, "VERSION_ID") ||
+		!strings.Contains(out, "DEFAULT_TRANSPORT") || !strings.Contains(out, "streamable_http") ||
+		!strings.Contains(out, "STREAMABLE HTTP (RECOMMENDED)") || !strings.Contains(out, "https://public.engine.test/mcp/mcp-1") ||
+		!strings.Contains(out, "SSE (LEGACY)") || !strings.Contains(out, "https://public.engine.test/mcp/mcp-1/sse") {
 		t.Fatalf("unexpected MCP list output: %q", out)
 	}
 }
 
+func TestMCPListJSONRetainsTypedTransportEndpoints(t *testing.T) {
+	server := httptest.NewServer(mcpListTestHandler(t, new(map[string]any)))
+	defer server.Close()
+
+	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"mcp", "list", "--json"})
+	var page struct {
+		Items []map[string]any `json:"items"`
+	}
+	if err := json.Unmarshal([]byte(out), &page); err != nil {
+		t.Fatalf("decode MCP list JSON %q: %v", out, err)
+	}
+	if len(page.Items) != 1 {
+		t.Fatalf("MCP list items = %#v", page.Items)
+	}
+	item := page.Items[0]
+	transportURLs, ok := item["transport_urls"].(map[string]any)
+	if item["default_transport"] != "streamable_http" || !ok ||
+		transportURLs["streamable_http"] != "https://public.engine.test/mcp/mcp-1" ||
+		transportURLs["sse"] != "https://public.engine.test/mcp/mcp-1/sse" {
+		t.Fatalf("typed MCP transport JSON = %#v", item)
+	}
+	if _, exists := item["url"]; exists {
+		t.Fatalf("MCP list JSON retained ambiguous url: %#v", item)
+	}
+	if _, exists := item["mcp_url"]; exists {
+		t.Fatalf("MCP list JSON retained ambiguous mcp_url: %#v", item)
+	}
+}
+
+func mcpListTestHandler(t *testing.T, sawVariables *map[string]any) http.Handler {
+	t.Helper()
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body := decodeGraphQLTestRequest(t, r)
+		if !strings.Contains(body.Query, "apps(kind: $kind") {
+			t.Fatalf("expected MCP apps query, got %s", body.Query)
+		}
+		*sawVariables = body.Variables
+		_, _ = w.Write([]byte(`{"data":{"apps":{"total":1,"items":[{"app_family_id":"family-1","app_id":"mcp-1","name":"support","version":"1.0.0","kind":"mcp","status":"active","created_at":"now","default_transport":"streamable_http","transport_urls":{"streamable_http":"https://public.engine.test/mcp/mcp-1","sse":"https://public.engine.test/mcp/mcp-1/sse"},"selections":[]}]}}}`))
+	})
+}
+
 func TestMCPDeactivateResolvesOnlyMCPNames(t *testing.T) {
 	var sawResolution, sawDeactivate bool
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/engine/graphql":
-			var body struct {
-				Variables map[string]any `json:"variables"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				t.Fatalf("decode MCP reference request: %v", err)
-			}
-			if body.Variables["reference"] != "support" || body.Variables["version"] != "1.0.0" || body.Variables["kind"] != "mcp" {
-				t.Fatalf("unexpected MCP reference variables: %#v", body.Variables)
-			}
-			sawResolution = true
-			_, _ = w.Write([]byte(`{"data":{"appReference":{"id":"mcp-1","kind":"app"}}}`))
-		case "/apps/mcp-1/":
-			if r.Method != http.MethodDelete {
-				t.Fatalf("unexpected MCP deactivate method: %s", r.Method)
-			}
-			sawDeactivate = true
-			w.WriteHeader(http.StatusNoContent)
-		default:
-			t.Fatalf("unexpected MCP remove request: %s %s", r.Method, r.URL.Path)
-		}
-	}))
+	server := httptest.NewServer(mcpDeactivateTestHandler(t, &sawResolution, &sawDeactivate))
 	defer server.Close()
 
 	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"mcp", "deactivate", "support@1.0.0"})
 	if !sawResolution || !sawDeactivate || !strings.Contains(out, "Deactivated MCP server") {
 		t.Fatalf("MCP deactivate = resolution:%t deactivate:%t output:%q", sawResolution, sawDeactivate, out)
 	}
+}
+
+func mcpDeactivateTestHandler(t *testing.T, sawResolution, sawDeactivate *bool) http.Handler {
+	t.Helper()
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/engine/graphql":
+			body := decodeGraphQLTestRequest(t, r)
+			assertMCPReferenceVariables(t, body.Variables)
+			*sawResolution = true
+			_, _ = w.Write([]byte(`{"data":{"appReference":{"id":"mcp-1","kind":"app"}}}`))
+		case "/apps/mcp-1/":
+			if r.Method != http.MethodDelete {
+				t.Fatalf("unexpected MCP deactivate method: %s", r.Method)
+			}
+			*sawDeactivate = true
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Fatalf("unexpected MCP remove request: %s %s", r.Method, r.URL.Path)
+		}
+	})
+}
+
+func assertMCPReferenceVariables(t *testing.T, variables map[string]any) {
+	t.Helper()
+	if variables["reference"] != "support" || variables["version"] != "1.0.0" || variables["kind"] != "mcp" {
+		t.Fatalf("unexpected MCP reference variables: %#v", variables)
+	}
+}
+
+type graphQLTestRequest struct {
+	Query     string         `json:"query"`
+	Variables map[string]any `json:"variables"`
+}
+
+func decodeGraphQLTestRequest(t *testing.T, request *http.Request) graphQLTestRequest {
+	t.Helper()
+	var body graphQLTestRequest
+	if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+		t.Fatalf("decode graphql body: %v", err)
+	}
+	return body
 }

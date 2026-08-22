@@ -6,6 +6,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -53,11 +54,7 @@ var secretSetCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		if err := runSecretSet(cmd, args[0], value); err != nil {
-			return err
-		}
-		recordAppliedChange(cmd.Context(), cmd.CommandPath(), "secret")
-		return nil
+		return runSecretSet(cmd, args[0], value)
 	}),
 }
 
@@ -119,15 +116,9 @@ func runSecretSet(cmd *cobra.Command, serviceSlug, value string) error {
 	if err != nil {
 		return err
 	}
-	authType := canonicalSecretAuthType(auth)
-	// Basic auth requires two distinct inputs (username and password) which can't be cleanly parsed from a single positional argument, so we route it to a specialized handler.
-	if authType == "basic" {
-		return handleBasicSecretSet(client, info.ID, bucketID, auth, value, expiresAt)
-	}
-	if authType == "mtls" {
-		return handleMTLSSecretSet(client, info.ID, bucketID, auth, value, expiresAt)
-	}
-	return handleTokenSecretSet(client, info.ID, bucketID, auth, value, expiresAt, serviceSlug)
+	return setSecretForAuth(client, info.ID, bucketID, auth, value, expiresAt, serviceSlug, cmd.OutOrStdout(), credentialMutationOptions{
+		auditCtx: cmd.Context(), auditAction: cmd.CommandPath(), resourceKind: "secret",
+	})
 }
 
 // parseSecretExpiresAt validates expiry locally so malformed timestamps do not
@@ -238,22 +229,85 @@ func promptSecretAuthSelect(info *api.ServiceInfo) (*api.AuthConfig, error) {
 	return &info.AuthConfigs[selected], nil
 }
 
-func handleBasicSecretSet(client *api.Client, serviceID, bucketID string, auth *api.AuthConfig, value string, expiresAt *time.Time) error {
-	username, password, err := resolveBasicSecretInput(auth.BasicPasswordMode, value)
-	if err != nil {
-		return err
-	}
+type secretCredentialInput struct {
+	username string
+	password string
+	cert     string
+	key      string
+	token    string
+}
 
-	name := secretAuthCredentialName(auth)
-	err = client.UpsertSecrets(bucketID, []api.SecretUpsertRequest{
-		{ServiceID: serviceID, KeyName: name + "_username", CredentialType: "basic", Value: username, ExpiresAt: expiresAt},
-		{ServiceID: serviceID, KeyName: name + "_password", CredentialType: "basic", Value: password, ExpiresAt: expiresAt},
-	})
+var collectSecretCredentialInput = resolveSecretCredentialInput
+
+// setSecretForAuth is the one static-credential mutation path used by both
+// `secret set` and interactive SDK planning. Keeping collection, provider key
+// naming, validation, persistence, output, and audit together prevents a plan
+// convenience flow from becoming a second credential implementation.
+func setSecretForAuth(client *api.Client, serviceID, bucketID string, auth *api.AuthConfig, value string, expiresAt *time.Time, serviceDisplay string, out io.Writer, mutation credentialMutationOptions) error {
+	input, err := collectSecretCredentialInput(auth, value)
 	if err != nil {
 		return err
 	}
-	fmt.Printf("Basic Auth secrets set successfully.\n")
+	if err := authorizeCredentialMutation(mutation); err != nil {
+		return err
+	}
+	if err := persistSecretCredential(client, serviceID, bucketID, auth, input, expiresAt); err != nil {
+		return err
+	}
+	recordCredentialMutation(mutation)
+	printSecretSetResult(out, auth, serviceDisplay, expiresAt)
 	return nil
+}
+
+func resolveSecretCredentialInput(auth *api.AuthConfig, value string) (secretCredentialInput, error) {
+	switch canonicalSecretAuthType(auth) {
+	case "basic":
+		username, password, err := resolveBasicSecretInput(auth.BasicPasswordMode, value)
+		return secretCredentialInput{username: username, password: password}, err
+	case "mtls":
+		cert, key, err := resolveMTLSSecretInput(value)
+		return secretCredentialInput{cert: cert, key: key}, err
+	default:
+		token, err := resolveTokenSecretInput(auth, value)
+		return secretCredentialInput{token: token}, err
+	}
+}
+
+func persistSecretCredential(client *api.Client, serviceID, bucketID string, auth *api.AuthConfig, input secretCredentialInput, expiresAt *time.Time) error {
+	name := secretAuthCredentialName(auth)
+	switch canonicalSecretAuthType(auth) {
+	case "basic":
+		return client.UpsertSecrets(bucketID, []api.SecretUpsertRequest{
+			{ServiceID: serviceID, KeyName: name + "_username", CredentialType: "basic", Value: input.username, ExpiresAt: expiresAt},
+			{ServiceID: serviceID, KeyName: name + "_password", CredentialType: "basic", Value: input.password, ExpiresAt: expiresAt},
+		})
+	case "mtls":
+		return client.UpsertSecrets(bucketID, []api.SecretUpsertRequest{
+			{ServiceID: serviceID, KeyName: name + "_cert", CredentialType: "mtls", Value: input.cert, ExpiresAt: expiresAt},
+			{ServiceID: serviceID, KeyName: name + "_key", CredentialType: "mtls", Value: input.key, ExpiresAt: expiresAt},
+		})
+	default:
+		return client.UpsertSecret(serviceID, name, canonicalSecretAuthType(auth), input.token, bucketID, expiresAt)
+	}
+}
+
+func printSecretSetResult(out io.Writer, auth *api.AuthConfig, serviceDisplay string, expiresAt *time.Time) {
+	if out == nil {
+		out = io.Discard
+	}
+	if canonicalSecretAuthType(auth) == "basic" {
+		fmt.Fprintln(out, "Basic Auth secrets set successfully.")
+		return
+	}
+	if canonicalSecretAuthType(auth) == "mtls" {
+		fmt.Fprintln(out, "mTLS secrets set successfully.")
+		return
+	}
+	if expiresAt != nil {
+		fmt.Fprintf(out, "Secret set successfully for %s (expires %s).\n", serviceDisplay, expiresAt.Format(time.RFC3339))
+		return
+	}
+	fmt.Fprintf(out, "Secret set successfully for %s.\n", serviceDisplay)
 }
 
 func resolveBasicSecretInput(mode api.BasicPasswordMode, value string) (string, string, error) {
@@ -293,79 +347,63 @@ func basicPasswordRequired(mode api.BasicPasswordMode) bool {
 	return mode == "" || mode == api.BasicPasswordMode("required")
 }
 
-func handleMTLSSecretSet(client *api.Client, serviceID, bucketID string, auth *api.AuthConfig, value string, expiresAt *time.Time) error {
+func resolveMTLSSecretInput(value string) (string, string, error) {
 	var cert, key string
 
 	if value != "" {
 		pairs := parseInlineKeyValuePairs(value)
 		cert, key = pairs["cert"], pairs["key"]
 		if cert == "" || key == "" {
-			return fmt.Errorf("mTLS auth requires both cert and key. Provide format 'cert=...;key=...' or use interactive mode (-i)")
+			return "", "", fmt.Errorf("mTLS auth requires both cert and key. Provide format 'cert=...;key=...' or use interactive mode (-i)")
 		}
 	} else {
 		if err := requireInteractive("provide the certificate and private key using the command's value input"); err != nil {
-			return err
+			return "", "", err
 		}
 		err := huh.NewText().Title("Client certificate PEM:").Value(&cert).Run()
 		if err != nil {
-			return err
+			return "", "", err
 		}
-		err = huh.NewText().Title("Client private key PEM:").Value(&key).Run()
+		// Private keys must not be echoed even though certificates are safe to
+		// review in the multiline editor.
+		err = huh.NewInput().Title("Client private key PEM:").EchoMode(huh.EchoModePassword).Value(&key).Run()
 		if err != nil {
-			return err
+			return "", "", err
 		}
 	}
 
 	if err := validateMTLSSecretPair(cert, key); err != nil {
-		return err
+		return "", "", err
 	}
-	name := secretAuthCredentialName(auth)
-	if err := client.UpsertSecrets(bucketID, []api.SecretUpsertRequest{
-		{ServiceID: serviceID, KeyName: name + "_cert", CredentialType: "mtls", Value: cert, ExpiresAt: expiresAt},
-		{ServiceID: serviceID, KeyName: name + "_key", CredentialType: "mtls", Value: key, ExpiresAt: expiresAt},
-	}); err != nil {
-		return err
-	}
-	fmt.Printf("mTLS secrets set successfully.\n")
-	return nil
+	return cert, key, nil
 }
 
-// handleTokenSecretSet maps imported auth spellings onto the public credential
-// families while preserving the scheme key used for provider injection.
-func handleTokenSecretSet(client *api.Client, serviceID, bucketID string, auth *api.AuthConfig, value string, expiresAt *time.Time, serviceSlug string) error {
+// resolveTokenSecretInput masks every token-shaped provider credential while
+// leaving exact scheme naming to the shared persistence path.
+func resolveTokenSecretInput(auth *api.AuthConfig, value string) (string, error) {
 	keyName := secretAuthCredentialName(auth)
 	authType := canonicalSecretAuthType(auth)
-	credType := authType
 	promptTitle := fmt.Sprintf("Enter %s:", keyName)
 
 	if authType == "bearer" {
-		credType = "bearer"
 		promptTitle = "Enter Bearer Token:"
 	} else if authType == "oauth" {
-		credType = "oauth"
 		promptTitle = "Enter OAuth Token:"
 	}
 
 	if value == "" {
 		if err := requireInteractive("provide the credential value explicitly"); err != nil {
-			return err
+			return "", err
 		}
 		err := huh.NewInput().Title(promptTitle).EchoMode(huh.EchoModePassword).Value(&value).Run()
 		if err != nil {
-			return err
+			return "", err
 		}
 	}
-
-	err := client.UpsertSecret(serviceID, keyName, credType, value, bucketID, expiresAt)
-	if err != nil {
-		return err
+	if value == "" {
+		return "", errors.New("credential value cannot be empty")
 	}
-	if expiresAt != nil {
-		fmt.Printf("Secret set successfully for %s (expires %s).\n", serviceSlug, expiresAt.Format(time.RFC3339))
-	} else {
-		fmt.Printf("Secret set successfully for %s.\n", serviceSlug)
-	}
-	return nil
+	return value, nil
 }
 
 // canonicalSecretAuthType lets the CLI accept imported service metadata while
