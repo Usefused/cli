@@ -7,7 +7,10 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 const (
@@ -28,6 +31,24 @@ type AppTokenBindingRequest struct {
 	AuthName    string  `json:"auth_name"`
 	EndUserRef  string  `json:"end_user_ref"`
 	ResourceID  *string `json:"resource_id,omitempty"`
+}
+
+// ValidServiceSlugReference mirrors Engine's public fixed-binding grammar so
+// the CLI can reject malformed or internal identities before issuing a token.
+func ValidServiceSlugReference(reference string) bool {
+	reference = strings.TrimSpace(reference)
+	if reference == "" || strings.ContainsAny(reference, " \t\r\n,") {
+		return false
+	}
+	if _, err := uuid.Parse(reference); err == nil {
+		return false
+	}
+	if !strings.HasPrefix(reference, "@") {
+		return !strings.Contains(reference, "/")
+	}
+	remainder := reference[1:]
+	slash := strings.IndexByte(remainder, '/')
+	return slash > 0 && slash < len(remainder)-1 && !strings.Contains(remainder[slash+1:], "/")
 }
 
 type AppTokenGenerateResponse struct {

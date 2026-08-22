@@ -85,3 +85,16 @@ func assertFixedTokenBinding(t *testing.T, binding AppTokenBindingRequest) {
 		t.Fatalf("generate fixed binding = %#v", binding)
 	}
 }
+
+func TestValidServiceSlugReference(t *testing.T) {
+	for _, reference := range []string{"jira", "google-drive", "@google/gmail"} {
+		if !ValidServiceSlugReference(reference) {
+			t.Fatalf("rejected valid service slug reference %q", reference)
+		}
+	}
+	for _, reference := range []string{"", "@google/", "@/gmail", "google/gmail", "de305d54-75b4-431b-adb2-eb6b9e546014"} {
+		if ValidServiceSlugReference(reference) {
+			t.Fatalf("accepted invalid service slug reference %q", reference)
+		}
+	}
+}

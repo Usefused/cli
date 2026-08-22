@@ -112,8 +112,8 @@ func parseMCPTokenBinding(value string) (api.AppTokenBindingRequest, error) {
 	}
 	// Slugs are public service identities; UUID parsing here would leak Engine's
 	// internal persistence identity into every agent-token workflow.
-	if parts[0] == "" || parts[1] == "" || parts[2] == "" {
-		return api.AppTokenBindingRequest{}, errors.New("service-slug, auth-name, and end-user-ref are required")
+	if !api.ValidServiceSlugReference(parts[0]) || parts[1] == "" || parts[2] == "" {
+		return api.AppTokenBindingRequest{}, errors.New("a bare or @provider/service slug, auth-name, and end-user-ref are required")
 	}
 	binding := api.AppTokenBindingRequest{ServiceSlug: parts[0], AuthName: parts[1], EndUserRef: parts[2]}
 	// Resource validation applies only to the explicitly supplied fourth tuple field.

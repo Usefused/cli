@@ -77,7 +77,10 @@ func assertPerServiceFixedBindings(t *testing.T, bindings []api.AppTokenBindingR
 }
 
 func TestMCPTokenFixedBindingRejectsInvalidShape(t *testing.T) {
-	for _, value := range []string{"missing", ",gmail,customer", "jira,,customer"} {
+	for _, value := range []string{
+		"missing", ",gmail,customer", "jira,,customer", "@provider/,gmail,customer",
+		"de305d54-75b4-431b-adb2-eb6b9e546014,gmail,customer",
+	} {
 		if _, err := parseMCPTokenBinding(value); err == nil {
 			t.Fatalf("accepted invalid fixed binding %q", value)
 		}
