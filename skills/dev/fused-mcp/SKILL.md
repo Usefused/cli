@@ -221,7 +221,10 @@ tool schemas. Engine performs the provider requests and streams each successful
 page as a separate execution chunk.
 
 Neither the tool schema nor its `call()` function accepts provider tokens,
-API keys, auth scheme names, or Fused user selectors as parameters. For a
+API keys, auth scheme names, Fused user selectors, or server-routing variables
+as parameters. A `server_variable` injection resolves the effective base URL
+inside Engine; only imported endpoint path/query/header/cookie/body inputs
+belong in the tool schema. For a
 dynamic token, configure selectors once on the MCP connection rather than on
 each tool call:
 

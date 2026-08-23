@@ -91,9 +91,10 @@ The selected operation's imported `security_requirements` is authoritative:
 alternatives are OR, schemes within one alternative are AND, and an empty
 alternative permits anonymous execution. Do not collapse an AND alternative
 to one convenient scheme or invent a scheme absent from the operation. Basic
-password mode and templated server variables are carried from Registry into
-the generated object; SDK config still contains neither provider credentials
-nor resolved tenant URLs.
+password mode and templated server declarations are carried from Registry as
+Engine routing metadata; they never become generated method options. SDK
+methods expose only endpoint parameters and body fields, while SDK config still
+contains neither provider credentials nor resolved tenant URLs.
 Generated SDKs use only Registry schema/media projections and auth selectors; raw schemas, OAuth flow choice, credentials, signing, and challenges remain Engine-owned. Callback/link/runtime-expression and unknown-extension metadata stays inert; only normalized documentation fields may shape generated prose.
 For a non-object request root, generated TypeScript and Python methods expose a
 typed `payload` argument and forward that scalar or array as the declared root;

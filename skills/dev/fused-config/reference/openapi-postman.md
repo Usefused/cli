@@ -126,7 +126,11 @@ Fused execution extensions.
 
 A nested host such as `https://api-{{app_id}}.sendbird.com` becomes canonical
 `https://api-{app_id}.sendbird.com` with required `app_id` and no imported
-tenant default. A service-bearing `sdk init`/`mcp init`, including `--extend`,
+tenant default. Postman URL variable arrays can mix host and path variables;
+only names referenced by the request path become operation parameters. The
+host `app_id` remains Engine routing metadata, while a path such as
+`/v3/users/{user_id}` exposes only `user_id` to generated SDK methods or MCP
+tools. A service-bearing `sdk init`/`mcp init`, including `--extend`,
 uses one batched Engine lookup to add only missing required `server_variable`
 bucket-value bindings. It preserves explicit injections and skips variables
 already owned by workspace policy or native `x-fused-connect` routing. JSON
@@ -148,7 +152,7 @@ services:
 
 The command's `env` argument writes the bucket's non-secret value namespace;
 it is not an operating-system environment variable.
-`server_variable` accepts only a complete `${bucket.env.KEY}` reference; literals, interpolation, and secrets fail. (`${bucket.values.KEY}` remains an accepted alias, but prefer `env` -- it is what `init` generates and what every example here uses.) Set `name` to a variable declared by the selected service or operation server; required provider variables still fail closed at execution when unresolved.
+`server_variable` accepts only a complete `${bucket.env.KEY}` reference; literals, interpolation, and secrets fail. (`${bucket.values.KEY}` remains an accepted alias, but prefer `env` -- it is what `init` generates and what every example here uses.) Set `name` to a variable declared by the selected service or operation server; it configures server routing rather than an operation argument. Required provider variables still fail closed at execution when unresolved.
 Omitted mode means `force`; `default` yields to connection-resource/workspace values but precedes the provider fallback, while `force` also overrides connection-resource input. Workspace policy is final.
 Runtime checks variable syntax/enum and the final URL. Hostnames must retain a fixed registrable anchor (`.sendbird.com` passes); whole-host/public-suffix templates fail closed. Resource routing still uses reviewed `allowed_hosts`.
 
