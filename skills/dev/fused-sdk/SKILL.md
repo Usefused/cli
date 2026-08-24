@@ -290,11 +290,12 @@ SDK config back into that file. Anything the Engine app no longer selects is rem
 There is no implicit latest lookup or sync-time version upgrade; change the
 config's `version`, then plan and apply that exact version deliberately.
 
-An SDK definition created before portable selection metadata was versioned
-cannot be synced safely: its auth choice, narrowed connect scopes, or injection
-expressions may have been discarded. The CLI rejects that definition before
-writing the local file. Use the original config to publish a new SDK version,
-then retry `sdk sync`; do not infer missing security policy from endpoint IDs.
+Every persisted selection returned by Engine must carry exactly
+`schema_version: 3`; this is Engine response metadata, not an `sdk.yaml` field.
+`sdk sync` accepts only that current value. A missing or older value requires
+the original config to publish a new SDK version before retrying.
+A higher unknown value requires a newer CLI. Never infer or normalize
+selection policy.
 
 Generated SDK calls only ever carry Fused selectors (`endUserRef`, `authType`, `resourceId`) -- never a raw provider token, API key, or provider base URL. For execution-contract negotiation, keep each pinned service version's `contract_version` and `required_capabilities` intact: Registry and Engine accept additive documentation fields but fail closed on unsupported execution semantics. Never bypass that error by dropping fields or adding provider-specific client logic; upgrade Engine or publish semantics implemented end to end. These identifiers describe provider execution, not SDK operation grants or token allowlists.
 Pagination comes from the endpoint and effective service-version policy. Do not
