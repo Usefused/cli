@@ -14,6 +14,9 @@ workspace activation, and credential requirements are understood.
 It never builds, archives, or downloads a code package. Its config shares service
 selection fields with SDK configs so validation remains consistent where the
 runtime capabilities overlap.
+The shared Engine app-selection projection is exactly `schema_version: 3`.
+That is response metadata, not an `mcp.yaml` field. Do not substitute another
+field name or interpret a missing, older, or future version.
 
 Run `bucket list`, treat its results as visible through `bucket.read` rather
 than proven usable, and choose visible `default` or another visible candidate.

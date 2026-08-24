@@ -115,6 +115,7 @@ func TestListAppsUsesEngineGraphQL(t *testing.T) {
 func TestGetAppUsesExactAppID(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request struct {
+			Query     string                 `json:"query"`
 			Variables map[string]interface{} `json:"variables"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
@@ -123,14 +124,27 @@ func TestGetAppUsesExactAppID(t *testing.T) {
 		if request.Variables["appId"] != "app-1" {
 			t.Fatalf("unexpected app ID: %#v", request.Variables)
 		}
-		_, _ = w.Write([]byte(`{"data":{"app":{"app_family_id":"family-1","app_id":"app-1","name":"support","version":"2.0.0","kind":"sdk","status":"active","created_at":"now","selections":[]}}}`))
+		if !strings.Contains(request.Query, "schema_version") || strings.Contains(request.Query, "definition_schema_version") {
+			t.Fatalf("app query does not use the exact selection schema field: %s", request.Query)
+		}
+		_, _ = w.Write([]byte(`{"data":{"app":{"app_family_id":"family-1","app_id":"app-1","name":"support","version":"2.0.0","kind":"sdk","status":"active","created_at":"now","selections":[{"service_id":"service-1","service_version_id":"version-1","schema_version":3}]}}}`))
 	}))
 	defer server.Close()
 
 	client := NewClient(server.URL, "test-key")
 	app, err := client.GetApp("app-1")
-	if err != nil || app.AppID != "app-1" || app.Kind != "sdk" {
+	if err != nil || app.AppID != "app-1" || app.Kind != "sdk" || len(app.Selections) != 1 || app.Selections[0].SchemaVersion != AppSelectionSchemaVersion {
 		t.Fatalf("GetApp = %#v, %v", app, err)
+	}
+}
+
+func TestAppSelectionJSONUsesSchemaVersion(t *testing.T) {
+	encoded, err := json.Marshal(AppSelection{SchemaVersion: AppSelectionSchemaVersion})
+	if err != nil {
+		t.Fatalf("marshal app selection: %v", err)
+	}
+	if !strings.Contains(string(encoded), `"schema_version":3`) || strings.Contains(string(encoded), "definition_schema_version") {
+		t.Fatalf("unexpected app selection JSON: %s", encoded)
 	}
 }
 

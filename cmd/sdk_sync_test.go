@@ -263,13 +263,28 @@ func TestSDKServiceEqual(t *testing.T) {
 	}
 }
 
-func TestValidateSDKSyncDefinitionRejectsHistoricalSelection(t *testing.T) {
-	err := validateSDKSyncDefinition("security-sdk", api.AppSelection{})
-	if err == nil || !strings.Contains(err.Error(), "requires definition refresh") || !strings.Contains(err.Error(), "sdk plan") {
-		t.Fatalf("expected actionable definition refresh error, got %v", err)
+func TestValidateSDKSyncDefinitionRequiresExactCurrentSchema(t *testing.T) {
+	tests := []struct {
+		name       string
+		version    int
+		wantError  bool
+		wantDetail string
+	}{
+		{name: "current", version: api.AppSelectionSchemaVersion},
+		{name: "missing", version: 0, wantError: true, wantDetail: "requires definition refresh"},
+		{name: "old", version: api.AppSelectionSchemaVersion - 1, wantError: true, wantDetail: "requires definition refresh"},
+		{name: "future", version: api.AppSelectionSchemaVersion + 1, wantError: true, wantDetail: "upgrade fused-cli"},
 	}
-	if err := validateSDKSyncDefinition("security-sdk", api.AppSelection{DefinitionSchemaVersion: api.SDKDefinitionSchemaVersion}); err != nil {
-		t.Fatalf("current definition was rejected: %v", err)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := validateSDKSyncDefinition("security-sdk", api.AppSelection{SchemaVersion: test.version})
+			if !test.wantError && err != nil {
+				t.Fatalf("current schema was rejected: %v", err)
+			}
+			if test.wantError && (err == nil || !strings.Contains(err.Error(), test.wantDetail)) {
+				t.Fatalf("expected error containing %q, got %v", test.wantDetail, err)
+			}
+		})
 	}
 }
 
@@ -437,7 +452,7 @@ services:
 		case strings.Contains(body.Query, "appReference"):
 			_, _ = w.Write([]byte(`{"data":{"appReference":{"id":"app-1","kind":"app"}}}`))
 		case strings.Contains(body.Query, "query App("):
-			_, _ = w.Write([]byte(`{"data":{"app":{"app_family_id":"family-1","app_id":"app-1","name":"security-sdk","version":"1.0.0","kind":"sdk","status":"active","created_at":"now","target_language":"python","selections":[{"service_id":"svc-github","service_version_id":"sv-1","definition_schema_version":0,"endpoint_ids":[],"operation_names":[],"webhook_ids":[],"webhook_names":[],"select_all":false,"webhook_select_all":false,"connect_scopes":[],"injections":[]}]}}}`))
+			_, _ = w.Write([]byte(`{"data":{"app":{"app_family_id":"family-1","app_id":"app-1","name":"security-sdk","version":"1.0.0","kind":"sdk","status":"active","created_at":"now","target_language":"python","selections":[{"service_id":"svc-github","service_version_id":"sv-1","endpoint_ids":[],"operation_names":[],"webhook_ids":[],"webhook_names":[],"select_all":false,"webhook_select_all":false,"connect_scopes":[],"injections":[]}]}}}`))
 		case strings.Contains(body.Query, "appServices"):
 			_, _ = w.Write([]byte(`{"data":{"appServices":[{"service_id":"svc-github","service_slug":"github","service_name":"GitHub","version":"1.1.4","select_all":false,"endpoint_count":0,"webhook_count":0}]}}`))
 		default:
@@ -484,7 +499,10 @@ func handleSDKSyncGraphQL(t *testing.T, w http.ResponseWriter, r *http.Request, 
 		if !strings.Contains(body.Query, "required_auth") {
 			t.Fatal("app query omitted immutable required auth policy")
 		}
-		_, _ = w.Write([]byte(`{"data":{"app":{"app_family_id":"family-1","app_id":"app-1","name":"security-sdk","version":"` + sdkVersion + `","kind":"sdk","status":"active","created_at":"now","target_language":"python","selections":[{"service_id":"svc-github","service_version_id":"sv-1","definition_schema_version":3,"endpoint_ids":["ep-1"],"operation_names":["repos_list_for_authenticated_user"],"webhook_ids":[],"webhook_names":[],"select_all":false,"webhook_select_all":false,"auth_type":"oauth","auth_name":"githubOAuth","required_auth":[{"auth_type":"oauth","auth_name":"githubOAuth","basic_password_mode":""}],"connect_scopes":["repo"],"injections":[{"location":"header","name":"X-Tenant","value":"$connection.tenant","mode":"replace"}]}]}}}`))
+		if !strings.Contains(body.Query, "schema_version") || strings.Contains(body.Query, "definition_schema_version") {
+			t.Fatalf("app query does not use the exact selection schema field: %s", body.Query)
+		}
+		_, _ = w.Write([]byte(`{"data":{"app":{"app_family_id":"family-1","app_id":"app-1","name":"security-sdk","version":"` + sdkVersion + `","kind":"sdk","status":"active","created_at":"now","target_language":"python","selections":[{"service_id":"svc-github","service_version_id":"sv-1","schema_version":3,"endpoint_ids":["ep-1"],"operation_names":["repos_list_for_authenticated_user"],"webhook_ids":[],"webhook_names":[],"select_all":false,"webhook_select_all":false,"auth_type":"oauth","auth_name":"githubOAuth","required_auth":[{"auth_type":"oauth","auth_name":"githubOAuth","basic_password_mode":""}],"connect_scopes":["repo"],"injections":[{"location":"header","name":"X-Tenant","value":"$connection.tenant","mode":"replace"}]}]}}}`))
 	case strings.Contains(body.Query, "appServices"):
 		_, _ = w.Write([]byte(`{"data":{"appServices":[{"service_id":"svc-github","service_slug":"github-rest-api","service_name":"GitHub REST API","version":"1.1.4","select_all":false,"endpoint_count":1,"webhook_count":0}]}}`))
 	default:

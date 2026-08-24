@@ -223,8 +223,13 @@ func fetchSDKSyncData(client *api.Client, sdkName, sdkVersion string) (appVersio
 }
 
 func validateSDKSyncDefinition(sdkName string, selection api.AppSelection) error {
-	if selection.DefinitionSchemaVersion >= api.SDKDefinitionSchemaVersion {
+	if selection.SchemaVersion == api.AppSelectionSchemaVersion {
 		return nil
+	}
+	if selection.SchemaVersion > api.AppSelectionSchemaVersion {
+		// A newer selection may carry semantics this CLI cannot preserve, so sync
+		// must fail instead of silently rewriting the local declaration.
+		return fmt.Errorf("sdk %q uses unsupported selection schema_version %d; upgrade fused-cli before sync", sdkName, selection.SchemaVersion)
 	}
 	// An unversioned row may have discarded security policy, so recovering
 	// operation names alone cannot make a trustworthy config. Re-applying the

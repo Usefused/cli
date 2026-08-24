@@ -410,6 +410,32 @@ func TestDevAppSkillsDocumentVersionedLifecycle(t *testing.T) {
 	}
 }
 
+func TestDevAppSkillsDocumentExactSelectionSchemaVersion(t *testing.T) {
+	tests := []struct {
+		name     string
+		required []string
+	}{
+		{name: "fused-sdk", required: []string{"`schema_version: 3`", "accepts only that current value", "unknown value requires a newer CLI"}},
+		{name: "fused-mcp", required: []string{"`schema_version: 3`", "not an `mcp.yaml` field", "substitute another field name"}},
+	}
+	for _, test := range tests {
+		path := filepath.Join("..", "skills", "dev", test.name, "SKILL.md")
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		content := strings.Join(strings.Fields(string(data)), " ")
+		for _, required := range test.required {
+			if !strings.Contains(content, required) {
+				t.Errorf("%s is missing exact app-selection guidance %q", test.name, required)
+			}
+		}
+		if strings.Contains(string(data), "definition_schema_version") {
+			t.Errorf("%s documents a removed app-selection field", test.name)
+		}
+	}
+}
+
 func TestCLISkillsUseCurrentCommandLanguage(t *testing.T) {
 	stale := []string{
 		"family",

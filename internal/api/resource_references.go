@@ -5,21 +5,23 @@ type ResolvedResourceReference struct {
 	Kind string `json:"kind"`
 }
 
+const AppSelectionSchemaVersion = 3
+
 type AppSelection struct {
-	ServiceID               string            `json:"service_id"`
-	ServiceVersionID        string            `json:"service_version_id"`
-	DefinitionSchemaVersion int               `json:"definition_schema_version"`
-	EndpointIDs             []string          `json:"endpoint_ids"`
-	OperationNames          []string          `json:"operation_names"`
-	WebhookIDs              []string          `json:"webhook_ids"`
-	WebhookNames            []string          `json:"webhook_names"`
-	SelectAll               bool              `json:"select_all"`
-	WebhookSelectAll        bool              `json:"webhook_select_all"`
-	AuthType                string            `json:"auth_type"`
-	AuthName                string            `json:"auth_name"`
-	RequiredAuth            []AppRequiredAuth `json:"required_auth"`
-	ConnectScopes           []string          `json:"connect_scopes"`
-	Injections              []InjectionConfig `json:"injections"`
+	ServiceID        string            `json:"service_id"`
+	ServiceVersionID string            `json:"service_version_id"`
+	SchemaVersion    int               `json:"schema_version"`
+	EndpointIDs      []string          `json:"endpoint_ids"`
+	OperationNames   []string          `json:"operation_names"`
+	WebhookIDs       []string          `json:"webhook_ids"`
+	WebhookNames     []string          `json:"webhook_names"`
+	SelectAll        bool              `json:"select_all"`
+	WebhookSelectAll bool              `json:"webhook_select_all"`
+	AuthType         string            `json:"auth_type"`
+	AuthName         string            `json:"auth_name"`
+	RequiredAuth     []AppRequiredAuth `json:"required_auth"`
+	ConnectScopes    []string          `json:"connect_scopes"`
+	Injections       []InjectionConfig `json:"injections"`
 }
 
 // MCPTransportURLs is Engine-owned discovery for one immutable MCP version.
@@ -74,7 +76,7 @@ const appSummaryFields = `
 	target_language generator_version readme planned_deactivation_at
 	default_transport transport_urls { streamable_http sse }
 	selections {
-		service_id service_version_id definition_schema_version
+		service_id service_version_id schema_version
 		endpoint_ids operation_names webhook_ids webhook_names
 		select_all webhook_select_all auth_type auth_name connect_scopes
 		required_auth { auth_type auth_name basic_password_mode }
