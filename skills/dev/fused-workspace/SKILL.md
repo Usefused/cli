@@ -169,6 +169,11 @@ service ID, or query with one unique result. A permission error is not a miss:
 stop instead of falling through, changing credentials, or guessing another
 service. Do not require a separate `service search` command first.
 
+Successful adds print the canonical service slug and a direct Engine UI URL
+whose route uses the stable service ID. Use the URL to inspect the resolved
+service; it does not replace the required `workspace plan` review or activate
+the local draft.
+
 This command authors local intent only. It does not activate the Registry
 service or prove `service.manage`; run `workspace plan`, review the resolved
 identity and required permissions, then `workspace apply`. Keep `service

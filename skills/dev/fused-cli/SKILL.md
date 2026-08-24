@@ -1,6 +1,6 @@
 ---
 name: fused-cli
-description: "Set up and operate fused-cli: install or authenticate it, inspect identity, log out, configure Engine access, discover/import Registry services, manage teams/people/RBAC/workspace access/personal credentials, select an owner team or domain skill, start an Engine, or diagnose connection failures. Trigger on 'fused-cli', 'whoami', 'logout', 'engine-url', 'api-key', 'find a service', 'import docs', 'team access', 'workspace access', 'workspace role', 'add user', 'personal credential', 'owner-team', 'required permissions', 'FUSED_LICENSE_KEY', 'create an MCP', or no running Engine. For an SDK requested inside a coding agent, use fused-sdk and never route through sdk prompt."
+description: "Set up and operate fused-cli: install or authenticate it, inspect identity, log out, configure Engine access, discover/import Registry services, manage teams/people/RBAC/workspace access/personal credentials, select an owner team or domain skill, start an Engine, or diagnose connection failures. Trigger on 'fused-cli', 'whoami', 'logout', 'engine-url', 'api-key', 'find a service', 'import discover', 'team access', 'workspace access', 'workspace role', 'add user', 'personal credential', 'owner-team', 'required permissions', 'FUSED_LICENSE_KEY', 'create an MCP', or no running Engine. For an SDK requested inside a coding agent, use fused-sdk and never route through sdk prompt."
 ---
 
 # fused-cli
@@ -149,8 +149,8 @@ saved API key has no managed-login provenance and is left unchanged.
 SIGINT/SIGTERM cancel outstanding Engine requests. `CI=true` also disables the
 release update check; set `FUSED_NO_UPDATE_CHECK=1` when only the update check
 should be disabled. In non-interactive mode, replace prompt-oriented options
-with explicit inputs (for example, use `import docs --select METHOD:/path`
-instead of `--review`).
+with explicit inputs (for example, use `import discover --select METHOD:/path`
+and an explicit enrichment decision instead of opening selectors).
 
 ## Command surface drifts faster than these skills -- verify with `--help`
 
@@ -320,7 +320,7 @@ requires a new plan.
 
 Registry search and import are separate permissions: `service search --q`
 requires `catalogue.read`; creating or updating a service with `import plan`,
-`import apply`, or `import docs` requires `catalogue.import`; reading an import
+`import apply`, or `import discover` requires `catalogue.import`; reading an import
 session requires `catalogue.read`. A visible Registry result does not grant
 `service.manage`, `service.consume`, or workspace activation. If import is
 denied, preserve the source and plan, report the missing permission/resource,
@@ -480,8 +480,9 @@ pre-convert either format in the CLI or infer provider-specific fixes. `import p
 reports the Registry-authoritative `source_format`, which apply re-detects and
 must match before mutation. `--url` is still a spec URL here:
 Registry first tries a bounded `GET`, then GraphQL introspection if the GET
-response is not recognized as a spec. A normal HTML docs page belongs to
-`import docs`, not `import plan --url`.
+response is not recognized as a spec. When the URL might be documentation,
+use `import discover`; it owns specification-first resolution and the bounded
+documentation fallback rather than overloading `import plan --url`.
 
 For OpenAPI imports, path-level parameters are inherited by each operation and
 an operation-level declaration of the same `(name, in)` pair wins.
@@ -583,31 +584,51 @@ remediation and `--json` preserves its code/category/retryable fields. The CLI
 must not prompt, invent a default, write a receipt, apply, or retry implicitly;
 rerun `import plan` with the explicit version.
 
-Use `import docs` when the source is a human-readable docs page and the agent
-must discover endpoint candidates. By default it selects every discovered
-endpoint, then extracts schemas and commits the service. Selection is an
-advanced correction/filter:
+Use `import discover` when starting from a provider URL whose exact source
+format is not already pinned. Registry validates machine-readable candidates
+first and otherwise crawls a bounded same-site documentation frontier. It
+shows exact operation and optional `x-fused-*` decisions, then stops at the
+ordinary import-plan boundary. In an interactive terminal, operation selection
+happens in the CLI, then the command opens the Engine's browser review and
+waits for the user to finish it:
 
 ```shell
-# Default: import every discovered endpoint.
-fused-cli import docs --url https://docs.example.com/api \
+# Default: select operations, then review in the browser.
+fused-cli import discover --url https://docs.example.com/api \
   --name "Docs API" --slug docs-api --version 1.0
 
-# Review interactively; all endpoints start selected.
-fused-cli import docs --url https://docs.example.com/api \
-  --name "Docs API" --slug docs-api --version 1.0 --review
+# Remote shell: print the review URL and wait without opening it.
+fused-cli import discover --url https://docs.example.com/api --no-browser \
+  --name "Docs API" --slug docs-api --version 1.0
 
-# CI/partial mode. Omitted endpoints are not treated as deletions.
-fused-cli import docs --url https://docs.example.com/api \
-  --name "Docs API" --slug docs-api --version 1.0 --select GET:/users
+# Automation: make every decision with flags and do not use browser review.
+fused-cli --no-input import discover --url https://docs.example.com/api \
+  --name "Docs API" --slug docs-api --version 1.0 \
+  --select GET:/users --reject-enrichment
+
+fused-cli import apply
 ```
 
-Why the default is all endpoints: docs extraction is meant to produce a coherent
-service contract. Partial selections are useful when the extractor found noise
-or the team intentionally wants a small slice, but omitted endpoints should not
-be interpreted as evidence that the provider removed them. `import docs` adds
-the completed service to the current workspace unless `--no-workspace-add` is
-passed.
+There is no implicit all-selection or service creation. Automation must pass
+global `--no-input` (or set `CI=true`), choose `--all` or exact `--select`
+flags, and accept offered proposal IDs with repeated `--accept-proposal` or
+reject all optional enrichment with `--reject-enrichment`. This path sends
+typed actions without opening or waiting for browser review. `--no-browser` is
+different: it remains an interactive review, prints the URL instead of opening
+it, and waits for the browser decision.
+
+At `plan_ready`, `import discover` atomically writes
+`.fused/.state/import.plan.json`. That single default file is the most recent
+import plan, so the next command that writes that path replaces it. Use
+`--receipt-out <path>` to retain another plan; that path is also atomically
+replaced when it already exists. Apply the chosen file with `fused-cli import
+apply --receipt <path>`. With no `--receipt`, the separate `fused-cli import
+apply` command consumes the default receipt. Discovery itself does not mutate
+Registry.
+
+Resume interactively with `fused-cli import discover --session <session-id>`.
+The session ID cannot be combined with service identity, source, worker, or
+crawl flags. A `--no-input` resume still needs flags for each pending decision.
 
 ## End-to-end: wiring up an OAuth service from zero
 

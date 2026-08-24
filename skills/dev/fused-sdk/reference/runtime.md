@@ -88,8 +88,14 @@ The channel target is resolved in this order (first non-empty value wins):
 3. `FUSED_ENGINE_URL` environment variable.
 4. Default: `http://127.0.0.1:50051`.
 
-Local development binds REST to port 8081 and gRPC to port 8082 by default.
+Engine binds REST to `8081` (`--port`) and gRPC to `50051` (`--grpc-port`).
 Point the SDK at the gRPC port; the REST port responds with HTTP 405.
+
+Step 3 is the trap: `FUSED_ENGINE_URL` is the *HTTP* variable `fused-cli` uses.
+If it is set and no `engine_url` is passed, the SDK speaks gRPC at the REST port
+and gets that 405. Set `FUSED_ENGINE_GRPC_URL` explicitly rather than relying on
+the fallback. Running two Engines side by side (as the e2e harness does) offsets
+both ports together -- `8082` with `50052` -- so the HTTP/gRPC split still holds.
 
 ### Python
 

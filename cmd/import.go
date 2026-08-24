@@ -4,22 +4,16 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// importCmd is the parent for the non-interactive spec import flow (sprint:
-// "Non-Interactive Multi-Format Spec Import via CLI"). Unlike plan/apply
-// above (which discover .fused/ config files), import takes a spec directly
-// -- there's no declarative config file to point at, since the spec IS the
-// input. The caller selects all, endpoints, or webhooks explicitly rather
-// than entering an endpoint-picking prompt.
+// importCmd groups deterministic spec planning, reviewed provider discovery,
+// and the one explicit apply boundary for Registry service mutation.
 var importCmd = &cobra.Command{
 	Use:   "import",
-	Short: "Import a supported API specification into the Registry",
-	Long: `Import a spec as a Fused service without the conversational import agent --
-suitable for a local run or a CI step. Always imports everything the spec
-describes within --target (no endpoint-picking prompt). Mirrors this CLI's plan/apply shape:
-"import plan" computes what would change and who else relies on the version
-being touched; "import apply" commits it. OpenAPI 3, Swagger 2, Google
-Discovery, AsyncAPI, Postman Collection, WSDL, GraphQL SDL, and introspectable
-GraphQL endpoints are detected automatically.`,
+	Short: "Discover, plan, and apply Registry service contracts",
+	Long: `Use "import plan" when the exact machine-readable source is already known.
+Use "import discover" for a provider URL: Fused validates specifications first,
+falls back to a bounded documentation crawl, and presents operations and optional
+enrichment for review. Both commands produce the same receipt. Only "import apply"
+creates or updates a Registry service.`,
 	Args: cobra.NoArgs,
 	RunE: requireSubcommand,
 }
@@ -84,12 +78,12 @@ var (
 
 var importApplyCmd = &cobra.Command{
 	Use:   "apply",
-	Short: "Apply a previously planned spec import",
-	Long: `Commits the plan produced by "import plan": a new service is created live
-immediately; an existing provider version is replaced by a new internal
-revision, while a different provider version is created alongside it. Defaults
-to the most recent local plan receipt. Spec import plan/apply requests allow 20
-minutes unless --timeout is explicitly set.`,
+	Short: "Apply a plan from import plan or import discover",
+	Long: `Commits the plan produced by "import plan" or "import discover": a new
+service is created live immediately; an existing provider version is replaced
+by a new internal revision, while a different provider version is created
+alongside it. Defaults to the most recent local receipt from either command.
+Import plan/apply requests allow 20 minutes unless --timeout is explicitly set.`,
 	Args: cobra.NoArgs,
 	RunE: WithTelemetry("cli.import.apply", func(cmd *cobra.Command, args []string) error {
 		return runImportApply(cmd, importSpecApplyOptions{
@@ -121,5 +115,5 @@ func init() {
 	importCmd.AddCommand(importApplyCmd)
 	importApplyCmd.Flags().StringVar(&importApplyPlanID, "plan-id", "", "Apply a specific remote plan ID (requires --review-hash)")
 	importApplyCmd.Flags().StringVar(&importApplyReviewHash, "review-hash", "", "Combined review hash to pair with --plan-id")
-	importApplyCmd.Flags().StringVar(&importApplyReceiptPath, "receipt", "", "Read a specific plan receipt (default: most recent local receipt)")
+	importApplyCmd.Flags().StringVar(&importApplyReceiptPath, "receipt", "", "Read a specific plan or discovery receipt (default: most recent local receipt)")
 }
