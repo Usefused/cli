@@ -435,7 +435,9 @@ func applyPreparedSDKJSON(client *api.Client, cfg *configfile.ParsedConfig, rece
 	result := sdkApplyOutput{
 		ConfigKey: cfg.ConfigKey, PlanID: resp.PlanID, Status: resp.Status,
 		SDKID: resp.AppFamilyID, VersionID: resp.AppID, ExecutionToken: resp.ExecutionToken,
-		Generation: sdkApplyStageOutput{Status: "completed", JobID: resp.JobID},
+		// Apply only enqueues generation; nothing has waited on the job yet, so
+		// the stage stays "queued" until the download path confirms it finished.
+		Generation: sdkApplyStageOutput{Status: "queued", JobID: resp.JobID},
 		Download:   sdkApplyDownloadOutput{Status: "not_requested"},
 	}
 	if !download {
@@ -447,6 +449,7 @@ func applyPreparedSDKJSON(client *api.Client, cfg *configfile.ParsedConfig, rece
 			VersionID: resp.AppID, JobID: resp.JobID, Err: err,
 		}
 	}
+	result.Generation.Status = "completed"
 	if err := downloadSDKByIDQuiet(client, resp.AppID, cfg.SDK.Name, "."); err != nil {
 		return sdkApplyOutput{}, &sdkApplyStageError{
 			Stage: "download", SDKName: cfg.SDK.Name, SDKID: resp.AppFamilyID,
