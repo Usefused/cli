@@ -45,6 +45,7 @@ func TestNonInteractiveHonorsFlagAndCI(t *testing.T) {
 	}
 }
 
+// TestNoInputStopsPromptingHelpersBeforeSideEffects includes the server-bounded discovery reviewer in automation checks.
 func TestNoInputStopsPromptingHelpersBeforeSideEffects(t *testing.T) {
 	oldNoInput := NoInput
 	NoInput = true
@@ -59,9 +60,9 @@ func TestNoInputStopsPromptingHelpersBeforeSideEffects(t *testing.T) {
 	if _, err := resolveExplicitBucketID("production"); err == nil {
 		t.Fatal("expected bucket names to be rejected before any lookup or prompt")
 	}
-	endpoints := []cliapi.Integration{{Method: "GET", Path: "/users"}}
-	if _, err := reviewDocsEndpoints(RootCmd, endpoints); err == nil {
-		t.Fatal("expected docs review prompt to be rejected")
+	operations := []cliapi.DiscoveryOperation{{Method: "GET", Path: "/users"}}
+	if _, err := reviewDiscoveryOperations(RootCmd, operations, 1); err == nil {
+		t.Fatal("expected discovery review prompt to be rejected")
 	}
 }
 

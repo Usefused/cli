@@ -45,12 +45,14 @@ fused-cli import plan \
   --name "Google Drive" \
   --slug google-drive
 
-# Human-readable documentation discovery.
-fused-cli import docs \
+# Specification-first provider discovery with documentation fallback.
+fused-cli import discover \
   --url https://docs.example.com/api \
   --name "Docs API" \
   --slug docs-api \
   --version 1.0
+
+fused-cli import apply
 ```
 
 Postman collections commonly omit `info.version`. If `--version` is also
@@ -60,9 +62,35 @@ never invents a version or retries the plan implicitly. Use `--json` to retain
 the stable code, validation category, retryability, and remediation for CI or
 agent workflows.
 
-`import docs` discovers endpoints from human-readable documentation. It imports
-all discovered endpoints by default; use `--review` or `--select` to narrow the
-result.
+`import discover` first resolves and validates a machine-readable source. If no
+unique valid source exists, Registry crawls a bounded same-site documentation
+frontier and presents exact operations for review. An interactive terminal
+shows the operation selector, opens the Engine's browser review when the draft
+is ready, and waits while the browser submits the review. Pass `--no-browser`
+to print the same review URL and wait without opening it, which is useful over
+SSH or when the browser is on another device.
+
+For flag-driven automation, use global `--no-input` and pass `--all` or repeat
+`--select METHOD:/path`. Also repeat `--accept-proposal <id>` for the exact
+optional enrichments to accept, or pass `--reject-enrichment`. This path makes
+the decisions through typed CLI actions and neither opens nor waits for browser
+review. `CI=true` enables the same non-interactive behavior.
+
+The command stops at `plan_ready` and atomically writes
+`.fused/.state/import.plan.json`. That single default path always represents
+the most recently completed import plan, so the next command that writes to
+that path replaces its existing receipt. Use `--receipt-out <path>` when
+several plans must remain available; the chosen path is also atomically
+replaced if it exists. Pass that file to `fused-cli import apply --receipt
+<path>`. With no `--receipt`, `fused-cli import apply` reads the default
+receipt. Discovery never creates a service or changes workspace activation;
+only the separate apply command commits the reviewed plan.
+
+Resume an interrupted interactive run with `fused-cli import discover
+--session <session-id>`. A `--no-input` resume still needs the explicit
+selection and enrichment flags for any decisions the session has not passed.
+Resume reloads Registry's authoritative snapshot and rejects new service
+identity, crawl, or worker inputs.
 
 Google Discovery adapter v2 automatically publishes the credential-free OAuth
 settings required for durable delegated access: `access_type=offline`,

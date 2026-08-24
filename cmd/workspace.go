@@ -300,6 +300,11 @@ func runWorkspaceServiceAdd(cmd *cobra.Command, serviceQuery string) error {
 	}
 	recordAppliedChange(cmd.Context(), cmd.CommandPath(), "workspace_config")
 	fmt.Fprintln(cmd.OutOrStdout(), workspaceServiceAddResult(target, version))
+	if engineURL, err := GetEngineURL(); err == nil {
+		if viewURL := workspaceServiceViewURL(engineURL, target.serviceID); viewURL != "" {
+			fmt.Fprintf(cmd.OutOrStdout(), "View %s: %s\n", target.slug, viewURL)
+		}
+	}
 	return nil
 }
 

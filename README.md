@@ -118,8 +118,38 @@ fused-cli import plan \
 fused-cli import apply
 ```
 
+When you have a provider URL rather than a known specification, start one
+reviewed discovery session. Fused tries a machine-readable contract first,
+then performs a bounded documentation crawl when necessary. In an interactive
+terminal, the command opens the Engine's browser review when the draft is
+ready and waits for you to finish that review:
+
+```bash
+fused-cli import discover \
+  --url https://docs.example.com/api \
+  --name "Example API" \
+  --slug example-api
+
+# Resume the same authoritative session after interruption.
+fused-cli import discover --session <session-id>
+
+fused-cli import apply
+```
+
+Pass `--no-browser` to print the review URL and wait without opening it. For
+flag-driven automation, use global `--no-input` with `--all` or repeat
+`--select METHOD:/path`, and either repeat `--accept-proposal <id>` or pass
+`--reject-enrichment`. Automation does not open or wait for browser review.
+
+Discovery never creates or activates the service. When review produces a plan,
+the CLI atomically writes `.fused/.state/import.plan.json`, replacing the
+previous import-plan receipt at that path. Use `--receipt-out <path>` to choose
+a different receipt; an existing file at that path is replaced the same way.
+Run the separate `fused-cli import apply` command to commit exactly that
+reviewed plan; with no `--receipt`, it consumes the default receipt.
+
 Fused detects the supported source format. See
-[Importing services](docs/IMPORTING_SERVICES.md) for documentation discovery,
+[Importing services](docs/IMPORTING_SERVICES.md) for reviewed discovery,
 GraphQL, AsyncAPI, Postman, WSDL, Google Discovery, overlays, strict mode, and
 diagnostics.
 

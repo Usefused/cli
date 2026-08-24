@@ -72,6 +72,10 @@ func TestWorkspaceAddServiceFallsBackToRegistryAndAutoAddsUniqueMatch(t *testing
 	if !strings.Contains(out, "planning will resolve its latest public version") {
 		t.Fatalf("expected latest-version guidance, got %q", out)
 	}
+	wantView := server.URL + "/integrations/00000000-0000-4000-8000-000000000002"
+	if !strings.Contains(out, "View @acme/billing: "+wantView) {
+		t.Fatalf("expected canonical slug and Engine link, got %q", out)
+	}
 }
 
 func TestWorkspaceAddServiceInteractiveConfirmsRegistryMatch(t *testing.T) {
@@ -194,11 +198,14 @@ func TestWorkspaceAddServiceInteractiveSelectsAmbiguousWorkspaceMatch(t *testing
 		return services[1], nil
 	}
 	t.Cleanup(func() { selectExistingWorkspaceService = oldSelect })
-	runCommandInDir(t, dir, server.URL, []string{"workspace", "service", "add", "billing", "--interactive", "-f", path})
+	out := runCommandInDirOutput(t, dir, server.URL, []string{"workspace", "service", "add", "billing", "--interactive", "-f", path})
 	if *registryCalls != 0 {
 		t.Fatalf("selected workspace match must not search Registry, got %d calls", *registryCalls)
 	}
 	assertWorkspaceConfigContains(t, path, "@other/billing:", false)
+	if !strings.Contains(out, "View @other/billing: "+server.URL+"/integrations/00000000-0000-4000-8000-000000000032") {
+		t.Fatalf("expected selected workspace service link, got %q", out)
+	}
 }
 
 func TestChooseRegistryServiceUsesExactQualifiedSlugWithoutPrompt(t *testing.T) {
@@ -334,6 +341,20 @@ func TestWorkspaceAddServiceExplicitServiceIDSkipsDiscoveryAndPreservesYAML(t *t
 	}
 	if !strings.Contains(out, "Added service private-service with version 1.2.3") {
 		t.Fatalf("unexpected explicit add output %q", out)
+	}
+	if !strings.Contains(out, "View private-service: http://127.0.0.1:1/integrations/"+serviceID) {
+		t.Fatalf("expected explicit service link, got %q", out)
+	}
+}
+
+func TestWorkspaceServiceViewURLNormalizesBaseAndEscapesID(t *testing.T) {
+	got := workspaceServiceViewURL("HTTPS://ENGINE.EXAMPLE/base/?transport=api#fragment", "service/id")
+	want := "https://engine.example/base/integrations/service%2Fid"
+	if got != want {
+		t.Fatalf("workspaceServiceViewURL() = %q, want %q", got, want)
+	}
+	if got := workspaceServiceViewURL("not-a-url", "service-id"); got != "" {
+		t.Fatalf("invalid Engine URL produced link %q", got)
 	}
 }
 

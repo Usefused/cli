@@ -3,6 +3,7 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/Usefused/cli/internal/api"
@@ -12,6 +13,7 @@ import (
 
 type workspaceServiceAddTarget struct {
 	slug            string
+	serviceID       string
 	configServiceID string
 	source          string
 }
@@ -47,10 +49,10 @@ func explicitWorkspaceServiceTarget(query, serviceID string) (workspaceServiceAd
 		if _, err := uuid.Parse(serviceID); err != nil {
 			return workspaceServiceAddTarget{}, false, errors.New("--service-id must be a valid Registry service UUID")
 		}
-		return workspaceServiceAddTarget{slug: query, configServiceID: serviceID, source: "explicit"}, true, nil
+		return workspaceServiceAddTarget{slug: query, serviceID: serviceID, configServiceID: serviceID, source: "explicit"}, true, nil
 	}
 	if _, err := uuid.Parse(query); err == nil {
-		return workspaceServiceAddTarget{slug: query, configServiceID: query, source: "explicit"}, true, nil
+		return workspaceServiceAddTarget{slug: query, serviceID: query, configServiceID: query, source: "explicit"}, true, nil
 	}
 	return workspaceServiceAddTarget{}, false, nil
 }
@@ -83,7 +85,7 @@ func findWorkspaceServiceTarget(client *api.Client, query string, interactive bo
 		slug = query
 	}
 	return workspaceServiceAddTarget{
-		slug: slug, source: "workspace",
+		slug: slug, serviceID: service.ServiceID, source: "workspace",
 	}, true, nil
 }
 
@@ -140,7 +142,7 @@ func findRegistryServiceTarget(client *api.Client, query string, interactive boo
 		}
 	}
 	return workspaceServiceAddTarget{
-		slug: selected.Slug, source: "registry",
+		slug: selected.Slug, serviceID: selected.ServiceID, source: "registry",
 	}, nil
 }
 
@@ -199,4 +201,25 @@ func workspaceServiceAddResult(target workspaceServiceAddTarget, version string)
 		return fmt.Sprintf("Added service %s to workspace config; planning will resolve its latest public version", target.slug)
 	}
 	return fmt.Sprintf("Added service %s with version %s to workspace config", target.slug, version)
+}
+
+func workspaceServiceViewURL(engineURL, serviceID string) string {
+	serviceID = strings.TrimSpace(serviceID)
+	if serviceID == "" {
+		return ""
+	}
+	base, err := canonicalEngineURL(engineURL)
+	if err != nil {
+		return ""
+	}
+	parsed, err := url.Parse(base)
+	if err != nil {
+		return ""
+	}
+	// A configured query belongs to API transport, not to the UI destination.
+	// Keeping the service ID as one escaped segment prevents malformed IDs from
+	// changing the route while still leaving the complete URL useful to agents.
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return strings.TrimRight(parsed.String(), "/") + "/integrations/" + url.PathEscape(serviceID)
 }

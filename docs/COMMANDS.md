@@ -757,6 +757,11 @@ Check if a specific service is available in the workspace and output its enabled
 Usage: `fused-cli workspace has <service-name>`
 
 ## `workspace service add <service-query-or-slug>`
+Resolve an enabled workspace service first, then fall back to Registry search.
+After updating the local config, the command prints the canonical service slug
+and a direct Engine UI link backed by the stable service ID. Review the change
+with `workspace plan` before applying it.
+
 Find and add a service to workspace configuration. The command first checks the
 access-filtered workspace service list. If there is no exact name or slug match,
 it searches the Registry using the same endpoint as `service search`. A unique
@@ -860,7 +865,13 @@ Usage: `fused-cli import plan [spec-path]` or `fused-cli import plan --url <http
 | `--strict` | | Reject warning or error import diagnostics before a plan is persisted | `false` |
 
 ## `import apply`
-Commit the exact source and optional overlay reviewed by `import plan`. The receipt's combined review hash authorizes the reviewed result; source and overlay hashes are informational. Service, provider version, contract rows, immutable internal revision, and plan completion are written atomically.
+Commit the exact source and optional overlay reviewed by `import plan` or
+`import discover`. With no flags, this command reads
+`.fused/.state/import.plan.json`; pass `--receipt <path>` when discovery or
+planning wrote a different receipt. The receipt's combined review hash
+authorizes the reviewed result; source and overlay hashes are informational.
+Service, provider version, contract rows, immutable internal revision, and plan
+completion are written atomically.
 
 Import plan/apply requests use a 20-minute timeout unless the global `--timeout`
 flag is explicitly set. A timeout leaves the apply outcome unknown and must not
@@ -873,21 +884,43 @@ as directed by the error.
 | `--review-hash` | | Combined Registry review hash to pair with `--plan-id` | `""` |
 | `--receipt` | | Read a specific plan receipt (default: most recent local receipt) | `""` |
 
-## `import docs`
-Extract endpoints from a human-readable API documentation URL using the same agent-backed flow as the web UI. Every discovered endpoint is selected by default.
+## `import discover`
+Resolve a machine-readable specification or crawl provider documentation, review exact operations and optional Fused enrichment, then produce the ordinary import-plan receipt. This command never applies the plan.
 
-Usage: `fused-cli import docs --url <http(s)-docs-url> --name <service-name> --slug <service-slug> --version <provider-version>`
+Usage: `fused-cli import discover (--url <http(s)-provider-url> --name <service-name> --slug <service-slug> | --session <session-id>) [--all | --select METHOD:/path]`
+
+In an interactive terminal, the command shows the operation selector, opens
+the Engine's browser review when the draft is ready, and waits for that review
+to finish. `--no-browser` prints the review URL and waits without opening it.
+Global `--no-input` uses only flags and typed actions: pass `--all` or repeat
+`--select`, then repeat `--accept-proposal` or pass `--reject-enrichment`.
+Non-interactive execution does not open or wait for browser review.
+
+On `plan_ready`, discovery atomically writes
+`.fused/.state/import.plan.json`, replacing the previous receipt at that path.
+Use `--receipt-out` to retain the plan elsewhere. Applying is always a separate
+`fused-cli import apply` invocation.
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
-| `--name` | | Service name (required) | `""` |
-| `--slug` | | Account-scoped service slug to create (required) | `""` |
-| `--url` | | Human-readable API documentation URL (required) | `""` |
-| `--version` | | Provider version for the extracted contract (required) | `""` |
-| `--review` | | Review discovered endpoints before extraction; all are selected by default | `false` |
-| `--select` | | Endpoint to import as `METHOD:/path`; repeat for multiple endpoints | `[]` |
-| `--timeout` | | Maximum time to wait for discovery and extraction | `20m0s` |
-| `--no-workspace-add` | | Skip adding the extracted service to the current workspace | `false` |
+| `--name` | | Service name (required unless resuming) | `""` |
+| `--slug` | | Account-scoped service slug to create or update (required unless resuming) | `""` |
+| `--url` | | Provider specification or documentation URL (required unless resuming) | `""` |
+| `--session` | | Resume this authoritative discovery session; cannot change start identity or limits | `""` |
+| `--version` | | Provider version when it cannot be discovered | `""` |
+| `--source-mode` | | Source admission strategy: `auto`, `spec`, or `docs` | `"auto"` |
+| `--workers` | | Requested extraction workers; Registry clamps the value | `0` |
+| `--max-pages` | | Requested documentation page ceiling; Registry clamps the value | `0` |
+| `--max-depth` | | Requested documentation crawl depth; Registry clamps the value | `0` |
+| `--all` | | Explicitly select every discovered operation | `false` |
+| `--select` | | Exact operation as `METHOD:/path`; repeat for several | `[]` |
+| `--accept-proposal` | | Accept one exact enrichment proposal ID; repeat for several | `[]` |
+| `--reject-enrichment` | | Reject every optional enrichment proposal | `false` |
+| `--overlay` | | Local JSON Fused overlay submitted for reviewed validation | `""` |
+| `--receipt-out` | | Write the resulting import-plan receipt to a specific path | `""` |
+| `--no-browser` | | Print the browser review URL and wait instead of opening it | `false` |
+| `--json` | | Print the final plan-ready snapshot as JSON | `false` |
+| `--timeout` | | Maximum discovery session duration | `20m0s` |
 
 ## Global `plan` / `apply` / `validate`
 The CLI also supports top-level `plan`, `apply`, and `validate` commands to process all configurations (both SDKs and workspaces).
