@@ -1083,3 +1083,65 @@ services:
 		t.Fatalf("unexpected parsed MCP config: %#v", parsed)
 	}
 }
+
+// TestParseSDKConfigCarriesGenerateAsTriState proves absent and explicit true
+// are distinguishable from an explicit false, so the historical
+// always-build-a-package default survives configs written before the field.
+func TestParseSDKConfigCarriesGenerateAsTriState(t *testing.T) {
+	body := `
+apiVersion: fused/v1
+kind: sdk
+name: ledger
+version: 1.0.0
+language: typescript
+services:
+  stripe:
+    version: "v1"
+    operations: [chargesList]
+`
+	absent, err := configfile.Parse([]byte(body), "sdk.yaml")
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if absent.SDK.Generate != nil {
+		t.Fatalf("absent generate must stay nil, got %#v", absent.SDK.Generate)
+	}
+
+	off, err := configfile.Parse([]byte(body+"generate: false\n"), "sdk.yaml")
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if off.SDK.Generate == nil || *off.SDK.Generate {
+		t.Fatalf("generate: false must decode to an explicit false, got %#v", off.SDK.Generate)
+	}
+
+	on, err := configfile.Parse([]byte(body+"generate: true\n"), "sdk.yaml")
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if on.SDK.Generate == nil || !*on.SDK.Generate {
+		t.Fatalf("generate: true must decode to an explicit true, got %#v", on.SDK.Generate)
+	}
+}
+
+// TestParseMCPConfigRejectsGenerate guards the shared AppConfig: packaging has
+// no meaning for an Engine-hosted MCP server.
+func TestParseMCPConfigRejectsGenerate(t *testing.T) {
+	_, err := configfile.Parse([]byte(`
+apiVersion: fused/v1
+kind: mcp
+name: github-agent
+version: 1.0.0
+generate: false
+services:
+  github:
+    version: "2026-07-01"
+    operations: [reposList]
+`), "mcp.yaml")
+	if err == nil {
+		t.Fatal("expected kind: mcp to reject generate")
+	}
+	if !strings.Contains(err.Error(), "generate") {
+		t.Fatalf("error must name the field, got %q", err)
+	}
+}

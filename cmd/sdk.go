@@ -137,8 +137,16 @@ func resolveSDKDownloadTargets(args []string, configPath string) ([]sdkDownloadT
 		return nil, err
 	}
 	targets := make([]sdkDownloadTarget, 0, len(run.Configs))
+	skipped := make([]string, 0)
 	for _, cfg := range run.Configs {
 		if cfg.Kind == configfile.KindSDK {
+			// A config that builds no package has nothing to fetch. Skipping it
+			// keeps a bare `sdk download` working for the configs alongside it
+			// that do generate one.
+			if !sdkGeneratesPackage(cfg.SDK) {
+				skipped = append(skipped, cfg.SDK.Name)
+				continue
+			}
 			if strings.TrimSpace(cfg.SDK.Version) == "" {
 				return nil, fmt.Errorf("sdk %q must declare a version before download", cfg.SDK.Name)
 			}
@@ -149,6 +157,12 @@ func resolveSDKDownloadTargets(args []string, configPath string) ([]sdkDownloadT
 		}
 	}
 	if len(targets) == 0 {
+		if len(skipped) > 0 {
+			return nil, fmt.Errorf(
+				"no sdk configs build a package: %s set generate: false; call them over REST, or describe one with 'fused-cli sdk openapi'",
+				strings.Join(skipped, ", "),
+			)
+		}
 		return nil, fmt.Errorf("no sdk configs found")
 	}
 	return targets, nil

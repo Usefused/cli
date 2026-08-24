@@ -309,3 +309,62 @@ func writeTestPlanReceipt(t *testing.T, dir string, cfg *configfile.ParsedConfig
 		t.Fatal(err)
 	}
 }
+
+// TestValidateDownloadableConfigsRejectsDownloadWhenNoPackageIsBuilt proves the
+// contradiction is caught before anything is applied.
+func TestValidateDownloadableConfigsRejectsDownloadWhenNoPackageIsBuilt(t *testing.T) {
+	no := false
+	yes := true
+	generating := &configfile.ParsedConfig{
+		Kind: configfile.KindSDK, ConfigKey: "sdk:billing:1.0.0",
+		SDK: &configfile.SDKConfig{Name: "billing", Generate: &yes},
+	}
+	notGenerating := &configfile.ParsedConfig{
+		Kind: configfile.KindSDK, ConfigKey: "sdk:ledger:1.0.0",
+		SDK: &configfile.SDKConfig{Name: "ledger", Generate: &no},
+	}
+	unset := &configfile.ParsedConfig{
+		Kind: configfile.KindSDK, ConfigKey: "sdk:legacy:1.0.0",
+		SDK: &configfile.SDKConfig{Name: "legacy"},
+	}
+
+	if err := validateDownloadableConfigs([]*configfile.ParsedConfig{notGenerating}, false); err != nil {
+		t.Fatalf("without --download the config is applyable: %v", err)
+	}
+	if err := validateDownloadableConfigs([]*configfile.ParsedConfig{generating, unset}, true); err != nil {
+		t.Fatalf("generate true and generate absent both build a package: %v", err)
+	}
+	err := validateDownloadableConfigs([]*configfile.ParsedConfig{generating, notGenerating}, true)
+	if err == nil {
+		t.Fatal("expected --download to be rejected for a config that builds no package")
+	}
+	if !strings.Contains(err.Error(), "ledger") || !strings.Contains(err.Error(), "generate: false") {
+		t.Fatalf("error must name the config and the field, got %q", err)
+	}
+}
+
+// TestApplyPreparedSDKJSONReportsSkippedGenerationWhenNoPackageIsBuilt keeps the
+// automation contract honest: nothing was queued, so nothing may claim to be.
+func TestApplyPreparedSDKJSONReportsSkippedGenerationWhenNoPackageIsBuilt(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"applied","plan_id":"plan-1","app_family_id":"sdk-1","app_id":"version-1","job_id":"job-1"}`))
+	}))
+	defer server.Close()
+
+	no := false
+	cfg := &configfile.ParsedConfig{
+		ConfigKey: "sdk:ledger:1.0.0",
+		SDK:       &configfile.SDKConfig{Name: "ledger", Generate: &no},
+	}
+	result, err := applyPreparedSDKJSON(api.NewClient(server.URL, "fsk_test"), cfg, planReceipt{PlanID: "plan-1", SourceHash: "hash"}, false)
+	if err != nil {
+		t.Fatalf("applyPreparedSDKJSON: %v", err)
+	}
+	if result.Generation.Status != "skipped" || result.Generation.JobID != "job-1" {
+		t.Fatalf("generation stage = %#v", result.Generation)
+	}
+	if result.Download.Status != "not_requested" {
+		t.Fatalf("download stage = %#v", result.Download)
+	}
+}
