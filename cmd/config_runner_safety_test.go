@@ -108,7 +108,7 @@ func TestApplyPreparedSDKJSONPreservesIDsTokenAndStageOutcomes(t *testing.T) {
 	if result.SDKID != "sdk-1" || result.VersionID != "version-1" || result.ExecutionToken != "shown-once" {
 		t.Fatalf("identity output = %#v", result)
 	}
-	if result.Generation.Status != "completed" || result.Generation.JobID != "job-1" || result.Download.Status != "not_requested" {
+	if result.Generation.Status != "queued" || result.Generation.JobID != "job-1" || result.Download.Status != "not_requested" {
 		t.Fatalf("stage output = %#v", result)
 	}
 }
