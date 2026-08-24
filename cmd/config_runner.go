@@ -365,6 +365,9 @@ func runConfigApply(opts applyOptions) error {
 	if err := validateApplyOptions(opts, len(configs)); err != nil {
 		return err
 	}
+	if err := validateDownloadableConfigs(configs, opts.download); err != nil {
+		return err
+	}
 	if !opts.jsonOut {
 		printResolvedConfigPaths(configs)
 	}
@@ -386,6 +389,33 @@ func validateApplyOptions(opts applyOptions, configCount int) error {
 		return errors.New("--receipt can only be used with one config")
 	}
 	return nil
+}
+
+// validateDownloadableConfigs rejects --download against a config that asked
+// for no package, before anything is applied. Letting the apply through and
+// failing at the transfer would leave a published version behind a command the
+// user has to reason about twice.
+func validateDownloadableConfigs(configs []*configfile.ParsedConfig, download bool) error {
+	if !download {
+		return nil
+	}
+	for _, cfg := range configs {
+		if cfg.Kind != configfile.KindSDK || cfg.SDK == nil || sdkGeneratesPackage(cfg.SDK) {
+			continue
+		}
+		return fmt.Errorf(
+			"%s sets generate: false, so no package is built and --download has nothing to fetch; drop --download, or set generate: true and bump the version",
+			cfg.SDK.Name,
+		)
+	}
+	return nil
+}
+
+// sdkGeneratesPackage reports whether this config builds a downloadable
+// package. Absent means yes, preserving the behaviour of every config written
+// before generate: existed.
+func sdkGeneratesPackage(cfg *configfile.SDKConfig) bool {
+	return cfg.Generate == nil || *cfg.Generate
 }
 
 func applyConfigs(client *api.Client, configs []*configfile.ParsedConfig, opts applyOptions) error {
@@ -439,6 +469,13 @@ func applyPreparedSDKJSON(client *api.Client, cfg *configfile.ParsedConfig, rece
 		// the stage stays "queued" until the download path confirms it finished.
 		Generation: sdkApplyStageOutput{Status: "queued", JobID: resp.JobID},
 		Download:   sdkApplyDownloadOutput{Status: "not_requested"},
+	}
+	// generate: false publishes the version without building a package, so
+	// there is no job to wait on and nothing to download. --download is already
+	// rejected for this config before apply runs.
+	if !sdkGeneratesPackage(cfg.SDK) {
+		result.Generation.Status = "skipped"
+		return result, nil
 	}
 	if !download {
 		return result, nil
@@ -658,6 +695,10 @@ func applyPreparedSDK(client *api.Client, cfg *configfile.ParsedConfig, receipt 
 	// successful response path without copying it into CLI state or logs.
 	if resp.ExecutionToken != "" {
 		fmt.Printf("  SDK token (shown once): %s\n", resp.ExecutionToken)
+	}
+	if !sdkGeneratesPackage(cfg.SDK) {
+		fmt.Printf("  Package: not built (generate: false) -- call it over REST, or describe it with 'fused-cli sdk openapi %s@%s'\n", cfg.SDK.Name, cfg.SDK.Version)
+		return nil
 	}
 	if !download {
 		return nil

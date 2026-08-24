@@ -280,6 +280,13 @@ func validateAppConfig(cfg *AppConfig, kind ConfigKind) error {
 	if kind == KindMCP && strings.TrimSpace(cfg.Language) != "" {
 		return fmt.Errorf("mcp config must not set language")
 	}
+	// generate: only describes whether a downloadable package is built, which
+	// has no meaning for an Engine-hosted MCP server. AppConfig is shared
+	// between the two kinds, so reject it here rather than letting it decode
+	// silently into a field nothing reads.
+	if kind == KindMCP && cfg.Generate != nil {
+		return fmt.Errorf("mcp config must not set generate")
+	}
 	if len(cfg.Services) == 0 {
 		return fmt.Errorf("%s config requires at least one service", kind)
 	}

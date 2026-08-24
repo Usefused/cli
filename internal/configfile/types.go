@@ -258,6 +258,14 @@ type AppConfig struct {
 	Version    string `yaml:"version" json:"version"`
 	Language   string `yaml:"language,omitempty" json:"language,omitempty"`
 	Bucket     string `yaml:"bucket,omitempty" json:"bucket,omitempty"`
+	// Generate is SDK-only and tri-state on purpose: absent means the
+	// historical default of building a downloadable package. Only an explicit
+	// `generate: false` suppresses codegen, publishing an app version that is
+	// still callable over REST execution and describable via `sdk openapi`,
+	// with no package behind it. It lives in the config rather than on a flag
+	// so the choice is declared, which means flipping it changes SourceHash
+	// and needs a version bump -- the same rule as any other scope change.
+	Generate *bool `yaml:"generate,omitempty" json:"generate,omitempty"`
 	// WebhookAttachment names one kind: webhook config (its own top-level
 	// `name:`) this SDK/MCP wants webhook delivery from. Deliberately a
 	// single scalar, not a list, and hoisted here at the app's top
