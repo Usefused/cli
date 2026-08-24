@@ -139,7 +139,7 @@ func NewClientWithOptions(baseURL, apiKey string, opts ClientOptions) *Client {
 	}
 }
 
-func (c *Client) GraphQL(query string, variables map[string]any{}, out any{}) error {
+func (c *Client) GraphQL(query string, variables map[string]any, out any) error {
 	return c.graphQLAt("/graphql", query, variables, out)
 }
 
@@ -147,12 +147,12 @@ func (c *Client) GraphQL(query string, variables map[string]any{}, out any{}) er
 // workspace reads. Keeping it separate from Registry GraphQL prevents CLI read
 // commands from accidentally proxying Engine-owned bucket state through the
 // catalogue surface.
-func (c *Client) EngineGraphQL(query string, variables map[string]any{}, out any{}) error {
+func (c *Client) EngineGraphQL(query string, variables map[string]any, out any) error {
 	return c.graphQLAt("/engine/graphql", query, variables, out)
 }
 
-func (c *Client) graphQLAt(path string, query string, variables map[string]any{}, out any{}) error {
-	payload := map[string]any{}{
+func (c *Client) graphQLAt(path string, query string, variables map[string]any, out any) error {
+	payload := map[string]any{
 		"query":     query,
 		"variables": variables,
 	}
@@ -188,7 +188,7 @@ func (c *Client) graphQLAt(path string, query string, variables map[string]any{}
 	return decodeGraphQLData(respBody, out)
 }
 
-func decodeGraphQLData(respBody []byte, out any{}) error {
+func decodeGraphQLData(respBody []byte, out any) error {
 	var graphqlResp struct {
 		Data   json.RawMessage `json:"data"`
 		Errors []struct {
@@ -893,8 +893,8 @@ type WorkspaceConnectProfile struct {
 	// IsPublic mirrors whether this profile was published to the Registry via
 	// connection_profiles[*].public: true, so sync can round-trip that intent
 	// back into workspace.yaml instead of dropping it on the next sync.
-	IsPublic bool                   `json:"is_public"`
-	Profile  map[string]any{} `json:"profile"`
+	IsPublic bool           `json:"is_public"`
+	Profile  map[string]any `json:"profile"`
 }
 
 // WorkspaceConnectConfig is the bucket-scoped, masked connect state consumed
@@ -942,7 +942,7 @@ func (c *Client) ListWorkspaceServices(names ...string) ([]WorkspaceService, err
 	}
 	// Why: service listing is a read path, and Engine GraphQL now exposes the
 	// same version/slug enrichment REST used to provide without client-side joins.
-	err := c.EngineGraphQL(query, map[string]any{}{"names": names}, &resp)
+	err := c.EngineGraphQL(query, map[string]any{"names": names}, &resp)
 	return resp.Services, err
 }
 
@@ -998,7 +998,7 @@ func (c *Client) ListWorkspaceWebhooks(serviceID string) ([]WorkspaceWebhook, er
 	var resp struct {
 		Webhooks []WorkspaceWebhook `json:"workspaceWebhooks"`
 	}
-	err := c.EngineGraphQL(query, map[string]any{}{"serviceId": serviceID}, &resp)
+	err := c.EngineGraphQL(query, map[string]any{"serviceId": serviceID}, &resp)
 	return resp.Webhooks, err
 }
 
@@ -1032,7 +1032,7 @@ func (c *Client) ListConnectionResources(connectionID string) ([]ConnectionResou
 	var response struct {
 		Resources []ConnectionResource `json:"connectionResources"`
 	}
-	err := c.EngineGraphQL(query, map[string]any{}{"connectionId": connectionID}, &response)
+	err := c.EngineGraphQL(query, map[string]any{"connectionId": connectionID}, &response)
 	return response.Resources, err
 }
 
@@ -1047,7 +1047,7 @@ func (c *Client) SetDefaultConnectionResource(connectionID, resourceID string) (
 	var response struct {
 		Resource ConnectionResource `json:"setDefaultConnectionResource"`
 	}
-	err := c.EngineGraphQL(query, map[string]any{}{"connectionId": connectionID, "resourceId": resourceID}, &response)
+	err := c.EngineGraphQL(query, map[string]any{"connectionId": connectionID, "resourceId": resourceID}, &response)
 	if err != nil {
 		return nil, err
 	}
@@ -1065,7 +1065,7 @@ func (c *Client) RediscoverConnectionResources(connectionID string) ([]Connectio
 	var response struct {
 		Resources []ConnectionResource `json:"rediscoverConnectionResources"`
 	}
-	err := c.EngineGraphQL(query, map[string]any{}{"connectionId": connectionID}, &response)
+	err := c.EngineGraphQL(query, map[string]any{"connectionId": connectionID}, &response)
 	return response.Resources, err
 }
 
@@ -1080,7 +1080,7 @@ func (c *Client) StartConnectSession(bucketID, serviceID, endUserRef, createdByA
 			}
 		}
 	`
-	vars := map[string]any{}{
+	vars := map[string]any{
 		"bucketId":   bucketID,
 		"serviceId":  serviceID,
 		"endUserRef": endUserRef,
@@ -1133,7 +1133,7 @@ func (c *Client) ServiceVisibilities(serviceIDs []string) (map[string]ServiceVis
 	var resp struct {
 		ServicesByIDs []ServiceVisibility `json:"servicesByIds"`
 	}
-	if err := c.GraphQL(query, map[string]any{}{"serviceIds": serviceIDs}, &resp); err != nil {
+	if err := c.GraphQL(query, map[string]any{"serviceIds": serviceIDs}, &resp); err != nil {
 		return nil, err
 	}
 	for _, svc := range resp.ServicesByIDs {
@@ -1333,7 +1333,7 @@ func (c *Client) GetServiceLatestVersion(serviceSlug string) (string, error) {
 		} `json:"service"`
 	}
 	slug, provider := splitProviderQualifiedServiceRef(serviceSlug)
-	vars := map[string]any{}{
+	vars := map[string]any{
 		"id":       slug,
 		"provider": provider,
 	}
@@ -1373,7 +1373,7 @@ func (c *Client) GetServiceInfo(serviceSlug string) (*ServiceInfo, error) {
 		Service *ServiceInfo `json:"service"`
 	}
 	slug, provider := splitProviderQualifiedServiceRef(serviceSlug)
-	err := c.GraphQL(query, map[string]any{}{"id": slug, "provider": provider}, &resp)
+	err := c.GraphQL(query, map[string]any{"id": slug, "provider": provider}, &resp)
 	return resp.Service, err
 }
 
@@ -1404,7 +1404,7 @@ func (c *Client) ServiceVersions(serviceSlug string) ([]ServiceVersion, error) {
 		ServiceVersions []ServiceVersion `json:"serviceVersions"`
 	}
 	slug, provider := splitProviderQualifiedServiceRef(serviceSlug)
-	err := c.GraphQL(query, map[string]any{}{"serviceId": slug, "provider": provider}, &resp)
+	err := c.GraphQL(query, map[string]any{"serviceId": slug, "provider": provider}, &resp)
 	return resp.ServiceVersions, err
 }
 
@@ -1429,13 +1429,13 @@ func (c *Client) ServiceVersionSummaries(serviceSlug string) ([]ServiceVersionSu
 		ServiceVersions []ServiceVersionSummary `json:"serviceVersions"`
 	}
 	slug, provider := splitProviderQualifiedServiceRef(serviceSlug)
-	err := c.GraphQL(query, map[string]any{}{"serviceId": slug, "provider": provider}, &resp)
+	err := c.GraphQL(query, map[string]any{"serviceId": slug, "provider": provider}, &resp)
 	return resp.ServiceVersions, err
 }
 
 // SetConnectionProfile appends an owner-authorized immutable provider profile
 // revision. Registry owns provenance, visibility, and stream identity.
-func (c *Client) SetConnectionProfile(serviceID, serviceVersionID, name string, profile map[string]any{}) (*ConnectionProfileRevision, error) {
+func (c *Client) SetConnectionProfile(serviceID, serviceVersionID, name string, profile map[string]any) (*ConnectionProfileRevision, error) {
 	query := `mutation SetConnectionProfile($serviceId: String!, $serviceVersionId: String!, $name: String!, $config: JSON!) {
 		setConnectionProfile(service_id: $serviceId, service_version_id: $serviceVersionId, name: $name, config: $config) {
 			profile_id service_id service_version_id revision profile_hash provenance
@@ -1444,7 +1444,7 @@ func (c *Client) SetConnectionProfile(serviceID, serviceVersionID, name string, 
 	var response struct {
 		Profile *ConnectionProfileRevision `json:"setConnectionProfile"`
 	}
-	if err := c.GraphQL(query, map[string]any{}{
+	if err := c.GraphQL(query, map[string]any{
 		"serviceId": serviceID, "serviceVersionId": serviceVersionID, "name": name, "config": profile,
 	}, &response); err != nil {
 		return nil, err
@@ -1479,7 +1479,7 @@ func (c *Client) SearchServices(q string) ([]Service, error) {
 	var resp struct {
 		SearchServices []Service `json:"searchServices"`
 	}
-	err := c.GraphQL(query, map[string]any{}{"q": q}, &resp)
+	err := c.GraphQL(query, map[string]any{"q": q}, &resp)
 	return resp.SearchServices, err
 }
 
@@ -1505,7 +1505,7 @@ func (c *Client) SearchEndpointsPage(serviceID, version, q string, opts PageOpti
 	var resp struct {
 		SearchEndpoints []Integration `json:"searchEndpoints"`
 	}
-	err := c.GraphQL(query, map[string]any{}{"serviceId": serviceID, "version": version, "q": q, "limit": normalLimit(opts.Limit), "offset": normalOffset(opts.Offset)}, &resp)
+	err := c.GraphQL(query, map[string]any{"serviceId": serviceID, "version": version, "q": q, "limit": normalLimit(opts.Limit), "offset": normalOffset(opts.Offset)}, &resp)
 	return resp.SearchEndpoints, err
 }
 
@@ -1527,7 +1527,7 @@ func (c *Client) ServiceOperations(serviceID, version string) ([]Integration, er
 	var resp struct {
 		ServiceOperations []Integration `json:"serviceOperations"`
 	}
-	err := c.GraphQL(query, map[string]any{}{"serviceId": serviceID, "version": version}, &resp)
+	err := c.GraphQL(query, map[string]any{"serviceId": serviceID, "version": version}, &resp)
 	return resp.ServiceOperations, err
 }
 
@@ -1556,7 +1556,7 @@ func (c *Client) FetchWebhooks(serviceID, version string) ([]Webhook, error) {
 			Webhooks []Webhook `json:"webhooks"`
 		} `json:"service"`
 	}
-	err := c.GraphQL(query, map[string]any{}{"id": serviceID}, &resp)
+	err := c.GraphQL(query, map[string]any{"id": serviceID}, &resp)
 	return resp.Service.Webhooks, err
 }
 
@@ -1583,7 +1583,7 @@ func (c *Client) ParseSDKIntent(q string) (*IntentPayload, error) {
 	var resp struct {
 		ParseSDKIntent IntentPayload `json:"parseSDKIntent"`
 	}
-	err := c.GraphQL(query, map[string]any{}{"q": q}, &resp)
+	err := c.GraphQL(query, map[string]any{"q": q}, &resp)
 	if err != nil {
 		return nil, err
 	}
@@ -1693,7 +1693,7 @@ type SDKConfigPlanResponse struct {
 	OwnerType           string                  `json:"owner_type"`
 	ConfigKey           string                  `json:"config_key"`
 	SourceHash          string                  `json:"source_hash"`
-	Summary             map[string]any{}  `json:"summary"`
+	Summary             map[string]any          `json:"summary"`
 	Notifications       NotificationInbox       `json:"notifications"`
 	RequiredPermissions []PermissionRequirement `json:"required_permissions"`
 }
@@ -1704,26 +1704,26 @@ type NotificationInbox struct {
 }
 
 type NotificationItem struct {
-	ID                  string        `json:"id"`
-	Source              string        `json:"source"`
-	Type                string        `json:"type"`
-	Severity            string        `json:"severity"`
-	Status              string        `json:"status"`
-	ServiceID           string        `json:"service_id"`
-	Version             string        `json:"version"`
-	ConfigKey           string        `json:"config_key"`
-	Message             string        `json:"message"`
-	IntegrationObjectID string        `json:"integration_object_id"`
-	WebhookObjectID     string        `json:"webhook_object_id"`
-	DetectedAt          string        `json:"detected_at"`
-	Diff                []any{} `json:"diff"`
+	ID                  string `json:"id"`
+	Source              string `json:"source"`
+	Type                string `json:"type"`
+	Severity            string `json:"severity"`
+	Status              string `json:"status"`
+	ServiceID           string `json:"service_id"`
+	Version             string `json:"version"`
+	ConfigKey           string `json:"config_key"`
+	Message             string `json:"message"`
+	IntegrationObjectID string `json:"integration_object_id"`
+	WebhookObjectID     string `json:"webhook_object_id"`
+	DetectedAt          string `json:"detected_at"`
+	Diff                []any  `json:"diff"`
 }
 
 type ConfigPlanResponse struct {
 	PlanID              string                  `json:"plan_id"`
 	ConfigKey           string                  `json:"config_key"`
 	SourceHash          string                  `json:"source_hash"`
-	Summary             map[string]any{}  `json:"summary"`
+	Summary             map[string]any          `json:"summary"`
 	RequiredPermissions []PermissionRequirement `json:"required_permissions"`
 	// Notifications was previously absent from this struct -- kind: workspace
 	// was the one plan response missing it entirely, unlike SDKConfigPlanResponse
@@ -1795,7 +1795,7 @@ func (c *Client) PlanWebhookConfig(intent DesiredConfigPlanIntent) (*SDKConfigPl
 // planDesiredConfig keeps SDK and MCP command behavior identical while the
 // Engine routes each kind to its distinct executor.
 func (c *Client) planDesiredConfig(kind string, intent DesiredConfigPlanIntent) (*SDKConfigPlanResponse, error) {
-	reqBody := map[string]any{}{
+	reqBody := map[string]any{
 		"source_hash": intent.SourceHash,
 		"config_key":  intent.ConfigKey,
 		"config":      intent.Config,
@@ -1915,7 +1915,7 @@ type WebhookConfigRegistration struct {
 // ApplySDKConfig may return a plaintext execution token only when Engine first
 // creates the SDK. Callers must surface it without retaining it.
 func (c *Client) ApplySDKConfig(planID, sourceHash string) (*SDKConfigApplyResponse, error) {
-	reqBody := map[string]any{}{
+	reqBody := map[string]any{
 		"plan_id":     planID,
 		"source_hash": sourceHash,
 	}
@@ -1954,7 +1954,7 @@ func (c *Client) ApplySDKConfig(planID, sourceHash string) (*SDKConfigApplyRespo
 // ApplyMCPConfig activates the resolved Engine scope and returns its plaintext
 // execution token only when the runtime is first created.
 func (c *Client) ApplyMCPConfig(planID, sourceHash string) (*MCPConfigApplyResponse, error) {
-	reqBody := map[string]any{}{"plan_id": planID, "source_hash": sourceHash}
+	reqBody := map[string]any{"plan_id": planID, "source_hash": sourceHash}
 	body, err := json.Marshal(reqBody)
 	if err != nil {
 		return nil, err
@@ -1987,7 +1987,7 @@ func (c *Client) ApplyMCPConfig(planID, sourceHash string) (*MCPConfigApplyRespo
 // Unlike SDK/MCP there is no generated package or token -- the response is
 // just the set of (service, slug) rows the Engine just wrote.
 func (c *Client) ApplyWebhookConfig(planID, sourceHash string) (*WebhookConfigApplyResponse, error) {
-	reqBody := map[string]any{}{"plan_id": planID, "source_hash": sourceHash}
+	reqBody := map[string]any{"plan_id": planID, "source_hash": sourceHash}
 	body, err := json.Marshal(reqBody)
 	if err != nil {
 		return nil, err
@@ -2017,7 +2017,7 @@ func (c *Client) ApplyWebhookConfig(planID, sourceHash string) (*WebhookConfigAp
 }
 
 func (c *Client) ApplyWorkspaceConfig(planID, sourceHash string, authMaterials map[string]AuthMaterial, profileMaterials map[string]ConnectMaterial, bucketSecretMaterials map[string]string) (*ConfigApplyResponse, error) {
-	reqBody := map[string]any{}{
+	reqBody := map[string]any{
 		"plan_id":     planID,
 		"source_hash": sourceHash,
 	}
