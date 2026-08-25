@@ -18,6 +18,9 @@ concurrency:
 jobs:
   goreleaser:
     runs-on: ubuntu-latest
+    # The selected compiler is installed explicitly, so Go must never download a second toolchain into the module cache.
+    env:
+      GOTOOLCHAIN: local
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -27,6 +30,34 @@ jobs:
 
       - name: Test release tag calculation
         run: ./scripts/next-release-tag_test.sh
+
+      - name: Test Go toolchain resolution
+        run: ./scripts/go-toolchain-version_test.sh
+
+      - name: Resolve Go toolchain
+        id: go-toolchain
+        run: echo "version=$(./scripts/go-toolchain-version.sh)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ steps.go-toolchain.outputs.version }}
+          # setup-go cannot exclude downloaded toolchains from its module cache, so release restores must remain disabled.
+          cache: false
+
+      - name: Verify Go toolchain
+        env:
+          EXPECTED_GO_VERSION: ${{ steps.go-toolchain.outputs.version }}
+        run: |
+          ACTUAL_GO_VERSION=$(go env GOVERSION)
+          # Fail before publishing a tag if the runner did not install the exact compiler declared by go.mod.
+          if [ "$ACTUAL_GO_VERSION" != "go$EXPECTED_GO_VERSION" ]; then
+            echo "::error::expected Go $EXPECTED_GO_VERSION, got $ACTUAL_GO_VERSION"
+            exit 1
+          fi
+
+      - name: Test CLI
+        run: go test ./...
 
       - name: Bump version and push tag
         if: github.ref == 'refs/heads/main'
@@ -49,11 +80,6 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git tag "$NEW_TAG"
           git push origin "$NEW_TAG"
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.22'
 
       - name: Stage versioned skills
         env:
