@@ -242,6 +242,13 @@ from Engine-local build metadata and the generator version pinned when that app
 version was created. It does not silently use a newer generator. Registry is
 not an SDK configuration archive and cannot restore SDKs after an Engine
 database reset; reapply the local SDK config and issue a new execution token.
+The CLI extracts the package to `<out>/fused-sdks/<sdk-name>`. A generated
+TypeScript README must path-qualify dependency preparation, for example with
+`npm --prefix './fused-sdks/<sdk-name>' install`; a bare `npm install` can
+mutate the consuming application instead of the downloaded SDK. Treat
+installing that built local package into the application as a separate
+`npm install './fused-sdks/<sdk-name>'` step, adjusting the path when `--out`
+is elsewhere.
 
 ## Permissions and team access
 
