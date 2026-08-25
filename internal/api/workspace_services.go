@@ -4,26 +4,15 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 )
-
-const maxCLIHTTPErrorBytes int64 = 64 << 10
-
-// readBoundedHTTPErrorBody limits untrusted control-plane failures before the
-// shared parser projects their safe structured fields.
-func readBoundedHTTPErrorBody(body io.Reader) []byte {
-	payload, _ := io.ReadAll(io.LimitReader(body, maxCLIHTTPErrorBytes))
-	return payload
-}
 
 // AddWorkspaceServiceRequest mirrors Engine's scoped additive activation
 // boundary; an omitted version lets Engine resolve the current Registry version.
 type AddWorkspaceServiceRequest struct {
-	ServiceID        string `json:"service_id"`
-	ServiceName      string `json:"service_name"`
-	VersionTag       string `json:"version_tag"`
-	ServiceVersionID string `json:"service_version_id,omitempty"`
+	ServiceID   string `json:"service_id"`
+	ServiceName string `json:"service_name"`
+	VersionTag  string `json:"version_tag"`
 }
 
 // AddWorkspaceService activates exactly one service through Engine's existing

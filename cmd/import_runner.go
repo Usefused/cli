@@ -58,12 +58,18 @@ type importApplyOutcomeUnknownError struct {
 	cause       error
 	timeout     time.Duration
 	operationID string
+	timedOut    bool
 }
 
 // Error explains both sides of the ambiguous boundary without exposing the
 // Engine URL, credentials, source, or remote response body.
 func (e *importApplyOutcomeUnknownError) Error() string {
-	return fmt.Sprintf("import apply outcome is unknown after %s. %s", e.timeout, e.remediation())
+	prefix := "import apply outcome is unknown."
+	// Only a real deadline should claim elapsed timeout or suggest a larger future budget.
+	if e.timedOut {
+		prefix = fmt.Sprintf("import apply outcome is unknown after %s.", e.timeout)
+	}
+	return prefix + " " + e.remediation()
 }
 
 // Unwrap preserves deadline inspection for logs while command classification
@@ -75,7 +81,12 @@ func (e *importApplyOutcomeUnknownError) Unwrap() error {
 // remediation directs recovery through the durable read-only operation status
 // because a blind mutation retry is unnecessary and may obscure the outcome.
 func (e *importApplyOutcomeUnknownError) remediation() string {
-	return fmt.Sprintf("Check the durable outcome with `fused-cli import status %s`. For future large imports, set `--timeout` above %s.", safeImportOperationID(e.operationID), e.timeout)
+	recovery := fmt.Sprintf("Check the durable outcome with `fused-cli import status %s`.", safeImportOperationID(e.operationID))
+	// Timeout tuning is relevant only when a deadline, rather than reset or malformed proof, lost the response.
+	if e.timedOut {
+		recovery += fmt.Sprintf(" For future large imports, set `--timeout` above %s.", e.timeout)
+	}
+	return recovery
 }
 
 // safeImportOperationID prevents a locally edited receipt from injecting
@@ -380,6 +391,8 @@ func printImportUsageWarning(out io.Writer, usage *api.SpecImportUsage) {
 	}
 }
 
+// runImportApply validates the reviewed receipt, submits one mutation attempt,
+// and records success only after the client proves the exact committed result.
 func runImportApply(cmd *cobra.Command, opts importSpecApplyOptions) error {
 	receipt, err := resolveImportApplyReceipt(opts)
 	if err != nil {
@@ -400,14 +413,10 @@ func runImportApply(cmd *cobra.Command, opts importSpecApplyOptions) error {
 	}
 	resp, err := client.ApplySpecImport(receipt.PlanID, receipt.ReviewHash)
 	if err != nil {
-		if isRequestTimeout(err) {
-			// The Registry transaction may have committed before the proxy response
-			// was lost, so this outcome is deliberately not marked retryable.
-			trace.SpanFromContext(cmd.Context()).SetAttributes(
-				attribute.String("outcome", "unknown"),
-				attribute.Int64("timeout_ms", timeout.Milliseconds()),
-			)
-			return &importApplyOutcomeUnknownError{cause: err, timeout: timeout, operationID: receipt.PlanID}
+		var unknown *api.SpecImportApplyOutcomeUnknownError
+		// Structured safe HTTP errors are authoritative; every marked transport or proof failure recovers by status.
+		if errors.As(err, &unknown) {
+			return newImportApplyOutcomeUnknownError(cmd, err, timeout, receipt.PlanID)
 		}
 		return err
 	}
@@ -416,9 +425,22 @@ func runImportApply(cmd *cobra.Command, opts importSpecApplyOptions) error {
 	return nil
 }
 
+// newImportApplyOutcomeUnknownError records one bounded unknown outcome and
+// preserves timeout tuning only when the underlying transport hit its deadline.
+func newImportApplyOutcomeUnknownError(cmd *cobra.Command, cause error, timeout time.Duration, operationID string) error {
+	timedOut := isRequestTimeout(cause)
+	attributes := []attribute.KeyValue{attribute.String("outcome", "unknown")}
+	// Deadline duration is useful only for actual timeout recovery, not resets or malformed bodies.
+	if timedOut {
+		attributes = append(attributes, attribute.Int64("timeout_ms", timeout.Milliseconds()))
+	}
+	trace.SpanFromContext(cmd.Context()).SetAttributes(attributes...)
+	return &importApplyOutcomeUnknownError{cause: cause, timeout: timeout, operationID: operationID, timedOut: timedOut}
+}
+
 // runImportStatus reads one durable operation and renders either stable JSON
 // or a compact human recovery summary.
-func runImportStatus(cmd *cobra.Command, operationID string, jsonOut bool) error {
+func runImportStatus(cmd *cobra.Command, operationID string) error {
 	canonicalOperationID := strings.TrimSpace(operationID)
 	parsedOperationID, err := uuid.Parse(canonicalOperationID)
 	// Local UUID validation keeps invalid path text away from the HTTP client.
@@ -437,8 +459,8 @@ func runImportStatus(cmd *cobra.Command, operationID string, jsonOut bool) error
 		return err
 	}
 	// JSON mode is a direct stable projection for scripts and agents.
-	if jsonOut {
-		return json.NewEncoder(cmd.OutOrStdout()).Encode(status)
+	if wantsJSON(cmd) {
+		return writeJSON(cmd, status)
 	}
 	printImportStatus(cmd.OutOrStdout(), status)
 	return nil
@@ -455,6 +477,10 @@ func printImportStatus(out io.Writer, status *api.SpecImportStatusResponse) {
 	// Terminal failures include one stable selector for scripts and operators.
 	if status.Code != "" {
 		fmt.Fprintf(out, "Code: %s\n", status.Code)
+	}
+	// In-progress guidance is informational and deliberately carries no shell recovery command.
+	if status.Guidance != "" {
+		fmt.Fprintf(out, "Guidance: %s\n", status.Guidance)
 	}
 	// Recovery is printed only when the server has a non-looping next command.
 	if status.Recovery != "" {

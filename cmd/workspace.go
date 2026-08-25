@@ -333,6 +333,7 @@ func workspaceServiceConfigAdditions(targets []workspaceServiceAddTarget, versio
 	for _, target := range targets {
 		additions = append(additions, workspaceServiceConfigAddition{
 			serviceName: target.slug, expectedServiceID: target.serviceID,
+			identityKeys:     appendUniqueWorkspaceServiceRefs([]string{target.slug}, target.requestedRefs...),
 			persistServiceID: target.configServiceID, version: version,
 		})
 	}
@@ -390,10 +391,18 @@ func printWorkspaceServiceAddTargets(cmd *cobra.Command, targets []workspaceServ
 // applyWorkspaceServiceAddTargets reuses Engine's scoped additive mutation for
 // each selected service, so unrelated workspace services can never be removed.
 func applyWorkspaceServiceAddTargets(cmd *cobra.Command, targets []workspaceServiceAddTarget, version string) error {
-	client, err := getAPIClient()
+	requestID := workspaceServiceCompositeRequestID()
+	client, err := getAPIClientWithRequestID(requestID)
+	// Client construction must happen after selecting the composite identity so
+	// every sibling request, error, and span uses the same audit correlation ID.
 	if err != nil {
 		return err
 	}
+	span := trace.SpanFromContext(cmd.Context())
+	span.SetAttributes(
+		attribute.String("workspace_service_apply.request_id", requestID),
+		attribute.String("workspace_service_apply.phase", workspaceServiceApplyPhase),
+	)
 	committed := make([]string, 0, len(targets))
 	for index, target := range targets {
 		err := client.AddWorkspaceService(cliapi.AddWorkspaceServiceRequest{
@@ -404,17 +413,21 @@ func applyWorkspaceServiceAddTargets(cmd *cobra.Command, targets []workspaceServ
 		if err != nil {
 			unattempted := workspaceServiceTargetSlugs(targets[index+1:])
 			commitState := workspaceServiceFailedCommitState(err)
-			span := trace.SpanFromContext(cmd.Context())
+			commitPossible := workspaceServiceCommitPossible(commitState)
 			span.SetAttributes(
+				attribute.String("workspace_service_apply.error_code", workspaceServiceApplyErrorCode),
 				attribute.Int("workspace_service_apply.committed_count", len(committed)),
 				attribute.Int("workspace_service_apply.unattempted_count", len(unattempted)),
 				attribute.String("workspace_service_apply.failed_commit_state", commitState),
+				attribute.Bool("workspace_service_apply.failed_commit_possible", commitPossible),
 			)
 			return &workspaceServiceApplyOutcomeError{
+				code: workspaceServiceApplyErrorCode, phase: workspaceServiceApplyPhase, requestID: requestID,
 				committed: committed, failed: target.slug, failedCommitState: commitState,
-				unattempted: unattempted,
-				recovery:    workspaceServiceApplyRecoveryCommand(targets[index:], version, ConfigFile),
-				cause:       err,
+				failedCommitPossible: commitPossible,
+				unattempted:          unattempted,
+				recovery:             workspaceServiceApplyRecoveryCommand(targets[index:], version, ConfigFile),
+				cause:                err,
 			}
 		}
 		recordAppliedChange(cmd.Context(), cmd.CommandPath(), "workspace_service_activation")
@@ -422,6 +435,26 @@ func applyWorkspaceServiceAddTargets(cmd *cobra.Command, targets []workspaceServ
 		committed = append(committed, target.slug)
 	}
 	return nil
+}
+
+// workspaceServiceCompositeRequestID preserves an explicit audit identity or
+// creates one local UUID before any scoped activation request is constructed.
+func workspaceServiceCompositeRequestID() string {
+	requestID := strings.TrimSpace(RequestID)
+	// A user-supplied value was already validated by root pre-run and must remain
+	// unchanged across transport, OTEL, and recovery output.
+	if requestID != "" {
+		return requestID
+	}
+	return uuid.NewString()
+}
+
+// workspaceServiceCommitPossible distinguishes a proven pre-commit rejection
+// from an ambiguous server or transport failure without guessing completion.
+func workspaceServiceCommitPossible(commitState string) bool {
+	// Only the authoritative not-committed state makes a prior commit impossible;
+	// unknown conservatively preserves the possibility of a completed write.
+	return commitState != "not_committed"
 }
 
 // workspaceServiceTargetSlugs projects safe canonical refs for outcome display.
@@ -437,10 +470,15 @@ func workspaceServiceTargetSlugs(targets []workspaceServiceAddTarget) []string {
 // authoritative client rejections are uncommitted, while 5xx/lost responses are unknown.
 func workspaceServiceFailedCommitState(err error) string {
 	var apiError *cliapi.APIError
-	// Only 4xx proves validation or policy rejected the request before commit;
-	// a 5xx can occur after persistence and must not invite an unsafe blind retry.
-	if errors.As(err, &apiError) && apiError.HTTPStatus >= http.StatusBadRequest && apiError.HTTPStatus < http.StatusInternalServerError {
-		return "not_committed"
+	// Only statuses produced by Engine validation, auth, lookup, or pre-mutation
+	// admission prove rejection; timeouts and unknown proxy statuses remain ambiguous.
+	if errors.As(err, &apiError) {
+		switch apiError.HTTPStatus {
+		case http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden,
+			http.StatusNotFound, http.StatusConflict, http.StatusUnprocessableEntity,
+			http.StatusTooManyRequests:
+			return "not_committed"
+		}
 	}
 	return "unknown"
 }
@@ -759,25 +797,25 @@ func parseResourceInputFlags(flags []string) (map[string]string, error) {
 	return values, nil
 }
 
+// workspaceServiceByID performs a bounded name lookup and then verifies the
+// immutable service ID before an operation uses the enriched workspace row.
 func workspaceServiceByID(client *cliapi.Client, serviceID, serviceSlug string) (cliapi.WorkspaceService, error) {
 	// Engine applies the name filter before enrichment, which keeps this
 	// membership check bounded even in workspaces with many services.
-	services, err := client.ListWorkspaceServices(workspaceServiceLookupName(serviceSlug))
+	services, err := client.ListWorkspaceServices(cliapi.ServiceLookupName(serviceSlug))
+	// Permission and transport errors are authoritative and must not be recast as
+	// a missing workspace membership.
 	if err != nil {
 		return cliapi.WorkspaceService{}, err
 	}
 	for _, service := range services {
+		// Immutable identity prevents equal slugs from different providers from
+		// satisfying the operation lookup.
 		if service.ServiceID == serviceID {
 			return service, nil
 		}
 	}
 	return cliapi.WorkspaceService{}, fmt.Errorf("service %s is not enabled in this workspace", serviceSlug)
-}
-
-// workspaceServiceLookupName keeps existing command call sites narrow while
-// delegating qualified-reference grammar to the shared API helper.
-func workspaceServiceLookupName(serviceSlug string) string {
-	return cliapi.ServiceLookupName(serviceSlug)
 }
 
 func resolveWorkspaceOperationVersion(service cliapi.WorkspaceService, requested string) (string, error) {

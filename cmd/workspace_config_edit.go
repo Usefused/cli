@@ -14,6 +14,7 @@ import (
 type workspaceServiceConfigAddition struct {
 	serviceName       string
 	expectedServiceID string
+	identityKeys      []string
 	persistServiceID  string
 	version           string
 }
@@ -31,12 +32,12 @@ func addWorkspaceServices(path string, additions []workspaceServiceConfigAdditio
 		return err
 	}
 	for _, addition := range additions {
-		service := cfg.Services[addition.serviceName]
-		// Existing stable identity must never be silently repointed because the
-		// resolved apply target and declarative identity must stay the same service.
-		if addition.expectedServiceID != "" && service.ServiceID != "" && service.ServiceID != addition.expectedServiceID {
-			return fmt.Errorf("service %s already has service_id %s; refusing to resolve or activate it as %s", addition.serviceName, service.ServiceID, addition.expectedServiceID)
+		// Every requested and canonical key must agree before the in-memory draft
+		// changes, preventing aliases from hiding a different persisted identity.
+		if err := validateWorkspaceServiceConfigIdentity(cfg, addition); err != nil {
+			return err
 		}
+		service := cfg.Services[addition.serviceName]
 		// Only explicit identity additions persist an ID; discovered public
 		// services retain canonical slug-based config-as-code behavior.
 		if addition.persistServiceID != "" {
@@ -46,6 +47,27 @@ func addWorkspaceServices(path string, additions []workspaceServiceConfigAdditio
 		mergeWorkspaceServiceSelection(cfg, addition.serviceName, addition.version)
 	}
 	return writeWorkspaceConfig(path, cfg)
+}
+
+// validateWorkspaceServiceConfigIdentity ensures discovery cannot activate one
+// Registry service while any requested YAML key remains pinned to another.
+func validateWorkspaceServiceConfigIdentity(cfg *configfile.WorkspaceConfig, addition workspaceServiceConfigAddition) error {
+	keys := addition.identityKeys
+	// Direct internal callers still receive canonical-key protection even when
+	// they do not carry discovery aliases.
+	if len(keys) == 0 {
+		keys = []string{addition.serviceName}
+	}
+	// Validate every alias before authoring the canonical resolved key.
+	for _, key := range keys {
+		service := cfg.Services[key]
+		// An omitted ID remains slug-resolved intent, but an existing stable ID is
+		// authoritative and cannot be silently repointed by discovery.
+		if addition.expectedServiceID != "" && service.ServiceID != "" && service.ServiceID != addition.expectedServiceID {
+			return fmt.Errorf("service %s already has service_id %s; refusing to resolve or activate it as %s", key, service.ServiceID, addition.expectedServiceID)
+		}
+	}
+	return nil
 }
 
 // mergeWorkspaceServiceSelection is the one additive workspace-authoring rule

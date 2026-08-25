@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"unicode"
 
 	"github.com/Usefused/cli/internal/api"
 	"github.com/charmbracelet/huh"
@@ -16,27 +17,47 @@ type workspaceServiceAddTarget struct {
 	serviceID        string
 	configServiceID  string
 	resolutionSource string
+	requestedRefs    []string
 }
 
+const (
+	workspaceServiceApplyErrorCode  = "workspace_service_apply_partial"
+	workspaceServiceApplyPhase      = "engine_scoped_activation"
+	workspaceServiceSafeRef         = "<service>"
+	workspaceServiceSafeID          = "<service-id>"
+	workspaceServiceSafeValue       = "<value>"
+	workspaceServiceSafeRecovery    = "recovery unavailable; rerun with exact service IDs"
+	workspaceServiceMaxFieldBytes   = 128
+	workspaceServiceMaxCommandBytes = 4096
+)
+
 type workspaceServiceApplyOutcomeError struct {
-	committed         []string
-	failed            string
-	failedCommitState string
-	unattempted       []string
-	recovery          string
-	cause             error
+	code                 string
+	phase                string
+	requestID            string
+	committed            []string
+	failed               string
+	failedCommitState    string
+	failedCommitPossible bool
+	unattempted          []string
+	recovery             string
+	cause                error
 }
 
 // Error reports the complete bounded composite outcome and its exact safe rerun.
 func (err *workspaceServiceApplyOutcomeError) Error() string {
 	return fmt.Sprintf(
-		"workspace service apply partially completed: committed=%s; failed=%s (%s); unattempted=%s; recovery=`%s`: %v",
-		workspaceServiceOutcomeList(err.committed), err.failed, err.failedCommitState,
-		workspaceServiceOutcomeList(err.unattempted), err.recovery, err.cause,
+		"workspace service apply partially completed: code=%s; phase=%s; request_id=%s; committed=%s; failed=%s (%s, commit_possible=%t); unattempted=%s; %s; recovery=`%s`",
+		safeWorkspaceOutcomeToken(err.code, workspaceServiceApplyErrorCode),
+		safeWorkspaceOutcomeToken(err.phase, workspaceServiceApplyPhase),
+		safeWorkspaceRequestID(err.requestID), workspaceServiceOutcomeList(err.committed), safeWorkspaceServiceRef(err.failed),
+		safeWorkspaceOutcomeToken(err.failedCommitState, "unknown"), err.failedCommitPossible,
+		workspaceServiceOutcomeList(err.unattempted), workspaceServiceFailureSummary(err.cause), safeWorkspaceRecoveryCommand(err.recovery),
 	)
 }
 
-// Unwrap retains the safe Engine/API error for telemetry classification.
+// Unwrap retains the original Engine/API error for internal classification
+// without rendering its potentially unsafe message.
 func (err *workspaceServiceApplyOutcomeError) Unwrap() error { return err.cause }
 
 // workspaceServiceOutcomeList renders an explicit none marker so partial state
@@ -47,7 +68,17 @@ func workspaceServiceOutcomeList(values []string) string {
 	if len(values) == 0 {
 		return "none"
 	}
-	return strings.Join(values, ",")
+	return strings.Join(safeWorkspaceServiceRefs(values), ",")
+}
+
+// safeWorkspaceServiceRefs projects outcome groups through the shared strict
+// reference renderer while preserving their committed positional order.
+func safeWorkspaceServiceRefs(values []string) []string {
+	safeValues := make([]string, 0, len(values))
+	for _, value := range values {
+		safeValues = append(safeValues, safeWorkspaceServiceRef(value))
+	}
+	return safeValues
 }
 
 // workspaceServiceApplyRecoveryCommand builds idempotent exact-ID additions for
@@ -56,18 +87,166 @@ func workspaceServiceApplyRecoveryCommand(targets []workspaceServiceAddTarget, v
 	commands := make([]string, 0, len(targets))
 	for _, target := range targets {
 		parts := []string{
-			"fused-cli workspace service add", shellQuoteWorkspaceServiceArg(target.slug),
-			"--service-id", shellQuoteWorkspaceServiceArg(target.serviceID),
+			"fused-cli workspace service add", shellQuoteWorkspaceServiceArg(safeWorkspaceServiceRef(target.slug)),
+			"--service-id", shellQuoteWorkspaceServiceArg(safeWorkspaceServiceID(target.serviceID)),
 		}
 		// Preserve an explicit version on every exact retry; omitted version keeps
 		// Engine's existing current-version resolution behavior.
 		if strings.TrimSpace(version) != "" {
-			parts = append(parts, "--version", shellQuoteWorkspaceServiceArg(version))
+			parts = append(parts, "--version", shellQuoteWorkspaceServiceArg(safeWorkspaceRecoveryValue(version)))
 		}
-		parts = append(parts, "--apply", "-f", shellQuoteWorkspaceServiceArg(configPath))
+		parts = append(parts, "--apply", "-f", shellQuoteWorkspaceServiceArg(safeWorkspaceRecoveryValue(configPath)))
 		commands = append(commands, strings.Join(parts, " "))
 	}
 	return strings.Join(commands, " && ")
+}
+
+// safeWorkspaceServiceRef admits only bounded UUIDs or canonical slug grammar
+// so remote catalogue text cannot inject URLs or terminal controls into output.
+func safeWorkspaceServiceRef(value string) string {
+	value = strings.TrimSpace(value)
+	// Credential-shaped values are never legitimate display slugs and must not
+	// survive merely because their characters overlap the slug alphabet.
+	if strings.Contains(strings.ToLower(value), "fsk_") {
+		return workspaceServiceSafeRef
+	}
+	// Exact IDs are safe canonical references even though they are not slugs.
+	if parsedID, err := uuid.Parse(value); err == nil {
+		return parsedID.String()
+	}
+	parsed := api.ParseServiceReference(value)
+	// Provider-qualified display requires two safe slug segments; incomplete or
+	// unsafe identities collapse to a fixed non-secret marker.
+	if parsed.Qualified {
+		if safeWorkspaceServiceSegment(parsed.Provider) && safeWorkspaceServiceSegment(parsed.Slug) {
+			return "@" + parsed.Provider + "/" + parsed.Slug
+		}
+		return workspaceServiceSafeRef
+	}
+	// Bare resolved slugs use the same strict segment grammar and byte bound.
+	if safeWorkspaceServiceSegment(value) {
+		return value
+	}
+	return workspaceServiceSafeRef
+}
+
+// safeWorkspaceServiceSegment accepts the canonical ASCII slug alphabet while
+// rejecting URL punctuation, whitespace, controls, and unbounded remote text.
+func safeWorkspaceServiceSegment(value string) bool {
+	// Service identity fields are non-empty and small enough for one terminal line.
+	if value == "" || len(value) > workspaceServiceMaxFieldBytes {
+		return false
+	}
+	for _, char := range value {
+		// Registry slugs and provider handles are intentionally narrower than free
+		// text so recovery output cannot become an executable URL or escape sequence.
+		if !isWorkspaceServiceTokenChar(char) {
+			return false
+		}
+	}
+	return true
+}
+
+// isWorkspaceServiceTokenChar centralizes the canonical ASCII alphabet shared
+// by safe slug and classifier-token rendering.
+func isWorkspaceServiceTokenChar(char rune) bool {
+	return char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z' ||
+		char >= '0' && char <= '9' || strings.ContainsRune("._-", char)
+}
+
+// safeWorkspaceServiceID returns one canonical UUID or a fixed inert marker for
+// malformed remote identity that must never be copied into a recovery command.
+func safeWorkspaceServiceID(value string) string {
+	parsed, err := uuid.Parse(strings.TrimSpace(value))
+	// Recovery is ID-pinned only when the immutable identity is a valid UUID.
+	if err != nil {
+		return workspaceServiceSafeID
+	}
+	return parsed.String()
+}
+
+// safeWorkspaceRecoveryValue bounds locally supplied version and config-path
+// arguments before POSIX quoting so copied recovery never contains controls.
+func safeWorkspaceRecoveryValue(value string) string {
+	value = strings.TrimSpace(value)
+	// URLs, credential-shaped text, empty values, and long fields are unsafe to
+	// reflect even inside quotes because terminal output is still user-visible.
+	if value == "" || len(value) > workspaceServiceMaxCommandBytes ||
+		strings.Contains(strings.ToLower(value), "://") || strings.Contains(strings.ToLower(value), "fsk_") {
+		return workspaceServiceSafeValue
+	}
+	for _, char := range value {
+		// Shell quoting does not neutralize terminal controls such as newlines.
+		if unicode.IsControl(char) {
+			return workspaceServiceSafeValue
+		}
+	}
+	return value
+}
+
+// safeWorkspaceRecoveryCommand verifies the internally generated command again
+// at the presentation boundary so manually wrapped errors also remain inert.
+func safeWorkspaceRecoveryCommand(value string) string {
+	value = strings.TrimSpace(value)
+	// A recovery string is useful only when bounded and free from URLs, secrets,
+	// or terminal controls; unsafe values are replaced rather than partially edited.
+	if value == "" || len(value) > workspaceServiceMaxCommandBytes ||
+		strings.Contains(strings.ToLower(value), "://") || strings.Contains(strings.ToLower(value), "fsk_") {
+		return workspaceServiceSafeRecovery
+	}
+	for _, char := range value {
+		// Commands may contain ordinary spaces, but never line or terminal controls.
+		if unicode.IsControl(char) {
+			return workspaceServiceSafeRecovery
+		}
+	}
+	return value
+}
+
+// safeWorkspaceOutcomeToken admits only bounded machine-token characters for
+// stable code, phase, and commit-state fields in human and JSON output.
+func safeWorkspaceOutcomeToken(value, fallback string) string {
+	value = strings.TrimSpace(value)
+	// Stable classifier fields must never contain remote prose or delimiters.
+	if value == "" || len(value) > workspaceServiceMaxFieldBytes {
+		return fallback
+	}
+	for _, char := range value {
+		// Token grammar intentionally excludes URL and terminal punctuation.
+		if !isWorkspaceServiceTokenChar(char) {
+			return fallback
+		}
+	}
+	return value
+}
+
+// safeWorkspaceRequestID preserves a validated correlation value or emits an
+// explicit unavailable marker without reflecting malformed text.
+func safeWorkspaceRequestID(value string) string {
+	value = strings.TrimSpace(value)
+	// Root validation owns the request-ID grammar; rechecking protects errors
+	// created directly by tests or future internal callers. Credential-shaped
+	// values are excluded even though their characters pass that grammar.
+	if !validRequestID(value) || value == "" || strings.Contains(strings.ToLower(value), "fsk_") {
+		return "unavailable"
+	}
+	return value
+}
+
+// workspaceServiceFailureSummary exposes only bounded classifier metadata from
+// the wrapped cause while Unwrap retains the original error for errors.As.
+func workspaceServiceFailureSummary(cause error) string {
+	var apiError *api.APIError
+	// Typed API status is safe numeric context; remote messages, URLs, and detail
+	// strings are intentionally excluded from the human composite outcome.
+	if errors.As(cause, &apiError) {
+		code := safeWorkspaceOutcomeToken(apiError.Code, "request_failed")
+		if apiError.HTTPStatus >= 100 && apiError.HTTPStatus <= 599 {
+			return fmt.Sprintf("failure_code=%s; http_status=%d", code, apiError.HTTPStatus)
+		}
+		return "failure_code=" + code
+	}
+	return "failure_code=request_failed"
 }
 
 // shellQuoteWorkspaceServiceArg makes Registry identity and config paths inert
@@ -157,6 +336,12 @@ func prepareWorkspaceServiceAddTargets(queries []string) ([]workspaceServiceAddT
 		if trimmedQuery == "" {
 			return nil, nil, nil, nil, errors.New("service query must not be empty")
 		}
+		parsedReference := api.ParseServiceReference(trimmedQuery)
+		// Composite add uses the identity-oriented set resolver, so a leading @
+		// must be a complete provider/service reference rather than lexical text.
+		if parsedReference.ProviderPrefixed && !parsedReference.Qualified {
+			return nil, nil, nil, nil, errors.New("provider-qualified service references must use @provider/service-slug")
+		}
 		normalizedQueries[index] = trimmedQuery
 		target, explicit, err := explicitWorkspaceServiceTarget(trimmedQuery, "")
 		// Exact UUIDs are authoritative and need neither Engine nor Registry
@@ -169,7 +354,7 @@ func prepareWorkspaceServiceAddTargets(queries []string) ([]workspaceServiceAddT
 			continue
 		}
 		pending = append(pending, index)
-		lookupNames = append(lookupNames, workspaceServiceLookupName(trimmedQuery))
+		lookupNames = append(lookupNames, api.ServiceLookupName(trimmedQuery))
 	}
 	return targets, pending, lookupNames, normalizedQueries, nil
 }
@@ -221,18 +406,41 @@ func workspaceServiceQueriesAt(queries []string, indexes []int) []string {
 // deduplicateWorkspaceServiceTargets prevents repeated CLI arguments from
 // causing duplicate config output or redundant scoped activation mutations.
 func deduplicateWorkspaceServiceTargets(targets []workspaceServiceAddTarget) []workspaceServiceAddTarget {
-	seen := make(map[string]bool, len(targets))
+	seen := make(map[string]int, len(targets))
 	result := make([]workspaceServiceAddTarget, 0, len(targets))
 	for _, target := range targets {
 		// Stable Registry identity, not display slug, determines whether two
-		// independently resolved references point at the same service.
-		if seen[target.serviceID] {
+		// independently resolved references point at the same service. Preserve
+		// every requested alias so config identity checks cannot be bypassed by dedupe.
+		if existingIndex, exists := seen[target.serviceID]; exists {
+			result[existingIndex].requestedRefs = appendUniqueWorkspaceServiceRefs(result[existingIndex].requestedRefs, target.requestedRefs...)
 			continue
 		}
-		seen[target.serviceID] = true
+		seen[target.serviceID] = len(result)
 		result = append(result, target)
 	}
 	return result
+}
+
+// appendUniqueWorkspaceServiceRefs retains stable positional aliases without
+// duplicating identity checks or exposing them as separate activation targets.
+func appendUniqueWorkspaceServiceRefs(existing []string, refs ...string) []string {
+	seen := make(map[string]bool, len(existing)+len(refs))
+	// Seed the set from aliases already retained by an earlier target.
+	for _, ref := range existing {
+		seen[ref] = true
+	}
+	// Append only new aliases in their original positional order.
+	for _, ref := range refs {
+		// Repeated aliases add no validation coverage and should not inflate the
+		// bounded config-edit DTO.
+		if seen[ref] {
+			continue
+		}
+		seen[ref] = true
+		existing = append(existing, ref)
+	}
+	return existing
 }
 
 // explicitWorkspaceServiceTarget recognizes the two exact-ID escape hatches
@@ -245,12 +453,12 @@ func explicitWorkspaceServiceTarget(query, serviceID string) (workspaceServiceAd
 		if _, err := uuid.Parse(serviceID); err != nil {
 			return workspaceServiceAddTarget{}, false, errors.New("--service-id must be a valid Registry service UUID")
 		}
-		return workspaceServiceAddTarget{slug: query, serviceID: serviceID, configServiceID: serviceID, resolutionSource: "explicit"}, true, nil
+		return workspaceServiceAddTarget{slug: query, serviceID: serviceID, configServiceID: serviceID, resolutionSource: "explicit", requestedRefs: []string{query}}, true, nil
 	}
 	// Exact positional UUIDs are already authoritative and must not trigger
 	// catalogue lookup or interactive ambiguity handling.
 	if _, err := uuid.Parse(query); err == nil {
-		return workspaceServiceAddTarget{slug: query, serviceID: query, configServiceID: query, resolutionSource: "explicit"}, true, nil
+		return workspaceServiceAddTarget{slug: query, serviceID: query, configServiceID: query, resolutionSource: "explicit", requestedRefs: []string{query}}, true, nil
 	}
 	return workspaceServiceAddTarget{}, false, nil
 }
@@ -285,7 +493,7 @@ func workspaceServiceTargetFromResults(query string, services []api.WorkspaceSer
 		slug = query
 	}
 	return workspaceServiceAddTarget{
-		slug: slug, serviceID: service.ServiceID, resolutionSource: "workspace",
+		slug: slug, serviceID: service.ServiceID, resolutionSource: "workspace", requestedRefs: []string{query},
 	}, true, nil
 }
 
@@ -307,13 +515,15 @@ func promptExistingWorkspaceService(services []api.WorkspaceService) (api.Worksp
 // lookup, so accepting the row without this check could turn @other/billing
 // into an already-enabled @acme/billing service.
 func exactWorkspaceServiceMatches(query string, services []api.WorkspaceService) []api.WorkspaceService {
-	query = strings.ToLower(strings.TrimSpace(query))
-	qualified := strings.HasPrefix(query, "@")
+	parsed := api.ParseServiceReference(query)
+	query = strings.ToLower(parsed.Raw)
 	matches := make([]api.WorkspaceService, 0, len(services))
 	for _, service := range services {
 		slug := strings.ToLower(strings.TrimSpace(service.ServiceSlug))
 		name := strings.ToLower(strings.TrimSpace(service.ServiceName))
-		if query == name || query == slug || !qualified && query == strings.ToLower(workspaceServiceLookupName(slug)) {
+		// Qualified identities must match the enriched display slug exactly;
+		// ordinary text may also match the provider-free Engine lookup segment.
+		if query == name || query == slug || !parsed.Qualified && query == strings.ToLower(api.ServiceLookupName(slug)) {
 			matches = append(matches, service)
 		}
 	}
@@ -344,7 +554,7 @@ func registryServiceTargetFromResults(query string, results []serviceSearchResul
 		}
 	}
 	return workspaceServiceAddTarget{
-		slug: selected.Slug, serviceID: selected.ServiceID, resolutionSource: "registry",
+		slug: selected.Slug, serviceID: selected.ServiceID, resolutionSource: "registry", requestedRefs: []string{query},
 	}, nil
 }
 

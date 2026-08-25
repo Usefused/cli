@@ -38,6 +38,7 @@ type jsonErrorResult struct {
 	HTTPStatus  int            `json:"http_status,omitempty"`
 	Phase       string         `json:"phase,omitempty"`
 	OperationID string         `json:"operation_id,omitempty"`
+	RequestID   string         `json:"request_id,omitempty"`
 	CommitState string         `json:"commit_state,omitempty"`
 	Recovery    string         `json:"recovery,omitempty"`
 	Command     string         `json:"command"`
@@ -91,6 +92,8 @@ func writeCommandError(out io.Writer, cmd *cobra.Command, err error) error {
 	return json.NewEncoder(out).Encode(jsonErrorEnvelope{Error: classifyCommandError(cmd, err)})
 }
 
+// classifyCommandError maps typed command failures into stable agent-facing
+// fields without requiring callers to parse human prose.
 func classifyCommandError(cmd *cobra.Command, err error) jsonErrorResult {
 	// Human and JSON output share the same typed error; only the presentation
 	// changes, so debugging detail cannot drift between interactive and agent use.
@@ -110,16 +113,7 @@ func classifyCommandError(cmd *cobra.Command, err error) jsonErrorResult {
 	}
 	var unknownApply *importApplyOutcomeUnknownError
 	if errors.As(err, &unknownApply) {
-		// Why: generic timeout remediation says retry, which is unsafe after a
-		// one-shot apply may already have committed.
-		result.Code, result.Category = "import_apply_outcome_unknown", "indeterminate"
-		result.Message = "The import apply response timed out after the server may have committed the reviewed plan."
-		result.Remediation = unknownApply.remediation()
-		result.Phase, result.OperationID = "registry_apply", safeImportOperationID(unknownApply.operationID)
-		result.CommitState = "unknown"
-		result.Recovery = "fused-cli import status " + result.OperationID
-		result.Details = map[string]any{"timeout_ms": unknownApply.timeout.Milliseconds()}
-		return result
+		return classifyUnknownImportApply(result, unknownApply)
 	}
 	var strictError *cliapi.SpecImportStrictError
 	if errors.As(err, &strictError) {
@@ -130,6 +124,22 @@ func classifyCommandError(cmd *cobra.Command, err error) jsonErrorResult {
 		return result
 	}
 	var apiError *cliapi.APIError
+	var workspaceApply *workspaceServiceApplyOutcomeError
+	// Composite activation has sibling outcome state that the wrapped one-target
+	// API error cannot represent, so classify it before the generic API branch.
+	if errors.As(err, &workspaceApply) {
+		result.Code, result.Category = safeWorkspaceOutcomeToken(workspaceApply.code, workspaceServiceApplyErrorCode), "partial"
+		result.Message = "One or more requested workspace services were not activated."
+		result.Remediation = "Run the exact recovery command after reviewing the failed target's commit possibility."
+		result.Phase, result.RequestID = safeWorkspaceOutcomeToken(workspaceApply.phase, workspaceServiceApplyPhase), safeWorkspaceRequestID(workspaceApply.requestID)
+		result.CommitState, result.Recovery = safeWorkspaceOutcomeToken(workspaceApply.failedCommitState, "unknown"), safeWorkspaceRecoveryCommand(workspaceApply.recovery)
+		result.Details = map[string]any{
+			"committed": safeWorkspaceServiceRefs(workspaceApply.committed), "failed": safeWorkspaceServiceRef(workspaceApply.failed),
+			"failed_commit_possible": workspaceApply.failedCommitPossible,
+			"unattempted":            safeWorkspaceServiceRefs(workspaceApply.unattempted),
+		}
+		return result
+	}
 	if errors.As(err, &apiError) {
 		result.Code, result.Message = apiError.Code, apiError.Message
 		result.Category, result.Retryable = apiError.Category, apiError.Retryable
@@ -152,6 +162,24 @@ func classifyCommandError(cmd *cobra.Command, err error) jsonErrorResult {
 	if errors.Is(err, context.Canceled) {
 		result.Code, result.Category = "request_cancelled", "cancelled"
 	}
+	return result
+}
+
+// classifyUnknownImportApply replaces generic retry advice with the durable
+// status recovery contract while distinguishing deadlines from other proof loss.
+func classifyUnknownImportApply(result jsonErrorResult, unknownApply *importApplyOutcomeUnknownError) jsonErrorResult {
+	result.Code, result.Category = "import_apply_outcome_unknown", "indeterminate"
+	result.Message = "The import apply response did not prove whether the reviewed plan committed."
+	// Timeout wording and duration are meaningful only when the transport
+	// actually crossed its deadline; resets and malformed proofs must not lie.
+	if unknownApply.timedOut {
+		result.Message = "The import apply response timed out after the server may have committed the reviewed plan."
+		result.Details = map[string]any{"timeout_ms": unknownApply.timeout.Milliseconds()}
+	}
+	result.Remediation = unknownApply.remediation()
+	result.Phase, result.OperationID = "registry_apply", safeImportOperationID(unknownApply.operationID)
+	result.CommitState = "unknown"
+	result.Recovery = "fused-cli import status " + result.OperationID
 	return result
 }
 

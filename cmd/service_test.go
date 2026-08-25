@@ -56,6 +56,36 @@ func newServiceSearchTestServer(t *testing.T, servicesJSON string) *httptest.Ser
 	}))
 }
 
+// TestServiceSearchTreatsIncompleteQualifierAsLexicalText protects provider-only
+// queries from being misrouted into exact @provider/slug resolution.
+func TestServiceSearchTreatsIncompleteQualifierAsLexicalText(t *testing.T) {
+	sawLexicalSearch := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Query string `json:"query"`
+		}
+		// A malformed fixture request cannot prove which GraphQL field was used.
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
+		}
+		// Only the legacy lexical field accepts a provider-only search term;
+		// the set resolver requires a complete stable service identity.
+		if strings.Contains(request.Query, "searchServices") {
+			sawLexicalSearch = true
+		}
+		_, _ = w.Write([]byte(`{"data":{"searchServices":[]}}`))
+	}))
+	defer server.Close()
+	// Provider-only text must complete successfully through lexical search.
+	if _, err := searchServiceResults(api.NewClient(server.URL, "test-key"), "@acme"); err != nil {
+		t.Fatal(err)
+	}
+	// The response alone is insufficient because both fields could decode empty.
+	if !sawLexicalSearch {
+		t.Fatal("provider-only query did not retain lexical search semantics")
+	}
+}
+
 // TestServiceShow_PrintsBareSlugForOwnedService covers the common case: a
 // service the caller owns should never be shown with a provider prefix.
 func TestServiceShow_PrintsBareSlugForOwnedService(t *testing.T) {

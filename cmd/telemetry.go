@@ -86,7 +86,7 @@ func recordTelemetryError(span trace.Span, err error) {
 	// Composite activation owns the top-level failure classification because an
 	// underlying per-service API code omits already-committed sibling mutations.
 	if errors.As(err, &workspaceApply) {
-		code, retryable = "workspace_service_apply_partial", false
+		code, retryable = workspaceServiceApplyErrorCode, false
 	}
 	// Stable fields make failures searchable without attaching user input or
 	// remote messages that could contain credentials.

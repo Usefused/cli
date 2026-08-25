@@ -13,6 +13,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// TestAgentReadCommandsExposeJSON keeps every documented structured read on the
+// shared command-local JSON flag contract.
 func TestAgentReadCommandsExposeJSON(t *testing.T) {
 	commands := []*cobra.Command{
 		serviceSearchCmd, serviceVersionsCmd, serviceShowCmd, serviceOperationsCmd, serviceOperationShowCmd, serviceWebhooksCmd,
@@ -22,7 +24,10 @@ func TestAgentReadCommandsExposeJSON(t *testing.T) {
 		sdkActivityCmd, sdkInvokeCmd, mcpListCmd, mcpValidateCmd, sdkTokenListCmd, mcpTokenListCmd, connectGetCmd, workspaceConnectionResourcesListCmd,
 		validateCmd, webhookValidateCmd, whoAmICmd, workspaceAccessListCmd, teamListCmd, teamShowCmd,
 		teamEligibleOwnersCmd, teamBuildAccessCmd, teamMemberListCmd, userListCmd, userShowCmd, configGetCmd, configListCmd, skillListCmd, skillPrintCmd,
+		importStatusCmd,
 	}
+	// A missing local flag would make error output and success output disagree
+	// about whether structured mode is active for that command.
 	for _, command := range commands {
 		if command.Flags().Lookup(jsonOutputFlag) == nil {
 			t.Errorf("%s does not expose --json", command.CommandPath())

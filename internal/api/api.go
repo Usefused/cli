@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -17,6 +18,7 @@ import (
 	"github.com/Usefused/cli/internal/retrypolicy"
 	"github.com/Usefused/cli/internal/signaturepolicy"
 	"github.com/charmbracelet/huh/spinner"
+	"github.com/google/uuid"
 )
 
 type Client struct {
@@ -1461,22 +1463,60 @@ func (c *Client) SetConnectionProfile(serviceID, serviceVersionID, name string, 
 	return response.Profile, nil
 }
 
+// ServiceReference is the normalized provider-aware identity shared by Registry
+// and Engine lookup callers. ProviderPrefixed lets identity-only callers reject
+// malformed qualifiers while lexical search callers preserve them as text.
+type ServiceReference struct {
+	Raw              string
+	Slug             string
+	Provider         string
+	ProviderPrefixed bool
+	Qualified        bool
+}
+
+// ParseServiceReference recognizes only a complete @provider/slug identity so
+// lexical-capable callers can retain incomplete qualifiers as ordinary text.
+func ParseServiceReference(ref string) ServiceReference {
+	raw := strings.TrimSpace(ref)
+	rest, hasPrefix := strings.CutPrefix(raw, "@")
+	// Ordinary search text never carries provider identity.
+	if !hasPrefix {
+		return ServiceReference{Raw: raw, Slug: raw}
+	}
+	provider, slug, hasSeparator := strings.Cut(rest, "/")
+	// Empty or nested segments cannot be stable Registry identity, so preserve
+	// the complete text for lexical search rather than partially interpreting it.
+	if !hasSeparator || provider == "" || slug == "" || strings.Contains(slug, "/") ||
+		strings.TrimSpace(provider) != provider || strings.TrimSpace(slug) != slug ||
+		hasUnsafeServiceReferenceRune(provider+slug) {
+		return ServiceReference{Raw: raw, Slug: raw, ProviderPrefixed: true}
+	}
+	return ServiceReference{Raw: raw, Slug: slug, Provider: provider, ProviderPrefixed: true, Qualified: true}
+}
+
+// hasUnsafeServiceReferenceRune rejects every whitespace or control rune so
+// identity-only callers cannot pass terminal escapes hidden inside a qualifier.
+func hasUnsafeServiceReferenceRune(value string) bool {
+	return strings.IndexFunc(value, unsafeServiceReferenceRune) >= 0
+}
+
+// unsafeServiceReferenceRune defines the non-identity characters rejected by
+// the shared provider-qualified parser.
+func unsafeServiceReferenceRune(char rune) bool {
+	return unicode.IsSpace(char) || unicode.IsControl(char)
+}
+
+// splitProviderQualifiedServiceRef retains the narrow tuple used by existing
+// Registry queries while delegating all grammar decisions to the shared parser.
 func splitProviderQualifiedServiceRef(ref string) (string, string) {
-	if !strings.HasPrefix(ref, "@") {
-		return ref, ""
-	}
-	rest := ref[1:]
-	if i := strings.IndexByte(rest, '/'); i >= 0 {
-		return rest[i+1:], rest[:i]
-	}
-	return ref, ""
+	parsed := ParseServiceReference(ref)
+	return parsed.Slug, parsed.Provider
 }
 
 // ServiceLookupName returns the service segment used by Engine's bounded name
 // lookup while keeping qualified-reference parsing owned by the API package.
 func ServiceLookupName(ref string) string {
-	slug, _ := splitProviderQualifiedServiceRef(strings.TrimSpace(ref))
-	return slug
+	return ParseServiceReference(ref).Slug
 }
 
 const serviceSearchGraphQLFields = `
@@ -2276,7 +2316,6 @@ type SpecImportApplyResponse struct {
 	OperationID      string `json:"operation_id"`
 	Phase            string `json:"phase"`
 	CommitState      string `json:"commit_state"`
-	Replayed         bool   `json:"replayed,omitempty"`
 	ServiceID        string `json:"service_id"`
 	ServiceVersionID string `json:"service_version_id"`
 	Slug             string `json:"slug"`
@@ -2286,12 +2325,27 @@ type SpecImportApplyResponse struct {
 	Revision         int    `json:"revision"`
 }
 
+// SpecImportApplyOutcomeUnknownError marks a POST whose transport or response
+// cannot prove either failure or the exact committed Registry result.
+type SpecImportApplyOutcomeUnknownError struct {
+	cause error
+}
+
+// Error stays bounded because transport errors can contain private Engine URLs.
+func (e *SpecImportApplyOutcomeUnknownError) Error() string {
+	return "import apply response did not prove the mutation outcome"
+}
+
+// Unwrap retains the local cause for timeout/reset classification without rendering it.
+func (e *SpecImportApplyOutcomeUnknownError) Unwrap() error {
+	return e.cause
+}
+
 // SpecImportStatusResponse is the durable, read-only recovery view for one
 // reviewed import operation.
 type SpecImportStatusResponse struct {
 	Status           string `json:"status"`
 	OperationID      string `json:"operation_id"`
-	PlanID           string `json:"plan_id"`
 	Phase            string `json:"phase"`
 	CommitState      string `json:"commit_state"`
 	ServiceID        string `json:"service_id,omitempty"`
@@ -2301,6 +2355,7 @@ type SpecImportStatusResponse struct {
 	Revision         int    `json:"revision,omitempty"`
 	Code             string `json:"code,omitempty"`
 	Recovery         string `json:"recovery,omitempty"`
+	Guidance         string `json:"guidance,omitempty"`
 }
 
 // PlanSpecImport computes (but does not commit) a non-interactive spec
@@ -2379,21 +2434,109 @@ func (c *Client) ApplySpecImport(planID, reviewHash string) (*SpecImportApplyRes
 	}
 
 	resp, err := c.doRequest(req)
+	// Once the POST is handed to HTTP, transport failure cannot prove whether Registry committed.
 	if err != nil {
-		return nil, err
+		return nil, newSpecImportApplyOutcomeUnknownError(err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		respBody := readBoundedHTTPErrorBody(resp.Body)
-		return nil, fmt.Errorf("apply spec import failed (HTTP %d): %w", resp.StatusCode, newHTTPError(resp.StatusCode, respBody))
+		respBody, truncated, readErr := readBoundedCLIHTTPBody(resp.Body)
+		// Only a complete structured safe envelope authoritatively classifies POST failure.
+		if readErr != nil || truncated {
+			return nil, newSpecImportApplyOutcomeUnknownError(readErr)
+		}
+		return nil, classifySpecImportApplyHTTPError(resp.StatusCode, respBody)
 	}
+	return decodeSpecImportApplyProof(resp.Body, planID)
+}
 
-	var out SpecImportApplyResponse
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, err
+// newSpecImportApplyOutcomeUnknownError centralizes the bounded uncertainty marker.
+func newSpecImportApplyOutcomeUnknownError(cause error) error {
+	// A missing read error still needs a local cause for errors.Is/errors.As traversal.
+	if cause == nil {
+		cause = errors.New("import apply response was incomplete")
 	}
-	return &out, nil
+	return &SpecImportApplyOutcomeUnknownError{cause: cause}
+}
+
+// classifySpecImportApplyHTTPError accepts only the slim server-owned error
+// contract; proxy pages and generic status bodies cannot prove mutation state.
+func classifySpecImportApplyHTTPError(status int, body []byte) error {
+	err := newHTTPError(status, body)
+	var apiErr *APIError
+	// Stable commit knowledge and recovery distinguish authoritative import errors from generic HTTP categories.
+	if errors.As(err, &apiErr) && apiErr.Phase != "" && validImportCommitState(apiErr.CommitState) && apiErr.Recovery != "" {
+		return fmt.Errorf("apply spec import failed (HTTP %d): %w", status, apiErr)
+	}
+	return newSpecImportApplyOutcomeUnknownError(err)
+}
+
+// decodeSpecImportApplyProof admits one bounded JSON object and validates every
+// identity/result field before the CLI records a successful mutation.
+func decodeSpecImportApplyProof(body io.Reader, planID string) (*SpecImportApplyResponse, error) {
+	payload, truncated, err := readBoundedCLIHTTPBody(body)
+	// Read failure or size truncation leaves the POST outcome unknown.
+	if err != nil || truncated {
+		return nil, newSpecImportApplyOutcomeUnknownError(err)
+	}
+	var result SpecImportApplyResponse
+	// json.Unmarshal rejects empty, malformed, truncated, and trailing non-whitespace bodies.
+	if err := json.Unmarshal(payload, &result); err != nil {
+		return nil, newSpecImportApplyOutcomeUnknownError(err)
+	}
+	// A syntactically valid body is still non-authoritative until its durable proof matches the receipt.
+	if err := validateSpecImportApplyProof(result, planID); err != nil {
+		return nil, newSpecImportApplyOutcomeUnknownError(err)
+	}
+	return &result, nil
+}
+
+// validateSpecImportApplyProof binds success to the requested operation and the
+// complete result invariant persisted atomically by Registry.
+func validateSpecImportApplyProof(result SpecImportApplyResponse, planID string) error {
+	// Identity, terminal state, and durable result are independent proof obligations.
+	if err := validateSpecImportApplyIdentity(result, planID); err != nil {
+		return err
+	}
+	// A matching operation is not successful until Registry reports committed completion.
+	if result.Status != "applied" || result.Phase != "complete" || result.CommitState != "committed" {
+		return errors.New("import apply response was not a committed completion")
+	}
+	return validateSpecImportApplyResult(result)
+}
+
+// validateSpecImportApplyIdentity proves both response aliases name the exact receipt operation.
+func validateSpecImportApplyIdentity(result SpecImportApplyResponse, planID string) error {
+	requestedID, requestedErr := uuid.Parse(strings.TrimSpace(planID))
+	planProofID, planErr := uuid.Parse(strings.TrimSpace(result.PlanID))
+	operationID, operationErr := uuid.Parse(strings.TrimSpace(result.OperationID))
+	// Both response identities must be canonical aliases of the requested receipt operation.
+	if requestedErr != nil || planErr != nil || operationErr != nil || requestedID != planProofID || requestedID != operationID {
+		return errors.New("import apply operation proof did not match the receipt")
+	}
+	return nil
+}
+
+// validateSpecImportApplyResult enforces the same complete result invariant Registry persists atomically.
+func validateSpecImportApplyResult(result SpecImportApplyResponse) error {
+	_, serviceErr := uuid.Parse(result.ServiceID)
+	_, versionErr := uuid.Parse(result.ServiceVersionID)
+	// Every atomically stored result field is required to reproduce the committed success exactly.
+	if serviceErr != nil || versionErr != nil || strings.TrimSpace(result.Slug) == "" || strings.TrimSpace(result.Version) == "" || result.Revision <= 0 {
+		return errors.New("import apply response omitted committed result proof")
+	}
+	return nil
+}
+
+// validImportCommitState admits the complete stable safe-error vocabulary.
+func validImportCommitState(value string) bool {
+	switch value {
+	case "not_committed", "committed", "unknown":
+		return true
+	default:
+		return false
+	}
 }
 
 // GetSpecImportStatus reads the existing Registry operation ledger without

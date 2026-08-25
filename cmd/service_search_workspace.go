@@ -48,7 +48,7 @@ func workspaceServiceSearchKeys(query string, results []serviceSearchResult) []s
 			keys = append(keys, value)
 		}
 	}
-	add(workspaceServiceLookupName(query))
+	add(cliapi.ServiceLookupName(query))
 	for _, result := range results {
 		add(result.Slug)
 		add(result.Name)

@@ -772,6 +772,11 @@ multiple matches and confirm the chosen Registry service before the file is
 written. In CI or with `--no-input`, omit `--interactive` and supply an exact
 slug, service ID, or a query with one unique result.
 
+Provider-qualified additions must use the complete `@provider/service-slug`
+form. A leading `@` with a missing, blank, whitespace-containing, or nested
+segment is rejected locally before discovery. The read-only `service search`
+command remains lexical and may accept incomplete `@` text as a search query.
+
 A workspace lookup permission error is not treated as absence and never falls
 through to Registry search. Registry fallback requires `catalogue.read`.
 Without `--apply`, the command only authors the local YAML; it neither activates
@@ -782,8 +787,10 @@ command instead composes the existing scoped additive activation once for each
 resolved service and cannot remove unrelated active services. `service search`
 remains available for explicit read-only browsing, but is not a prerequisite.
 If a later scoped activation fails, the error lists committed, failed, and
-unattempted services and prints exact ID-pinned recovery commands. Re-running
-those commands is safe because the scoped Engine addition is idempotent.
+unattempted services and prints a stable code, failed phase, composite request
+ID, whether the failed target may have committed, and exact ID-pinned recovery
+commands. Re-running those commands is safe because the scoped Engine addition
+is idempotent.
 
 One `--version` value applies to every positional service reference. Omit it to
 let Engine resolve each service's current public version, or run separate add
@@ -900,8 +907,8 @@ stored committed result instead of mutating Registry again.
 ## `import status <operation-id>`
 Read the durable outcome of an import apply without retrying its mutation. The
 immutable plan ID is also the operation ID. Human output reports status, phase,
-and commit state; `--json` additionally exposes the atomically stored
-service/version result after a complete commit. A pending row conservatively
+commit state, and a compact service/version result after a complete commit;
+`--json` exposes the complete raw status projection. A pending row conservatively
 reports an unknown commit state because another apply may still hold its lock;
 run the returned status command again instead of replaying apply. Terminal
 failed or incomplete historical results include a stable code and a planning

@@ -251,6 +251,9 @@ func TestPlanSpecImportDecodesVersionRequiredError(t *testing.T) {
 // TestApplySpecImport_PostsToImportApplyEndpoint verifies ApplySpecImport
 // sends plan_id/review_hash to /integrations/import/apply.
 func TestApplySpecImport_PostsToImportApplyEndpoint(t *testing.T) {
+	planID := "11111111-1111-4111-8111-111111111111"
+	serviceID := "22222222-2222-4222-8222-222222222222"
+	versionID := "33333333-3333-4333-8333-333333333333"
 	var reqPath string
 	var decoded api.SpecImportApplyRequest
 
@@ -260,21 +263,22 @@ func TestApplySpecImport_PostsToImportApplyEndpoint(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(api.SpecImportApplyResponse{
-			Status: "applied", PlanID: "plan-1", ServiceID: "svc-1",
+			Status: "applied", PlanID: planID, OperationID: planID, Phase: "complete", CommitState: "committed",
+			ServiceID: serviceID, ServiceVersionID: versionID, Slug: "widgets",
 			IsNewService: false, Action: "update_version", Version: "2026-07-14", Revision: 2,
 		})
 	}))
 	defer srv.Close()
 
 	client := api.NewClient(srv.URL, "test-key")
-	resp, err := client.ApplySpecImport("plan-1", "review-1")
+	resp, err := client.ApplySpecImport(planID, "review-1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if reqPath != "/integrations/import/apply" {
 		t.Errorf("expected /integrations/import/apply, got %s", reqPath)
 	}
-	if decoded.PlanID != "plan-1" || decoded.ReviewHash != "review-1" {
+	if decoded.PlanID != planID || decoded.ReviewHash != "review-1" {
 		t.Errorf("expected plan_id/review_hash to reach the server, got %+v", decoded)
 	}
 	if resp.Status != "applied" || resp.Action != "update_version" || resp.Version != "2026-07-14" || resp.Revision != 2 {
@@ -285,22 +289,77 @@ func TestApplySpecImport_PostsToImportApplyEndpoint(t *testing.T) {
 // TestApplySpecImport_HandlesError verifies a review_hash mismatch (or any
 // non-2xx) surfaces as an error rather than a silently empty response.
 func TestApplySpecImport_HandlesError(t *testing.T) {
+	planID := "11111111-1111-4111-8111-111111111111"
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusConflict)
-		w.Write([]byte(`{"error": "review_hash_mismatch"}`))
+		w.Write([]byte(`{"error":{"code":"IMPORT_REVIEW_MISMATCH","message":"review receipt changed","phase":"registry_apply","operation_id":"11111111-1111-4111-8111-111111111111","commit_state":"not_committed","recovery":"fused-cli import plan --help"}}`))
 	}))
 	defer srv.Close()
 
 	client := api.NewClient(srv.URL, "test-key")
-	_, err := client.ApplySpecImport("plan-1", "stale-hash")
+	_, err := client.ApplySpecImport(planID, "stale-hash")
 	if err == nil {
 		t.Fatal("expected an error on 409 response")
 	}
-	if !strings.Contains(err.Error(), "HTTP 409") || !strings.Contains(err.Error(), "request_conflict") {
-		t.Errorf("expected safe HTTP error category, got: %v", err)
+	var apiError *api.APIError
+	if !errors.As(err, &apiError) || apiError.Code != "IMPORT_REVIEW_MISMATCH" || apiError.CommitState != "not_committed" {
+		t.Errorf("expected authoritative safe HTTP error, got: %v", err)
 	}
-	if strings.Contains(err.Error(), "review_hash_mismatch") {
+	if strings.Contains(err.Error(), "stale-hash") {
 		t.Errorf("expected remote response body to be omitted, got: %v", err)
+	}
+}
+
+// TestApplySpecImportTreatsUnusablePostOutcomesAsUnknown proves transport loss,
+// incomplete 2xx bodies, and invalid success proofs all recover through status.
+func TestApplySpecImportTreatsUnusablePostOutcomesAsUnknown(t *testing.T) {
+	planID := "11111111-1111-4111-8111-111111111111"
+	validProof := `{"status":"applied","plan_id":"` + planID + `","operation_id":"` + planID + `","phase":"complete","commit_state":"committed","service_id":"22222222-2222-4222-8222-222222222222","service_version_id":"33333333-3333-4333-8333-333333333333","slug":"widgets","version":"1.0","revision":1}`
+	tests := []struct {
+		name    string
+		handler http.HandlerFunc
+	}{
+		{name: "connection reset", handler: closeImportApplyConnection},
+		{name: "unexpected EOF", handler: func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Length", "1000")
+			_, _ = w.Write([]byte(`{"status":"applied"}`))
+		}},
+		{name: "empty 2xx", handler: func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }},
+		{name: "malformed 2xx", handler: func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(`{"status":`)) }},
+		{name: "trailing 2xx", handler: func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(validProof + ` trailing`)) }},
+		{name: "unstructured proxy error", handler: func(w http.ResponseWriter, _ *http.Request) { http.Error(w, "upstream reset", http.StatusBadGateway) }},
+		{name: "identity mismatch", handler: func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(strings.Replace(validProof, planID, "44444444-4444-4444-8444-444444444444", 1)))
+		}},
+		{name: "incomplete proof", handler: func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`{"status":"applied","plan_id":"` + planID + `"}`))
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(test.handler)
+			defer server.Close()
+			_, err := api.NewClient(server.URL, "test-key").ApplySpecImport(planID, "review-1")
+			var unknown *api.SpecImportApplyOutcomeUnknownError
+			// No unusable POST response may be recorded as a proven local failure or success.
+			if !errors.As(err, &unknown) {
+				t.Fatalf("apply outcome = %T %v, want outcome unknown", err, err)
+			}
+		})
+	}
+}
+
+// closeImportApplyConnection simulates a proxy reset after accepting the POST.
+func closeImportApplyConnection(w http.ResponseWriter, _ *http.Request) {
+	hijacker, ok := w.(http.Hijacker)
+	// httptest's HTTP/1 server must support hijacking for a deterministic reset fixture.
+	if !ok {
+		return
+	}
+	connection, _, err := hijacker.Hijack()
+	// A successful hijack closes without an HTTP response, matching a proxy reset.
+	if err == nil {
+		_ = connection.Close()
 	}
 }
 
@@ -314,7 +373,7 @@ func TestGetSpecImportStatusReadsDurableOperation(t *testing.T) {
 			t.Fatalf("status request = %s %s", r.Method, r.URL.Path)
 		}
 		json.NewEncoder(w).Encode(api.SpecImportStatusResponse{
-			Status: "applied", OperationID: operationID, PlanID: operationID,
+			Status: "applied", OperationID: operationID,
 			Phase: "complete", CommitState: "committed", ServiceID: "svc-1",
 			Version: "2026-08-25", Revision: 2,
 		})

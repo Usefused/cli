@@ -199,19 +199,37 @@ func getAPIClient() (*api.Client, error) {
 	return getAPIClientWithTimeout(RequestTimeout)
 }
 
+// getAPIClientWithTimeout retains the command-wide request identity while
+// allowing long-running operations to select their reviewed timeout.
 func getAPIClientWithTimeout(timeout time.Duration) (*api.Client, error) {
+	return getAPIClientWithTimeoutAndRequestID(timeout, RequestID)
+}
+
+// getAPIClientWithRequestID binds one selected composite identity to every
+// request emitted by the returned client.
+func getAPIClientWithRequestID(requestID string) (*api.Client, error) {
+	return getAPIClientWithTimeoutAndRequestID(RequestTimeout, requestID)
+}
+
+// getAPIClientWithTimeoutAndRequestID centralizes Engine credentials and
+// transport options so composite commands do not rebuild client internals.
+func getAPIClientWithTimeoutAndRequestID(timeout time.Duration, requestID string) (*api.Client, error) {
 	url, err := GetEngineURL()
+	// Configuration failures must stop before a partially initialized client can
+	// emit requests with a different correlation identity.
 	if err != nil {
 		return nil, err
 	}
 	apiKey := GetAPIKey()
+	// Every Engine client requires an explicit local control credential; request
+	// correlation never changes that authentication boundary.
 	if apiKey == "" {
 		return nil, fmt.Errorf("api-key is not configured.\n\nRun:\n  fused-cli config set api-key <key>\n\nOr set FUSED_API_KEY or FUSED_LICENSE_KEY.")
 	}
 	return api.NewClientWithOptions(url, apiKey, api.ClientOptions{
 		Context:         executionContext,
 		Timeout:         timeout,
-		RequestID:       RequestID,
+		RequestID:       requestID,
 		DisableProgress: nonInteractive(),
 	}), nil
 }

@@ -124,22 +124,28 @@ type importApplyRequestCapture struct {
 	body map[string]string
 }
 
+const importApplyTestPlanID = "11111111-1111-4111-8111-111111111111"
+
+// newImportApplyTestServer returns a complete committed proof for the exact captured receipt.
 func newImportApplyTestServer(t *testing.T) (*httptest.Server, *importApplyRequestCapture) {
 	t.Helper()
 	capture := &importApplyRequestCapture{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Receipt apply must never silently recompute the reviewed plan.
 		if r.URL.Path == "/integrations/import/plan" {
 			t.Fatal("apply must not re-plan when a receipt exists")
 		}
+		// The fixture admits only the single mutation boundary under test.
 		if r.URL.Path != "/integrations/import/apply" {
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
 		capture.saw = true
+		// An unreadable request would invalidate the receipt-identity assertion.
 		if err := json.NewDecoder(r.Body).Decode(&capture.body); err != nil {
 			t.Fatalf("decode body: %v", err)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"status":"applied","plan_id":"plan-3","service_id":"svc-1","is_new_service":false,"action":"update_version","version":"2026-07-14","revision":2}`))
+		_, _ = w.Write([]byte(`{"status":"applied","plan_id":"` + importApplyTestPlanID + `","operation_id":"` + importApplyTestPlanID + `","phase":"complete","commit_state":"committed","service_id":"22222222-2222-4222-8222-222222222222","service_version_id":"33333333-3333-4333-8333-333333333333","slug":"widgets","is_new_service":false,"action":"update_version","version":"2026-07-14","revision":2}`))
 	}))
 	return server, capture
 }
@@ -513,7 +519,7 @@ func TestImportApplyUsesReceiptWithoutReplanning(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(receiptPath), 0755); err != nil {
 		t.Fatal(err)
 	}
-	receipt := importPlanReceipt{Slug: "widgets", PlanID: "plan-3", ReviewHash: "review-3", SourceHash: "hash-3", EngineURL: server.URL}
+	receipt := importPlanReceipt{Slug: "widgets", PlanID: importApplyTestPlanID, ReviewHash: "review-3", SourceHash: "hash-3", EngineURL: server.URL}
 	data, _ := json.Marshal(receipt)
 	if err := os.WriteFile(receiptPath, data, 0644); err != nil {
 		t.Fatal(err)
@@ -524,13 +530,13 @@ func TestImportApplyUsesReceiptWithoutReplanning(t *testing.T) {
 	if !capture.saw {
 		t.Fatal("expected a request to /integrations/import/apply")
 	}
-	if capture.body["plan_id"] != "plan-3" || capture.body["review_hash"] != "review-3" {
+	if capture.body["plan_id"] != importApplyTestPlanID || capture.body["review_hash"] != "review-3" {
 		t.Errorf("expected plan_id/review_hash from the receipt, got %#v", capture.body)
 	}
 	if _, exists := capture.body["source_hash"]; exists {
 		t.Errorf("source_hash must not authorize apply, got %#v", capture.body)
 	}
-	if !strings.Contains(out, "svc-1") || !strings.Contains(out, "2026-07-14") {
+	if !strings.Contains(out, "22222222-2222-4222-8222-222222222222") || !strings.Contains(out, "2026-07-14") {
 		t.Errorf("expected apply result naming service/version, got %q", out)
 	}
 	if !strings.Contains(out, "revision 2") {
@@ -593,12 +599,40 @@ func TestImportApplyTimeoutIsOutcomeUnknownAndNotRetried(t *testing.T) {
 	assertUnknownImportApplyTimeout(t, command, err, requests.Load())
 }
 
+// TestImportApplyMalformedSuccessRecoversThroughStatus proves a non-timeout 2xx
+// body cannot record applied success or fall through to generic retry advice.
+func TestImportApplyMalformedSuccessRecoversThroughStatus(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"status":"applied"`))
+	}))
+	defer server.Close()
+	setImportTestAPI(t, server.URL)
+	receiptPath := writeImportTimeoutReceipt(t, server.URL)
+	command := &cobra.Command{Use: "apply"}
+	command.SetContext(context.Background())
+	err := runImportApply(command, importSpecApplyOptions{receiptPath: receiptPath})
+	var unknown *importApplyOutcomeUnknownError
+	// Malformed proof is unknown without pretending the configured budget expired.
+	if !errors.As(err, &unknown) || unknown.timedOut || !strings.Contains(err.Error(), "fused-cli import status "+importApplyTestPlanID) || strings.Contains(err.Error(), "future large imports") {
+		t.Fatalf("malformed apply recovery = %T %v", err, err)
+	}
+	classified := classifyCommandError(command, err)
+	if classified.Code != "import_apply_outcome_unknown" || classified.Retryable || classified.CommitState != "unknown" || strings.Contains(strings.ToLower(classified.Message), "timeout") {
+		t.Fatalf("malformed apply classification = %#v", classified)
+	}
+	// Non-timeout proof loss must omit deadline metadata instead of presenting a
+	// configured budget as an elapsed duration.
+	if _, present := classified.Details["timeout_ms"]; present {
+		t.Fatalf("malformed apply classification retained timeout metadata: %#v", classified)
+	}
+}
+
 // writeImportTimeoutReceipt preserves the real receipt boundary so the test
 // exercises slug-based recovery guidance instead of constructing hidden state.
 func writeImportTimeoutReceipt(t *testing.T, engineURL string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "receipt.json")
-	receipt := importPlanReceipt{Slug: "large-api", PlanID: "11111111-1111-4111-8111-111111111111", ReviewHash: "review-large", EngineURL: engineURL}
+	receipt := importPlanReceipt{Slug: "large-api", PlanID: importApplyTestPlanID, ReviewHash: "review-large", EngineURL: engineURL}
 	data, err := json.Marshal(receipt)
 	if err != nil {
 		t.Fatal(err)
@@ -620,7 +654,7 @@ func assertUnknownImportApplyTimeout(t *testing.T, command *cobra.Command, err e
 	if requests != 1 {
 		t.Fatalf("apply request count = %d, want one", requests)
 	}
-	if !strings.Contains(err.Error(), "fused-cli import status 11111111-1111-4111-8111-111111111111") {
+	if !strings.Contains(err.Error(), "fused-cli import status "+importApplyTestPlanID) {
 		t.Fatalf("timeout remediation = %q", err)
 	}
 	assertTimeoutErrorHidesEngineURL(t, err)
@@ -676,7 +710,7 @@ func TestRunImportStatusPrintsCommittedResult(t *testing.T) {
 			t.Fatalf("status path = %q", r.URL.Path)
 		}
 		json.NewEncoder(w).Encode(api.SpecImportStatusResponse{
-			Status: "applied", OperationID: operationID, PlanID: operationID,
+			Status: "applied", OperationID: operationID,
 			Phase: "complete", CommitState: "committed", ServiceID: "svc-1",
 			Version: "2026-08-25", Revision: 4,
 		})
@@ -686,7 +720,7 @@ func TestRunImportStatusPrintsCommittedResult(t *testing.T) {
 	command := &cobra.Command{Use: "status"}
 	output := &strings.Builder{}
 	command.SetOut(output)
-	if err := runImportStatus(command, "  "+operationID+"  ", false); err != nil {
+	if err := runImportStatus(command, "  "+operationID+"  "); err != nil {
 		t.Fatalf("runImportStatus: %v", err)
 	}
 	if !strings.Contains(output.String(), "applied (complete, committed)") || !strings.Contains(output.String(), "Service svc-1 · version 2026-08-25 · revision 4") {
@@ -700,7 +734,7 @@ func TestRunImportStatusPrintsTerminalRecovery(t *testing.T) {
 	operationID := "11111111-1111-4111-8111-111111111111"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(api.SpecImportStatusResponse{
-			Status: "applied", OperationID: operationID, PlanID: operationID,
+			Status: "applied", OperationID: operationID,
 			Phase: "failed", CommitState: "committed", Code: "IMPORT_RESULT_UNAVAILABLE",
 			Recovery: "fused-cli import plan --help",
 		})
@@ -710,11 +744,43 @@ func TestRunImportStatusPrintsTerminalRecovery(t *testing.T) {
 	command := &cobra.Command{Use: "status"}
 	output := &strings.Builder{}
 	command.SetOut(output)
-	if err := runImportStatus(command, operationID, false); err != nil {
+	if err := runImportStatus(command, operationID); err != nil {
 		t.Fatalf("runImportStatus: %v", err)
 	}
 	if !strings.Contains(output.String(), "Code: IMPORT_RESULT_UNAVAILABLE") || !strings.Contains(output.String(), "fused-cli import plan --help") || strings.Contains(output.String(), "Service  ·") {
 		t.Fatalf("terminal status output = %q", output)
+	}
+}
+
+// TestRunImportStatusUsesSharedJSONOutput verifies status reads use the common
+// command-local flag and encoder instead of maintaining parallel JSON state.
+func TestRunImportStatusUsesSharedJSONOutput(t *testing.T) {
+	operationID := "11111111-1111-4111-8111-111111111111"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(api.SpecImportStatusResponse{
+			Status: "pending", OperationID: operationID,
+			Phase: "ready", CommitState: "unknown", Guidance: "import apply is in progress; poll status again",
+		})
+	}))
+	defer server.Close()
+	setImportTestAPI(t, server.URL)
+	command := &cobra.Command{Use: "status"}
+	addJSONOutputFlag(command)
+	// Setting the shared flag is the only supported structured-output switch;
+	// no package-global status boolean should influence this direct command.
+	if err := command.Flags().Set(jsonOutputFlag, "true"); err != nil {
+		t.Fatal(err)
+	}
+	output := &strings.Builder{}
+	command.SetOut(output)
+	// The direct runner must observe the command-local flag without Cobra's
+	// package-global execution state.
+	if err := runImportStatus(command, operationID); err != nil {
+		t.Fatalf("runImportStatus JSON: %v", err)
+	}
+	// Pending JSON carries poll guidance without presenting the same command as terminal recovery.
+	if !strings.Contains(output.String(), `"operation_id":"`+operationID+`"`) || !strings.Contains(output.String(), `"guidance":"import apply is in progress; poll status again"`) || strings.Contains(output.String(), `"recovery"`) {
+		t.Fatalf("shared status JSON output = %q", output)
 	}
 }
 
