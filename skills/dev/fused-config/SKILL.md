@@ -1,6 +1,6 @@
 ---
 name: fused-config
-description: "Use this skill when the task involves Fused config that isn't owned by one concept alone -- execution policy (rate limits, retries, pagination, a base_url override for a wrong/missing spec URL, event_extraction_path, incoming_webhook_config, and whether it's published to the Registry vs. only enforced locally in this workspace), import overlays that supply reviewed non-secret provider facts missing from a machine-readable source, or connection profiles (auth type, OAuth/OIDC resource discovery, dynamic request bindings) whether declared in a workspace file, a bucket, or directly in an OpenAPI/Postman spec via x-fused-connect. Trigger on 'execution policy', 'rate limit'/'retry config', 'pagination', 'base_url override', 'import overlay', '--overlay', 'webhook verification'/'incoming_webhook_config', 'local override', 'connection profile', 'resource_discovery', 'binding', '${resource...}', or 'x-fused-connect'. For SDK package or MCP server selection, or bucket/secret storage, read fused-workspace/fused-sdk/fused-mcp/fused-bucket instead."
+description: "Use this skill for cross-cutting Fused config: execution policy (rate limits, retries, pagination, a base_url override for a wrong/missing spec URL, event_extraction_path, incoming_webhook_config, and whether it's published to the Registry vs. only enforced locally in this workspace), import overlays that supply reviewed non-secret provider facts missing from a machine-readable source, or connection profiles (auth type, OAuth/OIDC resource discovery, dynamic request bindings) whether declared in a workspace file, a bucket, or directly in an OpenAPI/Postman spec via x-fused-connect. Trigger on 'execution policy', 'rate limit'/'retry config', 'pagination', 'base_url override', 'import overlay', '--overlay', 'webhook verification'/'incoming_webhook_config', 'local override', 'connection profile', 'resource_discovery', 'binding', '${resource...}', or 'x-fused-connect'. For SDK package or MCP server selection, or bucket/secret storage, read fused-workspace/fused-sdk/fused-mcp/fused-bucket instead."
 ---
 
 # Cross-cutting runtime config: execution policy & connection profiles
@@ -11,8 +11,11 @@ OpenAPI security requirements are not a workspace credential declaration.
 They remain an ordered OR-of-AND operation contract: alternatives are OR,
 schemes within one alternative are AND, and an empty alternative allows
 anonymous access. Imported Basic auth may declare `basic_password_mode` as
-`required`, `optional`, or `empty`; the mode describes credential shape and
-never supplies a password. Likewise, `servers[].variables` preserves each
+`required`, `optional`, or `empty`; omission defaults to conventional
+username-plus-password Basic auth (`required`), while unknown explicit values
+fail planning as `invalid_service_auth_contract`, never as missing bucket
+credentials. The mode describes credential shape and never supplies a password.
+Likewise, `servers[].variables` preserves each
 variable's optional default, enum, and required flag. Do not add these fields
 to bucket auth material or normalize them in CLI config; Registry validates the
 contract and Engine resolves credentials and connection routing at execution.

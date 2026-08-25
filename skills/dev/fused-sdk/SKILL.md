@@ -31,10 +31,10 @@ text: use `sdk plan --json`, `sdk apply --json`, `sdk token generate --json`,
 `sdk download --json`, `sdk invoke --json`, and `sdk activity --json`.
 
 `kind: sdk`, managed by `fused-cli sdk ...`, declares a typed SDK package from a bucket's already-configured services.
-Run `bucket list`; its results prove `bucket.read` visibility, not use. Choose
-visible `default` or another candidate and let SDK plan/apply check its exact
-`bucket.use`. On denial, stop without creating a fallback. Follow
-`fused-bucket` for the narrow conditions that permit creation.
+For service-bearing config, `sdk init` lists `bucket.read`-visible buckets once
+and writes visible `default` or the first candidate unless `--bucket` is set.
+Plan/apply proves exact `bucket.use`; init never creates a bucket or replaces an
+existing selection. Follow `fused-bucket` for permitted creation workflows.
 
 Each service map key is an activated service's persisted Registry slug. Confirm
 it with `fused-cli workspace services list -q <slug> --json`; Registry

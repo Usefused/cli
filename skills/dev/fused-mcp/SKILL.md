@@ -135,8 +135,11 @@ Use `init` to create `.fused/mcps/<name>.yaml` without overwriting an existing
 file. Repeat it with `--extend` to add selections; the result is `extended` or
 idempotent `unchanged`, and conflicts stop before writing. An empty skeleton
 is intentionally incomplete until each service lists operations or uses
-`--select-all`. `--bucket` references an existing usable bucket and never
-creates one.
+`--select-all`. For a service-bearing config without `--bucket`, init lists
+read-visible buckets once, writes the visible bucket named `default` or the
+first visible candidate, and fails without writing when none is visible. An
+explicit `--bucket` remains authoritative. Init never creates a bucket, and
+plan/apply remains the authoritative `bucket.use` check.
 
 `mcp apply` doesn't just validate config -- it stands up (or updates) a
 persistent, named Engine-hosted server with its own URL, which stays live
