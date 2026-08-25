@@ -11,7 +11,18 @@ import (
 	"github.com/Usefused/cli/internal/configfile"
 )
 
-func addWorkspaceService(path, serviceName, serviceID, version string) error {
+type workspaceServiceConfigAddition struct {
+	serviceName       string
+	expectedServiceID string
+	persistServiceID  string
+	version           string
+}
+
+// addWorkspaceServices authors every resolved addition in one atomic config
+// write, preserving existing service policy and avoiding partial multi-add files.
+func addWorkspaceServices(path string, additions []workspaceServiceConfigAddition) error {
+	// Workspace authoring always requires an explicit config destination so a
+	// composite never writes into an inferred or unrelated config file.
 	if path == "" {
 		return errors.New("workspace config edit requires -f")
 	}
@@ -19,15 +30,21 @@ func addWorkspaceService(path, serviceName, serviceID, version string) error {
 	if err != nil {
 		return err
 	}
-	service := cfg.Services[serviceName]
-	if serviceID != "" {
-		if service.ServiceID != "" && service.ServiceID != serviceID {
-			return fmt.Errorf("service %s already has service_id %s; refusing to replace it with %s", serviceName, service.ServiceID, serviceID)
+	for _, addition := range additions {
+		service := cfg.Services[addition.serviceName]
+		// Existing stable identity must never be silently repointed because the
+		// resolved apply target and declarative identity must stay the same service.
+		if addition.expectedServiceID != "" && service.ServiceID != "" && service.ServiceID != addition.expectedServiceID {
+			return fmt.Errorf("service %s already has service_id %s; refusing to resolve or activate it as %s", addition.serviceName, service.ServiceID, addition.expectedServiceID)
 		}
-		service.ServiceID = serviceID
-		cfg.Services[serviceName] = service
+		// Only explicit identity additions persist an ID; discovered public
+		// services retain canonical slug-based config-as-code behavior.
+		if addition.persistServiceID != "" {
+			service.ServiceID = addition.persistServiceID
+			cfg.Services[addition.serviceName] = service
+		}
+		mergeWorkspaceServiceSelection(cfg, addition.serviceName, addition.version)
 	}
-	mergeWorkspaceServiceSelection(cfg, serviceName, version)
 	return writeWorkspaceConfig(path, cfg)
 }
 

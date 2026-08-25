@@ -251,6 +251,10 @@ type APIError struct {
 		DependencyHTTPStatus int                            `json:"http_status,omitempty"`
 	} `json:"details,omitempty"`
 	Remediation string `json:"remediation,omitempty"`
+	Phase       string `json:"phase,omitempty"`
+	OperationID string `json:"operation_id,omitempty"`
+	CommitState string `json:"commit_state,omitempty"`
+	Recovery    string `json:"recovery,omitempty"`
 	TraceID     string `json:"trace_id,omitempty"`
 	HTTPStatus  int    `json:"-"`
 }
@@ -301,6 +305,11 @@ func (e *APIError) Error() string {
 	}
 	if e.Remediation != "" {
 		message += " " + e.Remediation
+	}
+	// Exact recovery commands are server-reviewed metadata, separate from
+	// mutable remote detail that the shared parser deliberately suppresses.
+	if e.Recovery != "" {
+		message += " Recovery: `" + e.Recovery + "`."
 	}
 	if e.TraceID != "" {
 		message += " Trace: " + e.TraceID
@@ -1463,16 +1472,28 @@ func splitProviderQualifiedServiceRef(ref string) (string, string) {
 	return ref, ""
 }
 
+// ServiceLookupName returns the service segment used by Engine's bounded name
+// lookup while keeping qualified-reference parsing owned by the API package.
+func ServiceLookupName(ref string) string {
+	slug, _ := splitProviderQualifiedServiceRef(strings.TrimSpace(ref))
+	return slug
+}
+
+const serviceSearchGraphQLFields = `
+		id
+		name
+		slug
+		provider { handle }
+		is_owner
+		is_public
+`
+
+// SearchServices performs the existing one-query Registry catalogue search.
 func (c *Client) SearchServices(q string) ([]Service, error) {
 	query := `
 		query SearchServices($q: String!) {
 			searchServices(q: $q) {
-				id
-				name
-				slug
-				provider { handle }
-				is_owner
-				is_public
+				` + serviceSearchGraphQLFields + `
 			}
 		}
 	`
@@ -1481,6 +1502,40 @@ func (c *Client) SearchServices(q string) ([]Service, error) {
 	}
 	err := c.GraphQL(query, map[string]any{"q": q}, &resp)
 	return resp.SearchServices, err
+}
+
+// SearchServicesBatch resolves independent service references through the
+// Registry's set-based field so composite CLI commands avoid N+1 DB searches.
+func (c *Client) SearchServicesBatch(queries []string) (map[string][]Service, error) {
+	// An empty composite has no Registry work and must not issue a malformed
+	// zero-field GraphQL operation.
+	if len(queries) == 0 {
+		return map[string][]Service{}, nil
+	}
+
+	query := `
+		query ServiceCandidatesByRefs($refs: [String!]!, $limitPerRef: Int!) {
+			serviceCandidatesByRefs(refs: $refs, limitPerRef: $limitPerRef) {
+				ref
+				candidates { ` + serviceSearchGraphQLFields + ` }
+			}
+		}
+	`
+	var response struct {
+		Results []struct {
+			Ref        string    `json:"ref"`
+			Candidates []Service `json:"candidates"`
+		} `json:"serviceCandidatesByRefs"`
+	}
+	if err := c.GraphQL(query, map[string]any{"refs": queries, "limitPerRef": 20}, &response); err != nil {
+		return nil, err
+	}
+
+	results := make(map[string][]Service, len(queries))
+	for _, result := range response.Results {
+		results[result.Ref] = result.Candidates
+	}
+	return results, nil
 }
 
 func (c *Client) SearchEndpoints(serviceID, version, q string) ([]Integration, error) {
@@ -2216,14 +2271,36 @@ type SpecImportApplyRequest struct {
 }
 
 type SpecImportApplyResponse struct {
-	Status       string `json:"status"`
-	PlanID       string `json:"plan_id"`
-	ServiceID    string `json:"service_id"`
-	Slug         string `json:"slug"`
-	IsNewService bool   `json:"is_new_service"`
-	Action       string `json:"action"`
-	Version      string `json:"version"`
-	Revision     int    `json:"revision"`
+	Status           string `json:"status"`
+	PlanID           string `json:"plan_id"`
+	OperationID      string `json:"operation_id"`
+	Phase            string `json:"phase"`
+	CommitState      string `json:"commit_state"`
+	Replayed         bool   `json:"replayed,omitempty"`
+	ServiceID        string `json:"service_id"`
+	ServiceVersionID string `json:"service_version_id"`
+	Slug             string `json:"slug"`
+	IsNewService     bool   `json:"is_new_service"`
+	Action           string `json:"action"`
+	Version          string `json:"version"`
+	Revision         int    `json:"revision"`
+}
+
+// SpecImportStatusResponse is the durable, read-only recovery view for one
+// reviewed import operation.
+type SpecImportStatusResponse struct {
+	Status           string `json:"status"`
+	OperationID      string `json:"operation_id"`
+	PlanID           string `json:"plan_id"`
+	Phase            string `json:"phase"`
+	CommitState      string `json:"commit_state"`
+	ServiceID        string `json:"service_id,omitempty"`
+	ServiceVersionID string `json:"service_version_id,omitempty"`
+	Slug             string `json:"slug,omitempty"`
+	Version          string `json:"version,omitempty"`
+	Revision         int    `json:"revision,omitempty"`
+	Code             string `json:"code,omitempty"`
+	Recovery         string `json:"recovery,omitempty"`
 }
 
 // PlanSpecImport computes (but does not commit) a non-interactive spec
@@ -2308,7 +2385,7 @@ func (c *Client) ApplySpecImport(planID, reviewHash string) (*SpecImportApplyRes
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody := readBoundedHTTPErrorBody(resp.Body)
 		return nil, fmt.Errorf("apply spec import failed (HTTP %d): %w", resp.StatusCode, newHTTPError(resp.StatusCode, respBody))
 	}
 
@@ -2317,6 +2394,38 @@ func (c *Client) ApplySpecImport(planID, reviewHash string) (*SpecImportApplyRes
 		return nil, err
 	}
 	return &out, nil
+}
+
+// GetSpecImportStatus reads the existing Registry operation ledger without
+// retrying or otherwise mutating the reviewed import.
+func (c *Client) GetSpecImportStatus(operationID string) (*SpecImportStatusResponse, error) {
+	operationID = strings.TrimSpace(operationID)
+	req, err := http.NewRequest(http.MethodGet, c.BaseURL+"/integrations/import/operations/"+operationID, nil)
+	// Request construction failures happen before any remote status read.
+	if err != nil {
+		return nil, err
+	}
+	// Authentication matches plan/apply because status is account-scoped.
+	if c.APIKey != "" {
+		req.Header.Set("x-api-key", c.APIKey)
+	}
+	resp, err := c.doRequest(req)
+	// Transport failures retain the shared client's safe error semantics.
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	// Structured Registry errors flow through the existing bounded parser.
+	if resp.StatusCode >= 400 {
+		body := readBoundedHTTPErrorBody(resp.Body)
+		return nil, fmt.Errorf("get import status failed (HTTP %d): %w", resp.StatusCode, newHTTPError(resp.StatusCode, body))
+	}
+	var result SpecImportStatusResponse
+	// Malformed success bodies cannot be treated as a known operation outcome.
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+	return &result, nil
 }
 
 func (c *Client) DeactivateApp(appID string) error {

@@ -112,7 +112,7 @@ resolve the workspace first, fall back to Registry, and merge the selected
 service without erasing its existing settings:
 
 ```shell
-fused-cli workspace service add <query-or-slug> [--version <version>] -f <workspace-config-path>
+fused-cli workspace service add <query-or-slug> [query-or-slug...] [--version <version>] [--apply] -f <workspace-config-path>
 ```
 
 A unique or exact result is added non-interactively. Use `--interactive` only

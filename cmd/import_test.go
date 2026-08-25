@@ -598,7 +598,7 @@ func TestImportApplyTimeoutIsOutcomeUnknownAndNotRetried(t *testing.T) {
 func writeImportTimeoutReceipt(t *testing.T, engineURL string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "receipt.json")
-	receipt := importPlanReceipt{Slug: "large-api", PlanID: "plan-large", ReviewHash: "review-large", EngineURL: engineURL}
+	receipt := importPlanReceipt{Slug: "large-api", PlanID: "11111111-1111-4111-8111-111111111111", ReviewHash: "review-large", EngineURL: engineURL}
 	data, err := json.Marshal(receipt)
 	if err != nil {
 		t.Fatal(err)
@@ -620,12 +620,101 @@ func assertUnknownImportApplyTimeout(t *testing.T, command *cobra.Command, err e
 	if requests != 1 {
 		t.Fatalf("apply request count = %d, want one", requests)
 	}
-	if !strings.Contains(err.Error(), "workspace services list -q large-api") || !strings.Contains(err.Error(), "Do not automatically reuse") {
+	if !strings.Contains(err.Error(), "fused-cli import status 11111111-1111-4111-8111-111111111111") {
 		t.Fatalf("timeout remediation = %q", err)
 	}
+	assertTimeoutErrorHidesEngineURL(t, err)
 	classified := classifyCommandError(command, err)
-	if classified.Code != "import_apply_outcome_unknown" || classified.Retryable {
+	if classified.Code != "import_apply_outcome_unknown" || classified.Retryable || classified.CommitState != "unknown" || classified.Recovery == "" {
 		t.Fatalf("classified timeout = %#v", classified)
+	}
+}
+
+// assertTimeoutErrorHidesEngineURL prevents Go transport errors from exposing
+// a private Engine endpoint through the human timeout message.
+func assertTimeoutErrorHidesEngineURL(t *testing.T, err error) {
+	t.Helper()
+	// Transport errors can embed the full URL, so neither HTTP scheme may render.
+	if strings.Contains(err.Error(), "http://") || strings.Contains(err.Error(), "https://") {
+		t.Fatalf("timeout error leaked Engine URL: %q", err)
+	}
+}
+
+// TestImportApplyOutcomeUnknownSanitizesOperationID prevents edited receipts
+// from injecting terminal text into the recommended status command.
+func TestImportApplyOutcomeUnknownSanitizesOperationID(t *testing.T) {
+	err := &importApplyOutcomeUnknownError{
+		cause: context.DeadlineExceeded, timeout: time.Minute,
+		operationID: "bad` && echo secret",
+	}
+	if strings.Contains(err.Error(), "echo secret") || !strings.Contains(err.Error(), "fused-cli import status <operation-id>") {
+		t.Fatalf("unsafe timeout remediation = %q", err)
+	}
+}
+
+// TestClassifyImportAPIErrorPreservesRecoveryFields keeps the Registry's slim
+// safe error contract intact in CLI JSON output.
+func TestClassifyImportAPIErrorPreservesRecoveryFields(t *testing.T) {
+	apiError := &api.APIError{
+		Code: "IMPORT_APPLY_FAILED", Message: "failed to apply import plan",
+		Phase: "registry_apply", OperationID: "11111111-1111-4111-8111-111111111111",
+		CommitState: "unknown", Recovery: "fused-cli import status 11111111-1111-4111-8111-111111111111",
+	}
+	result := classifyCommandError(&cobra.Command{Use: "apply"}, apiError)
+	if result.Phase != apiError.Phase || result.OperationID != apiError.OperationID || result.CommitState != apiError.CommitState || result.Recovery != apiError.Recovery {
+		t.Fatalf("classified import error = %#v", result)
+	}
+}
+
+// TestRunImportStatusPrintsCommittedResult verifies the composite recovery
+// command reads status once and renders the stored service identity.
+func TestRunImportStatusPrintsCommittedResult(t *testing.T) {
+	operationID := "11111111-1111-4111-8111-111111111111"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Whitespace accepted by the CLI must not survive into the route segment.
+		if r.URL.Path != "/integrations/import/operations/"+operationID {
+			t.Fatalf("status path = %q", r.URL.Path)
+		}
+		json.NewEncoder(w).Encode(api.SpecImportStatusResponse{
+			Status: "applied", OperationID: operationID, PlanID: operationID,
+			Phase: "complete", CommitState: "committed", ServiceID: "svc-1",
+			Version: "2026-08-25", Revision: 4,
+		})
+	}))
+	defer server.Close()
+	setImportTestAPI(t, server.URL)
+	command := &cobra.Command{Use: "status"}
+	output := &strings.Builder{}
+	command.SetOut(output)
+	if err := runImportStatus(command, "  "+operationID+"  ", false); err != nil {
+		t.Fatalf("runImportStatus: %v", err)
+	}
+	if !strings.Contains(output.String(), "applied (complete, committed)") || !strings.Contains(output.String(), "Service svc-1 · version 2026-08-25 · revision 4") {
+		t.Fatalf("status output = %q", output)
+	}
+}
+
+// TestRunImportStatusPrintsTerminalRecovery ensures failed and incomplete
+// committed operations show a stable code without a blank guessed service row.
+func TestRunImportStatusPrintsTerminalRecovery(t *testing.T) {
+	operationID := "11111111-1111-4111-8111-111111111111"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(api.SpecImportStatusResponse{
+			Status: "applied", OperationID: operationID, PlanID: operationID,
+			Phase: "failed", CommitState: "committed", Code: "IMPORT_RESULT_UNAVAILABLE",
+			Recovery: "fused-cli import plan --help",
+		})
+	}))
+	defer server.Close()
+	setImportTestAPI(t, server.URL)
+	command := &cobra.Command{Use: "status"}
+	output := &strings.Builder{}
+	command.SetOut(output)
+	if err := runImportStatus(command, operationID, false); err != nil {
+		t.Fatalf("runImportStatus: %v", err)
+	}
+	if !strings.Contains(output.String(), "Code: IMPORT_RESULT_UNAVAILABLE") || !strings.Contains(output.String(), "fused-cli import plan --help") || strings.Contains(output.String(), "Service  ·") {
+		t.Fatalf("terminal status output = %q", output)
 	}
 }
 

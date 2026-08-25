@@ -133,7 +133,7 @@ func TestRecordTelemetryErrorMarksUnknownImportApplyNonRetryable(t *testing.T) {
 	provider := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
 	_, span := provider.Tracer("test").Start(context.Background(), "import-apply")
 	recordTelemetryError(span, &importApplyOutcomeUnknownError{
-		cause: context.DeadlineExceeded, timeout: 20 * time.Minute, slug: "large-api",
+		cause: context.DeadlineExceeded, timeout: 20 * time.Minute, operationID: "11111111-1111-4111-8111-111111111111",
 	})
 	span.End()
 

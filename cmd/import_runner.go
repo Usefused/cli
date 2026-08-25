@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Usefused/cli/internal/api"
+	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -54,15 +55,15 @@ type importSpecApplyOptions struct {
 // mutation failure. Import plans are one-shot, so callers must never use the
 // generic retryable timeout classification to replay the same receipt.
 type importApplyOutcomeUnknownError struct {
-	cause   error
-	timeout time.Duration
-	slug    string
+	cause       error
+	timeout     time.Duration
+	operationID string
 }
 
 // Error explains both sides of the ambiguous boundary without exposing the
 // Engine URL, credentials, source, or remote response body.
 func (e *importApplyOutcomeUnknownError) Error() string {
-	return fmt.Sprintf("import apply outcome is unknown after %s: %v. %s", e.timeout, e.cause, e.remediation())
+	return fmt.Sprintf("import apply outcome is unknown after %s. %s", e.timeout, e.remediation())
 }
 
 // Unwrap preserves deadline inspection for logs while command classification
@@ -71,21 +72,21 @@ func (e *importApplyOutcomeUnknownError) Unwrap() error {
 	return e.cause
 }
 
-// remediation directs recovery through read-only activation checks because a
-// blind retry can only conflict after a late server-side commit.
+// remediation directs recovery through the durable read-only operation status
+// because a blind mutation retry is unnecessary and may obscure the outcome.
 func (e *importApplyOutcomeUnknownError) remediation() string {
-	slug := safeImportSlug(e.slug)
-	return fmt.Sprintf("Do not automatically reuse this one-shot receipt. Verify activation with `fused-cli workspace services list -q %s`; if absent, inspect `fused-cli service show %s` and use the normal workspace plan/apply flow. For future large imports, set `--timeout` above %s.", slug, slug, e.timeout)
+	return fmt.Sprintf("Check the durable outcome with `fused-cli import status %s`. For future large imports, set `--timeout` above %s.", safeImportOperationID(e.operationID), e.timeout)
 }
 
-// safeImportSlug prevents a locally edited receipt from injecting terminal or
-// shell syntax into recovery guidance.
-func safeImportSlug(slug string) string {
-	slug = strings.TrimSpace(slug)
-	if slug != "" && validRequestID(slug) {
-		return slug
+// safeImportOperationID prevents a locally edited receipt from injecting
+// terminal or shell syntax into the exact recovery command.
+func safeImportOperationID(value string) string {
+	operationID, err := uuid.Parse(strings.TrimSpace(value))
+	// Only canonical UUIDs are safe and useful in the status command.
+	if err != nil {
+		return "<operation-id>"
 	}
-	return "<slug>"
+	return operationID.String()
 }
 
 // importPlanReceipt mirrors planReceipt's shape (config_runner.go) for the
@@ -406,13 +407,59 @@ func runImportApply(cmd *cobra.Command, opts importSpecApplyOptions) error {
 				attribute.String("outcome", "unknown"),
 				attribute.Int64("timeout_ms", timeout.Milliseconds()),
 			)
-			return &importApplyOutcomeUnknownError{cause: err, timeout: timeout, slug: receipt.Slug}
+			return &importApplyOutcomeUnknownError{cause: err, timeout: timeout, operationID: receipt.PlanID}
 		}
 		return err
 	}
 	recordAppliedChange(cmd.Context(), cmd.CommandPath(), "service_import")
 	printImportApplyResult(cmd.OutOrStdout(), resp)
 	return nil
+}
+
+// runImportStatus reads one durable operation and renders either stable JSON
+// or a compact human recovery summary.
+func runImportStatus(cmd *cobra.Command, operationID string, jsonOut bool) error {
+	canonicalOperationID := strings.TrimSpace(operationID)
+	parsedOperationID, err := uuid.Parse(canonicalOperationID)
+	// Local UUID validation keeps invalid path text away from the HTTP client.
+	if err != nil {
+		return errors.New("operation ID must be a UUID")
+	}
+	canonicalOperationID = parsedOperationID.String()
+	client, err := getAPIClient()
+	// Context/auth configuration must succeed before the read-only request.
+	if err != nil {
+		return err
+	}
+	status, err := client.GetSpecImportStatus(canonicalOperationID)
+	// Shared API errors preserve stable recovery fields for automation.
+	if err != nil {
+		return err
+	}
+	// JSON mode is a direct stable projection for scripts and agents.
+	if jsonOut {
+		return json.NewEncoder(cmd.OutOrStdout()).Encode(status)
+	}
+	printImportStatus(cmd.OutOrStdout(), status)
+	return nil
+}
+
+// printImportStatus renders the compact human recovery view separately from
+// request validation so neither concern accumulates command complexity.
+func printImportStatus(out io.Writer, status *api.SpecImportStatusResponse) {
+	fmt.Fprintf(out, "Import %s: %s (%s, %s)\n", status.OperationID, status.Status, status.Phase, status.CommitState)
+	// A complete committed operation carries the exact durable mutation result.
+	if status.CommitState == "committed" && status.ServiceID != "" && status.Version != "" && status.Revision > 0 {
+		fmt.Fprintf(out, "Service %s · version %s · revision %d\n", status.ServiceID, status.Version, status.Revision)
+	}
+	// Terminal failures include one stable selector for scripts and operators.
+	if status.Code != "" {
+		fmt.Fprintf(out, "Code: %s\n", status.Code)
+	}
+	// Recovery is printed only when the server has a non-looping next command.
+	if status.Recovery != "" {
+		fmt.Fprintf(out, "Recovery: `%s`\n", status.Recovery)
+	}
 }
 
 // specImportTimeout honors an explicit global flag while giving import plan

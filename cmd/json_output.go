@@ -36,6 +36,10 @@ type jsonErrorResult struct {
 	Details     map[string]any `json:"details,omitempty"`
 	TraceID     string         `json:"trace_id,omitempty"`
 	HTTPStatus  int            `json:"http_status,omitempty"`
+	Phase       string         `json:"phase,omitempty"`
+	OperationID string         `json:"operation_id,omitempty"`
+	CommitState string         `json:"commit_state,omitempty"`
+	Recovery    string         `json:"recovery,omitempty"`
 	Command     string         `json:"command"`
 }
 
@@ -111,6 +115,9 @@ func classifyCommandError(cmd *cobra.Command, err error) jsonErrorResult {
 		result.Code, result.Category = "import_apply_outcome_unknown", "indeterminate"
 		result.Message = "The import apply response timed out after the server may have committed the reviewed plan."
 		result.Remediation = unknownApply.remediation()
+		result.Phase, result.OperationID = "registry_apply", safeImportOperationID(unknownApply.operationID)
+		result.CommitState = "unknown"
+		result.Recovery = "fused-cli import status " + result.OperationID
 		result.Details = map[string]any{"timeout_ms": unknownApply.timeout.Milliseconds()}
 		return result
 	}
@@ -127,6 +134,10 @@ func classifyCommandError(cmd *cobra.Command, err error) jsonErrorResult {
 		result.Code, result.Message = apiError.Code, apiError.Message
 		result.Category, result.Retryable = apiError.Category, apiError.Retryable
 		result.Remediation, result.TraceID, result.HTTPStatus = apiError.Remediation, apiError.TraceID, apiError.HTTPStatus
+		// Import operation recovery remains top-level so agents do not parse a
+		// generic details bag to decide whether a commit is possible.
+		result.Phase, result.OperationID = apiError.Phase, apiError.OperationID
+		result.CommitState, result.Recovery = apiError.CommitState, apiError.Recovery
 		result.Details = mergeJSONDetails(result.Details, apiErrorJSONDetails(apiError))
 		return result
 	}
