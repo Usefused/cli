@@ -47,6 +47,25 @@ services:
 `select_all: true` is the alternative to listing `operations` explicitly --
 exactly one of the two is required (see `fused-sdk`; the validation and
 sync-freezing behavior described there is the same struct shared with SDK).
+A top-level `unified_operations` map uses the same graph, mapping, dependency,
+rollback, and output authoring contract as an SDK; read
+`fused-unified-operations`. MCP sets no `language`, so plan skips only generated
+TypeScript/Python symbol checks, then runs the same Engine compiler after
+physical selections are pinned. Apply persists the same immutable private v3
+definitions and hashes, while the credential-free descriptor remains in the
+applied plan. Do not create an MCP-specific graph shape or authorization scope.
+At session start, Engine adds each fully token-authorized descriptor to the
+existing `search_docs` catalogue under its exact authored name. The server still
+exposes only `search_docs` and `execute`; an exact physical/Unified name collision
+fails closed. Discovery returns public schemas and graph names only, never
+private mappings, internal UUIDs, selectors, or values.
+Inside an `execute` script, call a discovered Unified operation with
+`await call(operationId, {input, targets, selectors?, pagination?, idempotencyKey?})`.
+Use TypeScript camelCase selector and pagination fields, keep `targets`
+dependency-closed, and omit `idempotencyKey` only when a new SDK-equivalent UUID
+is appropriate. Engine reauthenticates the session and sends every selected
+forward and active rollback through the canonical Unified coordinator; catalogue
+visibility never grants execution scope.
 A service's `webhooks`/`webhooks_select_all` are rejected outright on an MCP
 config (both CLI-side and Engine-side) -- this predates `webhook_attachment`
 and hasn't been revisited since (see the doc comment on

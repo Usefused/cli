@@ -1,21 +1,24 @@
 ---
 name: fused-unified-operations
-description: "Configure or review Fused SDK Unified Operations that expose one typed TypeScript or Python operation over multiple selected services. Use when authoring unified_operations, bindings, depends_on, rollback, recursive typed outputs, runtime targets/selectors, OAuth/OIDC routing, or interpreting transformed results and rollbacks."
+description: "Configure or review Fused Unified Operations for typed TypeScript/Python SDKs or Engine-hosted MCP apps. Use when authoring unified_operations, bindings, depends_on, rollback, recursive typed outputs, runtime targets/selectors, OAuth/OIDC routing, or interpreting transformed results and rollbacks."
 ---
 
 # Fused Unified Operations
 
 ## Result
 
-Produce one generated SDK method that can call an explicit set of provider
+Produce one immutable logical app operation that can call an explicit set of provider
 operations, make ready targets eligible for bounded concurrency, wait for
 declared dependencies, compensate successful direct dependencies after a graph
 execution failure or dependency skip, and optionally return one exact
 operation-level transformed value.
 
-Use Unified Operations only in TypeScript or Python `kind: sdk` configs. They wrap
-selected `services`, grant no new scope, and carry no credentials. Read `fused-sdk`
-for lifecycle and `fused-bucket` for OAuth/OIDC or credential readiness.
+Use Unified Operations in TypeScript or Python `kind: sdk` configs and in
+`kind: mcp` configs, which omit `language`. Both adapters send the same authoring
+shape through the same Engine compiler and immutable v3 persistence fields.
+They wrap selected `services`, grant no new scope, and carry no credentials.
+Read `fused-sdk` or `fused-mcp` for adapter lifecycle, and `fused-bucket` for
+OAuth/OIDC or credential readiness.
 
 ## Properties and where they are used
 
@@ -23,8 +26,8 @@ for lifecycle and `fused-bucket` for OAuth/OIDC or credential readiness.
 
 | Property | Location | Result |
 |---|---|---|
-| `unified_operations` | Top-level, beside `services` | Declares generated multi-service methods. It is invalid in Go SDKs and MCP configs. |
-| `<operation-name>` | Key under `unified_operations` | Dot-separated segments become the generated namespace and method, such as `release.provision` -> `sdk.unified.release.provision`. |
+| `unified_operations` | Top-level, beside `services` | Declares logical multi-service operations. It is invalid only for Go SDK generation. |
+| `<operation-name>` | Key under `unified_operations` | Exact logical identity; in SDKs its dot-separated segments also become the generated namespace and method, such as `release.provision` -> `sdk.unified.release.provision`. |
 | `description` | Operation | Optional descriptive metadata retained with the immutable definition; generated method comments are currently fixed. |
 | `input` | Operation | Required JSON Schema for the generated method input. |
 | `bindings` | Operation | Required map of public execution-step names to selected provider operations. Maximum 16 bindings. |
@@ -115,14 +118,16 @@ generated Unified output error with bounded forward and rollback diagnostics.
 Without operation output, binding output replaces only its target's `data` in
 the ordinary all-settled success envelope.
 
-### Generated-call properties
+### Call properties
 
-These properties are passed when invoking the generated method, not written
-inside `bindings`:
+These properties are passed when invoking a generated method or MCP Unified
+call, not written inside `bindings`. MCP uses
+`call(operationId, {input, targets, selectors?, pagination?, idempotencyKey?})`
+with the TypeScript spellings below:
 
 | Property | Where | Result |
 |---|---|---|
-| `targets` | Required call option in TypeScript; second argument in Python | Exact dependency-closed binding subset to execute. One or many targets are valid. |
+| `targets` | Required call option in TypeScript/MCP; second argument in Python | Exact dependency-closed binding subset to execute. One or many targets are valid. |
 | `selectors.<service>.environment` | Per-service call selector | Chooses a declared provider environment for every selected step using that service. |
 | `selectors.<service>.endUserRef` / `end_user_ref` | TypeScript / Python selector | Routes every selected OAuth/OIDC step on that service through the connected user. |
 | `selectors.<service>.authType` / `auth_type` | TypeScript / Python selector | Disambiguates `oauth`, `oidc`, or another declared auth type. |

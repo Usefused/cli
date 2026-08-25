@@ -202,11 +202,15 @@ func validateUnifiedOperations(cfg *AppConfig, kind ConfigKind) error {
 	if cfg.UnifiedOperations == nil {
 		return nil
 	}
-	if err := validateUnifiedSetBounds(cfg.UnifiedOperations); err != nil {
+	if err := validateUnifiedSetBounds(cfg.UnifiedOperations, kind == KindSDK); err != nil {
 		return err
 	}
-	if err := validateUnifiedGeneratedNames(cfg.UnifiedOperations, cfg.Language); err != nil {
-		return err
+	// Only generated SDK packages need language-specific namespace admission;
+	// MCP preserves the exact logical operation names for Engine discovery.
+	if kind == KindSDK {
+		if err := validateUnifiedGeneratedNames(cfg.UnifiedOperations, cfg.Language); err != nil {
+			return err
+		}
 	}
 	budget := &unifiedValueBudget{}
 	for name, operation := range cfg.UnifiedOperations {
@@ -295,15 +299,14 @@ func pythonKeyword(value string) bool {
 	}
 }
 
-// validateUnifiedAvailability restricts composition to supported SDK languages.
+// validateUnifiedAvailability keeps package-language admission SDK-only while both app adapters share the authoring contract.
 func validateUnifiedAvailability(cfg *AppConfig, kind ConfigKind) error {
-	if kind == KindMCP {
-		if cfg.UnifiedOperations != nil {
-			return fmt.Errorf("mcp config must not set unified_operations")
-		}
+	if cfg.UnifiedOperations == nil {
 		return nil
 	}
-	if cfg.UnifiedOperations == nil {
+	// MCP does not generate language symbols, so its otherwise-identical
+	// Unified declaration must not be coupled to an SDK target language.
+	if kind == KindMCP {
 		return nil
 	}
 	if cfg.Language != "typescript" && cfg.Language != "python" {
@@ -313,7 +316,7 @@ func validateUnifiedAvailability(cfg *AppConfig, kind ConfigKind) error {
 }
 
 // validateUnifiedSetBounds enforces operation count, size, and name limits.
-func validateUnifiedSetBounds(operations map[string]UnifiedOperation) error {
+func validateUnifiedSetBounds(operations map[string]UnifiedOperation, requireGeneratedNamespaces bool) error {
 	if len(operations) == 0 {
 		return fmt.Errorf("sdk unified_operations requires at least one operation")
 	}
@@ -323,7 +326,7 @@ func validateUnifiedSetBounds(operations map[string]UnifiedOperation) error {
 	if err := validateUnifiedEncodedSize(operations); err != nil {
 		return err
 	}
-	return validateUnifiedOperationNames(operations)
+	return validateUnifiedOperationNames(operations, requireGeneratedNamespaces)
 }
 
 // validateUnifiedEncodedSize bounds the canonical definition sent to Engine.
@@ -338,8 +341,8 @@ func validateUnifiedEncodedSize(operations map[string]UnifiedOperation) error {
 	return nil
 }
 
-// validateUnifiedOperationNames validates source names and namespace prefixes.
-func validateUnifiedOperationNames(operations map[string]UnifiedOperation) error {
+// validateUnifiedOperationNames validates logical names and, for generated SDKs, namespace prefixes.
+func validateUnifiedOperationNames(operations map[string]UnifiedOperation, requireGeneratedNamespaces bool) error {
 	names := make([]string, 0, len(operations))
 	for name := range operations {
 		if len(name) == 0 || len(name) > MaxUnifiedNameBytes || !unifiedOperationNamePattern.MatchString(name) {
@@ -348,6 +351,11 @@ func validateUnifiedOperationNames(operations map[string]UnifiedOperation) error
 		names = append(names, name)
 	}
 	sort.Strings(names)
+	// Prefix collisions matter only when dotted names become nested SDK
+	// members; MCP keeps each exact operation name as a catalogue identity.
+	if !requireGeneratedNamespaces {
+		return nil
+	}
 	for i := 1; i < len(names); i++ {
 		if strings.HasPrefix(names[i], names[i-1]+".") {
 			return fmt.Errorf("sdk unified operations %q and %q collide as generated namespace paths", names[i-1], names[i])

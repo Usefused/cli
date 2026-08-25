@@ -25,6 +25,8 @@ type importPlanRequestCapture struct {
 	body       map[string]any
 }
 
+// newImportPlanTestServer returns a deterministic successful planner and the
+// decoded request so command tests can assert both transport and output.
 func newImportPlanTestServer(t *testing.T) (*httptest.Server, *importPlanRequestCapture) {
 	t.Helper()
 	capture := &importPlanRequestCapture{}
@@ -37,20 +39,22 @@ func newImportPlanTestServer(t *testing.T) (*httptest.Server, *importPlanRequest
 		if err := json.NewDecoder(r.Body).Decode(&capture.body); err != nil {
 			t.Fatalf("decode body: %v", err)
 		}
+		response := map[string]any{
+			"plan_id": "plan-1", "source_hash": "hash-1", "review_hash": "review-1",
+			"adapter_version": "openapi-v2", "service_id": "", "slug": "widgets", "name": "Widgets",
+			"is_new_service": true, "action": "create_service", "target_version": "1.0",
+			"diff": map[string]any{"added": 1, "changed": 0, "removed": 0},
+		}
+		// The fake server mirrors Registry's closed explicit response shape only when requested.
+		if destination, ok := capture.body["destination_version"].(string); ok && destination != "" {
+			response["source_version"] = "source-v2"
+			response["target_version"] = destination
+			response["destination_version"] = destination
+			response["is_new_service"] = false
+			response["action"] = "update_version"
+		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{
-			"plan_id": "plan-1",
-			"source_hash": "hash-1",
-			"review_hash": "review-1",
-			"adapter_version": "openapi-v2",
-			"service_id": "",
-			"slug": "widgets",
-			"name": "Widgets",
-			"is_new_service": true,
-			"action": "create_service",
-			"target_version": "1.0",
-			"diff": {"added": 1, "changed": 0, "removed": 0}
-		}`))
+		_ = json.NewEncoder(w).Encode(response)
 	}))
 	return server, capture
 }
@@ -177,6 +181,36 @@ func TestBuildSpecImportRequestUsesURLFlagAndExplicitVersion(t *testing.T) {
 	}
 }
 
+// TestBuildSpecImportRequestKeepsDestinationSeparateFromSourceVersion proves
+// webhook attachment does not overload the versionless-source fallback.
+func TestBuildSpecImportRequestKeepsDestinationSeparateFromSourceVersion(t *testing.T) {
+	req, err := buildSpecImportRequest("", importSpecPlanOptions{
+		name: "Events", slug: "events", url: "https://example.test/webhooks.yaml",
+		version: "source-v2", destinationVersion: "service-v1", target: "webhooks",
+	})
+	// A valid split-version request must pass CLI validation unchanged.
+	if err != nil {
+		t.Fatal(err)
+	}
+	// All three identity dimensions must remain independently observable.
+	if req.Version != "source-v2" || req.DestinationVersion != "service-v1" || req.TargetType != "webhooks" {
+		t.Fatalf("source and destination versions were not kept distinct: %+v", req)
+	}
+}
+
+// TestBuildSpecImportRequestRestrictsDestinationToWebhooks keeps destination
+// attachment from changing endpoint import replacement semantics.
+func TestBuildSpecImportRequestRestrictsDestinationToWebhooks(t *testing.T) {
+	_, err := buildSpecImportRequest("", importSpecPlanOptions{
+		name: "Events", slug: "events", url: "https://example.test/openapi.yaml",
+		destinationVersion: "service-v1", target: "endpoints",
+	})
+	// Cross-surface destination targeting would reintroduce implicit contract merging.
+	if err == nil || !strings.Contains(err.Error(), "--target webhooks") {
+		t.Fatalf("expected webhook-only destination validation, got %v", err)
+	}
+}
+
 func TestBuildSpecImportRequestSendsOverlayBytesUnchanged(t *testing.T) {
 	overlayPath := filepath.Join(t.TempDir(), "provider.overlay.yaml")
 	overlay := []byte("operations:\r\n  listWidgets: {pagination: cursor}\r\n# keep me\n")
@@ -290,6 +324,36 @@ func TestPrintImportPlanSummaryIncludesRegistrySourceFormat(t *testing.T) {
 	}
 }
 
+// TestPrintImportPlanSummaryShowsDistinctAttachedSourceVersion keeps source
+// metadata visible without duplicating the ordinary single-version headline.
+func TestPrintImportPlanSummaryShowsDistinctAttachedSourceVersion(t *testing.T) {
+	tests := []struct {
+		name               string
+		sourceVersion      string
+		destinationVersion string
+		wantSourceLine     bool
+	}{
+		{name: "different explicit destination", sourceVersion: "webhooks-v2", destinationVersion: "service-v1", wantSourceLine: true},
+		{name: "same explicit destination", sourceVersion: "service-v1", destinationVersion: "service-v1"},
+		{name: "ordinary import", sourceVersion: "service-v1"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			out := &strings.Builder{}
+			printImportPlanSummary(out, &api.SpecImportPlanResponse{
+				PlanID: "plan-1", Name: "Widgets", Slug: "widgets", Action: "update_version",
+				SourceVersion: test.sourceVersion, DestinationVersion: test.destinationVersion,
+				TargetVersion: "service-v1", TargetType: "webhooks",
+			})
+			hasSourceLine := strings.Contains(out.String(), "Source version: "+test.sourceVersion)
+			// Only a distinct explicit attachment source warrants an extra line.
+			if hasSourceLine != test.wantSourceLine {
+				t.Fatalf("source version line present=%v, want %v:\n%s", hasSourceLine, test.wantSourceLine, out.String())
+			}
+		})
+	}
+}
+
 func TestImportPlanRegistersStrictFlag(t *testing.T) {
 	flag := importPlanCmd.Flags().Lookup("strict")
 	if flag == nil || flag.DefValue != "false" {
@@ -304,6 +368,21 @@ func TestImportPlanRegistersOverlayFlag(t *testing.T) {
 	}
 	if importApplyCmd.Flags().Lookup("source-hash") != nil {
 		t.Fatal("legacy --source-hash apply flag must not remain registered")
+	}
+}
+
+// TestImportPlanRegistersDestinationVersionFlag keeps the explicit attachment
+// mechanism discoverable without changing the established --version default.
+func TestImportPlanRegistersDestinationVersionFlag(t *testing.T) {
+	flag := importPlanCmd.Flags().Lookup("destination-version")
+	// The destination selector must be opt-in and explain its narrow scope.
+	if flag == nil || flag.DefValue != "" || !strings.Contains(flag.Usage, "--target webhooks") {
+		t.Fatalf("destination-version flag = %#v, want an empty webhook-scoped flag", flag)
+	}
+	versionFlag := importPlanCmd.Flags().Lookup("version")
+	// The established source fallback must remain discoverable as a separate concept.
+	if versionFlag == nil || !strings.Contains(versionFlag.Usage, "Source provider version fallback") {
+		t.Fatalf("version flag must retain source fallback semantics: %#v", versionFlag)
 	}
 }
 
@@ -328,7 +407,10 @@ func TestRunImportPlanRecordsStrictMode(t *testing.T) {
 	if err := os.WriteFile(overlayPath, []byte("secret-marker"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	err := runImportPlan(command, specPath, importSpecPlanOptions{name: "Widgets", slug: "widgets", strict: true, overlay: overlayPath, jsonOut: true})
+	err := runImportPlan(command, specPath, importSpecPlanOptions{
+		name: "Widgets", slug: "widgets", strict: true, overlay: overlayPath, jsonOut: true,
+		target: "webhooks", destinationVersion: "1.0",
+	})
 	span.End()
 	if err != nil {
 		t.Fatalf("runImportPlan: %v", err)
@@ -336,9 +418,83 @@ func TestRunImportPlanRecordsStrictMode(t *testing.T) {
 	spans := exporter.GetSpans()
 	assertImportPlanSpanAttribute(t, spans, "strict_mode", true)
 	assertImportPlanSpanAttribute(t, spans, "overlay_present", true)
+	assertImportPlanSpanAttribute(t, spans, "destination_version_present", true)
 	assertImportPlanSpanAttribute(t, spans, "adapter_version", "openapi-v2")
-	assertImportPlanSpanAttribute(t, spans, "outcome", "create_service")
+	assertImportPlanSpanAttribute(t, spans, "outcome", "update_version")
 	assertImportPlanTelemetrySecretSafe(t, spans, overlayPath)
+}
+
+// TestRunImportPlanRejectsMismatchedDestinationEcho prevents an old Registry
+// from silently ignoring webhook attachment intent and creating a new version.
+func TestRunImportPlanRejectsMismatchedDestinationEcho(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// The acknowledgement is correct while the resolved target is not, so
+		// this fixture exercises the second half of the attachment invariant.
+		_, _ = w.Write([]byte(`{
+			"plan_id":"plan-1","review_hash":"review-1","target_version":"1.0",
+			"destination_version":"service-v2","target_type":"webhooks","action":"update_version"
+		}`))
+	}))
+	defer server.Close()
+	setImportTestAPI(t, server.URL)
+	specPath := filepath.Join(t.TempDir(), "webhooks.json")
+	// A local immutable fixture keeps the test on the same source-content path as production.
+	if err := os.WriteFile(specPath, []byte(`{"openapi":"3.0.0"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	command := &cobra.Command{}
+	command.SetContext(t.Context())
+	err := runImportPlan(command, specPath, importSpecPlanOptions{
+		name: "Widgets", slug: "widgets", target: "webhooks", destinationVersion: "service-v2",
+	})
+	// A correct marker with a redirected target must still fail closed.
+	if err == nil || !strings.Contains(err.Error(), "did not plan the requested destination version") {
+		t.Fatalf("expected destination echo mismatch, got %v", err)
+	}
+}
+
+// TestRunImportPlanRejectsMissingDestinationAcknowledgement covers the subtle
+// old-server case where source and destination resolve to the same version.
+func TestRunImportPlanRejectsMissingDestinationAcknowledgement(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// This response deliberately models an older Registry: target_version
+		// happens to match, but no destination_version acknowledgement exists.
+		_, _ = w.Write([]byte(`{
+			"plan_id":"plan-1","review_hash":"review-1","target_version":"1.0",
+			"target_type":"webhooks","action":"update_version"
+		}`))
+	}))
+	defer server.Close()
+	setImportTestAPI(t, server.URL)
+	specPath := filepath.Join(t.TempDir(), "webhooks.json")
+	// Matching source and destination values reproduce the legacy false-positive case.
+	if err := os.WriteFile(specPath, []byte(`{"openapi":"3.0.0","info":{"version":"1.0"}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	command := &cobra.Command{}
+	command.SetContext(t.Context())
+	err := runImportPlan(command, specPath, importSpecPlanOptions{
+		name: "Widgets", slug: "widgets", version: "1.0", target: "webhooks", destinationVersion: "1.0",
+	})
+	// Exact target equality is insufficient unless the server acknowledges destination semantics.
+	if err == nil || !strings.Contains(err.Error(), "did not acknowledge") {
+		t.Fatalf("expected missing destination acknowledgement, got %v", err)
+	}
+}
+
+// TestNormalizeImportPlanResponseRejectsUnsolicitedDestinationMetadata ensures
+// an ordinary request cannot be upgraded into attachment semantics by response fields.
+func TestNormalizeImportPlanResponseRejectsUnsolicitedDestinationMetadata(t *testing.T) {
+	err := normalizeAndValidateImportPlanResponse(
+		api.SpecImportPlanRequest{TargetType: "endpoints"},
+		&api.SpecImportPlanResponse{ReviewHash: "review-1", TargetVersion: "1.0", DestinationVersion: "1.0", SourceVersion: "source-v2"},
+	)
+	// Closed explicit-only response markers must fail when the request omitted them.
+	if err == nil || !strings.Contains(err.Error(), "unsolicited") {
+		t.Fatalf("expected unsolicited destination rejection, got %v", err)
+	}
 }
 
 // assertImportPlanSpanAttribute keeps the telemetry contract table-driven so
@@ -860,6 +1016,8 @@ func TestResolveImportApplyReceiptValidatesFlagPairsAndLegacyReceipts(t *testing
 	}
 }
 
+// TestRunImportPlanWritesExplicitReceiptInJSONMode verifies structured output
+// preserves Registry response metadata while receipt persistence stays explicit.
 func TestRunImportPlanWritesExplicitReceiptInJSONMode(t *testing.T) {
 	server, _ := newImportPlanTestServer(t)
 	defer server.Close()
@@ -874,7 +1032,8 @@ func TestRunImportPlanWritesExplicitReceiptInJSONMode(t *testing.T) {
 	out := &strings.Builder{}
 	command.SetOut(out)
 	err := runImportPlan(command, specPath, importSpecPlanOptions{
-		name: "Widgets", slug: "widgets", jsonOut: true, receiptOut: receiptPath,
+		name: "Widgets", slug: "widgets", target: "webhooks", destinationVersion: "1.0",
+		jsonOut: true, receiptOut: receiptPath,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -886,7 +1045,8 @@ func TestRunImportPlanWritesExplicitReceiptInJSONMode(t *testing.T) {
 	if receipt.PlanID != "plan-1" || receipt.ReviewHash != "review-1" {
 		t.Fatalf("unexpected JSON-mode receipt: %+v", receipt)
 	}
-	if !strings.Contains(out.String(), `"review_hash":"review-1"`) || !strings.Contains(out.String(), `"adapter_version":"openapi-v2"`) {
+	// Source version is part of the reviewed response and must survive raw JSON output.
+	if !strings.Contains(out.String(), `"review_hash":"review-1"`) || !strings.Contains(out.String(), `"adapter_version":"openapi-v2"`) || !strings.Contains(out.String(), `"source_version":"source-v2"`) {
 		t.Fatalf("JSON output omitted Registry review metadata: %s", out.String())
 	}
 }

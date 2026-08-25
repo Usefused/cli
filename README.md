@@ -107,6 +107,20 @@ fused-cli import plan ./openapi.json \
 fused-cli import apply
 ```
 
+For a webhook-only contract that has its own source `info.version`, attach it
+to an exact existing service version without combining specifications or
+rewriting provenance:
+
+```bash
+fused-cli import plan ./webhooks.openapi.yaml \
+  --name "Internal Billing API" \
+  --slug billing-api \
+  --target webhooks \
+  --destination-version 2026-08-19
+
+fused-cli import apply
+```
+
 For a remote specification:
 
 ```bash

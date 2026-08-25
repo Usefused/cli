@@ -19,17 +19,18 @@ creates or updates a Registry service.`,
 }
 
 var (
-	importPlanName       string
-	importPlanSlug       string
-	importPlanURL        string
-	importPlanVersion    string
-	importPlanTarget     string
-	importPlanPublic     bool
-	importPlanCategory   string
-	importPlanOverlay    string
-	importPlanReceiptOut string
-	importPlanJSON       bool
-	importPlanStrict     bool
+	importPlanName               string
+	importPlanSlug               string
+	importPlanURL                string
+	importPlanVersion            string
+	importPlanDestinationVersion string
+	importPlanTarget             string
+	importPlanPublic             bool
+	importPlanCategory           string
+	importPlanOverlay            string
+	importPlanReceiptOut         string
+	importPlanJSON               bool
+	importPlanStrict             bool
 )
 
 var importPlanCmd = &cobra.Command{
@@ -55,17 +56,18 @@ file that Registry will validate and canonicalize with the source.`,
 			isPublic = &importPlanPublic
 		}
 		return runImportPlan(cmd, specPath, importSpecPlanOptions{
-			name:       importPlanName,
-			slug:       importPlanSlug,
-			url:        importPlanURL,
-			version:    importPlanVersion,
-			target:     importPlanTarget,
-			isPublic:   isPublic,
-			category:   importPlanCategory,
-			overlay:    importPlanOverlay,
-			receiptOut: importPlanReceiptOut,
-			jsonOut:    importPlanJSON,
-			strict:     importPlanStrict,
+			name:               importPlanName,
+			slug:               importPlanSlug,
+			url:                importPlanURL,
+			version:            importPlanVersion,
+			destinationVersion: importPlanDestinationVersion,
+			target:             importPlanTarget,
+			isPublic:           isPublic,
+			category:           importPlanCategory,
+			overlay:            importPlanOverlay,
+			receiptOut:         importPlanReceiptOut,
+			jsonOut:            importPlanJSON,
+			strict:             importPlanStrict,
 		})
 	}),
 }
@@ -114,7 +116,8 @@ func init() {
 	importPlanCmd.Flags().StringVar(&importPlanSlug, "slug", "", "Service slug to create or update (required; unique within your account)")
 	importPlanCmd.MarkFlagRequired("slug")
 	importPlanCmd.Flags().StringVar(&importPlanURL, "url", "", "Import from an online http(s) source")
-	importPlanCmd.Flags().StringVar(&importPlanVersion, "version", "", "Provider version when the source does not declare one")
+	importPlanCmd.Flags().StringVar(&importPlanVersion, "version", "", "Source provider version fallback when the specification does not declare one")
+	importPlanCmd.Flags().StringVar(&importPlanDestinationVersion, "destination-version", "", "Existing provider version to augment (requires --target webhooks)")
 	importPlanCmd.Flags().StringVar(&importPlanTarget, "target", "endpoints", "Contract content to import: all, endpoints, or webhooks")
 	importPlanCmd.Flags().BoolVar(&importPlanPublic, "public", false, "Registry visibility: for a brand-new service, marks the service (and its first version) public -- default private if omitted. For a new version of an existing service, stages just that version's visibility -- default public (matching prior versions) if omitted, so existing automation that never passes this flag is unaffected.")
 	importPlanCmd.Flags().StringVar(&importPlanCategory, "category", "", "Category for a new service")

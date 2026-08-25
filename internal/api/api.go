@@ -1326,6 +1326,7 @@ func (s *ServiceInfo) DisplaySlug() string {
 	return "@" + s.Provider.Handle + "/" + s.Slug
 }
 
+// GetServiceLatestVersion resolves one service reference without manufacturing an explicit empty provider identity.
 func (c *Client) GetServiceLatestVersion(serviceSlug string) (string, error) {
 	query := `
 		query GetServiceLatestVersion($id: String!, $provider: String) {
@@ -1343,11 +1344,7 @@ func (c *Client) GetServiceLatestVersion(serviceSlug string) (string, error) {
 			} `json:"service_versions"`
 		} `json:"service"`
 	}
-	slug, provider := splitProviderQualifiedServiceRef(serviceSlug)
-	vars := map[string]any{
-		"id":       slug,
-		"provider": provider,
-	}
+	vars := serviceReferenceGraphQLVariables("id", serviceSlug)
 	if err := c.GraphQL(query, vars, &resp); err != nil {
 		return "", err
 	}
@@ -1360,6 +1357,7 @@ func (c *Client) GetServiceLatestVersion(serviceSlug string) (string, error) {
 	return resp.Service.ServiceVersions[0].Name, nil
 }
 
+// GetServiceInfo preserves Registry's distinction between an omitted owner namespace and an explicit provider.
 func (c *Client) GetServiceInfo(serviceSlug string) (*ServiceInfo, error) {
 	query := `
 		query GetServiceInfo($id: String!, $provider: String) {
@@ -1383,11 +1381,11 @@ func (c *Client) GetServiceInfo(serviceSlug string) (*ServiceInfo, error) {
 	var resp struct {
 		Service *ServiceInfo `json:"service"`
 	}
-	slug, provider := splitProviderQualifiedServiceRef(serviceSlug)
-	err := c.GraphQL(query, map[string]any{"id": slug, "provider": provider}, &resp)
+	err := c.GraphQL(query, serviceReferenceGraphQLVariables("id", serviceSlug), &resp)
 	return resp.Service, err
 }
 
+// ServiceVersions requests the complete version contract for one owner-relative or provider-qualified service reference.
 func (c *Client) ServiceVersions(serviceSlug string) ([]ServiceVersion, error) {
 	query := `
 		query ServiceVersions($serviceId: String!, $provider: String) {
@@ -1414,8 +1412,7 @@ func (c *Client) ServiceVersions(serviceSlug string) ([]ServiceVersion, error) {
 	var resp struct {
 		ServiceVersions []ServiceVersion `json:"serviceVersions"`
 	}
-	slug, provider := splitProviderQualifiedServiceRef(serviceSlug)
-	err := c.GraphQL(query, map[string]any{"serviceId": slug, "provider": provider}, &resp)
+	err := c.GraphQL(query, serviceReferenceGraphQLVariables("serviceId", serviceSlug), &resp)
 	return resp.ServiceVersions, err
 }
 
@@ -1439,8 +1436,7 @@ func (c *Client) ServiceVersionSummaries(serviceSlug string) ([]ServiceVersionSu
 	var resp struct {
 		ServiceVersions []ServiceVersionSummary `json:"serviceVersions"`
 	}
-	slug, provider := splitProviderQualifiedServiceRef(serviceSlug)
-	err := c.GraphQL(query, map[string]any{"serviceId": slug, "provider": provider}, &resp)
+	err := c.GraphQL(query, serviceReferenceGraphQLVariables("serviceId", serviceSlug), &resp)
 	return resp.ServiceVersions, err
 }
 
@@ -1511,6 +1507,17 @@ func unsafeServiceReferenceRune(char rune) bool {
 func splitProviderQualifiedServiceRef(ref string) (string, string) {
 	parsed := ParseServiceReference(ref)
 	return parsed.Slug, parsed.Provider
+}
+
+// serviceReferenceGraphQLVariables omits the optional provider for bare refs because Registry reserves omission for the caller-owned namespace.
+func serviceReferenceGraphQLVariables(referenceArgument, ref string) map[string]any {
+	slug, provider := splitProviderQualifiedServiceRef(ref)
+	variables := map[string]any{referenceArgument: slug}
+	// A provider variable is sent only when the user selected a qualified namespace; an empty value is intentionally invalid server input.
+	if provider != "" {
+		variables["provider"] = provider
+	}
+	return variables
 }
 
 // ServiceLookupName returns the service segment used by Engine's bounded name
@@ -2208,12 +2215,13 @@ func (c *Client) UpdateWorkspacePlanAction(planID string, actions []map[string]a
 // (RESTProxyMountPaths), so the CLI needs no separate Registry URL concept.
 
 type SpecImportPlanRequest struct {
-	Name           string  `json:"name"`
-	Slug           string  `json:"slug"`
-	Version        string  `json:"version,omitempty"`
-	SourceURL      string  `json:"source_url,omitempty"`
-	SourceContent  string  `json:"source_content,omitempty"`
-	OverlayContent *string `json:"overlay_content,omitempty"`
+	Name               string  `json:"name"`
+	Slug               string  `json:"slug"`
+	Version            string  `json:"version,omitempty"`
+	DestinationVersion string  `json:"destination_version,omitempty"`
+	SourceURL          string  `json:"source_url,omitempty"`
+	SourceContent      string  `json:"source_content,omitempty"`
+	OverlayContent     *string `json:"overlay_content,omitempty"`
 	// IsPublic is omitted from the request entirely when --public was not
 	// passed, so the Registry can default it differently depending on
 	// whether this targets a new service or a new version of an existing
@@ -2285,24 +2293,26 @@ func (e *SpecImportStrictError) Error() string {
 }
 
 type SpecImportPlanResponse struct {
-	PlanID           string                 `json:"plan_id"`
-	SourceHash       string                 `json:"source_hash"`
-	OverlayPresent   bool                   `json:"overlay_present"`
-	OverlayHash      string                 `json:"overlay_hash,omitempty"`
-	SourceBundleHash string                 `json:"source_bundle_hash"`
-	ReviewHash       string                 `json:"review_hash"`
-	SourceFormat     string                 `json:"source_format"`
-	AdapterVersion   string                 `json:"adapter_version"`
-	ServiceID        string                 `json:"service_id"`
-	Slug             string                 `json:"slug"`
-	Name             string                 `json:"name"`
-	IsNewService     bool                   `json:"is_new_service"`
-	TargetVersion    string                 `json:"target_version"`
-	TargetType       string                 `json:"target_type"`
-	Action           string                 `json:"action"`
-	Diff             SpecImportDiff         `json:"diff"`
-	Usage            *SpecImportUsage       `json:"usage,omitempty"`
-	Diagnostics      []SpecImportDiagnostic `json:"diagnostics,omitempty"`
+	PlanID             string                 `json:"plan_id"`
+	SourceHash         string                 `json:"source_hash"`
+	OverlayPresent     bool                   `json:"overlay_present"`
+	OverlayHash        string                 `json:"overlay_hash,omitempty"`
+	SourceBundleHash   string                 `json:"source_bundle_hash"`
+	ReviewHash         string                 `json:"review_hash"`
+	SourceFormat       string                 `json:"source_format"`
+	AdapterVersion     string                 `json:"adapter_version"`
+	ServiceID          string                 `json:"service_id"`
+	Slug               string                 `json:"slug"`
+	Name               string                 `json:"name"`
+	IsNewService       bool                   `json:"is_new_service"`
+	SourceVersion      string                 `json:"source_version,omitempty"`
+	TargetVersion      string                 `json:"target_version"`
+	DestinationVersion string                 `json:"destination_version,omitempty"`
+	TargetType         string                 `json:"target_type"`
+	Action             string                 `json:"action"`
+	Diff               SpecImportDiff         `json:"diff"`
+	Usage              *SpecImportUsage       `json:"usage,omitempty"`
+	Diagnostics        []SpecImportDiagnostic `json:"diagnostics,omitempty"`
 }
 
 type SpecImportApplyRequest struct {

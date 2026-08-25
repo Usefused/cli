@@ -280,7 +280,7 @@ type AppConfig struct {
 	// delivered/generated for each service.
 	WebhookAttachment string                `yaml:"webhook_attachment,omitempty" json:"webhook_attachment,omitempty"`
 	Services          map[string]AppService `yaml:"services" json:"services"`
-	// UnifiedOperations is SDK-only declarative composition. It stays beside
+	// UnifiedOperations is shared app-level declarative composition. It stays beside
 	// Services because bindings refer to opaque configured service keys in this
 	// exact immutable app version; Engine resolves those keys during plan.
 	UnifiedOperations map[string]UnifiedOperation `yaml:"unified_operations,omitempty" json:"unified_operations,omitempty"`
