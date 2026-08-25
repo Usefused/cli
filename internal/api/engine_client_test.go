@@ -258,6 +258,7 @@ func TestServiceVisibilitiesRejectsLegacyRateLimitResponse(t *testing.T) {
 	}
 }
 
+// TestServiceVersionsReturnsServiceIDForSlug verifies bare references omit provider while retaining the stable service identity.
 func TestServiceVersionsReturnsServiceIDForSlug(t *testing.T) {
 	var sawSlug string
 	var sawProvider string
@@ -272,6 +273,7 @@ func TestServiceVersionsReturnsServiceIDForSlug(t *testing.T) {
 	assertPaginationServiceVersion(t, sawSlug, sawProvider, versions)
 }
 
+// newPaginationServiceVersionsServer captures reference variables so tests enforce Registry's omitted-versus-qualified provider contract.
 func newPaginationServiceVersionsServer(t *testing.T, sawSlug, sawProvider *string) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -289,19 +291,27 @@ func newPaginationServiceVersionsServer(t *testing.T, sawSlug, sawProvider *stri
 			t.Fatalf("expected service_id in query, got %s", body.Query)
 		}
 		*sawSlug, _ = body.Variables["serviceId"].(string)
-		*sawProvider, _ = body.Variables["provider"].(string)
+		provider, supplied := body.Variables["provider"].(string)
+		// Bare references must omit provider entirely because Registry rejects an explicit empty namespace.
+		if supplied {
+			*sawProvider = provider
+		} else {
+			*sawProvider = "<omitted>"
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"data":{"serviceVersions":[{"id":"ver-1","service_id":"svc-1","name":"2026-07-01","status":"public","created_at":"2026-07-16T00:00:00Z","pagination":{"version":3,"request":[],"response":{"items":{"path":"$.values"},"values":[{"name":"next_link","source":{"location":"link","name":"Link","relation":"next","value_type":"url"}}]},"continuation":[{"kind":"rfc_link","state":"next_url","response_value":"next_link","origin":{"mode":"same_origin"}}],"termination":{"stop_on_missing_values":["next_link"],"repeated_value":"stop"},"limits":{"max_pages":25,"max_items":10000,"max_bytes":10485760,"max_duration_ms":60000}}}]}}`))
 	}))
 }
 
+// assertPaginationServiceVersion checks identity variables and decoded version metadata together.
 func assertPaginationServiceVersion(t *testing.T, sawSlug, sawProvider string, versions []api.ServiceVersion) {
 	t.Helper()
 	if sawSlug != "github" {
 		t.Fatalf("expected slug variable github, got %q", sawSlug)
 	}
-	if sawProvider != "" {
-		t.Fatalf("expected empty provider for bare slug, got %q", sawProvider)
+	// The sentinel proves the provider key was absent rather than present with an empty value.
+	if sawProvider != "<omitted>" {
+		t.Fatalf("expected omitted provider for bare slug, got %q", sawProvider)
 	}
 	if len(versions) != 1 || versions[0].ServiceID != "svc-1" {
 		t.Fatalf("expected service_id svc-1, got %#v", versions)

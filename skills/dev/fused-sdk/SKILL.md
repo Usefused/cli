@@ -118,8 +118,8 @@ about it changed.
 
 ## Unified Operations
 
-TypeScript and Python SDK configs may declare top-level `unified_operations`
-over operations in the same immutable SDK version; Go and `kind: mcp` cannot.
+TypeScript and Python SDK configs and `kind: mcp` configs may declare top-level
+`unified_operations` over operations in the same immutable app version; Go SDKs cannot.
 Read `fused-unified-operations` for graph, mapping, selector, and output rules.
 A configured root `output` is the exact success value with no wrapper; only an
 operation without it returns the all-settled `{results, rollbacks}` envelope.

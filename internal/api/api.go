@@ -1326,6 +1326,7 @@ func (s *ServiceInfo) DisplaySlug() string {
 	return "@" + s.Provider.Handle + "/" + s.Slug
 }
 
+// GetServiceLatestVersion resolves one service reference without manufacturing an explicit empty provider identity.
 func (c *Client) GetServiceLatestVersion(serviceSlug string) (string, error) {
 	query := `
 		query GetServiceLatestVersion($id: String!, $provider: String) {
@@ -1343,11 +1344,7 @@ func (c *Client) GetServiceLatestVersion(serviceSlug string) (string, error) {
 			} `json:"service_versions"`
 		} `json:"service"`
 	}
-	slug, provider := splitProviderQualifiedServiceRef(serviceSlug)
-	vars := map[string]any{
-		"id":       slug,
-		"provider": provider,
-	}
+	vars := serviceReferenceGraphQLVariables("id", serviceSlug)
 	if err := c.GraphQL(query, vars, &resp); err != nil {
 		return "", err
 	}
@@ -1360,6 +1357,7 @@ func (c *Client) GetServiceLatestVersion(serviceSlug string) (string, error) {
 	return resp.Service.ServiceVersions[0].Name, nil
 }
 
+// GetServiceInfo preserves Registry's distinction between an omitted owner namespace and an explicit provider.
 func (c *Client) GetServiceInfo(serviceSlug string) (*ServiceInfo, error) {
 	query := `
 		query GetServiceInfo($id: String!, $provider: String) {
@@ -1383,11 +1381,11 @@ func (c *Client) GetServiceInfo(serviceSlug string) (*ServiceInfo, error) {
 	var resp struct {
 		Service *ServiceInfo `json:"service"`
 	}
-	slug, provider := splitProviderQualifiedServiceRef(serviceSlug)
-	err := c.GraphQL(query, map[string]any{"id": slug, "provider": provider}, &resp)
+	err := c.GraphQL(query, serviceReferenceGraphQLVariables("id", serviceSlug), &resp)
 	return resp.Service, err
 }
 
+// ServiceVersions requests the complete version contract for one owner-relative or provider-qualified service reference.
 func (c *Client) ServiceVersions(serviceSlug string) ([]ServiceVersion, error) {
 	query := `
 		query ServiceVersions($serviceId: String!, $provider: String) {
@@ -1414,8 +1412,7 @@ func (c *Client) ServiceVersions(serviceSlug string) ([]ServiceVersion, error) {
 	var resp struct {
 		ServiceVersions []ServiceVersion `json:"serviceVersions"`
 	}
-	slug, provider := splitProviderQualifiedServiceRef(serviceSlug)
-	err := c.GraphQL(query, map[string]any{"serviceId": slug, "provider": provider}, &resp)
+	err := c.GraphQL(query, serviceReferenceGraphQLVariables("serviceId", serviceSlug), &resp)
 	return resp.ServiceVersions, err
 }
 
@@ -1439,8 +1436,7 @@ func (c *Client) ServiceVersionSummaries(serviceSlug string) ([]ServiceVersionSu
 	var resp struct {
 		ServiceVersions []ServiceVersionSummary `json:"serviceVersions"`
 	}
-	slug, provider := splitProviderQualifiedServiceRef(serviceSlug)
-	err := c.GraphQL(query, map[string]any{"serviceId": slug, "provider": provider}, &resp)
+	err := c.GraphQL(query, serviceReferenceGraphQLVariables("serviceId", serviceSlug), &resp)
 	return resp.ServiceVersions, err
 }
 
@@ -1511,6 +1507,17 @@ func unsafeServiceReferenceRune(char rune) bool {
 func splitProviderQualifiedServiceRef(ref string) (string, string) {
 	parsed := ParseServiceReference(ref)
 	return parsed.Slug, parsed.Provider
+}
+
+// serviceReferenceGraphQLVariables omits the optional provider for bare refs because Registry reserves omission for the caller-owned namespace.
+func serviceReferenceGraphQLVariables(referenceArgument, ref string) map[string]any {
+	slug, provider := splitProviderQualifiedServiceRef(ref)
+	variables := map[string]any{referenceArgument: slug}
+	// A provider variable is sent only when the user selected a qualified namespace; an empty value is intentionally invalid server input.
+	if provider != "" {
+		variables["provider"] = provider
+	}
+	return variables
 }
 
 // ServiceLookupName returns the service segment used by Engine's bounded name

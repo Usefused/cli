@@ -817,7 +817,6 @@ func TestSDKUnifiedOperationsRejectsInvalidShapeAndUnsupportedAppKinds(t *testin
 		"missing input":              {unifiedSDKDocument("unified_operations:\n  issues.create:\n    bindings: {github: createIssue}\n"), "requires input schema"},
 		"missing binding":            {unifiedSDKDocument("unified_operations:\n  issues.create:\n    input: {}\n    bindings: {}\n"), "requires at least one binding"},
 		"go SDK":                     {strings.Replace(unifiedSDKDocument("unified_operations:\n  issues.create:\n    input: {}\n    bindings: {github: createIssue}\n"), "language: typescript", "language: go", 1), "require language typescript or python"},
-		"MCP":                        {strings.Replace(strings.Replace(unifiedSDKDocument("unified_operations:\n  issues.create:\n    input: {}\n    bindings: {github: createIssue}\n"), "kind: sdk", "kind: mcp", 1), "language: typescript\n", "", 1), "mcp config must not set unified_operations"},
 	}
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -826,6 +825,26 @@ func TestSDKUnifiedOperationsRejectsInvalidShapeAndUnsupportedAppKinds(t *testin
 				t.Fatalf("error = %v, want substring %q", err, test.want)
 			}
 		})
+	}
+}
+
+// TestMCPUnifiedOperationsUsesSharedAuthoringContract proves MCP accepts the
+// same graph declaration without requiring an SDK code-generation language.
+func TestMCPUnifiedOperationsUsesSharedAuthoringContract(t *testing.T) {
+	document := strings.Replace(
+		strings.Replace(unifiedSDKDocument("unified_operations:\n  issues:\n    input: {type: object}\n    bindings: {github: createIssue}\n  issues.create:\n    input: {type: object}\n    bindings: {github: createIssue}\n"), "kind: sdk", "kind: mcp", 1),
+		"language: typescript\n", "", 1,
+	)
+	parsed, err := configfile.Parse([]byte(document), "mcp-unified.yaml")
+	// Parser admission is the contract under test; any error means MCP still
+	// diverges before the shared Engine compiler can run.
+	if err != nil {
+		t.Fatalf("MCP Unified Operations should share SDK authoring validation: %v", err)
+	}
+	// The exact declaration remains on the MCP document so Engine plan can run
+	// the shared compiler instead of reconstructing an adapter-specific graph.
+	if len(parsed.MCP.UnifiedOperations) != 2 {
+		t.Fatalf("expected two exact MCP Unified Operations, got %#v", parsed.MCP.UnifiedOperations)
 	}
 }
 
