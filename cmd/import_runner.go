@@ -30,11 +30,12 @@ const defaultImportReceiptPath = ".fused/.state/import.plan.json"
 const defaultSpecImportTimeout = 20 * time.Minute
 
 type importSpecPlanOptions struct {
-	name    string
-	slug    string
-	url     string
-	version string
-	target  string
+	name               string
+	slug               string
+	url                string
+	version            string
+	destinationVersion string
+	target             string
 	// isPublic is nil when --public was not passed at all, distinct from an
 	// explicit --public=false -- see import.go's flag registration.
 	isPublic   *bool
@@ -115,6 +116,8 @@ type importPlanReceipt struct {
 	CreatedAt        string `json:"created_at,omitempty"`
 }
 
+// runImportPlan validates one immutable source request, records bounded audit
+// dimensions, and persists the Registry-reviewed receipt without applying it.
 func runImportPlan(cmd *cobra.Command, specArg string, opts importSpecPlanOptions) error {
 	req, err := buildSpecImportRequest(specArg, opts)
 	if err != nil {
@@ -122,6 +125,7 @@ func runImportPlan(cmd *cobra.Command, specArg string, opts importSpecPlanOption
 	}
 	trace.SpanFromContext(cmd.Context()).SetAttributes(
 		attribute.String("target_type", displayImportTarget(req.TargetType)),
+		attribute.Bool("destination_version_present", req.DestinationVersion != ""),
 		attribute.Bool("strict_mode", req.Strict),
 		attribute.Bool("overlay_present", req.OverlayContent != nil),
 	)
@@ -139,26 +143,74 @@ func runImportPlan(cmd *cobra.Command, specArg string, opts importSpecPlanOption
 		}
 		return err
 	}
-	// Why: older Registries already honor target_type but do not echo it.
-	// Preserve the reviewed request scope in CLI/JSON output during rollout.
-	if strings.TrimSpace(resp.TargetType) == "" {
-		resp.TargetType = displayImportTarget(req.TargetType)
-	}
-	if strings.TrimSpace(resp.ReviewHash) == "" {
-		return errors.New("Registry returned an import plan without review_hash; run plan again after upgrading the Registry")
+	// Receipt creation starts only after compatibility and destination invariants are proven.
+	if err := normalizeAndValidateImportPlanResponse(req, resp); err != nil {
+		return err
 	}
 	trace.SpanFromContext(cmd.Context()).SetAttributes(
 		attribute.String("adapter_version", boundedImportTelemetryValue(resp.AdapterVersion)),
 		attribute.String("outcome", importPlanOutcome(resp.Action)),
 	)
 
+	// A durable receipt must contain the same reviewed response that the user sees.
 	if err := maybeWriteImportPlanReceipt(newImportPlanReceipt(resp), opts); err != nil {
 		return err
 	}
+	// Structured mode returns the complete bounded Registry response for automation.
 	if opts.jsonOut {
 		return json.NewEncoder(cmd.OutOrStdout()).Encode(resp)
 	}
 	printImportPlanSummary(cmd.OutOrStdout(), resp)
+	return nil
+}
+
+// normalizeAndValidateImportPlanResponse applies rollout compatibility only
+// after Registry returns a complete reviewed planning response.
+func normalizeAndValidateImportPlanResponse(req api.SpecImportPlanRequest, resp *api.SpecImportPlanResponse) error {
+	// Why: older Registries already honor target_type but do not echo it.
+	// Preserve the reviewed request scope in CLI/JSON output during rollout.
+	if strings.TrimSpace(resp.TargetType) == "" {
+		resp.TargetType = displayImportTarget(req.TargetType)
+	}
+	// Explicit-only response fields must match the request's closed attachment shape.
+	if err := validateImportDestinationAcknowledgement(req, resp); err != nil {
+		return err
+	}
+	// A review hash is the only authority the later apply step accepts.
+	if strings.TrimSpace(resp.ReviewHash) == "" {
+		return errors.New("Registry returned an import plan without review_hash; run plan again after upgrading the Registry")
+	}
+	return nil
+}
+
+// validateImportDestinationAcknowledgement rejects both ignored selectors and
+// unsolicited explicit-only fields before the CLI persists a receipt.
+func validateImportDestinationAcknowledgement(req api.SpecImportPlanRequest, resp *api.SpecImportPlanResponse) error {
+	requested := strings.TrimSpace(req.DestinationVersion)
+	destination := strings.TrimSpace(resp.DestinationVersion)
+	source := strings.TrimSpace(resp.SourceVersion)
+	// Ordinary imports must retain the legacy single-version response shape.
+	if requested == "" {
+		// Either explicit-only marker would represent publication intent the caller never supplied.
+		if destination != "" || source != "" {
+			return errors.New("Registry returned unsolicited import destination metadata; run plan again after upgrading the Registry")
+		}
+		return nil
+	}
+	// An explicit acknowledgement distinguishes a destination-aware Registry
+	// from an older one that merely resolved the source to the same version.
+	if destination != requested {
+		return fmt.Errorf("Registry did not acknowledge the requested destination version %q; upgrade the Registry and run plan again", requested)
+	}
+	// The planned target must also remain the acknowledged attachment target so
+	// a Registry cannot redirect the webhook rows to another service version.
+	if strings.TrimSpace(resp.TargetVersion) != requested {
+		return fmt.Errorf("Registry did not plan the requested destination version %q (planned %q); run plan again", requested, strings.TrimSpace(resp.TargetVersion))
+	}
+	// Explicit destination plans must expose the separately reviewed source identity.
+	if source == "" {
+		return errors.New("Registry returned an import destination without source_version; upgrade the Registry and run plan again")
+	}
 	return nil
 }
 
@@ -169,43 +221,73 @@ func buildSpecImportRequest(specArg string, opts importSpecPlanOptions) (api.Spe
 	slug := strings.TrimSpace(opts.slug)
 	targetType, err := normalizeImportTarget(opts.target)
 	req := api.SpecImportPlanRequest{
-		Name:       opts.name,
-		Slug:       slug,
-		Version:    strings.TrimSpace(opts.version),
-		IsPublic:   opts.isPublic,
-		TargetType: targetType,
-		Category:   opts.category,
-		Strict:     opts.strict,
+		Name:               opts.name,
+		Slug:               slug,
+		Version:            strings.TrimSpace(opts.version),
+		DestinationVersion: strings.TrimSpace(opts.destinationVersion),
+		IsPublic:           opts.isPublic,
+		TargetType:         targetType,
+		Category:           opts.category,
+		Strict:             opts.strict,
 	}
 	if err != nil {
 		return req, err
 	}
-	if slug == "" {
-		return req, errors.New("--slug is required")
+	// Identity must be valid before reading either optional overlay or source bytes.
+	if err := validateSpecImportIdentity(req); err != nil {
+		return req, err
 	}
 	overlayContent, err := readImportOverlay(opts.overlay)
+	// Overlay failures stop before a partially populated request can leave the CLI.
 	if err != nil {
 		return req, err
 	}
 	req.OverlayContent = overlayContent
-	sourceURL := strings.TrimSpace(opts.url)
+	return populateSpecImportSource(req, specArg, opts.url)
+}
+
+// validateSpecImportIdentity keeps destination scope and canonical local
+// identity checks independent from source transport selection.
+func validateSpecImportIdentity(req api.SpecImportPlanRequest) error {
+	// Destination attachment is deliberately limited to webhook-only imports so
+	// endpoint imports retain their established source-version replacement rules.
+	if req.DestinationVersion != "" && req.TargetType != "webhooks" {
+		return errors.New("--destination-version requires --target webhooks")
+	}
+	// A missing slug cannot identify either the source owner or destination service.
+	if req.Slug == "" {
+		return errors.New("--slug is required")
+	}
+	return nil
+}
+
+// populateSpecImportSource selects exactly one URL or local immutable source
+// without mixing transport policy into request identity validation.
+func populateSpecImportSource(req api.SpecImportPlanRequest, specArg, rawSourceURL string) (api.SpecImportPlanRequest, error) {
+	sourceURL := strings.TrimSpace(rawSourceURL)
+	// An explicit URL owns online-source selection and excludes a positional path.
 	if sourceURL != "" {
+		// Two source selectors would make the reviewed bytes ambiguous.
 		if specArg != "" {
 			return req, errors.New("provide either a local spec path or --url, not both")
 		}
+		// Registry fetching is deliberately limited to bounded HTTP transports.
 		if !isURL(sourceURL) {
 			return req, errors.New("--url must be an http(s) URL")
 		}
 		req.SourceURL = sourceURL
 		return req, nil
 	}
+	// Source content is mandatory when the URL selector is absent.
 	if specArg == "" {
 		return req, errors.New("a local spec path or --url is required")
 	}
+	// Positional URLs are rejected so callers cannot accidentally bypass explicit URL intent.
 	if isURL(specArg) {
 		return req, errors.New("online sources must be passed with --url")
 	}
 	data, err := os.ReadFile(specArg)
+	// Local read failures must stop before a receipt can authorize nonexistent bytes.
 	if err != nil {
 		return req, fmt.Errorf("failed to read spec file %s: %w", specArg, err)
 	}
@@ -286,6 +368,13 @@ func maybeWriteImportPlanReceipt(receipt importPlanReceipt, opts importSpecPlanO
 func printImportPlanSummary(out io.Writer, resp *api.SpecImportPlanResponse) {
 	fmt.Fprintf(out, "Plan %s for %q (slug: %s, version: %s, target: %s) -- plan ID: %s\n", resp.Action, resp.Name, resp.Slug, resp.TargetVersion, displayImportTarget(resp.TargetType), resp.PlanID)
 	fmt.Fprintf(out, "Source format: %s\n", resp.SourceFormat)
+	sourceVersion := strings.TrimSpace(resp.SourceVersion)
+	destinationVersion := strings.TrimSpace(resp.DestinationVersion)
+	// A separate source label matters only for explicit cross-version attachment;
+	// otherwise the headline's target version already conveys the same identity.
+	if destinationVersion != "" && sourceVersion != "" && sourceVersion != destinationVersion {
+		fmt.Fprintf(out, "Source version: %s\n", sourceVersion)
+	}
 	fmt.Fprintf(out, "Review hash: %s\n", resp.ReviewHash)
 	fmt.Fprintf(out, "Source bundle hash: %s\n", resp.SourceBundleHash)
 	if resp.OverlayHash == "" {

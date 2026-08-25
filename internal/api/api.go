@@ -2208,12 +2208,13 @@ func (c *Client) UpdateWorkspacePlanAction(planID string, actions []map[string]a
 // (RESTProxyMountPaths), so the CLI needs no separate Registry URL concept.
 
 type SpecImportPlanRequest struct {
-	Name           string  `json:"name"`
-	Slug           string  `json:"slug"`
-	Version        string  `json:"version,omitempty"`
-	SourceURL      string  `json:"source_url,omitempty"`
-	SourceContent  string  `json:"source_content,omitempty"`
-	OverlayContent *string `json:"overlay_content,omitempty"`
+	Name               string  `json:"name"`
+	Slug               string  `json:"slug"`
+	Version            string  `json:"version,omitempty"`
+	DestinationVersion string  `json:"destination_version,omitempty"`
+	SourceURL          string  `json:"source_url,omitempty"`
+	SourceContent      string  `json:"source_content,omitempty"`
+	OverlayContent     *string `json:"overlay_content,omitempty"`
 	// IsPublic is omitted from the request entirely when --public was not
 	// passed, so the Registry can default it differently depending on
 	// whether this targets a new service or a new version of an existing
@@ -2285,24 +2286,26 @@ func (e *SpecImportStrictError) Error() string {
 }
 
 type SpecImportPlanResponse struct {
-	PlanID           string                 `json:"plan_id"`
-	SourceHash       string                 `json:"source_hash"`
-	OverlayPresent   bool                   `json:"overlay_present"`
-	OverlayHash      string                 `json:"overlay_hash,omitempty"`
-	SourceBundleHash string                 `json:"source_bundle_hash"`
-	ReviewHash       string                 `json:"review_hash"`
-	SourceFormat     string                 `json:"source_format"`
-	AdapterVersion   string                 `json:"adapter_version"`
-	ServiceID        string                 `json:"service_id"`
-	Slug             string                 `json:"slug"`
-	Name             string                 `json:"name"`
-	IsNewService     bool                   `json:"is_new_service"`
-	TargetVersion    string                 `json:"target_version"`
-	TargetType       string                 `json:"target_type"`
-	Action           string                 `json:"action"`
-	Diff             SpecImportDiff         `json:"diff"`
-	Usage            *SpecImportUsage       `json:"usage,omitempty"`
-	Diagnostics      []SpecImportDiagnostic `json:"diagnostics,omitempty"`
+	PlanID             string                 `json:"plan_id"`
+	SourceHash         string                 `json:"source_hash"`
+	OverlayPresent     bool                   `json:"overlay_present"`
+	OverlayHash        string                 `json:"overlay_hash,omitempty"`
+	SourceBundleHash   string                 `json:"source_bundle_hash"`
+	ReviewHash         string                 `json:"review_hash"`
+	SourceFormat       string                 `json:"source_format"`
+	AdapterVersion     string                 `json:"adapter_version"`
+	ServiceID          string                 `json:"service_id"`
+	Slug               string                 `json:"slug"`
+	Name               string                 `json:"name"`
+	IsNewService       bool                   `json:"is_new_service"`
+	SourceVersion      string                 `json:"source_version,omitempty"`
+	TargetVersion      string                 `json:"target_version"`
+	DestinationVersion string                 `json:"destination_version,omitempty"`
+	TargetType         string                 `json:"target_type"`
+	Action             string                 `json:"action"`
+	Diff               SpecImportDiff         `json:"diff"`
+	Usage              *SpecImportUsage       `json:"usage,omitempty"`
+	Diagnostics        []SpecImportDiagnostic `json:"diagnostics,omitempty"`
 }
 
 type SpecImportApplyRequest struct {

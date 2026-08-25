@@ -874,7 +874,8 @@ Usage: `fused-cli import plan [spec-path]` or `fused-cli import plan --url <http
 | `--name` | | Service name (required) | `""` |
 | `--slug` | | Account-scoped service slug to create or update (required) | `""` |
 | `--url` | | Import from an online HTTP(S) source | `""` |
-| `--version` | | Provider version when the source does not declare one | `""` |
+| `--version` | | Source provider version fallback when the specification does not declare one | `""` |
+| `--destination-version` | | Existing provider version to augment; valid only with `--target webhooks` | `""` |
 | `--target` | | Contract content to import: `all`, `endpoints`, or `webhooks` | `"endpoints"` |
 | `--public` | | Mark a new service public | `false` |
 | `--category` | | Category for a new service | `""` |

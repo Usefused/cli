@@ -26,20 +26,22 @@ func TestPlanSpecImport_PostsToImportPlanEndpoint(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(api.SpecImportPlanResponse{
-			PlanID:           "plan-1",
-			SourceHash:       "hash-1",
-			OverlayPresent:   true,
-			OverlayHash:      "overlay-1",
-			ReviewHash:       "review-1",
-			SourceBundleHash: "bundle-1",
-			SourceFormat:     "swagger2",
-			AdapterVersion:   "swagger2-v1",
-			ServiceID:        "svc-1",
-			Slug:             "widgets",
-			Name:             "Widgets",
-			IsNewService:     false,
-			Action:           "update_version",
-			TargetVersion:    "1.0",
+			PlanID:             "plan-1",
+			SourceHash:         "hash-1",
+			OverlayPresent:     true,
+			OverlayHash:        "overlay-1",
+			ReviewHash:         "review-1",
+			SourceBundleHash:   "bundle-1",
+			SourceFormat:       "swagger2",
+			AdapterVersion:     "swagger2-v1",
+			ServiceID:          "svc-1",
+			Slug:               "widgets",
+			Name:               "Widgets",
+			IsNewService:       false,
+			Action:             "update_version",
+			SourceVersion:      "source-v2",
+			TargetVersion:      "existing-v1",
+			DestinationVersion: "existing-v1",
 			Diff: api.SpecImportDiff{
 				Added: 1, Changed: 2, Removed: 0,
 				ChangedNames: []string{"listWidgets"},
@@ -55,11 +57,12 @@ func TestPlanSpecImport_PostsToImportPlanEndpoint(t *testing.T) {
 	overlay := "operations:\r\n  listWidgets: {}\n"
 	client := api.NewClient(srv.URL, "test-key")
 	resp, err := client.PlanSpecImport(api.SpecImportPlanRequest{
-		Name:           "Widgets",
-		Slug:           "widgets",
-		Version:        "1.0",
-		SourceContent:  `{"openapi":"3.0.0"}`,
-		OverlayContent: &overlay,
+		Name:               "Widgets",
+		Slug:               "widgets",
+		Version:            "1.0",
+		DestinationVersion: "existing-v1",
+		SourceContent:      `{"openapi":"3.0.0"}`,
+		OverlayContent:     &overlay,
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -68,6 +71,8 @@ func TestPlanSpecImport_PostsToImportPlanEndpoint(t *testing.T) {
 	assertSpecImportPlanResponse(t, resp)
 }
 
+// assertSpecImportPlanRequest verifies every caller-controlled import identity
+// remains distinct on the transport boundary.
 func assertSpecImportPlanRequest(t *testing.T, method, path, authHeader string, decoded api.SpecImportPlanRequest) {
 	t.Helper()
 	if method != "POST" {
@@ -85,8 +90,40 @@ func assertSpecImportPlanRequest(t *testing.T, method, path, authHeader string, 
 	if decoded.Version != "1.0" {
 		t.Errorf("expected explicit version to reach the server, got %+v", decoded)
 	}
+	// The attachment target must not be folded into the source fallback on the wire.
+	if decoded.DestinationVersion != "existing-v1" {
+		t.Errorf("expected explicit destination version to reach the server, got %+v", decoded)
+	}
 	if decoded.OverlayContent == nil || *decoded.OverlayContent != "operations:\r\n  listWidgets: {}\n" {
 		t.Errorf("expected exact overlay content to reach the server, got %+v", decoded.OverlayContent)
+	}
+}
+
+// TestSpecImportPlanRequestOmitsUnsetDestinationVersion preserves the wire
+// shape used by existing endpoint and versionless-source import automation.
+func TestSpecImportPlanRequestOmitsUnsetDestinationVersion(t *testing.T) {
+	encoded, err := json.Marshal(api.SpecImportPlanRequest{Name: "Widgets", Slug: "widgets"})
+	// JSON encoding failure would invalidate the compatibility assertion itself.
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Omission preserves the pre-feature request shape for ordinary imports.
+	if strings.Contains(string(encoded), "destination_version") {
+		t.Fatalf("unset destination version must be omitted: %s", encoded)
+	}
+}
+
+// TestSpecImportPlanResponseOmitsUnsetVersionMetadata preserves structured
+// output compatibility for ordinary imports that have no attachment metadata.
+func TestSpecImportPlanResponseOmitsUnsetVersionMetadata(t *testing.T) {
+	encoded, err := json.Marshal(api.SpecImportPlanResponse{PlanID: "plan-1", TargetVersion: "v1"})
+	// Encoding must succeed before the wire-shape assertion is meaningful.
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Both additive fields stay absent unless Registry explicitly returns them.
+	if strings.Contains(string(encoded), "source_version") || strings.Contains(string(encoded), "destination_version") {
+		t.Fatalf("unset response version metadata must be omitted: %s", encoded)
 	}
 }
 
@@ -97,9 +134,12 @@ func assertSpecImportPlanResponse(t *testing.T, resp *api.SpecImportPlanResponse
 	assertSpecImportPlanUsage(t, resp)
 }
 
+// assertSpecImportPlanIdentity verifies the distinct source, attachment, and
+// resolved target versions all survive response decoding.
 func assertSpecImportPlanIdentity(t *testing.T, resp *api.SpecImportPlanResponse) {
 	t.Helper()
-	if resp.PlanID != "plan-1" || resp.Action != "update_version" || resp.TargetVersion != "1.0" || resp.SourceFormat != "swagger2" {
+	// A collapsed or dropped version field would make attachment review ambiguous.
+	if resp.PlanID != "plan-1" || resp.Action != "update_version" || resp.SourceVersion != "source-v2" || resp.TargetVersion != "existing-v1" || resp.DestinationVersion != "existing-v1" || resp.SourceFormat != "swagger2" {
 		t.Errorf("unexpected response: %+v", resp)
 	}
 }

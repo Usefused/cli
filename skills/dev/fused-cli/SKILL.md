@@ -434,6 +434,12 @@ fused-cli import plan ./openapi.yaml --name "Billing API" --slug billing-api \
   --target endpoints
 fused-cli import apply
 
+# Attach a separately versioned webhook contract to one existing service
+# version without rewriting the source artifact's info.version.
+fused-cli import plan ./webhooks.openapi.yaml --name "Billing API" \
+  --slug billing-api --target webhooks --destination-version 2026-08-19
+fused-cli import apply
+
 # Read-only recovery after a timeout or lost apply response. The plan ID is
 # also the stable operation ID.
 fused-cli import status <operation-id>
@@ -477,6 +483,20 @@ endpoint/shared execution config while retaining webhook rows and verification
 policy; `webhooks` replaces webhook rows and webhook policy while retaining
 endpoint rows, authentication, routing, connection profiles, and core execution
 policy. Use `all` only when one reviewed artifact authoritatively contains both.
+
+For a webhook-only fragment whose `info.version` identifies the source artifact
+rather than the destination service version, pass `--destination-version` with
+`--target webhooks`. The destination must be an exact existing version of the
+owned service; Registry rejects creation and cross-scope use. `--version` keeps
+its existing meaning as a fallback when the source itself has no version. The
+CLI sends these values separately, records only whether a destination was
+present in OTEL, and rejects a successful response that does not echo the exact
+destination so an older server cannot silently ignore the new field. The
+destination must already use Registry's current execution-contract version;
+partial attachment never relabels a retained older endpoint contract. Apply
+preserves the destination's endpoint provenance, visibility/lifecycle status,
+and endpoint surface, then rederives required capabilities from the final
+retained-plus-webhook contract state.
 
 Use service-level `public` as the pre-publication gate. Keep the owned service
 `public: false` through private workspace validation; do not require its
