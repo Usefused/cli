@@ -35,23 +35,28 @@ Generated physical calls may tighten the Engine-owned page limit without
 copying pagination policy into application code:
 
 ```typescript
-await sdk.YourService.yourListMethod({
+const result = await sdk.YourService.yourListMethod({
   pageSize: 100,
   fused: {
     endUserRef: 'customer-123',
     pagination: { maxPages: 5 },
   },
 });
+// Every generated method returns { ok, status, data, error }.
+if (result.ok) use(result.data);
 ```
 
 ```python
-await sdk.AsyncYourService.your_list_method({
-    "pageSize": 100,
-    "fused": {
+result = await sdk.AsyncYourService.your_list_method(
+    {"pageSize": 100},
+    options={"fused": {
         "end_user_ref": "customer-123",
         "pagination": {"max_pages": 5},
-    },
-})
+    }},
+)
+# Every generated method returns {"ok", "status", "data", "error"}.
+if result["ok"]:
+    use(result["data"])
 ```
 
 The call still produces one aggregate response after one logical Engine
@@ -108,8 +113,10 @@ sdk = FusedSDK({
     "token": os.environ["FUSED_SDK_TOKEN"],
 })
 
+# One client carries both surfaces: sdk.Jira is synchronous,
+# sdk.AsyncJira is not. Resources and methods are snake_case.
 async with sdk:
-    result = await sdk.async_jira.issues.list()
+    result = await sdk.AsyncJira.issues.list()
 ```
 
 ### TypeScript
