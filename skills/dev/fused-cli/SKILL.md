@@ -351,8 +351,11 @@ Import apply failures additionally carry the slim recovery contract
 `error`. `commit_state` is `not_committed`, `committed`, or `unknown`; run the
 exact `recovery` command instead of inferring safety from the HTTP status.
 Engine authentication, authorization, and preflight-audit failures on import
-routes use the same shape before Registry is reached. Transport timeout text
-never includes the raw Engine URL; use the wrapped error only for local logs.
+routes use the same shape before Registry is reached. Authentication recovers
+with `fused-cli login`; permission denial points an authorized workspace owner
+to `fused-cli team access workspace set --help` instead of implying that
+`whoami` can grant access. Transport timeout text never includes the raw Engine
+URL; use the wrapped error only for local logs.
 
 Use `import plan` / `import apply` when the source is already a machine-readable
 specification. This path is reviewed and receipt-backed: `plan` parses/diffs,
@@ -365,9 +368,12 @@ recovers interrupted work. Do not re-run plan/apply or wait/poll merely for
 that optional enrichment.
 
 Large reviewed specifications receive a 20-minute plan/apply request budget by
-default; an explicit global `--timeout` overrides it. If apply reaches that
-deadline, treat `import_apply_outcome_unknown` as non-retryable: the Registry
-transaction may have committed even though Engine never received the response.
+default; an explicit global `--timeout` overrides it. Treat timeout, connection
+reset, EOF, malformed/truncated 2xx, and an incomplete or identity-mismatched
+success proof as non-retryable `import_apply_outcome_unknown`: the Registry
+transaction may have committed even though the CLI never received an authoritative
+response. A success proof must match the receipt operation and report
+`applied`/`complete`/`committed` with complete service and version identities.
 Run `fused-cli import status <operation-id>` using the plan ID from the receipt;
 this is a read-only recovery command and never replays the mutation. A repeated
 `import apply` with the exact same plan ID and review hash is also idempotent:
@@ -376,8 +382,9 @@ different review hash remains rejected. Do not create a fresh plan merely to
 recover a lost response.
 
 A `pending` status uses `commit_state=unknown` because a concurrent apply may
-hold the plan lock while its writes are still invisible; follow its exact status
-poll command and do not replay apply. Terminal `failed` or
+hold the plan lock while its writes are still invisible. It carries in-progress
+poll guidance rather than a terminal `recovery` command; wait and read status
+again without replaying apply. Terminal `failed` or
 `IMPORT_RESULT_UNAVAILABLE` status includes a stable code and a non-looping
 planning recovery command. A complete committed status alone prints the stored
 service/version result.

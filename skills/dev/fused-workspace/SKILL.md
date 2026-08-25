@@ -170,6 +170,12 @@ service ID, or query with one unique result. A permission error is not a miss:
 stop instead of falling through, changing credentials, or guessing another
 service. Do not require a separate `service search` command first.
 
+For add, a provider-qualified identity must use the complete
+`@provider/service-slug` form. Reject a leading `@` with a missing, blank,
+whitespace-containing, or nested segment locally before discovery. This is
+intentionally narrower than read-only `service search`, where incomplete `@`
+text remains a lexical catalogue query.
+
 Multiple references share batched workspace and Registry reads and are written
 to the config atomically. `--service-id` remains a single-reference escape hatch;
 for multiple exact IDs, pass each UUID as a positional reference. Successful
@@ -185,9 +191,10 @@ With `--apply`, it composes Engine's existing scoped additive service mutation
 for only the resolved references; it does not run the full-workspace mirror and
 therefore cannot remove an unrelated active service. If a later activation
 fails, report the command's committed, failed, and unattempted groups plus its
-exact ID-pinned recovery command; do not describe the whole composite as rolled
-back. One `--version` applies to every reference, so use separate commands for
-different explicit provider versions. Keep `service
+stable code, failed phase, composite request ID, failed-target commit
+possibility, and exact ID-pinned recovery command; do not describe the whole
+composite as rolled back. One `--version` applies to every reference, so use
+separate commands for different explicit provider versions. Keep `service
 search --q` for an explicit read-only combined view: each Registry match is
 marked `enabled` or `available_to_add`, and an exact workspace-only match is
 included. It requires both `catalogue.read` and `service.read`, but remains

@@ -150,6 +150,33 @@ func TestRecordTelemetryErrorMarksUnknownImportApplyNonRetryable(t *testing.T) {
 	}
 }
 
+// TestRecordTelemetryErrorMarksCompositeWorkspaceApplyNonRetryable verifies the
+// stable partial code is emitted without service refs or remote failure text.
+func TestRecordTelemetryErrorMarksCompositeWorkspaceApplyNonRetryable(t *testing.T) {
+	exporter := tracetest.NewInMemoryExporter()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
+	_, span := provider.Tracer("test").Start(context.Background(), "workspace-add")
+	recordTelemetryError(span, &workspaceServiceApplyOutcomeError{
+		code: workspaceServiceApplyErrorCode, cause: errors.New("private remote detail"),
+	})
+	span.End()
+	spans := exporter.GetSpans()
+	// The partial classifier, not the wrapped remote detail, owns span status.
+	if len(spans) != 1 || spans[0].Status.Description != workspaceServiceApplyErrorCode {
+		t.Fatalf("workspace apply span = %#v", spans)
+	}
+	attributes := map[string]interface{}{}
+	// Only the bounded classifier fields belong in cross-request telemetry.
+	for _, value := range spans[0].Attributes {
+		attributes[string(value.Key)] = value.Value.AsInterface()
+	}
+	// Retryability stays false because only the exact recovery command may replay
+	// the failed/unattempted suffix safely.
+	if attributes["error.code"] != workspaceServiceApplyErrorCode || attributes["error.retryable"] != false || strings.Contains(fmt.Sprint(attributes), "private remote detail") {
+		t.Fatalf("workspace apply telemetry attributes = %#v", attributes)
+	}
+}
+
 func TestRecordAppliedChangeIfSkipsNoOpMutation(t *testing.T) {
 	exporter := tracetest.NewInMemoryExporter()
 	provider := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))

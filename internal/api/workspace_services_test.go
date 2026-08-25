@@ -13,16 +13,25 @@ import (
 // TestServiceLookupNameSharesQualifiedReferenceParsing prevents command helpers
 // from recreating a second provider/service grammar.
 func TestServiceLookupNameSharesQualifiedReferenceParsing(t *testing.T) {
-	tests := map[string]string{
-		"square":            "square",
-		" @acme/square ":    "square",
-		"@acme/square/v2":   "square/v2",
-		"@malformed-handle": "@malformed-handle",
+	tests := map[string]struct {
+		lookupName string
+		prefixed   bool
+		qualified  bool
+	}{
+		"square":            {lookupName: "square"},
+		" @acme/square ":    {lookupName: "square", prefixed: true, qualified: true},
+		"@acme/square/v2":   {lookupName: "@acme/square/v2", prefixed: true},
+		"@malformed-handle": {lookupName: "@malformed-handle", prefixed: true},
+		"@/square":          {lookupName: "@/square", prefixed: true},
+		"@acme/":            {lookupName: "@acme/", prefixed: true},
+		"@ac me/square":     {lookupName: "@ac me/square", prefixed: true},
+		"@acme/\x1bsquare":  {lookupName: "@acme/\x1bsquare", prefixed: true},
 	}
 	// Every input must retain the API client's established split semantics.
 	for input, want := range tests {
-		if got := ServiceLookupName(input); got != want {
-			t.Fatalf("ServiceLookupName(%q) = %q, want %q", input, got, want)
+		parsed := ParseServiceReference(input)
+		if got := ServiceLookupName(input); got != want.lookupName || parsed.ProviderPrefixed != want.prefixed || parsed.Qualified != want.qualified {
+			t.Fatalf("service ref %q parsed as %#v with lookup %q, want %#v", input, parsed, got, want)
 		}
 	}
 }

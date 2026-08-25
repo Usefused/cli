@@ -186,16 +186,19 @@ var serviceSearchCmd = &cobra.Command{
 // workspace add fallback. Keeping the account-qualified slug projection here
 // ensures both commands hand users the exact same reusable service identity.
 func searchServiceResults(client *cliapi.Client, query string) ([]serviceSearchResult, error) {
-	// Qualified references are identities rather than free text, so they use the
-	// provider-aware Registry field even when only one service was requested.
-	if strings.HasPrefix(strings.TrimSpace(query), "@") {
-		results, err := client.SearchServicesBatch([]string{query})
+	parsed := cliapi.ParseServiceReference(query)
+	// Complete qualified references are identities rather than free text, so
+	// they use the provider-aware field even when only one service was requested.
+	if parsed.Qualified {
+		results, err := client.SearchServicesBatch([]string{parsed.Raw})
+		// Exact lookup failures retain the shared Registry client's typed error.
 		if err != nil {
 			return nil, err
 		}
-		return serviceSearchResultsFromAPI(results[query]), nil
+		return serviceSearchResultsFromAPI(results[parsed.Raw]), nil
 	}
-	services, err := client.SearchServices(query)
+	services, err := client.SearchServices(parsed.Raw)
+	// Lexical lookup failures retain the same typed error path as qualified refs.
 	if err != nil {
 		return nil, err
 	}

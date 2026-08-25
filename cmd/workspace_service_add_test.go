@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -10,15 +12,20 @@ import (
 
 	"github.com/Usefused/cli/internal/api"
 	"github.com/Usefused/cli/internal/configfile"
+	"github.com/google/uuid"
+	"github.com/spf13/cobra"
 )
 
 // resetWorkspaceServiceAddState isolates mutable Cobra flag storage between tests.
 func resetWorkspaceServiceAddState(t *testing.T) {
 	t.Helper()
 	oldVersion, oldID, oldInteractive, oldApply := workspaceServiceAddVersion, workspaceServiceAddID, workspaceServiceAddInteractive, workspaceServiceAddApply
+	oldRequestID := RequestID
 	workspaceServiceAddVersion, workspaceServiceAddID, workspaceServiceAddInteractive, workspaceServiceAddApply = "", "", false, false
+	RequestID = ""
 	t.Cleanup(func() {
 		workspaceServiceAddVersion, workspaceServiceAddID, workspaceServiceAddInteractive, workspaceServiceAddApply = oldVersion, oldID, oldInteractive, oldApply
+		RequestID = oldRequestID
 	})
 }
 
@@ -69,6 +76,7 @@ func assertCompositeWorkspaceServiceOutput(t *testing.T, output string) {
 func newCompositeWorkspaceServiceServer(t *testing.T) (*httptest.Server, *int, *int, *[]api.AddWorkspaceServiceRequest) {
 	t.Helper()
 	engineReads, registryReads := 0, 0
+	activationRequestID := ""
 	activations := make([]api.AddWorkspaceServiceRequest, 0, 2)
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		// Each endpoint represents one existing production boundary; any other
@@ -83,6 +91,16 @@ func newCompositeWorkspaceServiceServer(t *testing.T) (*httptest.Server, *int, *
 			registryReads++
 			_, _ = writer.Write([]byte(`{"data":{"serviceCandidatesByRefs":[{"ref":"linear","candidates":[{"id":"00000000-0000-4000-8000-000000000001","name":"Linear","slug":"linear","is_owner":true,"is_public":true}]},{"ref":"square","candidates":[{"id":"00000000-0000-4000-8000-000000000002","name":"Square","slug":"square","is_owner":true,"is_public":true}]}]}}`))
 		case "/workspace/services":
+			requestID := request.Header.Get("X-Request-ID")
+			// A generated UUID must be present before the first mutation and reused by
+			// every sibling activation in the composite command.
+			if _, err := uuid.Parse(requestID); err != nil {
+				t.Errorf("activation request ID %q is not a generated UUID: %v", requestID, err)
+			}
+			if activationRequestID != "" && activationRequestID != requestID {
+				t.Errorf("sibling activation request IDs differ: %q and %q", activationRequestID, requestID)
+			}
+			activationRequestID = requestID
 			var activation api.AddWorkspaceServiceRequest
 			// A decodable payload is necessary to prove exact resolved identities,
 			// not merely the number of scoped HTTP requests.
@@ -153,7 +171,7 @@ func TestWorkspaceAddRejectsResolvedIdentityConflictBeforeWriteOrApply(t *testin
 			workspaceJSON: `[]`,
 			registryJSON: `[{
 				"id":"00000000-0000-4000-8000-000000000022",
-				"name":"Billing","slug":"billing","is_owner":true,"is_public":true
+				"name":"Acme Billing","slug":"billing","provider":{"handle":"acme"},"is_owner":false,"is_public":true
 			}]`,
 		},
 	} {
@@ -199,9 +217,11 @@ func TestWorkspaceAddApplyReportsPartialOutcomeAndExactRecovery(t *testing.T) {
 
 	errText := runCommandInDirExpectError(t, dir, server.URL, []string{
 		"workspace", "service", "add", "linear", "square", "guard", "--apply", "-f", path,
+		"--request-id", "composite-review-42",
 	})
 	for _, expected := range []string{
-		"committed=linear", "failed=square (not_committed)", "unattempted=guard",
+		"code=workspace_service_apply_partial", "phase=engine_scoped_activation", "request_id=",
+		"committed=linear", "failed=square (not_committed, commit_possible=false)", "unattempted=guard",
 		"workspace service add 'square' --service-id '00000000-0000-4000-8000-000000000002'",
 		"workspace service add 'guard' --service-id '00000000-0000-4000-8000-000000000003'",
 	} {
@@ -211,6 +231,12 @@ func TestWorkspaceAddApplyReportsPartialOutcomeAndExactRecovery(t *testing.T) {
 	}
 	if *activationCalls != 2 {
 		t.Fatalf("activation calls = %d, want 2", *activationCalls)
+	}
+	// The CLI-generated correlation identity stays bounded and explicit even
+	// though Engine owns trusted request IDs for each scoped child mutation.
+	requestIDText := strings.SplitN(strings.SplitN(errText, "request_id=", 2)[1], ";", 2)[0]
+	if requestIDText != "composite-review-42" {
+		t.Fatalf("partial outcome request ID %q did not preserve the audit identity: %s", requestIDText, errText)
 	}
 	parsed, err := configfile.ParseFile(path)
 	if err != nil {
@@ -242,6 +268,11 @@ func newPartialWorkspaceServiceApplyServer(t *testing.T) (*httptest.Server, *int
 			]}}`))
 		case "/workspace/services":
 			activationCalls++
+			// An explicit composite identity must reach each scoped child request,
+			// matching the ID rendered in the partial outcome and OTEL attributes.
+			if request.Header.Get("X-Request-ID") != "composite-review-42" {
+				t.Errorf("activation request ID = %q", request.Header.Get("X-Request-ID"))
+			}
 			// The second known rejection leaves the first committed and the third
 			// unattempted, which is the partial boundary the command must expose.
 			if activationCalls == 2 {
@@ -261,6 +292,75 @@ func newPartialWorkspaceServiceApplyServer(t *testing.T) (*httptest.Server, *int
 	return server, &activationCalls
 }
 
+// TestWorkspaceServiceApplyOutcomeRedactsUnsafeRemoteText verifies human and
+// structured partial results never reflect causes, URLs, controls, or bad refs.
+func TestWorkspaceServiceApplyOutcomeRedactsUnsafeRemoteText(t *testing.T) {
+	apiCause := &api.APIError{Code: "unsafe\ncode", Message: "POST https://private.invalid/path\nfsk_secret", HTTPStatus: http.StatusBadGateway}
+	err := &workspaceServiceApplyOutcomeError{
+		code: "bad\ncode", phase: "bad\rphase", requestID: "bad\nid",
+		committed: []string{"https://private.invalid/service"}, failed: "evil\nslug",
+		failedCommitState: "unknown\nstate", failedCommitPossible: true,
+		unattempted: []string{"fsk_secret"}, recovery: "curl https://private.invalid\nfsk_secret",
+		cause: fmt.Errorf("remote request failed: %w", apiCause),
+	}
+	human := err.Error()
+	// Only bounded fallback fields and numeric status may survive presentation.
+	for _, unsafe := range []string{"private.invalid", "fsk_secret", "evil\nslug", "unsafe\ncode", "remote request failed"} {
+		if strings.Contains(human, unsafe) {
+			t.Fatalf("human partial outcome leaked %q: %s", unsafe, human)
+		}
+	}
+	if !strings.Contains(human, "failure_code=request_failed; http_status=502") || !strings.Contains(human, workspaceServiceSafeRecovery) {
+		t.Fatalf("human partial outcome lost safe classifier metadata: %s", human)
+	}
+	var unwrapped *api.APIError
+	// Unwrap remains available for internal status and telemetry classification.
+	if !errors.As(err, &unwrapped) || unwrapped != apiCause {
+		t.Fatalf("partial outcome did not retain typed cause: %v", err)
+	}
+	result := classifyCommandError(&cobra.Command{Use: "add"}, err)
+	encoded, encodeErr := json.Marshal(result)
+	if encodeErr != nil {
+		t.Fatal(encodeErr)
+	}
+	// Agent output follows the same safe projection as human output.
+	if strings.Contains(string(encoded), "private.invalid") || strings.Contains(string(encoded), "fsk_secret") || strings.Contains(string(encoded), "evil\\nslug") {
+		t.Fatalf("structured partial outcome leaked unsafe text: %s", encoded)
+	}
+}
+
+// TestPrepareWorkspaceServiceAddTargetsRejectsMalformedProviderPrefix keeps the
+// identity-only batch resolver from treating incomplete @ references lexically.
+func TestPrepareWorkspaceServiceAddTargetsRejectsMalformedProviderPrefix(t *testing.T) {
+	for _, ref := range []string{"@acme", "@acme/", "@/billing", "@acme/billing/v2", "@ac me/billing", "@acme/\x1bbilling", "@acme/\nhttps://private.invalid"} {
+		// Rejection occurs locally before Engine or Registry discovery can interpret
+		// the malformed provider-prefixed text under a different lookup policy.
+		if _, _, _, _, err := prepareWorkspaceServiceAddTargets([]string{ref}); err == nil || err.Error() != "provider-qualified service references must use @provider/service-slug" {
+			t.Fatalf("malformed provider ref %q returned %v", ref, err)
+		}
+	}
+}
+
+// TestClassifyWorkspaceServiceApplyOutcomePreservesRecoveryMetadata keeps the
+// slim composite state available to future structured command output.
+func TestClassifyWorkspaceServiceApplyOutcomePreservesRecoveryMetadata(t *testing.T) {
+	err := &workspaceServiceApplyOutcomeError{
+		code: workspaceServiceApplyErrorCode, phase: workspaceServiceApplyPhase,
+		requestID: "11111111-1111-4111-8111-111111111111",
+		committed: []string{"linear"}, failed: "square", failedCommitState: "unknown", failedCommitPossible: true,
+		unattempted: []string{"guard"}, recovery: "fused-cli workspace service add square --apply", cause: errors.New("lost response"),
+	}
+	result := classifyCommandError(&cobra.Command{Use: "add"}, err)
+	// Stable top-level fields let agents recover without parsing human prose.
+	if result.Code != workspaceServiceApplyErrorCode || result.Phase != workspaceServiceApplyPhase || result.RequestID != err.requestID || result.CommitState != "unknown" || result.Recovery != err.recovery {
+		t.Fatalf("classified workspace apply outcome = %#v", result)
+	}
+	// Unknown delivery must preserve commit possibility in structured details.
+	if possible, _ := result.Details["failed_commit_possible"].(bool); !possible {
+		t.Fatalf("classified workspace apply lost commit possibility: %#v", result.Details)
+	}
+}
+
 // TestWorkspaceServiceFailedCommitState keeps ambiguous server failures from
 // being misreported as authoritative pre-commit rejections.
 func TestWorkspaceServiceFailedCommitState(t *testing.T) {
@@ -270,6 +370,7 @@ func TestWorkspaceServiceFailedCommitState(t *testing.T) {
 		want       string
 	}{
 		{name: "client rejection", httpStatus: http.StatusConflict, want: "not_committed"},
+		{name: "proxy timeout", httpStatus: http.StatusRequestTimeout, want: "unknown"},
 		{name: "server failure", httpStatus: http.StatusInternalServerError, want: "unknown"},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
