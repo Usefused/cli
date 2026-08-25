@@ -24,10 +24,15 @@ Plan and apply allow 20 minutes by default for large reviewed specifications.
 Use `--timeout 30m` (or another explicit duration) when the deployment needs a
 larger bound. If apply times out, its outcome is unknown because the Registry
 may have committed before the Engine proxy lost the response. Do not replay the
-same one-shot receipt automatically. Check `workspace services list -q <slug>`
-and `service show <slug>`; if Registry committed but activation is absent, add
-the exact version to workspace configuration and use normal workspace
-plan/apply.
+same one-shot receipt automatically. Run the exact `fused-cli import status
+<operation-id>` recovery printed by the CLI.
+
+Registry publication and Engine workspace activation are two phases of the
+composite apply. If publication commits but activation fails, the CLI exits
+non-zero with `phase=workspace_activation` and `commit_state=committed`. The
+service already exists: do not repeat the import. Run the reported
+`fused-cli workspace service add ... --service-id ... --version ... --apply`
+command to activate that exact immutable version in the workspace.
 
 ## URLs and other source types
 

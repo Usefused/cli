@@ -191,6 +191,15 @@ func TestUnstructuredAndCredentialBearingErrorDetailsAreNotReturned(t *testing.T
 	}
 }
 
+// TestLegacyEngineErrorsKeepSafeDependencyDetail prevents generic 5xx copy from hiding an actionable Engine diagnosis.
+func TestLegacyEngineErrorsKeepSafeDependencyDetail(t *testing.T) {
+	err := newHTTPError(http.StatusInternalServerError, []byte(`{"error":"workspace snapshot write failed because the local schema is behind"}`))
+	message := err.Error()
+	if !strings.Contains(message, "workspace snapshot write failed") || !strings.Contains(message, "engine_request_failed") {
+		t.Fatalf("legacy dependency error = %q", message)
+	}
+}
+
 // TestValidationErrorDetailsAreBoundedAndStructured verifies only the reviewed
 // string fields from actionable validation responses reach terminal output.
 func TestValidationErrorDetailsAreBoundedAndStructured(t *testing.T) {
@@ -254,8 +263,8 @@ func TestGraphQLDecodeUsesOnlyAllowlistedSafeErrorCodes(t *testing.T) {
 		body string
 		want string
 	}{
-		{name: "resource not found", body: `{"errors":[{"message":"untrusted","extensions":{"code":"FUSED_RESOURCE_NOT_FOUND"}}]}`, want: "resource_not_found"},
-		{name: "ambiguous resource", body: `{"errors":[{"message":"untrusted","extensions":{"code":"FUSED_RESOURCE_AMBIGUOUS"}}]}`, want: "use the full UUID"},
+		{name: "resource not found", body: `{"errors":[{"message":"fsk_never_return","extensions":{"code":"FUSED_RESOURCE_NOT_FOUND"}}]}`, want: "resource_not_found"},
+		{name: "ambiguous resource", body: `{"errors":[{"message":"fsk_never_return","extensions":{"code":"FUSED_RESOURCE_AMBIGUOUS"}}]}`, want: "use the full UUID"},
 		{name: "unknown code", body: `{"errors":[{"message":"fsk_never_return","extensions":{"code":"REMOTE_FAILURE"}}]}`, want: "graphql_request_rejected"},
 	}
 	for _, test := range tests {
@@ -264,10 +273,46 @@ func TestGraphQLDecodeUsesOnlyAllowlistedSafeErrorCodes(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("error = %v, want %q", err, test.want)
 			}
-			if strings.Contains(err.Error(), "untrusted") || strings.Contains(err.Error(), "fsk_never_return") {
+			// Credential-shaped resolver text must remain hidden for every stable code.
+			if strings.Contains(err.Error(), "fsk_never_return") {
 				t.Fatalf("error contains remote GraphQL message: %q", err)
 			}
 		})
+	}
+}
+
+// TestGraphQLDecodePreservesSafeEngineDetail keeps resolver diagnostics visible
+// for both known and fallback codes without trusting remote codes as telemetry identity.
+func TestGraphQLDecodePreservesSafeEngineDetail(t *testing.T) {
+	tests := []struct {
+		name string
+		code string
+		want string
+	}{
+		{name: "known", code: graphQLCodeResourceNotFound, want: "resource_not_found"},
+		{name: "fallback", code: "INTERNAL_SERVER_ERROR", want: "graphql_request_rejected"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			body := []byte(`{"errors":[{"message":"workspace service version is not enabled","extensions":{"code":"` + test.code + `"}}]}`)
+			err := decodeGraphQLData(body, &struct{}{})
+			// Safe detail must augment rather than replace the stable local code.
+			if err == nil || !strings.Contains(err.Error(), "workspace service version is not enabled") || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("GraphQL error = %v", err)
+			}
+		})
+	}
+}
+
+// TestStructuredEnginePartialErrorRendersRecoveryIdentity verifies human output includes the complete commit proof.
+func TestStructuredEnginePartialErrorRendersRecoveryIdentity(t *testing.T) {
+	body := []byte(`{"error":{"code":"import_workspace_activation_failed","message":"Service published; workspace activation failed.","category":"partial","phase":"workspace_activation","operation_id":"11111111-1111-4111-8111-111111111111","request_id":"request-1","commit_state":"committed","recovery":"fused-cli workspace service add chargebee --apply"}}`)
+	err := newHTTPError(http.StatusFailedDependency, body)
+	message := err.Error()
+	for _, want := range []string{"workspace_activation", "committed", "11111111-1111-4111-8111-111111111111", "request-1", "workspace service add chargebee"} {
+		if !strings.Contains(message, want) {
+			t.Fatalf("partial error %q does not contain %q", message, want)
+		}
 	}
 }
 

@@ -507,11 +507,31 @@ func runImportApply(cmd *cobra.Command, opts importSpecApplyOptions) error {
 		if errors.As(err, &unknown) {
 			return newImportApplyOutcomeUnknownError(cmd, err, timeout, receipt.PlanID)
 		}
+		var apiError *api.APIError
+		// A structured committed partial failure is still mutation evidence even
+		// though the requested composite outcome did not fully complete.
+		if errors.As(err, &apiError) && apiError.CommitState == "committed" {
+			recordAppliedChange(cmd.Context(), cmd.CommandPath(), "service_import")
+			trace.SpanFromContext(cmd.Context()).SetAttributes(
+				attribute.String("outcome", "partial"),
+				attribute.String("failure_phase", safeImportFailurePhase(apiError.Phase)),
+			)
+		}
 		return err
 	}
 	recordAppliedChange(cmd.Context(), cmd.CommandPath(), "service_import")
 	printImportApplyResult(cmd.OutOrStdout(), resp)
 	return nil
+}
+
+// safeImportFailurePhase keeps remote phase text out of telemetry while retaining the reviewed partial-apply stage.
+func safeImportFailurePhase(value string) string {
+	// Workspace activation is the only Engine-local post-commit phase currently
+	// returned through import apply; every other value stays a bounded unknown.
+	if value == "workspace_activation" {
+		return value
+	}
+	return "unknown"
 }
 
 // newImportApplyOutcomeUnknownError records one bounded unknown outcome and

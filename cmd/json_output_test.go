@@ -103,6 +103,7 @@ func TestBucketListJSONUsesAPIPageWithoutHumanSummary(t *testing.T) {
 	}
 }
 
+// TestWriteCommandErrorPreservesStructuredEngineFields verifies human-safe Engine diagnostics survive agent JSON output.
 func TestWriteCommandErrorPreservesStructuredEngineFields(t *testing.T) {
 	// JSON output exposes the same reviewed server detail as human output so an
 	// agent can diagnose validation failures without parsing prose.
@@ -113,7 +114,7 @@ func TestWriteCommandErrorPreservesStructuredEngineFields(t *testing.T) {
 	}
 	apiError := &cliapi.APIError{
 		Code: "bucket_credentials_missing", Message: "Required authentication material is missing.",
-		Category: "validation", Remediation: "Add credentials and plan again.", TraceID: "trace-1", HTTPStatus: http.StatusBadRequest,
+		Category: "validation", Remediation: "Add credentials and plan again.", TraceID: "trace-1", RequestID: "request-1", HTTPStatus: http.StatusBadRequest,
 	}
 	apiError.Details.Bucket = &cliapi.MissingCredentialBucket{ID: "bucket-1", Name: "production"}
 	apiError.Details.MissingCredentials = []cliapi.MissingCredentialRequirement{{
@@ -121,6 +122,9 @@ func TestWriteCommandErrorPreservesStructuredEngineFields(t *testing.T) {
 		RequiredFields: []cliapi.MissingCredentialField{{Name: "username", SecretKey: "basicAuth_username"}},
 	}}
 	apiError.Details.ServerDetail = `unknown field "items_path"`
+	apiError.Details.ServiceID = "service-1"
+	apiError.Details.ServiceVersionID = "version-1"
+	apiError.Details.WorkspaceOutcome = "contract_snapshot_failed"
 
 	var out bytes.Buffer
 	if err := writeCommandError(&out, command, fmt.Errorf("plan failed: %w", apiError)); err != nil {
@@ -131,7 +135,7 @@ func TestWriteCommandErrorPreservesStructuredEngineFields(t *testing.T) {
 		t.Fatalf("decode error JSON %q: %v", out.String(), err)
 	}
 	if envelope.OK || envelope.Error.Code != apiError.Code || envelope.Error.Message != apiError.Message ||
-		envelope.Error.TraceID != "trace-1" || envelope.Error.HTTPStatus != http.StatusBadRequest {
+		envelope.Error.TraceID != "trace-1" || envelope.Error.RequestID != "request-1" || envelope.Error.HTTPStatus != http.StatusBadRequest {
 		t.Fatalf("error envelope = %#v", envelope)
 	}
 	missing, ok := envelope.Error.Details["missing_credentials"].([]any)
@@ -143,6 +147,9 @@ func TestWriteCommandErrorPreservesStructuredEngineFields(t *testing.T) {
 	}
 	if envelope.Error.Details["server_detail"] != apiError.Details.ServerDetail {
 		t.Fatalf("server detail = %#v", envelope.Error.Details)
+	}
+	if envelope.Error.Details["service_id"] != "service-1" || envelope.Error.Details["service_version_id"] != "version-1" || envelope.Error.Details["workspace_outcome"] != "contract_snapshot_failed" {
+		t.Fatalf("partial outcome details = %#v", envelope.Error.Details)
 	}
 }
 
