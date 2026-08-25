@@ -10,6 +10,11 @@ on:
 permissions:
   contents: write
 
+# Serial release mutation prevents two main-branch pushes from calculating the same next tag concurrently.
+concurrency:
+  group: cli-release
+  cancel-in-progress: false
+
 jobs:
   goreleaser:
     runs-on: ubuntu-latest
@@ -20,52 +25,26 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Test release tag calculation
+        run: ./scripts/next-release-tag_test.sh
+
       - name: Bump version and push tag
         if: github.ref == 'refs/heads/main'
         id: tag
         run: |
-          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
-          CURRENT_TAG=$(git tag --points-at HEAD 2>/dev/null | head -1)
-          if [ -n "$CURRENT_TAG" ]; then
-            echo "HEAD already tagged $CURRENT_TAG, skipping bump"
-            echo "new_tag=$CURRENT_TAG" >> $GITHUB_OUTPUT
+          # Refresh tags after queued releases so calculation sees every remote release identity.
+          git fetch --force --tags origin
+          TAG_OUTPUT=$(./scripts/next-release-tag.sh)
+          echo "$TAG_OUTPUT" >> "$GITHUB_OUTPUT"
+          LATEST_TAG=$(sed -n 's/^latest_tag=//p' <<< "$TAG_OUTPUT")
+          NEW_TAG=$(sed -n 's/^new_tag=//p' <<< "$TAG_OUTPUT")
+          BUMP=$(sed -n 's/^bump=//p' <<< "$TAG_OUTPUT")
+          ALREADY_TAGGED=$(sed -n 's/^already_tagged=//p' <<< "$TAG_OUTPUT")
+          if [ "$ALREADY_TAGGED" = "true" ]; then
+            echo "HEAD already tagged $NEW_TAG, skipping bump"
             exit 0
           fi
-
-          # Determine bump level from conventional commits since last tag
-          # 0=patch (fix, chore, docs, etc.), 1=minor (feat), 2=major (BREAKING CHANGE or !)
-          BUMP=0
-          if git describe --tags --abbrev=0 >/dev/null 2>&1; then
-            COMMITS=$(git log "${LATEST_TAG}..HEAD" --format="%s")
-          else
-            COMMITS=$(git log --format="%s")
-          fi
-
-          while IFS= read -r msg; do
-            case "$msg" in
-              *BREAKING\ CHANGE*|*BREAKING-CHANGE*|*!\:*)
-                BUMP=2
-                break
-                ;;
-              feat\(*\):*|feat:*)
-                [ "$BUMP" -lt 1 ] && BUMP=1
-                ;;
-            esac
-          done <<< "$COMMITS"
-
-          MAJOR=$(echo "${LATEST_TAG#v}" | cut -d. -f1)
-          MINOR=$(echo "${LATEST_TAG#v}" | cut -d. -f2)
-          PATCH=$(echo "${LATEST_TAG#v}" | cut -d. -f3)
-
-          case $BUMP in
-            2) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
-            1) MINOR=$((MINOR + 1)); PATCH=0 ;;
-            0) PATCH=$((PATCH + 1)) ;;
-          esac
-
-          NEW_TAG="v${MAJOR}.${MINOR}.${PATCH}"
           echo "Bump: $BUMP (0=patch, 1=minor, 2=major) | $LATEST_TAG → $NEW_TAG"
-          echo "new_tag=$NEW_TAG" >> $GITHUB_OUTPUT
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git tag "$NEW_TAG"
