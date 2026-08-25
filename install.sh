@@ -6,6 +6,7 @@ set -e
 # and installs the `fused-cli` binary to /usr/local/bin.
 # For Windows, use install.ps1 instead.
 
+# Constants
 REPO="Usefused/cli"
 BINARY="fused-cli"
 INSTALL_DIR="${FUSED_CLI_INSTALL_DIR:-${HOME}/.local/bin}"
