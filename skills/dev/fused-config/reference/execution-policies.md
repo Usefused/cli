@@ -159,6 +159,15 @@ carries a secret, only the verification mechanism (`auth_type`,
 `auth_location`, `auth_key_name`, `signature_header`,
 `verification_headers`).
 
+An event extraction expression uses `body.`, `header.`, or `query.` paths.
+Join fields with `+` only when every field must exist and their values form one
+composite event identity. Join ordered alternatives with `|` when the first
+available field wins, for example `body.event.type|body.type` for an envelope
+that sometimes carries a more specific nested event. The whole expression is
+bounded to eight unique paths. Array paths are not supported because one
+delivery can contain several event identities; leave routing unset until a
+reviewed fan-out capability exists.
+
 ## Local effect vs. publishing to the Registry -- two independent things
 
 Every field above takes effect **locally, in this workspace, immediately on
