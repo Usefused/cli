@@ -756,33 +756,45 @@ List workspace services along with their enabled versions.
 Check if a specific service is available in the workspace and output its enabled versions.
 Usage: `fused-cli workspace has <service-name>`
 
-## `workspace service add <service-query-or-slug>`
-Resolve an enabled workspace service first, then fall back to Registry search.
-After updating the local config, the command prints the canonical service slug
-and a direct Engine UI link backed by the stable service ID. Review the change
-with `workspace plan` before applying it.
+## `workspace service add <service-query-or-slug> [service-query-or-slug...]`
+Resolve enabled workspace services first, then fall back to Registry search.
+After atomically updating the local config, the command prints each canonical
+service slug and a direct Engine UI link backed by its stable service ID. Review
+the changes with `workspace plan` before applying them, or pass `--apply` to
+activate only these additions through Engine's scoped service boundary.
 
 Find and add a service to workspace configuration. The command first checks the
 access-filtered workspace service list. If there is no exact name or slug match,
-it searches the Registry using the same endpoint as `service search`. A unique
-or exact Registry match is added automatically. Pass `--interactive` to select
-among multiple matches and confirm the chosen Registry service before the file
-is written. In CI or with `--no-input`, omit `--interactive` and supply an exact
+it uses the Registry's set-based reference resolver with the same lexical
+ranking and provider-identity rules as `service search`. A unique or exact
+Registry match is added automatically. Pass `--interactive` to select among
+multiple matches and confirm the chosen Registry service before the file is
+written. In CI or with `--no-input`, omit `--interactive` and supply an exact
 slug, service ID, or a query with one unique result.
 
 A workspace lookup permission error is not treated as absence and never falls
-through to Registry search. Registry fallback requires `catalogue.read`. The
-command only authors the local YAML; it neither activates the service nor proves
-the caller has `service.manage` and `workspace.update`. Run `workspace plan`,
-review the resolved identity and permission checks, and then run `workspace
-apply` to activate it. `service search` remains available for explicit read-only
-browsing, but is not a prerequisite for this flow.
+through to Registry search. Registry fallback requires `catalogue.read`.
+Without `--apply`, the command only authors the local YAML; it neither activates
+the service nor proves the caller has activation permission. Run `workspace
+plan`, review the resolved identity and permission checks, and then run
+`workspace apply` to apply the full declarative workspace. With `--apply`, the
+command instead composes the existing scoped additive activation once for each
+resolved service and cannot remove unrelated active services. `service search`
+remains available for explicit read-only browsing, but is not a prerequisite.
+If a later scoped activation fails, the error lists committed, failed, and
+unattempted services and prints exact ID-pinned recovery commands. Re-running
+those commands is safe because the scoped Engine addition is idempotent.
+
+One `--version` value applies to every positional service reference. Omit it to
+let Engine resolve each service's current public version, or run separate add
+commands when the services need different explicit versions.
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
-| `--version` | | Version to enable; omitted resolves latest during plan | `""` |
+| `--version` | | Version to enable; omitted resolves latest during plan or scoped activation | `""` |
 | `--service-id` | | Registry service UUID to store in workspace config | `""` |
 | `--interactive` | `-i` | Select and confirm a Registry service when it is not already enabled | `false` |
+| `--apply` | | Activate only the services added by this command | `false` |
 
 ## `workspace service delete <service-slug>`
 Delete a service from your Workspace configuration.
@@ -874,15 +886,30 @@ Service, provider version, contract rows, immutable internal revision, and plan
 completion are written atomically.
 
 Import plan/apply requests use a 20-minute timeout unless the global `--timeout`
-flag is explicitly set. A timeout leaves the apply outcome unknown and must not
-automatically replay the one-shot receipt; verify workspace and Registry state
-as directed by the error.
+flag is explicitly set. A timeout leaves the apply outcome unknown; run the
+exact `fused-cli import status <operation-id>` command reported by the error.
+Reapplying the exact plan ID and review hash is idempotent and returns the
+stored committed result instead of mutating Registry again.
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
 | `--plan-id` | | Apply a specific remote plan ID (requires `--review-hash`) | `""` |
 | `--review-hash` | | Combined Registry review hash to pair with `--plan-id` | `""` |
 | `--receipt` | | Read a specific plan receipt (default: most recent local receipt) | `""` |
+
+## `import status <operation-id>`
+Read the durable outcome of an import apply without retrying its mutation. The
+immutable plan ID is also the operation ID. Human output reports status, phase,
+and commit state; `--json` additionally exposes the atomically stored
+service/version result after a complete commit. A pending row conservatively
+reports an unknown commit state because another apply may still hold its lock;
+run the returned status command again instead of replaying apply. Terminal
+failed or incomplete historical results include a stable code and a planning
+recovery command rather than directing callers into a status loop.
+
+| Argument | Short | Description | Default |
+|----------|-------|-------------|---------|
+| `--json` | | Print the raw operation status as JSON | `false` |
 
 ## `import discover`
 Resolve a machine-readable specification or crawl provider documentation, review exact operations and optional Fused enrichment, then produce the ordinary import-plan receipt. This command never applies the plan.

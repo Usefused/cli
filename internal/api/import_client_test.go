@@ -303,3 +303,42 @@ func TestApplySpecImport_HandlesError(t *testing.T) {
 		t.Errorf("expected remote response body to be omitted, got: %v", err)
 	}
 }
+
+// TestGetSpecImportStatusReadsDurableOperation verifies the recovery client
+// uses the read-only operation route and preserves committed result fields.
+func TestGetSpecImportStatusReadsDurableOperation(t *testing.T) {
+	operationID := "11111111-1111-4111-8111-111111111111"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Status recovery must never replay the apply mutation.
+		if r.Method != http.MethodGet || r.URL.Path != "/integrations/import/operations/"+operationID {
+			t.Fatalf("status request = %s %s", r.Method, r.URL.Path)
+		}
+		json.NewEncoder(w).Encode(api.SpecImportStatusResponse{
+			Status: "applied", OperationID: operationID, PlanID: operationID,
+			Phase: "complete", CommitState: "committed", ServiceID: "svc-1",
+			Version: "2026-08-25", Revision: 2,
+		})
+	}))
+	defer server.Close()
+	client := api.NewClient(server.URL, "test-key")
+	status, err := client.GetSpecImportStatus(operationID)
+	if err != nil || status.CommitState != "committed" || status.ServiceID != "svc-1" {
+		t.Fatalf("status = %#v, err = %v", status, err)
+	}
+}
+
+// TestImportSafeErrorPreservesRecoveryContract verifies structured Registry
+// apply errors remain machine-readable through the shared HTTP error parser.
+func TestImportSafeErrorPreservesRecoveryContract(t *testing.T) {
+	body := []byte(`{"error":{"code":"IMPORT_APPLY_FAILED","message":"failed to apply import plan","phase":"registry_apply","operation_id":"11111111-1111-4111-8111-111111111111","commit_state":"unknown","recovery":"fused-cli import status 11111111-1111-4111-8111-111111111111"}}`)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write(body)
+	}))
+	defer server.Close()
+	_, err := api.NewClient(server.URL, "test-key").ApplySpecImport("plan-1", "review-1")
+	var apiError *api.APIError
+	if !errors.As(err, &apiError) || apiError.Phase != "registry_apply" || apiError.OperationID == "" || apiError.CommitState != "unknown" || apiError.Recovery == "" {
+		t.Fatalf("safe import error = %#v", apiError)
+	}
+}

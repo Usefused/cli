@@ -137,7 +137,7 @@ fused-cli workspace services list [--q "<provider or product>"]
 fused-cli workspace service versions <slug>
 fused-cli workspace service operations <slug>
 fused-cli workspace service webhooks <slug>   # read-only: lists this service's kind: webhook registrations, see fused-webhook
-fused-cli workspace service add <query-or-slug> [--version <v>] [--interactive]
+fused-cli workspace service add <query-or-slug> [query-or-slug...] [--version <v>] [--interactive] [--apply]
 fused-cli workspace service delete <slug> [--force]
 fused-cli workspace service deprecate <slug> --at <date> --reason "..."
 fused-cli workspace service version add <slug> <v|latest>
@@ -157,11 +157,12 @@ apply.
 full flow (buckets, secrets, connection resources) is documented in
 `fused-bucket`.
 
-Use `workspace service add <query-or-slug>` as the single discovery-and-author
+Use `workspace service add <query-or-slug> [query-or-slug...]` as the single discovery-and-author
 action. It checks the access-filtered workspace first by exact name or slug
-(`service.read`) and reuses that result. Only when absent does it call the same
-Registry search used by `service search --q` (`catalogue.read`). A unique or
-exact Registry result is added to the local YAML automatically;
+(`service.read`) and reuses that result. Only when absent does it call the
+Registry's set-based reference resolver (`catalogue.read`), which shares the
+lexical ranking and provider-identity policy of `service search --q`. A unique
+or exact Registry result is added to the local YAML automatically;
 `--interactive` selects among ambiguous results and asks for confirmation
 before writing. In CI or `--no-input`, do not pass `--interactive`; ambiguous
 results must fail until the caller supplies an exact provider-qualified slug,
@@ -169,14 +170,24 @@ service ID, or query with one unique result. A permission error is not a miss:
 stop instead of falling through, changing credentials, or guessing another
 service. Do not require a separate `service search` command first.
 
-Successful adds print the canonical service slug and a direct Engine UI URL
+Multiple references share batched workspace and Registry reads and are written
+to the config atomically. `--service-id` remains a single-reference escape hatch;
+for multiple exact IDs, pass each UUID as a positional reference. Successful
+adds print the canonical service slug and a direct Engine UI URL
 whose route uses the stable service ID. Use the URL to inspect the resolved
-service; it does not replace the required `workspace plan` review or activate
-the local draft.
+service. Without `--apply`, this output does not replace the required
+`workspace plan` review and does not activate the local draft.
 
-This command authors local intent only. It does not activate the Registry
-service or prove `service.manage`; run `workspace plan`, review the resolved
-identity and required permissions, then `workspace apply`. Keep `service
+Without `--apply`, this command authors local intent only. It does not activate
+the Registry service or prove activation permission; run `workspace plan`,
+review the resolved identity and required permissions, then `workspace apply`.
+With `--apply`, it composes Engine's existing scoped additive service mutation
+for only the resolved references; it does not run the full-workspace mirror and
+therefore cannot remove an unrelated active service. If a later activation
+fails, report the command's committed, failed, and unattempted groups plus its
+exact ID-pinned recovery command; do not describe the whole composite as rolled
+back. One `--version` applies to every reference, so use separate commands for
+different explicit provider versions. Keep `service
 search --q` for an explicit read-only combined view: each Registry match is
 marked `enabled` or `available_to_add`, and an exact workspace-only match is
 included. It requires both `catalogue.read` and `service.read`, but remains
@@ -186,8 +197,9 @@ optional rather than a prerequisite to workspace addition.
 
 Finding a Registry service does not imply permission to activate it. The add
 command's workspace lookup requires `service.read`; only its Registry fallback
-requires `catalogue.read`. Writing the local draft does not call an activation
-endpoint. Planning that draft requires `workspace.read` and `service.manage`
+requires `catalogue.read`. Writing the local draft without `--apply` does not
+call an activation endpoint; `--apply` immediately calls the scoped additive
+Engine endpoint for each resolved target. Planning a declarative draft requires `workspace.read` and `service.manage`
 for every changed service; applying it also requires `workspace.update` and the
 same `service.manage`. Bucket changes additionally require `bucket.manage`, and
 credential material can require `credentials.manage`. Built-in Admin and Owner
@@ -195,9 +207,10 @@ workspace roles provide the activation permissions, while Builder and Viewer
 do not.
 
 If lookup or Registry fallback reports a permission denial, stop before writing
-the config. If plan or apply reports a denial, preserve the local draft and
-plan. Report the missing permission and resource; do not describe a local YAML
-edit as successful activation. Never self-grant, switch credentials, broaden
+the config. If declarative plan/apply or scoped `--apply` reports a denial,
+preserve the local draft and report any already-committed sibling activations.
+Report the missing permission and resource; do not describe a local YAML edit as
+successful activation. Never self-grant, switch credentials, broaden
 scope, or retry with guessed authority. An authorised administrator can use the
 narrow service/bucket grant or, when the missing permission is workspace-level,
 assign a suitable workspace role:

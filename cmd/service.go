@@ -186,10 +186,25 @@ var serviceSearchCmd = &cobra.Command{
 // workspace add fallback. Keeping the account-qualified slug projection here
 // ensures both commands hand users the exact same reusable service identity.
 func searchServiceResults(client *cliapi.Client, query string) ([]serviceSearchResult, error) {
+	// Qualified references are identities rather than free text, so they use the
+	// provider-aware Registry field even when only one service was requested.
+	if strings.HasPrefix(strings.TrimSpace(query), "@") {
+		results, err := client.SearchServicesBatch([]string{query})
+		if err != nil {
+			return nil, err
+		}
+		return serviceSearchResultsFromAPI(results[query]), nil
+	}
 	services, err := client.SearchServices(query)
 	if err != nil {
 		return nil, err
 	}
+	return serviceSearchResultsFromAPI(services), nil
+}
+
+// serviceSearchResultsFromAPI centralizes provider-qualified Registry identity
+// projection for both singular discovery and batched workspace additions.
+func serviceSearchResultsFromAPI(services []cliapi.Service) []serviceSearchResult {
 	results := make([]serviceSearchResult, 0, len(services))
 	for _, service := range services {
 		isOwner, isPublic := service.IsOwner, service.IsPublic
@@ -198,7 +213,7 @@ func searchServiceResults(client *cliapi.Client, query string) ([]serviceSearchR
 			IsOwner: &isOwner, IsPublic: &isPublic,
 		})
 	}
-	return results, nil
+	return results
 }
 
 var serviceShowCmd = &cobra.Command{

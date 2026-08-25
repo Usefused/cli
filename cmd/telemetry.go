@@ -64,6 +64,7 @@ func WithTelemetry(spanName string, runE func(cmd *cobra.Command, args []string)
 	}
 }
 
+// recordTelemetryError projects typed failures into bounded searchable span state.
 func recordTelemetryError(span trace.Span, err error) {
 	code := "command_failed"
 	retryable := false
@@ -80,6 +81,12 @@ func recordTelemetryError(span trace.Span, err error) {
 	var apiError *cliapi.APIError
 	if errors.As(err, &apiError) {
 		code, retryable = apiError.Code, apiError.Retryable
+	}
+	var workspaceApply *workspaceServiceApplyOutcomeError
+	// Composite activation owns the top-level failure classification because an
+	// underlying per-service API code omits already-committed sibling mutations.
+	if errors.As(err, &workspaceApply) {
+		code, retryable = "workspace_service_apply_partial", false
 	}
 	// Stable fields make failures searchable without attaching user input or
 	// remote messages that could contain credentials.

@@ -3,8 +3,10 @@ package cmd
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -228,7 +230,14 @@ var workspaceServiceCmd = &cobra.Command{
 var workspaceServiceVersionsCmd = newWorkspaceServiceCommand("versions <service-slug>", "List enabled service versions", "cli.workspace.service.versions", runWorkspaceServiceVersions)
 var workspaceServiceOperationsCmd = newWorkspaceServiceCommand("operations <service-slug>", "List or search enabled service operations", "cli.workspace.service.operations", runWorkspaceServiceOperationsWithFlagVersion)
 var workspaceServiceWebhooksCmd = newWorkspaceServiceCommand("webhooks <service-slug>", "List workspace webhook registrations", "cli.workspace.service.webhooks", runWorkspaceServiceWebhooks)
-var workspaceServiceAddCmd = newWorkspaceServiceCommand("add <service-query-or-slug>", "Find and add a service to workspace configuration", "cli.workspace.service.add", runWorkspaceServiceAdd)
+var workspaceServiceAddCmd = &cobra.Command{
+	Use:   "add <service-query-or-slug> [service-query-or-slug...]",
+	Short: "Find and add services to workspace configuration",
+	Args:  cobra.MinimumNArgs(1),
+	RunE: WithTelemetry("cli.workspace.service.add", func(cmd *cobra.Command, args []string) error {
+		return runWorkspaceServiceAdd(cmd, args)
+	}),
+}
 var workspaceServiceConnectCmd = newWorkspaceServiceCommand("connect <service-slug>", "Start an end-user connection", "cli.workspace.service.connect", runWorkspaceServiceConnectWithRequiredUser)
 var workspaceServiceDeleteCmd = newWorkspaceServiceCommand("delete <service-slug>", "Delete a service from workspace configuration", "cli.workspace.service.delete", runWorkspaceServiceDelete)
 var workspaceServiceDeprecateCmd = newWorkspaceServiceCommand("deprecate <service-slug>", "Schedule service deprecation", "cli.workspace.service.deprecate", runWorkspaceServiceDeprecateWithRequiredDate)
@@ -283,29 +292,157 @@ func runWorkspaceServiceDeprecateWithRequiredDate(cmd *cobra.Command, serviceSlu
 	return runWorkspaceServiceDeprecate(cmd, serviceSlug)
 }
 
-func runWorkspaceServiceAdd(cmd *cobra.Command, serviceQuery string) error {
+// runWorkspaceServiceAdd composes batched resolution, one atomic config edit,
+// and optional scoped activations without invoking full workspace mirroring.
+func runWorkspaceServiceAdd(cmd *cobra.Command, serviceQueries []string) error {
+	// Interactive selection is intentionally unavailable to agents and CI so an
+	// ambiguous provider identity can never be guessed during automation.
 	if workspaceServiceAddInteractive {
 		if err := requireInteractive("omit --interactive to add a unique or exact service match automatically"); err != nil {
 			return err
 		}
 	}
-	target, err := resolveWorkspaceServiceAddTarget(serviceQuery, workspaceServiceAddID, workspaceServiceAddInteractive)
+	targets, err := resolveWorkspaceServiceAddTargets(serviceQueries, workspaceServiceAddID, workspaceServiceAddInteractive)
 	if err != nil {
 		return err
 	}
 	version := strings.TrimSpace(workspaceServiceAddVersion)
-	trace.SpanFromContext(cmd.Context()).SetAttributes(attribute.String("service_resolution_source", target.source))
-	if err := addWorkspaceService(ConfigFile, target.slug, target.configServiceID, version); err != nil {
+	span := trace.SpanFromContext(cmd.Context())
+	span.SetAttributes(attribute.Int("service_count", len(targets)), attribute.Bool("apply", workspaceServiceAddApply))
+	recordWorkspaceServiceResolution(span, targets)
+	if err := addWorkspaceServices(ConfigFile, workspaceServiceConfigAdditions(targets, version)); err != nil {
 		return err
 	}
 	recordAppliedChange(cmd.Context(), cmd.CommandPath(), "workspace_config")
-	fmt.Fprintln(cmd.OutOrStdout(), workspaceServiceAddResult(target, version))
-	if engineURL, err := GetEngineURL(); err == nil {
-		if viewURL := workspaceServiceViewURL(engineURL, target.serviceID); viewURL != "" {
+	printWorkspaceServiceAddTargets(cmd, targets, version)
+	// Omitting --apply intentionally preserves the established config-as-code
+	// workflow; only an explicit composite request crosses the mutation boundary.
+	if !workspaceServiceAddApply {
+		return nil
+	}
+	// Reuse the existing production safeguard for the composite's immediate
+	// mutation path, even though the scoped endpoint cannot remove services.
+	warnIfProductionEnvironment(cmd)
+	return applyWorkspaceServiceAddTargets(cmd, targets, version)
+}
+
+// workspaceServiceConfigAdditions projects resolution details into the narrow
+// config-edit DTO so authoring remains separate from discovery and activation.
+func workspaceServiceConfigAdditions(targets []workspaceServiceAddTarget, version string) []workspaceServiceConfigAddition {
+	additions := make([]workspaceServiceConfigAddition, 0, len(targets))
+	for _, target := range targets {
+		additions = append(additions, workspaceServiceConfigAddition{
+			serviceName: target.slug, expectedServiceID: target.serviceID,
+			persistServiceID: target.configServiceID, version: version,
+		})
+	}
+	return additions
+}
+
+// recordWorkspaceServiceResolution emits bounded aggregate provenance without
+// attaching user queries, provider names, service slugs, or credential context.
+func recordWorkspaceServiceResolution(span trace.Span, targets []workspaceServiceAddTarget) {
+	explicitCount, workspaceCount, registryCount := 0, 0, 0
+	source := "none"
+	for index, target := range targets {
+		// The first source is the candidate aggregate value; any later difference
+		// converts it to a bounded mixed marker instead of a user-derived list.
+		if index == 0 {
+			source = target.resolutionSource
+		} else if source != target.resolutionSource {
+			source = "mixed"
+		}
+		switch target.resolutionSource {
+		case "explicit":
+			explicitCount++
+		case "workspace":
+			workspaceCount++
+		case "registry":
+			registryCount++
+		}
+	}
+	span.SetAttributes(
+		attribute.String("service_resolution_source", source),
+		attribute.Int("service_resolution.explicit_count", explicitCount),
+		attribute.Int("service_resolution.workspace_count", workspaceCount),
+		attribute.Int("service_resolution.registry_count", registryCount),
+	)
+}
+
+// printWorkspaceServiceAddTargets retains the existing per-service result and
+// direct UI link while supporting any number of resolved additions.
+func printWorkspaceServiceAddTargets(cmd *cobra.Command, targets []workspaceServiceAddTarget, version string) {
+	engineURL, engineURLErr := GetEngineURL()
+	for _, target := range targets {
+		fmt.Fprintln(cmd.OutOrStdout(), workspaceServiceAddResult(target, version, workspaceServiceAddApply))
+		// UI links are best-effort output; config authoring remains successful
+		// when the Engine URL is unavailable or cannot produce a safe route.
+		if engineURLErr != nil {
+			continue
+		}
+		viewURL := workspaceServiceViewURL(engineURL, target.serviceID)
+		if viewURL != "" {
 			fmt.Fprintf(cmd.OutOrStdout(), "View %s: %s\n", target.slug, viewURL)
 		}
 	}
+}
+
+// applyWorkspaceServiceAddTargets reuses Engine's scoped additive mutation for
+// each selected service, so unrelated workspace services can never be removed.
+func applyWorkspaceServiceAddTargets(cmd *cobra.Command, targets []workspaceServiceAddTarget, version string) error {
+	client, err := getAPIClient()
+	if err != nil {
+		return err
+	}
+	committed := make([]string, 0, len(targets))
+	for index, target := range targets {
+		err := client.AddWorkspaceService(cliapi.AddWorkspaceServiceRequest{
+			ServiceID: target.serviceID, ServiceName: target.slug, VersionTag: version,
+		})
+		// Stop on the first rejected scoped activation, but return every known state
+		// and an exact idempotent retry for the failed and unattempted suffix.
+		if err != nil {
+			unattempted := workspaceServiceTargetSlugs(targets[index+1:])
+			commitState := workspaceServiceFailedCommitState(err)
+			span := trace.SpanFromContext(cmd.Context())
+			span.SetAttributes(
+				attribute.Int("workspace_service_apply.committed_count", len(committed)),
+				attribute.Int("workspace_service_apply.unattempted_count", len(unattempted)),
+				attribute.String("workspace_service_apply.failed_commit_state", commitState),
+			)
+			return &workspaceServiceApplyOutcomeError{
+				committed: committed, failed: target.slug, failedCommitState: commitState,
+				unattempted: unattempted,
+				recovery:    workspaceServiceApplyRecoveryCommand(targets[index:], version, ConfigFile),
+				cause:       err,
+			}
+		}
+		recordAppliedChange(cmd.Context(), cmd.CommandPath(), "workspace_service_activation")
+		fmt.Fprintf(cmd.OutOrStdout(), "Activated service %s in workspace\n", target.slug)
+		committed = append(committed, target.slug)
+	}
 	return nil
+}
+
+// workspaceServiceTargetSlugs projects safe canonical refs for outcome display.
+func workspaceServiceTargetSlugs(targets []workspaceServiceAddTarget) []string {
+	slugs := make([]string, 0, len(targets))
+	for _, target := range targets {
+		slugs = append(slugs, target.slug)
+	}
+	return slugs
+}
+
+// workspaceServiceFailedCommitState is conservative across the HTTP boundary:
+// authoritative client rejections are uncommitted, while 5xx/lost responses are unknown.
+func workspaceServiceFailedCommitState(err error) string {
+	var apiError *cliapi.APIError
+	// Only 4xx proves validation or policy rejected the request before commit;
+	// a 5xx can occur after persistence and must not invite an unsafe blind retry.
+	if errors.As(err, &apiError) && apiError.HTTPStatus >= http.StatusBadRequest && apiError.HTTPStatus < http.StatusInternalServerError {
+		return "not_committed"
+	}
+	return "unknown"
 }
 
 func runWorkspaceServiceDelete(cmd *cobra.Command, serviceSlug string) error {
@@ -412,6 +549,7 @@ func runWorkspaceServiceVersionDeprecate(cmd *cobra.Command, serviceSlug, versio
 var workspaceServiceAddVersion string
 var workspaceServiceAddID string
 var workspaceServiceAddInteractive bool
+var workspaceServiceAddApply bool
 var workspaceServiceRemoveForce bool
 var workspaceServiceDeprecateAt string
 var workspaceServiceDeprecateReason string
@@ -636,14 +774,10 @@ func workspaceServiceByID(client *cliapi.Client, serviceID, serviceSlug string) 
 	return cliapi.WorkspaceService{}, fmt.Errorf("service %s is not enabled in this workspace", serviceSlug)
 }
 
+// workspaceServiceLookupName keeps existing command call sites narrow while
+// delegating qualified-reference grammar to the shared API helper.
 func workspaceServiceLookupName(serviceSlug string) string {
-	trimmed := strings.TrimSpace(serviceSlug)
-	if strings.HasPrefix(trimmed, "@") {
-		if _, slug, ok := strings.Cut(trimmed, "/"); ok {
-			return slug
-		}
-	}
-	return trimmed
+	return cliapi.ServiceLookupName(serviceSlug)
 }
 
 func resolveWorkspaceOperationVersion(service cliapi.WorkspaceService, requested string) (string, error) {
@@ -840,6 +974,7 @@ func actionRequiresForce(action map[string]any, serviceID string, version string
 	return actionType == "disable_service_version" && actionVersion == version
 }
 
+// init registers workspace commands and their command-scoped flags once.
 func init() {
 	RootCmd.AddCommand(workspaceCmd)
 
@@ -865,9 +1000,10 @@ func init() {
 	workspaceServiceOperationsCmd.Flags().StringVar(&workspaceServiceOperationsQuery, "q", "", "Search query")
 	addListFlags(workspaceServiceOperationsCmd, &workspaceServiceListFlags)
 
-	workspaceServiceAddCmd.Flags().StringVar(&workspaceServiceAddVersion, "version", "", "Version to enable; omitted resolves latest during plan")
+	workspaceServiceAddCmd.Flags().StringVar(&workspaceServiceAddVersion, "version", "", "Version to enable; omitted resolves latest during plan or scoped activation")
 	workspaceServiceAddCmd.Flags().StringVar(&workspaceServiceAddID, "service-id", "", "Registry service UUID to store in workspace config")
 	workspaceServiceAddCmd.Flags().BoolVarP(&workspaceServiceAddInteractive, "interactive", "i", false, "Select and confirm a Registry service when it is not already enabled")
+	workspaceServiceAddCmd.Flags().BoolVar(&workspaceServiceAddApply, "apply", false, "Activate only the added services after updating the config")
 
 	workspaceServiceConnectCmd.Flags().StringVar(&workspaceServiceConnectBucket, "bucket", "", "Workspace bucket name or UUID (required)")
 	workspaceServiceConnectCmd.Flags().StringVar(&workspaceServiceConnectUserRef, "user-ref", "", "Stable user reference (required)")

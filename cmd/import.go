@@ -94,6 +94,20 @@ Import plan/apply requests allow 20 minutes unless --timeout is explicitly set.`
 	}),
 }
 
+var importStatusJSON bool
+
+var importStatusCmd = &cobra.Command{
+	Use:   "status <operation-id>",
+	Short: "Read a durable import apply outcome",
+	Long: `Reads the operation recorded for an import plan. Use this after an
+apply timeout or lost response; status never retries the import mutation.`,
+	Args: cobra.ExactArgs(1),
+	RunE: WithTelemetry("cli.import.status", func(cmd *cobra.Command, args []string) error {
+		return runImportStatus(cmd, args[0], importStatusJSON)
+	}),
+}
+
+// init registers import commands and their command-scoped receipt flags once.
 func init() {
 	RootCmd.AddCommand(importCmd)
 
@@ -116,4 +130,7 @@ func init() {
 	importApplyCmd.Flags().StringVar(&importApplyPlanID, "plan-id", "", "Apply a specific remote plan ID (requires --review-hash)")
 	importApplyCmd.Flags().StringVar(&importApplyReviewHash, "review-hash", "", "Combined review hash to pair with --plan-id")
 	importApplyCmd.Flags().StringVar(&importApplyReceiptPath, "receipt", "", "Read a specific plan or discovery receipt (default: most recent local receipt)")
+
+	importCmd.AddCommand(importStatusCmd)
+	importStatusCmd.Flags().BoolVar(&importStatusJSON, "json", false, "Print the raw operation status as JSON")
 }

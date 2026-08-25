@@ -346,6 +346,14 @@ Arbitrary proxy bodies and credential-shaped strings remain hidden.
 Do not retry when `retryable` is false and do not parse the human error string
 to recover fields already present in the object.
 
+Import apply failures additionally carry the slim recovery contract
+`code`, `phase`, `operation_id`, `commit_state`, and `recovery` inside
+`error`. `commit_state` is `not_committed`, `committed`, or `unknown`; run the
+exact `recovery` command instead of inferring safety from the HTTP status.
+Engine authentication, authorization, and preflight-audit failures on import
+routes use the same shape before Registry is reached. Transport timeout text
+never includes the raw Engine URL; use the wrapped error only for local logs.
+
 Use `import plan` / `import apply` when the source is already a machine-readable
 specification. This path is reviewed and receipt-backed: `plan` parses/diffs,
 then `apply` commits the exact planned source.
@@ -359,11 +367,20 @@ that optional enrichment.
 Large reviewed specifications receive a 20-minute plan/apply request budget by
 default; an explicit global `--timeout` overrides it. If apply reaches that
 deadline, treat `import_apply_outcome_unknown` as non-retryable: the Registry
-transaction may have committed even though Engine never received the response
-needed for automatic activation. Do not replay the one-shot receipt. Verify
-with `workspace services list -q <slug>`, inspect Registry state with `service
-show <slug>`, and use the normal workspace plan/apply flow when activation is
-missing. Create a fresh import plan before another import attempt.
+transaction may have committed even though Engine never received the response.
+Run `fused-cli import status <operation-id>` using the plan ID from the receipt;
+this is a read-only recovery command and never replays the mutation. A repeated
+`import apply` with the exact same plan ID and review hash is also idempotent:
+after commit it returns the atomically stored service/version result, while a
+different review hash remains rejected. Do not create a fresh plan merely to
+recover a lost response.
+
+A `pending` status uses `commit_state=unknown` because a concurrent apply may
+hold the plan lock while its writes are still invisible; follow its exact status
+poll command and do not replay apply. Terminal `failed` or
+`IMPORT_RESULT_UNAVAILABLE` status includes a stable code and a non-looping
+planning recovery command. A complete committed status alone prints the stored
+service/version result.
 
 Read import diagnostics by stable `code`, `disposition`, source format/version,
 and JSON pointer. `captured` means the source meaning survived, `diagnosed`
@@ -409,6 +426,10 @@ plan/apply flow to activate it.
 fused-cli import plan ./openapi.yaml --name "Billing API" --slug billing-api \
   --target endpoints
 fused-cli import apply
+
+# Read-only recovery after a timeout or lost apply response. The plan ID is
+# also the stable operation ID.
+fused-cli import status <operation-id>
 
 fused-cli import plan --url https://developer.example.com/asyncapi.yaml \
   --name "Events API" --slug events-api
