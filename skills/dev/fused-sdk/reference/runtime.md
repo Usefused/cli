@@ -83,7 +83,7 @@ connection, so there is no per-service connection overhead.
 
 The channel target is resolved in this order (first non-empty value wins):
 
-1. `engine_url` / `engineUrl` passed directly to `FusedSDK(...)`.
+1. `grpc_url` / `grpcUrl` passed directly to `FusedSDK(...)`.
 2. `FUSED_ENGINE_GRPC_URL` environment variable.
 3. `FUSED_ENGINE_URL` environment variable.
 4. Default: `http://127.0.0.1:50051`.
@@ -92,7 +92,7 @@ Engine binds REST to `8081` (`--port`) and gRPC to `50051` (`--grpc-port`).
 Point the SDK at the gRPC port; the REST port responds with HTTP 405.
 
 Step 3 is the trap: `FUSED_ENGINE_URL` is the *HTTP* variable `fused-cli` uses.
-If it is set and no `engine_url` is passed, the SDK speaks gRPC at the REST port
+If it is set and no `grpc_url` is passed, the SDK speaks gRPC at the REST port
 and gets that 405. Set `FUSED_ENGINE_GRPC_URL` explicitly rather than relying on
 the fallback. Running two Engines side by side (as the e2e harness does) offsets
 both ports together -- `8082` with `50052` -- so the HTTP/gRPC split still holds.
@@ -104,7 +104,7 @@ import os
 from src import FusedSDK
 
 sdk = FusedSDK({
-    "engine_url": os.environ.get("FUSED_ENGINE_GRPC_URL"),
+    "grpc_url": os.environ.get("FUSED_ENGINE_GRPC_URL"),
     "token": os.environ["FUSED_SDK_TOKEN"],
 })
 
@@ -118,7 +118,7 @@ async with sdk:
 import { FusedSDK } from 'your-sdk-package';
 
 const sdk = new FusedSDK({
-  engineUrl: process.env.FUSED_ENGINE_GRPC_URL,
+  grpcUrl: process.env.FUSED_ENGINE_GRPC_URL,
   token: process.env.FUSED_SDK_TOKEN,
 });
 
