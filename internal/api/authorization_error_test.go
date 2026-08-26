@@ -11,6 +11,8 @@ import (
 	"testing"
 )
 
+// TestFormatHTTPAuthorizationErrors keeps access advice grounded in reviewed
+// missing grants and avoids inventing a role problem for generic Engine denials.
 func TestFormatHTTPAuthorizationErrors(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -40,17 +42,18 @@ func TestFormatHTTPAuthorizationErrors(t *testing.T) {
 			doNotWant: []string{"service.consume", "22222222-2222-2222-2222-222222222222"},
 		},
 		{
-			name:   "empty missing list stays actionable",
-			status: http.StatusForbidden,
-			body:   `{"error":"permission_denied"}`,
-			want:   []string{"permission denied", "workspace administrator"},
+			name:      "empty missing list stays actionable",
+			status:    http.StatusForbidden,
+			body:      `{"error":"permission_denied"}`,
+			want:      []string{"permission denied", "did not identify a missing permission", "config references", "fused-cli whoami"},
+			doNotWant: []string{"ask a workspace administrator"},
 		},
 		{
 			name:      "malformed missing entries stay actionable",
 			status:    http.StatusForbidden,
 			body:      `{"error":"permission_denied","missing":[null,{}, {"permission":"bucket.read"}, {"resource_type":"bucket","resource_id":"44444444-4444-4444-4444-444444444444"}]}`,
-			want:      []string{"permission denied", "workspace administrator"},
-			doNotWant: []string{" on ", "bucket.read", "44444444-4444-4444-4444-444444444444"},
+			want:      []string{"permission denied", "did not identify a missing permission"},
+			doNotWant: []string{" on ", "bucket.read", "44444444-4444-4444-4444-444444444444", "ask a workspace administrator"},
 		},
 		{
 			name:      "valid requirements survive malformed siblings",
@@ -75,15 +78,21 @@ func TestFormatHTTPAuthorizationErrors(t *testing.T) {
 		},
 	}
 
+	// Each response shape must preserve only its supported product-safe advice.
 	for _, test := range tests {
+		// Isolate cases so a malformed response cannot mask another formatting regression.
 		t.Run(test.name, func(t *testing.T) {
 			message := newHTTPError(test.status, []byte(test.body)).Error()
+			// Required fragments prove that actionable context survived parsing.
 			for _, value := range test.want {
+				// Missing context would recreate the hidden-diagnostic failure.
 				if !strings.Contains(message, value) {
 					t.Errorf("message %q does not contain %q", message, value)
 				}
 			}
+			// Internal identifiers and unsupported advice must not reach users.
 			for _, value := range test.doNotWant {
+				// Check case-insensitively to catch accidental disclosure variants.
 				if strings.Contains(strings.ToLower(message), value) {
 					t.Errorf("message %q unexpectedly contains %q", message, value)
 				}

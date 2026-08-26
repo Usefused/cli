@@ -306,22 +306,24 @@ func (e *APIError) Error() string {
 	// The detail is intentionally separate from the stable message so scripts can
 	// branch on the contract while an Engine owner still sees the parser decision.
 	message := e.Code + ": " + e.Message
+	// Concrete missing grants remain distinct from provider credential readiness.
 	if len(e.Details.RequiredPermissions) > 0 {
 		message += " Required permissions: " + strings.Join(e.Details.RequiredPermissions, ", ") + "."
 	}
-	if len(e.Details.MissingCredentials) > 0 {
-		message += fmt.Sprintf(" Missing credential requirements: %d.", len(e.Details.MissingCredentials))
-	}
+	// Only reviewed server detail is carried through the shared parser.
 	if e.Details.ServerDetail != "" {
 		message += " Server detail: " + e.Details.ServerDetail
 	}
+	// Lease evidence explains when a conflicting apply can be retried.
 	if e.Details.ApplyLeaseExpiresAt != "" {
 		message += " Apply lease expires: " + e.Details.ApplyLeaseExpiresAt + "."
 	}
+	// Do not invent retry timing when Engine supplied no delay.
 	if e.Details.RetryAfterSeconds > 0 {
 		message += fmt.Sprintf(" Retry after %d seconds.", e.Details.RetryAfterSeconds)
 	}
 	message += formatAPIErrorContext(e)
+	// Remediation is part of the stable Engine error contract, not a guessed command.
 	if e.Remediation != "" {
 		message += " " + e.Remediation
 	}
@@ -330,10 +332,11 @@ func (e *APIError) Error() string {
 	if e.Recovery != "" {
 		message += " Recovery: `" + e.Recovery + "`."
 	}
+	// Correlation remains optional for older Engine versions.
 	if e.TraceID != "" {
 		message += " Trace: " + e.TraceID
 	}
-	return message
+	return message + formatMissingCredentialDetails(e.Details.Bucket, e.Details.MissingCredentials)
 }
 
 // formatAPIErrorContext appends the slim operation proof only when the Engine supplied each field.
@@ -494,16 +497,17 @@ func permissionDeniedError(status int, missing []PermissionRequirement) error {
 	return apiErr
 }
 
+// formatPermissionDenied recommends access changes only when the Engine
+// identifies missing grants; older generic denials can also mean invalid input.
 func formatPermissionDenied(missing []PermissionRequirement) string {
-	if len(missing) == 0 {
-		return "permission denied; ask a workspace administrator for access"
+	items := safePermissionDescriptions(missing)
+	// Empty or malformed metadata is not evidence that the caller needs a role change.
+	if len(items) == 0 {
+		return "permission denied; Engine did not identify a missing permission. Check your identity with `fused-cli whoami`, and verify the selected workspace and config references"
 	}
+	// A concrete owning-team requirement has its own actionable access remedy.
 	if containsPermission(missing, "access.manage") {
 		return "permission denied; you are not a member of the owning team; join that team or ask an access administrator to perform this action"
-	}
-	items := safePermissionDescriptions(missing)
-	if len(items) == 0 {
-		return "permission denied; ask a workspace administrator for access"
 	}
 	return "permission denied; ask a workspace administrator to allow you to " + strings.Join(items, "; ")
 }
