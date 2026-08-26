@@ -283,6 +283,66 @@ timeouts still apply. Treat
 the returned projection before retrying. Keep the same token and MCP version;
 these failures do not require republishing or creating another server.
 
+Successful `execute` values up to 16 KiB of UTF-8 JSON remain inline by default.
+The optional `execute` argument `outputBudgetBytes` accepts integers from
+1024 to 65536; retain it on continuation calls. This is a byte budget, not an
+exact token count or a model-context guarantee. Larger
+admitted values (up to the existing 1 MiB ceiling) are automatically retained
+as JSON snapshots in the same session. The small `MCP_RESULT_STORED` envelope
+contains `result_ref`, byte size, expiry, and an explicitly incomplete
+structural preview with field names, types, and collection counts; previews
+never sample scalar values. `collections` also advertises exact RFC 6901 array
+paths, counts, observed immediate field names, and `fields_complete`.
+`collections_complete` describes traversal completeness. The final model-facing
+JSON ceiling is 64 KiB. For lists, choose known needed fields in the first
+execution when possible. On overflow, use the existing `execute` tool:
+
+```typescript
+return session.page("<result_ref from the envelope>", {
+  path: "/transactions",
+  fields: ["date", "merchant", "amount", "currency"],
+  offset: 0
+});
+```
+
+Paging returns maximal contiguous whole-row prefixes within the same invocation
+budget, including serialized metadata, escaping, and UTF-8. Read `items`,
+`offset`, `total`, `returned`, `nextOffset`, and `complete`; continue at the exact
+`nextOffset` with unchanged path/fields. `complete` means no rows remain after
+this range, not that earlier pages were included. Return the page directly;
+combining pages can overflow again. Omit path or use an empty string for a root
+array. Fields are literal immediate keys, never dotted selectors; omit them
+for whole or mixed-type rows. Sparse missing keys remain absent, and a field
+that exists in no row is rejected. Empty collections return a complete empty
+page. An individually oversized row fails with `MCP_RESULT_ROW_TOO_LARGE`;
+narrow fields or use `session.get` for a custom field/string slice, never
+retry the provider operation. Very long paths may require a larger byte budget
+for metadata. For totals or analysis, compute inside `execute` and return the
+answer instead of transferring every row.
+
+Discovery inspects at most eight collections, 256 nodes, eight levels, 32
+children per node, 512 rows per collection, and 32 field names (128 UTF-8 bytes
+each). Output budgets may trim metadata further. Incomplete flags never imply
+missing data: select advertised fields immediately, and use `session.get` with
+`Object.keys` to inspect additional keys only when needed. Large custom
+retrievals still produce a bounded envelope. Do not repeat `call()` to inspect
+an already executed operation. Automatic retention is limited to 16 snapshots
+and 4 MiB per session, with oldest-first eviction and an absolute five-minute
+TTL that reads do not extend. Session closure releases all snapshots. A new
+session cannot retrieve an old reference. `MCP_RESULT_UNAVAILABLE` means the
+snapshot cannot be recovered here; report that limitation and make a deliberate
+re-execution decision, especially for operations with side effects. Never
+automatically retry. Error text is capped by the smaller of 8 KiB and the
+invocation budget. Oversized error text returns
+`MCP_EXECUTE_ERROR_OUTPUT_LIMIT_EXCEEDED` rather than being stored.
+
+Agent-triggered result delivery and retrieval emit only fixed delivery state,
+transport, actor type, bounded read/miss counts, and effective byte budget through
+Engine OTEL. `session.page` counts as a retained read once it attempts the
+snapshot lookup, including subsequent projection or size failures. Do not
+log references, field names, previews, result bodies, or scripts, and do not
+create another provider-execution receipt for a session-only read.
+
 Pagination is inherited automatically from the selected endpoint and its
 effective service-version policy. Do not add pagination fields to MCP config or
 tool schemas. Engine performs the provider requests and streams each successful
