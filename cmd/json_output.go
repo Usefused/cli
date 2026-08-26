@@ -146,7 +146,7 @@ func classifyCommandError(cmd *cobra.Command, err error) jsonErrorResult {
 		result.Remediation, result.TraceID, result.HTTPStatus = apiError.Remediation, apiError.TraceID, apiError.HTTPStatus
 		// Import operation recovery remains top-level so agents do not parse a
 		// generic details bag to decide whether a commit is possible.
-		result.Phase, result.OperationID = apiError.Phase, apiError.OperationID
+		result.Phase, result.OperationID, result.RequestID = apiError.Phase, apiError.OperationID, apiError.RequestID
 		result.CommitState, result.Recovery = apiError.CommitState, apiError.Recovery
 		result.Details = mergeJSONDetails(result.Details, apiErrorJSONDetails(apiError))
 		return result
@@ -226,10 +226,22 @@ func apiErrorJSONDetails(apiError *cliapi.APIError) map[string]any {
 	if apiError.Details.DependencyHTTPStatus > 0 {
 		details["dependency_http_status"] = apiError.Details.DependencyHTTPStatus
 	}
+	putAPIErrorJSONDetail(details, "service_id", apiError.Details.ServiceID)
+	putAPIErrorJSONDetail(details, "service_version_id", apiError.Details.ServiceVersionID)
+	putAPIErrorJSONDetail(details, "workspace_outcome", apiError.Details.WorkspaceOutcome)
 	if len(details) == 0 {
 		return nil
 	}
 	return details
+}
+
+// putAPIErrorJSONDetail preserves a non-empty reviewed Engine field without repeating projection guards.
+func putAPIErrorJSONDetail(details map[string]any, key, value string) {
+	// Empty optional fields stay absent so agents can distinguish missing proof
+	// from a present but false-looking value.
+	if value != "" {
+		details[key] = value
+	}
 }
 
 func isCommandUsageError(message string) bool {

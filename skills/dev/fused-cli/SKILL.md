@@ -350,6 +350,11 @@ Import apply failures additionally carry the slim recovery contract
 `code`, `phase`, `operation_id`, `commit_state`, and `recovery` inside
 `error`. `commit_state` is `not_committed`, `committed`, or `unknown`; run the
 exact `recovery` command instead of inferring safety from the HTTP status.
+If Registry publication commits but Engine workspace activation fails, apply
+returns `import_workspace_activation_failed` with `phase=workspace_activation`
+and `commit_state=committed`. Treat the import as published, run the pinned
+`workspace service add ... --service-id ... --version ... --apply` recovery,
+and never replay the import merely because the composite command exited non-zero.
 Engine authentication, authorization, and preflight-audit failures on import
 routes use the same shape before Registry is reached. Authentication recovers
 with `fused-cli login`; permission denial points an authorized workspace owner

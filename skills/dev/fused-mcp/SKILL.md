@@ -59,6 +59,34 @@ existing `search_docs` catalogue under its exact authored name. The server still
 exposes only `search_docs` and `execute`; an exact physical/Unified name collision
 fails closed. Discovery returns public schemas and graph names only, never
 private mappings, internal UUIDs, selectors, or values.
+
+Treat a non-empty `search_docs` query as a concise capability intent, such as
+`send email attachment`, rather than forwarding the conversation. Intent search
+returns the three best matches by default and accepts at most five, including
+enough callable detail for an immediate `execute` when that detail fits. Prefer
+a complete Unified Operation when it covers the whole goal. If no returned
+operation safely supports the request, retry at most once with more specific
+service and action terms; never guess an operation ID.
+
+An empty or whitespace-only query is the browsing fallback: it returns a bounded,
+schema-free catalogue with `total` and `truncated` metadata. An exact
+`operationId` remains the deterministic detail lookup and takes precedence over
+query text. Every `search_docs` result is bounded to 64 KiB of UTF-8 JSON. Check
+`schema_status.complete`, then compare `included_sections` with
+`available_sections` before writing a call: never infer fields omitted from an
+outline or truncated result. When a chosen operation is incomplete, retrieve
+only its missing physical `parameters`, `request`, or `response:<status>`
+section, or its Unified `input`, `targets`, or `output` section. Use
+`schemaPath` JSON Pointer retrieval only when a smaller nested schema is needed.
+Do not pre-emptively load every response schema because the actual provider
+response arrives through `execute`.
+
+Agent-triggered discovery is auditable without exposing user content. Telemetry
+may record mode, bounded catalogue counts, whether detail was requested,
+response bytes, duration, outcome, and actor type, but never the raw query,
+operation ID, returned schema, schema pointer, private mapping, or
+credential-bearing value.
+
 Inside an `execute` script, call a discovered Unified operation with
 `await call(operationId, {input, targets, selectors?, pagination?, idempotencyKey?})`.
 Use TypeScript camelCase selector and pagination fields, keep `targets`
@@ -135,8 +163,11 @@ Use `init` to create `.fused/mcps/<name>.yaml` without overwriting an existing
 file. Repeat it with `--extend` to add selections; the result is `extended` or
 idempotent `unchanged`, and conflicts stop before writing. An empty skeleton
 is intentionally incomplete until each service lists operations or uses
-`--select-all`. `--bucket` references an existing usable bucket and never
-creates one.
+`--select-all`. For a service-bearing config without `--bucket`, init lists
+read-visible buckets once, writes the visible bucket named `default` or the
+first visible candidate, and fails without writing when none is visible. An
+explicit `--bucket` remains authoritative. Init never creates a bucket, and
+plan/apply remains the authoritative `bucket.use` check.
 
 `mcp apply` doesn't just validate config -- it stands up (or updates) a
 persistent, named Engine-hosted server with its own URL, which stays live
@@ -236,6 +267,21 @@ It addresses the same immutable MCP version and uses the same execution token,
 but it is transitional compatibility and must not be recommended for new
 clients. Human output labels Streamable HTTP as recommended and SSE as legacy;
 JSON output uses `default_transport` and the typed `transport_urls` object.
+
+Engine applies non-configurable ceilings before MCP data crosses a process or
+transport boundary: 256 KiB request/call payloads, 64 KiB documentation,
+512 KiB individual schemas, 1 MiB physical/final execution results, bounded schema
+depth/node counts. Sessions have a five-minute maximum inactivity window, not a
+fixed lifetime: accepted client traffic and pending calls keep them alive, and
+completion refreshes the idle window. Server keepalives alone do not count as
+activity. Token expiry/revocation, app deactivation, and independent per-call
+timeouts still apply. Treat
+`MCP_DOCUMENTATION_OUTPUT_LIMIT_EXCEEDED`,
+`MCP_EXECUTE_RESULT_LIMIT_EXCEEDED`, `mcp_call_payload_too_large`, and
+`mcp_call_result_too_large` as terminal for that invocation. Narrow
+`search_docs` with a query or exact `operationId`; reduce execution input or
+the returned projection before retrying. Keep the same token and MCP version;
+these failures do not require republishing or creating another server.
 
 Pagination is inherited automatically from the selected endpoint and its
 effective service-version policy. Do not add pagination fields to MCP config or

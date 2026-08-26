@@ -14,6 +14,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// TestScaffoldCommandCreatesRunnableConfigs proves service-bearing app init emits the bucket required by Engine plan.
 func TestScaffoldCommandCreatesRunnableConfigs(t *testing.T) {
 	tests := []struct {
 		name string
@@ -48,6 +49,13 @@ func TestScaffoldCommandCreatesRunnableConfigs(t *testing.T) {
 			if parsed.Kind != test.kind {
 				t.Fatalf("kind = %s, want %s", parsed.Kind, test.kind)
 			}
+			// Workspace owns bucket declarations separately, while SDK and MCP must bind an existing candidate.
+			if test.kind == configfile.KindSDK && parsed.SDK.Bucket != "default" {
+				t.Fatalf("SDK bucket = %q, want default", parsed.SDK.Bucket)
+			}
+			if test.kind == configfile.KindMCP && parsed.MCP.Bucket != "default" {
+				t.Fatalf("MCP bucket = %q, want default", parsed.MCP.Bucket)
+			}
 			var result scaffoldResult
 			if err := json.Unmarshal(output, &result); err != nil {
 				t.Fatalf("decode result: %v\n%s", err, output)
@@ -56,6 +64,37 @@ func TestScaffoldCommandCreatesRunnableConfigs(t *testing.T) {
 				t.Fatalf("unexpected result: %+v", result)
 			}
 		})
+	}
+}
+
+// TestSelectScaffoldBucketPrefersNamedDefaultAndFallsBack proves init never creates a bucket while choosing a stable visible candidate.
+func TestSelectScaffoldBucketPrefersNamedDefaultAndFallsBack(t *testing.T) {
+	buckets := []api.BucketSummaryResponse{{Name: "production"}, {Name: "default"}}
+	selected, err := selectScaffoldBucket(buckets)
+	if err != nil || selected != "default" {
+		t.Fatalf("default selection = %q, %v", selected, err)
+	}
+	selected, err = selectScaffoldBucket(buckets[:1])
+	if err != nil || selected != "production" {
+		t.Fatalf("fallback selection = %q, %v", selected, err)
+	}
+	// An empty visible set must fail rather than inventing or creating workspace state.
+	if _, err := selectScaffoldBucket(nil); err == nil {
+		t.Fatal("empty bucket selection succeeded")
+	}
+}
+
+// TestEnsureScaffoldBucketPreservesExistingSelection proves automatic discovery cannot retarget authored config.
+func TestEnsureScaffoldBucketPreservesExistingSelection(t *testing.T) {
+	config := &configfile.AppConfig{Bucket: "production", Services: map[string]configfile.AppService{"jira": {Version: "3", SelectAll: true}}}
+	resolverCalls := 0
+	changed, err := ensureScaffoldBucket(config, func() (string, error) {
+		resolverCalls++
+		return "default", nil
+	})
+	// Existing selection is authoritative, so discovery must not even run.
+	if err != nil || changed || resolverCalls != 0 || config.Bucket != "production" {
+		t.Fatalf("existing bucket changed: config=%#v changed=%v calls=%d err=%v", config, changed, resolverCalls, err)
 	}
 }
 
@@ -470,8 +509,7 @@ func runScaffoldCommandForTest(t *testing.T, path string, args ...string) []byte
 	return runScaffoldCommandWithResolverForTest(t, path, noOpScaffoldRequirements, args...)
 }
 
-// runScaffoldCommandWithResolverForTest executes one isolated command with an
-// explicit requirement dependency so tests never depend on ambient Engine state.
+// runScaffoldCommandWithResolverForTest executes one isolated command with deterministic discovery dependencies.
 func runScaffoldCommandWithResolverForTest(t *testing.T, path string, resolver scaffoldRequirementsResolver, args ...string) []byte {
 	t.Helper()
 	command := newScaffoldCommandWithResolver(configfile.ConfigKind(args[0]), resolver)

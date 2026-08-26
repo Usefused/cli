@@ -899,6 +899,13 @@ exact `fused-cli import status <operation-id>` command reported by the error.
 Reapplying the exact plan ID and review hash is idempotent and returns the
 stored committed result instead of mutating Registry again.
 
+Registry publication may commit before Engine workspace activation fails. In
+that case the command exits non-zero with the structured code
+`import_workspace_activation_failed`, phase `workspace_activation`, commit state
+`committed`, the request and operation IDs, and an exact pinned
+`workspace service add ... --apply` recovery command. The service is already
+published; run the recovery command instead of replaying the import.
+
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
 | `--plan-id` | | Apply a specific remote plan ID (requires `--review-hash`) | `""` |

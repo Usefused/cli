@@ -190,10 +190,12 @@ func (c *Client) graphQLAt(path string, query string, variables map[string]any, 
 	return decodeGraphQLData(respBody, out)
 }
 
+// decodeGraphQLData preserves bounded resolver diagnostics while keeping response-shape failures stable.
 func decodeGraphQLData(respBody []byte, out any) error {
 	var graphqlResp struct {
 		Data   json.RawMessage `json:"data"`
 		Errors []struct {
+			Message    string `json:"message"`
 			Extensions struct {
 				Code string `json:"code"`
 			} `json:"extensions"`
@@ -203,9 +205,9 @@ func decodeGraphQLData(respBody []byte, out any) error {
 		return errGraphQLResponseMalformed
 	}
 	if len(graphqlResp.Errors) > 0 {
-		// GraphQL messages are remote input and can echo submitted credentials.
-		// Only fixed extension codes select more useful, locally-authored errors.
-		return safeGraphQLRequestError(graphqlResp.Errors[0].Extensions.Code)
+		// Engine-authored messages explain resolver failures that a generic rejection
+		// hides; the shared redactor still drops credential-shaped or URL-bearing text.
+		return safeGraphQLRequestError(graphqlResp.Errors[0].Extensions.Code, graphqlResp.Errors[0].Message)
 	}
 	if err := json.Unmarshal(graphqlResp.Data, out); err != nil {
 		return errGraphQLDataMalformed
@@ -213,15 +215,24 @@ func decodeGraphQLData(respBody []byte, out any) error {
 	return nil
 }
 
-func safeGraphQLRequestError(code string) error {
+// safeGraphQLRequestError preserves actionable Engine detail without trusting it as telemetry identity.
+func safeGraphQLRequestError(code, message string) error {
+	var base *APIError
 	switch code {
 	case graphQLCodeResourceNotFound:
-		return errGraphQLResourceNotFound
+		base = errGraphQLResourceNotFound
 	case graphQLCodeResourceAmbiguous:
-		return errGraphQLResourceAmbiguous
+		base = errGraphQLResourceAmbiguous
 	default:
-		return errGraphQLRequestRejected
+		// Unknown extension codes stay locally classified to prevent unbounded OTEL
+		// dimensions instead of promoting remote codes into the public contract.
+		base = errGraphQLRequestRejected
 	}
+	// Each request owns its copy so an explanatory resolver message cannot mutate
+	// the package-level stable error reused by concurrent commands.
+	result := *base
+	result.Details.ServerDetail = safeServerDetail(message)
+	return &result
 }
 
 type PermissionRequirement struct {
@@ -251,10 +262,14 @@ type APIError struct {
 		RetryAfterSeconds    int                            `json:"retry_after_seconds,omitempty"`
 		Stage                string                         `json:"stage,omitempty"`
 		DependencyHTTPStatus int                            `json:"http_status,omitempty"`
+		ServiceID            string                         `json:"service_id,omitempty"`
+		ServiceVersionID     string                         `json:"service_version_id,omitempty"`
+		WorkspaceOutcome     string                         `json:"workspace_outcome,omitempty"`
 	} `json:"details,omitempty"`
 	Remediation string `json:"remediation,omitempty"`
 	Phase       string `json:"phase,omitempty"`
 	OperationID string `json:"operation_id,omitempty"`
+	RequestID   string `json:"request_id,omitempty"`
 	CommitState string `json:"commit_state,omitempty"`
 	Recovery    string `json:"recovery,omitempty"`
 	TraceID     string `json:"trace_id,omitempty"`
@@ -286,6 +301,7 @@ type MissingCredentialField struct {
 	SecretKey string `json:"secret_key,omitempty"`
 }
 
+// Error renders the complete reviewed Engine diagnostic contract for a human operator.
 func (e *APIError) Error() string {
 	// The detail is intentionally separate from the stable message so scripts can
 	// branch on the contract while an Engine owner still sees the parser decision.
@@ -305,6 +321,7 @@ func (e *APIError) Error() string {
 	if e.Details.RetryAfterSeconds > 0 {
 		message += fmt.Sprintf(" Retry after %d seconds.", e.Details.RetryAfterSeconds)
 	}
+	message += formatAPIErrorContext(e)
 	if e.Remediation != "" {
 		message += " " + e.Remediation
 	}
@@ -319,6 +336,29 @@ func (e *APIError) Error() string {
 	return message
 }
 
+// formatAPIErrorContext appends the slim operation proof only when the Engine supplied each field.
+func formatAPIErrorContext(apiError *APIError) string {
+	var context strings.Builder
+	// Phase distinguishes Registry mutation from Engine-local follow-up work.
+	if apiError.Phase != "" {
+		fmt.Fprintf(&context, " Phase: %s.", apiError.Phase)
+	}
+	// Commit state tells a human whether repeating the mutation can be safe.
+	if apiError.CommitState != "" {
+		fmt.Fprintf(&context, " Commit state: %s.", apiError.CommitState)
+	}
+	// Operation identity supports durable outcome recovery after apply.
+	if apiError.OperationID != "" {
+		fmt.Fprintf(&context, " Operation: %s.", apiError.OperationID)
+	}
+	// Request identity correlates this exact failed Engine attempt for debugging.
+	if apiError.RequestID != "" {
+		fmt.Fprintf(&context, " Request: %s.", apiError.RequestID)
+	}
+	return context.String()
+}
+
+// newHTTPError prefers structured Engine diagnostics and safely bounds legacy JSON strings.
 func newHTTPError(status int, respBody []byte) error {
 	var payload apiErrorPayload
 	if err := json.Unmarshal(respBody, &payload); err == nil {
@@ -326,30 +366,20 @@ func newHTTPError(status int, respBody []byte) error {
 			return parsed
 		}
 		apiErr := genericHTTPError(status)
-		apiErr.Details.ServerDetail = validationServerDetail(status, payload)
+		apiErr.Details.ServerDetail = legacyServerDetail(payload)
 		return apiErr
 	}
 	// Non-JSON bodies have no contract boundary and can contain proxy pages or
-	// credentials, so only structured Engine validation strings are displayable.
+	// credentials, so only JSON string diagnostics are displayable.
 	return genericHTTPError(status)
 }
 
-// validationServerDetail exposes bounded validation context only where the
-// caller can act on it; authentication and dependency responses stay opaque.
-func validationServerDetail(status int, payload apiErrorPayload) string {
+// legacyServerDetail preserves bounded Engine text when an older handler has not adopted the structured envelope yet.
+func legacyServerDetail(payload apiErrorPayload) string {
 	if detail := decodedErrorString(payload.Error); detail != "" {
-		return safeValidationDetail(status, detail)
+		return safeServerDetail(detail)
 	}
-	return safeValidationDetail(status, decodedErrorString(payload.Message))
-}
-
-// safeValidationDetail centralizes the status gate so both legacy string and
-// structured Engine errors receive the same local-display safety policy.
-func safeValidationDetail(status int, value string) string {
-	if status != http.StatusBadRequest && status != http.StatusUnprocessableEntity {
-		return ""
-	}
-	return safeServerDetail(value)
+	return safeServerDetail(decodedErrorString(payload.Message))
 }
 
 // decodedErrorString rejects nested or mixed response shapes because those
@@ -383,6 +413,7 @@ func containsCredentialMaterial(value string) bool {
 	lower := strings.ToLower(value)
 	markers := []string{
 		"fsk_", "-----begin ", "authorization:", "authorization=",
+		"http://", "https://", "postgres://", "postgresql://",
 		"access_token=", `"access_token":`, "refresh_token=", `"refresh_token":`,
 		"client_secret=", `"client_secret":`, "password=", `"password":`,
 		"api_key=", `"api_key":`, "apikey=", `"apikey":`, "secret=", `"secret":`,
@@ -397,7 +428,7 @@ func containsCredentialMaterial(value string) bool {
 
 func parsedHTTPError(status int, payload apiErrorPayload) error {
 	// Structured errors remain the preferred stable contract, but their optional
-	// owner detail still passes through the same validation-only safety boundary.
+	// owner detail still passes through the same bounded credential-safety gate.
 	var structured APIError
 	if len(payload.Error) > 0 && json.Unmarshal(payload.Error, &structured) == nil && structured.Code != "" && structured.Message != "" {
 		structured.HTTPStatus = status

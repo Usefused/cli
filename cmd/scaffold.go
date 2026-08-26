@@ -70,15 +70,20 @@ type scaffoldResult struct {
 
 type scaffoldRequirementsResolver func([]api.AppScaffoldSelection) ([]api.AppScaffoldRequirement, error)
 
-// newScaffoldCommand wires production app scaffolds to Engine requirement
-// discovery while leaving the dependency replaceable in focused offline tests.
+type scaffoldBucketResolver func() (string, error)
+
+// newScaffoldCommand wires production app scaffolds to Engine requirement and visible-bucket discovery.
 func newScaffoldCommand(kind configfile.ConfigKind) *cobra.Command {
-	return newScaffoldCommandWithResolver(kind, resolveScaffoldRequirements)
+	return newScaffoldCommandWithDependencies(kind, resolveScaffoldRequirements, resolveScaffoldBucket)
 }
 
-// newScaffoldCommandWithResolver injects the only remote scaffold dependency
-// so parsing, merging, and atomic writes remain independently testable.
+// newScaffoldCommandWithResolver preserves focused requirement tests with a deterministic existing-bucket candidate.
 func newScaffoldCommandWithResolver(kind configfile.ConfigKind, resolver scaffoldRequirementsResolver) *cobra.Command {
+	return newScaffoldCommandWithDependencies(kind, resolver, defaultTestScaffoldBucket)
+}
+
+// newScaffoldCommandWithDependencies keeps Engine-owned discovery replaceable without coupling local merge tests to remote state.
+func newScaffoldCommandWithDependencies(kind configfile.ConfigKind, resolver scaffoldRequirementsResolver, bucketResolver scaffoldBucketResolver) *cobra.Command {
 	opts := &scaffoldOptions{version: defaultScaffoldVersion, language: defaultScaffoldLanguage}
 	use := "init [name]"
 	args := cobra.RangeArgs(0, 1)
@@ -100,10 +105,11 @@ merge %s into an existing config instead.`, kind, selectionDescription),
 		Args: args,
 		RunE: WithTelemetry(fmt.Sprintf("cli.%s.init", kind), func(cmd *cobra.Command, args []string) error {
 			request, err := buildScaffoldRequest(cmd, kind, args, opts)
+			// Invalid local arguments must fail before either Engine discovery dependency is invoked.
 			if err != nil {
 				return err
 			}
-			result, err := writeScaffold(request, resolver)
+			result, err := writeScaffold(request, resolver, bucketResolver)
 			if err != nil {
 				return err
 			}
@@ -140,6 +146,41 @@ func resolveScaffoldRequirements(selections []api.AppScaffoldSelection) ([]api.A
 		return nil, err
 	}
 	return client.AppScaffoldRequirements(selections)
+}
+
+// resolveScaffoldBucket selects an existing visible bucket without creating or granting access as a side effect of init.
+func resolveScaffoldBucket() (string, error) {
+	client, err := getAPIClient()
+	// Authentication and transport failures must stop init rather than masquerading as an empty workspace.
+	if err != nil {
+		return "", err
+	}
+	page, err := client.ListBucketSummariesPage(api.PageOptions{Limit: 100})
+	// The ordinary bucket list is the authoritative read-visible candidate set for automatic selection.
+	if err != nil {
+		return "", err
+	}
+	return selectScaffoldBucket(page.Items)
+}
+
+// selectScaffoldBucket prefers the conventional default name and otherwise uses one existing visible candidate deterministically.
+func selectScaffoldBucket(buckets []api.BucketSummaryResponse) (string, error) {
+	for _, bucket := range buckets {
+		// The visible bucket named default is the documented automatic candidate; plan still proves bucket.use.
+		if strings.EqualFold(strings.TrimSpace(bucket.Name), "default") {
+			return bucket.Name, nil
+		}
+	}
+	// Falling back to the first visible bucket avoids silently creating workspace state when default is absent.
+	if len(buckets) > 0 {
+		return buckets[0].Name, nil
+	}
+	return "", errors.New("no visible bucket is available; create one or pass --bucket")
+}
+
+// defaultTestScaffoldBucket keeps focused command tests deterministic while production uses Engine-visible bucket selection.
+func defaultTestScaffoldBucket() (string, error) {
+	return "default", nil
 }
 
 func buildScaffoldRequest(cmd *cobra.Command, kind configfile.ConfigKind, args []string, opts *scaffoldOptions) (scaffoldRequest, error) {
@@ -244,11 +285,13 @@ func parseScaffoldNames(flag string, values []string) ([]string, error) {
 	return names, nil
 }
 
-func writeScaffold(request scaffoldRequest, resolver scaffoldRequirementsResolver) (scaffoldResult, error) {
+// writeScaffold routes create and extend through their matching atomic-write workflows.
+func writeScaffold(request scaffoldRequest, resolver scaffoldRequirementsResolver, bucketResolver scaffoldBucketResolver) (scaffoldResult, error) {
+	// Extend must inspect the existing document before deciding whether automatic bucket selection is necessary.
 	if request.extend {
-		return extendScaffold(request, resolver)
+		return extendScaffold(request, resolver, bucketResolver)
 	}
-	data, generated, err := newScaffoldData(request, resolver)
+	data, generated, err := newScaffoldData(request, resolver, bucketResolver)
 	if err != nil {
 		return scaffoldResult{}, err
 	}
@@ -258,7 +301,8 @@ func writeScaffold(request scaffoldRequest, resolver scaffoldRequirementsResolve
 	return scaffoldResult{Action: "created", Kind: request.kind, Path: request.path, Changed: true, GeneratedBindingCount: generated}, nil
 }
 
-func extendScaffold(request scaffoldRequest, resolver scaffoldRequirementsResolver) (scaffoldResult, error) {
+// extendScaffold preserves the existing draft until the complete merged document validates and can be replaced atomically.
+func extendScaffold(request scaffoldRequest, resolver scaffoldRequirementsResolver, bucketResolver scaffoldBucketResolver) (scaffoldResult, error) {
 	data, err := os.ReadFile(request.path)
 	if os.IsNotExist(err) {
 		return scaffoldResult{}, fmt.Errorf("cannot extend %s: file does not exist", request.path)
@@ -266,7 +310,7 @@ func extendScaffold(request scaffoldRequest, resolver scaffoldRequirementsResolv
 	if err != nil {
 		return scaffoldResult{}, fmt.Errorf("read config %s: %w", request.path, err)
 	}
-	updated, changed, generated, err := extendScaffoldData(request, data, resolver)
+	updated, changed, generated, err := extendScaffoldData(request, data, resolver, bucketResolver)
 	if err != nil {
 		return scaffoldResult{}, err
 	}
@@ -281,7 +325,9 @@ func extendScaffold(request scaffoldRequest, resolver scaffoldRequirementsResolv
 	return result, nil
 }
 
-func newScaffoldData(request scaffoldRequest, resolver scaffoldRequirementsResolver) ([]byte, int, error) {
+// newScaffoldData builds one complete create document before any filesystem mutation occurs.
+func newScaffoldData(request scaffoldRequest, resolver scaffoldRequirementsResolver, bucketResolver scaffoldBucketResolver) ([]byte, int, error) {
+	// Workspace scaffolds own bucket declarations separately and must not acquire app-only defaults.
 	if request.kind == configfile.KindWorkspace {
 		config := &configfile.WorkspaceConfig{
 			BaseConfig: configfile.BaseConfig{APIVersion: configfile.APIVersionV1, Kind: request.kind},
@@ -300,12 +346,14 @@ func newScaffoldData(request scaffoldRequest, resolver scaffoldRequirementsResol
 	if request.kind == configfile.KindSDK {
 		config.Language = request.language
 	}
-	// Why: omission delegates to Engine's existing default-bucket selection;
-	// scaffolding must not invent a bucket or imply that one was created.
+	// An explicit flag remains authoritative and is verified later by plan's exact bucket.use check.
 	if request.bucketSet {
 		config.Bucket = request.bucket
 	}
 	if _, err := mergeAppSelections(config, request); err != nil {
+		return nil, 0, err
+	}
+	if _, err := ensureScaffoldBucket(config, bucketResolver); err != nil {
 		return nil, 0, err
 	}
 	generated, err := enrichAppScaffold(config, resolver)
@@ -316,12 +364,13 @@ func newScaffoldData(request scaffoldRequest, resolver scaffoldRequirementsResol
 	return data, generated, err
 }
 
-func extendScaffoldData(request scaffoldRequest, data []byte, resolver scaffoldRequirementsResolver) ([]byte, bool, int, error) {
+// extendScaffoldData keeps workspace-local and Engine-backed app merge policies separated at one boundary.
+func extendScaffoldData(request scaffoldRequest, data []byte, resolver scaffoldRequirementsResolver, bucketResolver scaffoldBucketResolver) ([]byte, bool, int, error) {
 	// Workspace drafts have no Engine-backed app routing requirements.
 	if request.kind == configfile.KindWorkspace {
 		return extendWorkspaceScaffoldData(request, data)
 	}
-	return extendAppScaffoldData(request, data, resolver)
+	return extendAppScaffoldData(request, data, resolver, bucketResolver)
 }
 
 // extendWorkspaceScaffoldData keeps the local-only workspace merge separate
@@ -340,9 +389,8 @@ func extendWorkspaceScaffoldData(request scaffoldRequest, data []byte) ([]byte, 
 	return updated, changed, 0, err
 }
 
-// extendAppScaffoldData merges identity and selections before performing one
-// requirement lookup and one atomic serialization.
-func extendAppScaffoldData(request scaffoldRequest, data []byte, resolver scaffoldRequirementsResolver) ([]byte, bool, int, error) {
+// extendAppScaffoldData merges identity and selections before bounded Engine discovery and one atomic serialization.
+func extendAppScaffoldData(request scaffoldRequest, data []byte, resolver scaffoldRequirementsResolver, bucketResolver scaffoldBucketResolver) ([]byte, bool, int, error) {
 	config := &configfile.AppConfig{}
 	if err := decodeScaffoldDraft(data, request.path, request.kind, config); err != nil {
 		return nil, false, 0, err
@@ -359,12 +407,35 @@ func extendAppScaffoldData(request scaffoldRequest, data []byte, resolver scaffo
 	if err != nil {
 		return nil, false, 0, err
 	}
+	bucketChanged, err := ensureScaffoldBucket(config, bucketResolver)
+	if err != nil {
+		return nil, false, 0, err
+	}
 	generated, err := enrichAppScaffold(config, resolver)
 	if err != nil {
 		return nil, false, 0, err
 	}
 	updated, err := yaml.Marshal(config)
-	return updated, changed || selectionChanged || generated > 0, generated, err
+	return updated, changed || selectionChanged || bucketChanged || generated > 0, generated, err
+}
+
+// ensureScaffoldBucket fills only a missing service-bearing app bucket so empty editable skeletons stay local-only.
+func ensureScaffoldBucket(config *configfile.AppConfig, resolver scaffoldBucketResolver) (bool, error) {
+	// Existing or explicitly authored buckets must never be replaced by automatic selection.
+	if strings.TrimSpace(config.Bucket) != "" {
+		return false, nil
+	}
+	// Empty skeletons remain editable offline because they cannot be planned until a service is selected anyway.
+	if len(config.Services) == 0 {
+		return false, nil
+	}
+	bucket, err := resolver()
+	// Bucket discovery failures stop the write so init cannot emit another locally valid but unplannable app config.
+	if err != nil {
+		return false, err
+	}
+	config.Bucket = bucket
+	return true, nil
 }
 
 func mergeWorkspaceServices(config *configfile.WorkspaceConfig, services []scaffoldService) bool {

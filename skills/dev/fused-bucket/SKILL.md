@@ -182,10 +182,10 @@ when there is exactly one. `--type` selects the public credential type
 (`api_key`, `oauth`, and so on); when two schemes share that type, also pass the exact
 Registry scheme name as `--auth-name <scheme-name>` or use `-i`. The CLI fails
 an ambiguous same-type selection rather than choosing the first. Basic input
-follows the selected scheme's `basic_password_mode`: `required` needs a
-non-empty password, `optional` permits one to be empty, and `empty` rejects a
-non-empty password. The CLI writes the password key even when empty so a stale
-older value is replaced. mTLS is always stored as the matching
+follows the selected scheme's `basic_password_mode`: omission and `required`
+need a non-empty password, `optional` permits one to be empty, and `empty`
+rejects a non-empty password. The CLI writes the password key even when empty
+so a stale older value is replaced. mTLS is always stored as the matching
 `<name>_cert`/`<name>_key` pair and is validated before storage.
 
 `--expires-at` is optional and purely advisory metadata (`secret list` and

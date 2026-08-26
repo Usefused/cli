@@ -783,6 +783,45 @@ func TestImportApplyMalformedSuccessRecoversThroughStatus(t *testing.T) {
 	}
 }
 
+// TestImportApplyCommittedPartialRecordsMutationEvidence proves a post-commit
+// Engine failure remains an error while still leaving a durable OTEL audit event.
+func TestImportApplyCommittedPartialRecordsMutationEvidence(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusFailedDependency)
+		// The Engine owns this reviewed envelope, so the CLI can preserve its
+		// recovery contract without recording the diagnostic text in telemetry.
+		_, _ = w.Write([]byte(`{"error":{"code":"import_workspace_activation_failed","message":"The service was published, but workspace activation failed.","category":"partial","phase":"workspace_activation","operation_id":"` + importApplyTestPlanID + `","request_id":"request-1","commit_state":"committed","recovery":"fused-cli workspace service add chargebee --apply"}}`))
+	}))
+	defer server.Close()
+	setImportTestAPI(t, server.URL)
+
+	exporter := tracetest.NewInMemoryExporter()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
+	ctx, span := provider.Tracer("test").Start(t.Context(), "cli.import.apply")
+	command := &cobra.Command{Use: "apply"}
+	command.SetContext(ctx)
+	command.SetOut(&strings.Builder{})
+	err := runImportApply(command, importSpecApplyOptions{receiptPath: writeImportTimeoutReceipt(t, server.URL)})
+	span.End()
+
+	var apiError *api.APIError
+	// A committed partial must not be rewritten as outcome-unknown or success.
+	if !errors.As(err, &apiError) || apiError.CommitState != "committed" || apiError.Phase != "workspace_activation" {
+		t.Fatalf("committed partial = %T %v", err, err)
+	}
+	spans := exporter.GetSpans()
+	if got := countAppliedChangeEvents(spans); got != 1 {
+		t.Fatalf("applied change event count = %d, want 1", got)
+	}
+	assertImportPlanSpanAttribute(t, spans, "outcome", "partial")
+	assertImportPlanSpanAttribute(t, spans, "failure_phase", "workspace_activation")
+	// User-facing diagnostics are deliberately absent from bounded audit data.
+	if strings.Contains(spanText(spans), apiError.Message) || strings.Contains(spanText(spans), apiError.Recovery) {
+		t.Fatalf("telemetry contains Engine diagnostic text: %s", spanText(spans))
+	}
+}
+
 // writeImportTimeoutReceipt preserves the real receipt boundary so the test
 // exercises slug-based recovery guidance instead of constructing hidden state.
 func writeImportTimeoutReceipt(t *testing.T, engineURL string) string {
