@@ -431,6 +431,26 @@ func TestMCPDevSkillDocumentsInitializedLifecycle(t *testing.T) {
 	}
 }
 
+// TestMCPDevSkillDocumentsPhysicalPaginationDiscovery prevents installed agents from guessing GET traversal.
+func TestMCPDevSkillDocumentsPhysicalPaginationDiscovery(t *testing.T) {
+	path := filepath.Join("..", "skills", "dev", "fused-mcp", "SKILL.md")
+	data, err := os.ReadFile(path)
+	// Missing skill content cannot satisfy the distributed pagination contract.
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	content := strings.Join(strings.Fields(string(data)), " ")
+	for _, required := range []string{
+		"`supported`, `caller_bound_supported`", "`engine_max_pages`", "positive N strictly lower",
+		"Engine makes one provider request", "Never infer page, cursor, offset", "omit the option",
+	} {
+		// Every marker changes how a fresh agent formats physical call pagination.
+		if !strings.Contains(content, required) {
+			t.Errorf("MCP skill is missing physical pagination guidance %q", required)
+		}
+	}
+}
+
 func TestDevAppSkillsDocumentExactSelectionSchemaVersion(t *testing.T) {
 	tests := []struct {
 		name     string
