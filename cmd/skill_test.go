@@ -441,8 +441,19 @@ func TestMCPDevSkillDocumentsPhysicalPaginationDiscovery(t *testing.T) {
 	}
 	content := strings.Join(strings.Fields(string(data)), " ")
 	for _, required := range []string{
-		"`supported`, `caller_bound_supported`", "`engine_max_pages`", "positive N strictly lower",
-		"Engine makes one provider request", "Never infer page, cursor, offset", "omit the option",
+		"`supported: true` and `exact_lookup_required: true`", "`usage` offers only an exact `operationId` lookup for full guidance or the safe two-argument `call(operationId, params)`",
+		"does not mention or authorize a numeric bound or third argument", "omits `caller_bound_supported` and `engine_max_pages`",
+		"Resolve exact detail before adding a physical pagination option, but not solely to make the safe two-argument call", "ranked query result may instead establish `supported: false`",
+		"still omits `caller_bound_supported`", "Exact mode alone exposes `caller_bound_supported` and `engine_max_pages`",
+		"Exact operation detail exposes `supported`, `caller_bound_supported`, optional `engine_max_pages`", "positive N strictly lower",
+		"Evaluate pagination separately for every physical call", "Never reuse pagination support or a page bound from another operation",
+		"guidance for `gmail.users.messages.list` cannot authorize a third argument for `gmail.users.messages.get`",
+		"Only when exact detail for that same `operationId` reports `caller_bound_supported: true`", "Never derive a numeric bound or third argument from a ranked query result",
+		"reports `caller_bound_supported: false`, must use the two-argument form `call(operationId, params)`",
+		"Physical-target pagination inside a Unified operation must stay target-keyed", "Never move it into the separate third argument",
+		"pre-provider argument correction only when no earlier or concurrent call", "`execute_request: correct_arguments` with `provider_execution: not_started`",
+		"`execute_request: do_not_replay` with `provider_execution: unknown`", "pre-provider correction only when isolated",
+		"Engine makes one provider request", "Never infer page, cursor, offset",
 	} {
 		// Every marker changes how a fresh agent formats physical call pagination.
 		if !strings.Contains(content, required) {

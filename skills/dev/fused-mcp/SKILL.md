@@ -81,12 +81,27 @@ section, or its Unified `input`, `targets`, or `output` section. Use
 Do not pre-emptively load every response schema because the actual provider
 response arrives through `execute`.
 
-Physical operations returned by query or exact detail include a `pagination`
-object with `supported`, `caller_bound_supported`, optional
-`engine_max_pages`, and an exact `usage` instruction. Follow those fields before
-writing `call()`: HTTP method and provider parameter names never establish an
-Engine pagination policy. Section-only retrieval is a continuation of the
-earlier detail lookup, not a replacement for reading this operation guidance.
+Every physical operation returned by `search_docs` may include a `pagination`
+object scoped only to the operation ID in that same result. A ranked query result
+for an operation that may support Engine pagination reports `supported: true`
+and `exact_lookup_required: true`. Its `usage` offers only an exact `operationId`
+lookup for full guidance or the safe two-argument `call(operationId, params)`;
+it does not mention or authorize a numeric bound or third argument. The ranked
+object also omits `caller_bound_supported` and `engine_max_pages`. Resolve exact
+detail before adding a physical pagination option, but not solely to make the
+safe two-argument call. Exact operation detail exposes `supported`,
+`caller_bound_supported`, optional `engine_max_pages`, and the authoritative
+`usage` instruction. A ranked query result may instead establish
+`supported: false` and give the exact two-argument form without another lookup
+solely for pagination, but still omits `caller_bound_supported`. Exact mode alone
+exposes `caller_bound_supported` and `engine_max_pages`. Evaluate pagination
+separately for every physical call.
+Never reuse pagination support or a page bound from another operation, even one
+on the same service or resource: guidance for `gmail.users.messages.list`
+cannot authorize a third argument for `gmail.users.messages.get`. HTTP method
+and provider parameter names never establish an Engine pagination policy.
+Section-only retrieval is a continuation of the earlier detail lookup, not a
+replacement for reading this operation guidance.
 
 Agent-triggered discovery is auditable without exposing user content. Telemetry
 may record mode, bounded catalogue counts, whether detail was requested,
@@ -101,6 +116,9 @@ dependency-closed, and omit `idempotencyKey` only when a new SDK-equivalent UUID
 is appropriate. Engine reauthenticates the session and sends every selected
 forward and active rollback through the canonical Unified coordinator; catalogue
 visibility never grants execution scope.
+Physical-target pagination inside a Unified operation must stay target-keyed in
+that documented Unified `pagination` parameter. Never move it into the separate
+third argument used only by direct physical calls.
 A service's `webhooks`/`webhooks_select_all` are rejected outright on an MCP
 config (both CLI-side and Engine-side) -- this predates `webhook_attachment`
 and hasn't been revisited since (see the doc comment on
@@ -396,32 +414,48 @@ create another provider-execution receipt for a session-only read.
 
 Pagination is derived from the selected endpoint and its current effective
 service-version policy. Do not add pagination fields to MCP config or physical
-provider schemas. When `search_docs.pagination.supported` is true, an ordinary
-`call(operationId, params)` completes the reviewed provider pagination loop
-inside Engine and returns one aggregate; MCP result retention and
-`session.get`/`session.page` happen only afterward. Provider page-size
-parameters such as Gmail `maxResults` do not limit total Engine traversal.
-When `caller_bound_supported` is also true and the goal intentionally needs
-only the first N provider pages, use the canonical caller bound as a separate
-third argument with a positive N strictly lower than `engine_max_pages`:
+provider schemas. Ranked `supported: true` guidance safely authorizes an
+ordinary `call(operationId, params)`, which completes the reviewed provider
+pagination loop inside Engine and returns one aggregate; MCP result retention
+and `session.get`/`session.page` happen only afterward. Provider page-size
+parameters such as Gmail `maxResults` do not limit total Engine traversal. Only
+when exact detail for that same `operationId` reports
+`caller_bound_supported: true` and the goal intentionally needs the first N
+provider pages may you use the canonical caller bound as a separate third
+argument with a positive N strictly lower than `engine_max_pages`:
 
 ```typescript
 await call(operationId, params, { pagination: { maxPages: N } })
 ```
 
 This option can only tighten the reviewed Engine policy. It never belongs in
-provider params or bypasses Engine pagination. When `supported` is false, omit
-the option: Engine makes one provider request for that call and does not
-traverse provider pages. For a paged GET, repeat two-argument calls only when
-the operation documentation explicitly supplies the page input, continuation
-output, and stop condition. Pass the documented page input in `params`, await
-the call, read the continuation from its result, and repeat until that stop
-condition. Never infer page, cursor, offset, or termination semantics from
-field names. Every manual page consumes the execute call and deadline budgets.
-A supported one-page policy has
-`caller_bound_supported: false`, because no positive lower bound exists.
-Unified calls retain their target-keyed `pagination` inside the documented
-Unified invocation object.
+provider params or bypasses Engine pagination. Never derive a numeric bound or
+third argument from a ranked query result, including one with `supported: true`;
+the exact lookup is the only authority for those fields. A physical operation
+whose available guidance reports `supported: false`, or whose exact detail
+reports `caller_bound_supported: false`, must use the two-argument form
+`call(operationId, params)`; do not copy a third-argument bound from a different
+operation. When `supported` is false, Engine makes one provider request for that
+call and does not traverse provider pages. For a paged GET, repeat two-argument
+calls only when the operation documentation explicitly supplies the page input,
+continuation output, and stop condition. Pass the documented page input in
+`params`, await the call, read the continuation from its result, and repeat until
+that stop condition. Never infer page, cursor, offset, or termination semantics
+from field names. Every manual page consumes the execute call and deadline
+budgets. A supported one-page policy has `caller_bound_supported: false`,
+because no positive lower bound exists. Unified calls retain their target-keyed
+`pagination` inside the documented Unified invocation object.
+
+A physical pagination-intent rejection is a pre-provider argument correction
+only when no earlier or concurrent call in the same `execute` may have
+dispatched. In that isolated case, invalid `maxPages`, unsupported pagination,
+or a non-lowering bound returns `execute_request: correct_arguments` with
+`provider_execution: not_started`. If an earlier or concurrent call may have
+dispatched, the outer `execute` must instead return
+`execute_request: do_not_replay` with `provider_execution: unknown`, because the
+script may already have provider side effects. Inspect external state before
+issuing new work. Invalid target-keyed physical pagination on a Unified call
+uses the same rule: it is a pre-provider correction only when isolated.
 
 If automatic traversal reaches an Engine pagination limit before provider
 termination, narrow the provider query or deliberately choose a smaller caller
