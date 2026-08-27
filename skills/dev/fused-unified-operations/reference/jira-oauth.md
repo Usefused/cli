@@ -1,15 +1,18 @@
 # Bucket-scoped Jira OAuth
 
-Use one visible bucket consistently for static provider secrets, Jira OAuth app
-registration, user connections, and the immutable SDK. `bucket list`
+Use one visible bucket consistently for Jira OAuth application credentials,
+user connections, and the immutable SDK. `bucket list`
 does not prove `bucket.use`; stop on denial and never create or select a
 fallback bucket. This example uses `default`:
 
 ```shell
 fused-cli bucket list
-printf '%s' 'client_id=...;client_secret=...;redirect_uri=http://localhost:8081/workspace/connect/callback' | \
-  fused-cli connect set jira --bucket default --type oauth --auth-name OAuth2 --value-stdin
+printf '%s' 'client_id=...;client_secret=...' | \
+  fused-cli secret set jira --bucket default --type oauth --auth-name OAuth2 --value-stdin
 ```
+
+Configure the Engine canonical public URL separately. Engine appends
+`/workspace/connect/callback`; never supply a redirect URI as credential input.
 
 ## Ingest the official contract
 
@@ -94,7 +97,12 @@ services:
   jira:
     version: "<official-jira-version>"
     operations: [searchProjects, getCreateIssueMetaIssueTypes, getCreateIssueMetaIssueTypeId, createIssue]
-    auth: {type: oauth, name: OAuth2}
+    auth:
+      type: oauth
+      name: OAuth2
+      ref: "${bucket.auth.jira.OAuth2}"
+    connect:
+      scopes: ["read:jira-work", "write:jira-work", offline_access]
 ```
 
 After consent, select only an opaque Engine resource UUID. Discover visible

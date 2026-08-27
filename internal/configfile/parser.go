@@ -324,7 +324,8 @@ func validateAppKindFields(cfg *AppConfig, kind ConfigKind) error {
 // webhook_attachment or per-service Webhooks/WebhooksSelectAll.
 func validateAppServices(services map[string]SDKService, kind ConfigKind, webhookAttachment string) error {
 	for svcName, svc := range services {
-		if err := validateSDKService(svcName, svc); err != nil {
+		// Kind-specific diagnostics keep shared validation actionable for both app kinds.
+		if err := validateAppService(svcName, svc, kind); err != nil {
 			return err
 		}
 		if kind == KindMCP && (len(svc.Webhooks) > 0 || svc.WebhooksSelectAll) {
@@ -358,15 +359,55 @@ func strictUnmarshal(data []byte, target any) error {
 	return decoder.Decode(target)
 }
 
-func validateSDKService(name string, svc SDKService) error {
+// validateAppService checks operation selection and exact auth intent shared by SDK and MCP configs.
+func validateAppService(name string, svc SDKService, kind ConfigKind) error {
+	// Every selected service must expose at least one physical operation.
 	if len(svc.Operations) == 0 && !svc.SelectAll {
-		return fmt.Errorf("sdk service %q requires at least one operation", name)
+		return fmt.Errorf("%s service %q requires at least one operation", kind, name)
 	}
-	if svc.Auth != nil && strings.TrimSpace(svc.Auth.Type) == "" {
-		return fmt.Errorf("sdk service %q auth requires type", name)
+	return validateAppAuth(name, svc.Auth, kind)
+}
+
+// validateAppAuth admits ordinary scheme selection and the narrower OAuth/OIDC credential-family reference.
+func validateAppAuth(serviceName string, auth *AppAuth, kind ConfigKind) error {
+	// Services without an explicit selector retain Engine's reviewed requirement resolution.
+	if auth == nil {
+		return nil
 	}
-	if svc.Auth != nil && !isAppAuthType(svc.Auth.Type) {
-		return fmt.Errorf("sdk service %q auth type must be one of basic, bearer, api_key, oauth, oidc, or mtls", name)
+	authType := strings.ToLower(strings.TrimSpace(auth.Type))
+	// A present selector must always identify one supported public auth family.
+	if authType == "" {
+		return fmt.Errorf("%s service %q auth requires type", kind, serviceName)
+	}
+	if !isAppAuthType(authType) {
+		return fmt.Errorf("%s service %q auth type must be one of basic, bearer, api_key, oauth, oidc, or mtls", kind, serviceName)
+	}
+	// Ordinary direct selectors need no credential-family reference validation.
+	if auth.Ref == "" {
+		return nil
+	}
+	// Only OAuth/OIDC application pairs are compatible with cross-service reuse.
+	if authType != "oauth" && authType != "oidc" {
+		return fmt.Errorf("%s service %q auth ref requires type oauth or oidc", kind, serviceName)
+	}
+	// The destination scheme is exact so Engine never guesses among same-family schemes.
+	if strings.TrimSpace(auth.Name) == "" || auth.Name != strings.TrimSpace(auth.Name) {
+		return fmt.Errorf("%s service %q auth ref requires an exact name", kind, serviceName)
+	}
+	return validateAppAuthRef(serviceName, auth.Ref, kind)
+}
+
+// validateAppAuthRef enforces the credential-family reference grammar while Engine owns source lookup and compatibility.
+func validateAppAuthRef(serviceName, value string, kind ConfigKind) error {
+	const prefix = "${bucket.auth."
+	// The reference must be the complete field value so interpolation cannot alter source identity.
+	if value != strings.TrimSpace(value) || !strings.HasPrefix(value, prefix) || !strings.HasSuffix(value, "}") {
+		return fmt.Errorf("%s service %q auth ref must use ${bucket.auth.<source-service>.<source-authName>}", kind, serviceName)
+	}
+	parts := strings.Split(strings.TrimSuffix(strings.TrimPrefix(value, prefix), "}"), ".")
+	// Exact arity keeps the source service and auth name unambiguous across plan and runtime.
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" || strings.ContainsAny(strings.Join(parts, ""), " \t\r\n{}$") {
+		return fmt.Errorf("%s service %q auth ref must name one source service and auth scheme", kind, serviceName)
 	}
 	return nil
 }
@@ -382,20 +423,48 @@ func isAppAuthType(value string) bool {
 	}
 }
 
+// validateWorkspaceConfig checks workspace services, generic bucket secrets, and deprecation directives.
 func validateWorkspaceConfig(cfg *WorkspaceConfig) error {
+	// Service policy is validated independently from generic bucket-secret declarations.
 	for name, svc := range cfg.Services {
 		if err := validateWorkspaceService(name, svc); err != nil {
 			return err
 		}
 	}
+	// Workspace buckets may carry webhook-style named secrets, but never provider auth configuration.
 	for bucketName, bucket := range cfg.Buckets {
-		if err := validateWorkspaceBucket(bucketName, bucket, cfg.Services); err != nil {
+		if err := validateWorkspaceBucket(bucketName, bucket); err != nil {
 			return err
 		}
 	}
+	// Deprecations require both durable identity and scheduling information.
 	for _, deprecation := range cfg.Deprecations {
 		if deprecation.ServiceID == "" || deprecation.EffectiveAt == "" {
 			return fmt.Errorf("workspace deprecations require service_id and effective_at")
+		}
+	}
+	return nil
+}
+
+// validateWorkspaceBucket restricts workspace YAML buckets to generic, env-backed named secrets.
+func validateWorkspaceBucket(bucketName string, bucket WorkspaceBucket) error {
+	// Empty bucket names cannot form stable apply-material keys.
+	if strings.TrimSpace(bucketName) == "" {
+		return fmt.Errorf("workspace bucket name is required")
+	}
+	return validateWorkspaceBucketSecrets(bucketName, bucket.Secrets)
+}
+
+// validateWorkspaceBucketSecrets prevents plaintext generic secrets from entering a shareable workspace file.
+func validateWorkspaceBucketSecrets(bucketName string, secrets map[string]string) error {
+	for key, value := range secrets {
+		// Each secret needs a stable, non-empty lookup key.
+		if strings.TrimSpace(key) == "" {
+			return fmt.Errorf("workspace bucket %q has a secret with an empty key name", bucketName)
+		}
+		// Apply resolves only explicit environment references, never inline secret values.
+		if strings.TrimSpace(value) == "" || !IsEnvironmentReference(value) {
+			return fmt.Errorf("workspace bucket %q secret %q requires a $ENV reference", bucketName, key)
 		}
 	}
 	return nil
@@ -652,133 +721,8 @@ func isOAuth2FlowName(flow string) bool {
 	}
 }
 
-// validateWorkspaceBucket keeps bucket material scoped to services declared in
-// the same file, preventing credentials from silently targeting an unapproved
-// service key.
-func validateWorkspaceBucket(bucketName string, bucket WorkspaceBucket, services map[string]WorkspaceService) error {
-	if strings.TrimSpace(bucketName) == "" {
-		return fmt.Errorf("workspace bucket name is required")
-	}
-	for serviceName, serviceConfig := range bucket.ServiceConfig {
-		if _, ok := services[serviceName]; !ok {
-			return fmt.Errorf("workspace bucket %q references unknown service %q", bucketName, serviceName)
-		}
-		if err := validateWorkspaceAuthIntent(serviceName, serviceConfig.Auth); err != nil {
-			return err
-		}
-	}
-	return validateWorkspaceBucketSecrets(bucketName, bucket.Secrets)
-}
-
-// validateWorkspaceBucketSecrets enforces the same $ENV-only discipline as
-// Auth/Connect fields on the newer, generic bucket.<name>.secrets.<key>
-// declarative field -- static values are secret material and must never be
-// committed to workspace.yaml.
-func validateWorkspaceBucketSecrets(bucketName string, secrets map[string]string) error {
-	for key, value := range secrets {
-		if strings.TrimSpace(key) == "" {
-			return fmt.Errorf("workspace bucket %q has a secret with an empty key name", bucketName)
-		}
-		if strings.TrimSpace(value) == "" || !isEnvRef(value) {
-			return fmt.Errorf("workspace bucket %q secret %q requires a $ENV reference", bucketName, key)
-		}
-	}
-	return nil
-}
-
-// validateWorkspaceAuthIntent keeps static auth material out of plan/state by
-// requiring local env references for every credential field.
-func validateWorkspaceAuthIntent(name string, auth *AuthConfig) error {
-	// Routing-only service config does not need a static credential declaration.
-	if auth == nil {
-		return nil
-	}
-	// A reference is a complete credential source, so mixing it with local
-	// material would make rotation precedence ambiguous.
-	if strings.TrimSpace(auth.Ref) != "" {
-		// A complete-bundle edge cannot coexist with local credential fields.
-		if workspaceAuthHasCredentialFields(auth) {
-			return fmt.Errorf("workspace service %q auth ref cannot include credential fields", name)
-		}
-		if err := validateWorkspaceAuthReferenceTarget(name, auth); err != nil {
-			return err
-		}
-		return validateWorkspaceAuthRef(name, auth.Ref)
-	}
-	switch canonicalStaticAuthType(auth.AuthType) {
-	case "basic":
-		return validateAuthEnvRefs(name, "basic", auth.Username, auth.Password)
-	case "api_key":
-		return validateAuthEnvRefs(name, "api_key", auth.APIKey)
-	case "mtls":
-		return validateAuthEnvRefs(name, "mtls", auth.Cert, auth.Key)
-	case "bearer", "oauth", "oidc":
-		return validateAuthEnvRefs(name, canonicalStaticAuthType(auth.AuthType), auth.Token)
-	default:
-		return fmt.Errorf("workspace service %q auth has unsupported auth_type", name)
-	}
-}
-
-// validateWorkspaceAuthReferenceTarget requires an exact static destination;
-// runtime must never infer which scheme receives another service's credential.
-func validateWorkspaceAuthReferenceTarget(name string, auth *AuthConfig) error {
-	switch canonicalStaticAuthType(auth.AuthType) {
-	case "basic", "api_key", "mtls", "bearer", "oauth", "oidc":
-		// A named selector is the durable reference target and cannot be omitted
-		// even when the current contract happens to expose only one scheme.
-		if strings.TrimSpace(auth.AuthName) == "" {
-			return fmt.Errorf("workspace service %q auth ref requires auth_name", name)
-		}
-		return nil
-	default:
-		return fmt.Errorf("workspace service %q auth ref has unsupported auth_type", name)
-	}
-}
-
-// workspaceAuthHasCredentialFields keeps the mutually-exclusive ref check in
-// one place as new static credential families are added.
-func workspaceAuthHasCredentialFields(auth *AuthConfig) bool {
-	return auth.Username != "" || auth.Password != "" || auth.Token != "" || auth.APIKey != "" || auth.Cert != "" || auth.Key != ""
-}
-
-// validateWorkspaceAuthRef performs local syntax admission while Engine later
-// resolves both exact service and auth identities authoritatively.
-func validateWorkspaceAuthRef(name, value string) error {
-	const prefix = "${bucket.auth."
-	trimmed := strings.TrimSpace(value)
-	// The slim MVP grammar deliberately uses two dot-free identity segments;
-	// rejecting ambiguous input is safer than guessing how to split it.
-	if !strings.HasPrefix(trimmed, prefix) || !strings.HasSuffix(trimmed, "}") {
-		return fmt.Errorf("workspace service %q auth ref must use ${bucket.auth.<service>.<authName>}", name)
-	}
-	parts := strings.Split(strings.TrimSuffix(strings.TrimPrefix(trimmed, prefix), "}"), ".")
-	// Exact arity prevents a malformed reference from selecting a different
-	// service or scheme after it crosses the apply boundary.
-	if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
-		return fmt.Errorf("workspace service %q auth ref must name one service and auth scheme", name)
-	}
-	return nil
-}
-
-// validateAuthEnvRefs treats static auth fields as secret material even when a
-// provider calls one of them "username", keeping bucket writes apply-only.
-func validateAuthEnvRefs(name, authType string, values ...string) error {
-	for _, value := range values {
-		if strings.TrimSpace(value) == "" || !isEnvRef(value) {
-			// Static auth material is encrypted into Engine bucket secrets during
-			// apply, so the shareable config must carry env refs rather than values.
-			return fmt.Errorf("workspace service %q auth %s requires $ENV credential fields", name, authType)
-		}
-	}
-	return nil
-}
-
-// WorkspaceProfileMaterials resolves only profile binding env refs -- a
-// connection profile is service-level routing policy (keyed by service, not
-// by bucket), which is why it uses its own resolution pass rather than
-// riding along with anything bucket-scoped. Reuses ConnectMaterial purely
-// for its BindingValues field; ClientID/ClientSecret are never populated
-// here (see ConnectMaterial's doc comment).
+// WorkspaceProfileMaterials resolves only profile binding env refs; generic
+// bucket secrets use a separate envelope and provider credentials use APIs.
 func (p *ParsedConfig) WorkspaceProfileMaterials() (map[string]ConnectMaterial, error) {
 	if p.Workspace == nil {
 		return nil, fmt.Errorf("parsed config is not a workspace")
@@ -796,33 +740,9 @@ func (p *ParsedConfig) WorkspaceProfileMaterials() (map[string]ConnectMaterial, 
 	return materials, nil
 }
 
-// WorkspaceAuthMaterials resolves static provider auth env refs only during
-// apply so workspace plan/state files never contain plaintext bucket secrets.
-func (p *ParsedConfig) WorkspaceAuthMaterials() (map[string]AuthMaterial, error) {
-	if p.Workspace == nil {
-		return nil, fmt.Errorf("parsed config is not a workspace")
-	}
-	materials := map[string]AuthMaterial{}
-	for bucketName, bucket := range p.Workspace.Buckets {
-		for key, serviceConfig := range bucket.ServiceConfig {
-			material, ok, err := workspaceServiceAuthMaterial(key, serviceConfig)
-			if err != nil {
-				return nil, err
-			}
-			if ok {
-				materials[workspaceBucketMaterialKey(bucketName, key)] = material
-			}
-		}
-	}
-	return materials, nil
-}
-
-// WorkspaceBucketSecretMaterials resolves buckets.<name>.secrets.<key> $ENV
-// refs only during apply, mirroring WorkspaceAuthMaterials -- generic bucket
-// secrets (plans/plan-service-config-restructure.md item 4) get the same
-// out-of-band resolution treatment as bucket-owned Auth/Connect material, so
-// plan/state files never carry a resolved secret value.
+// WorkspaceBucketSecretMaterials resolves generic bucket-secret env refs only during apply.
 func (p *ParsedConfig) WorkspaceBucketSecretMaterials() (map[string]string, error) {
+	// Only workspace configs can declare generic bucket-secret material.
 	if p.Workspace == nil {
 		return nil, fmt.Errorf("parsed config is not a workspace")
 	}
@@ -830,64 +750,14 @@ func (p *ParsedConfig) WorkspaceBucketSecretMaterials() (map[string]string, erro
 	for bucketName, bucket := range p.Workspace.Buckets {
 		for key, ref := range bucket.Secrets {
 			value, err := resolveMaybeEnv(ref)
+			// Keep the bucket and key in local resolution errors without exposing the value.
 			if err != nil {
-				return nil, fmt.Errorf("workspace bucket %q secret %q: %w", workspaceConnectBucketName(bucketName), key, err)
+				return nil, fmt.Errorf("workspace bucket %q secret %q: %w", workspaceBucketName(bucketName), key, err)
 			}
 			materials[workspaceBucketMaterialKey(bucketName, key)] = value
 		}
 	}
 	return materials, nil
-}
-
-// workspaceServiceAuthMaterial resolves only bucket-scoped static auth so one
-// service's secrets cannot be accidentally reused by another bucket entry.
-func workspaceServiceAuthMaterial(name string, serviceConfig BucketServiceConfig) (AuthMaterial, bool, error) {
-	// Services without static auth contribute no apply-only material envelope.
-	if serviceConfig.Auth == nil {
-		return AuthMaterial{}, false, nil
-	}
-	auth := *serviceConfig.Auth
-	// References resolve inside Engine at dispatch time and therefore must not
-	// produce a duplicate apply-time material envelope from the CLI process.
-	if strings.TrimSpace(auth.Ref) != "" {
-		return AuthMaterial{}, false, nil
-	}
-	if err := resolveAuthEnv(name, &auth); err != nil {
-		return AuthMaterial{}, false, err
-	}
-	return AuthMaterial{Username: auth.Username, Password: auth.Password, Token: auth.Token, APIKey: auth.APIKey, Cert: auth.Cert, Key: auth.Key}, true, nil
-}
-
-// resolveAuthEnv resolves all possible fields; validation decides which fields
-// are required for the selected auth type before this apply-time step.
-func resolveAuthEnv(name string, auth *AuthConfig) error {
-	if err := resolveAuthField(name, "username", &auth.Username); err != nil {
-		return err
-	}
-	if err := resolveAuthField(name, "password", &auth.Password); err != nil {
-		return err
-	}
-	if err := resolveAuthField(name, "token", &auth.Token); err != nil {
-		return err
-	}
-	if err := resolveAuthField(name, "api_key", &auth.APIKey); err != nil {
-		return err
-	}
-	if err := resolveAuthField(name, "cert", &auth.Cert); err != nil {
-		return err
-	}
-	return resolveAuthField(name, "key", &auth.Key)
-}
-
-// resolveAuthField gives each env lookup a field-specific error so operators
-// know exactly which local variable is missing.
-func resolveAuthField(name, field string, value *string) error {
-	resolved, err := resolveMaybeEnv(*value)
-	if err != nil {
-		return fmt.Errorf("workspace service %q auth %s: %w", name, field, err)
-	}
-	*value = resolved
-	return nil
 }
 
 // workspaceServiceProfileMaterial resolves dynamic binding refs separately so
@@ -920,16 +790,15 @@ func workspaceConnectionProfileMaps(svc WorkspaceService) []map[string]interface
 	return out
 }
 
-// workspaceBucketMaterialKey prevents two buckets configuring the same service
-// from overwriting each other's apply-time credential material.
-func workspaceBucketMaterialKey(bucketName, serviceKey string) string {
-	return workspaceConnectBucketName(bucketName) + "\x00" + serviceKey
+// workspaceBucketMaterialKey preserves bucket scope when generic secret maps cross the apply boundary.
+func workspaceBucketMaterialKey(bucketName, secretKey string) string {
+	return workspaceBucketName(bucketName) + "\x00" + secretKey
 }
 
-// workspaceConnectBucketName mirrors Engine's default bucket fallback so local
-// material keys line up with apply validation.
-func workspaceConnectBucketName(bucketName string) string {
+// workspaceBucketName mirrors Engine's default-bucket fallback for apply material keys.
+func workspaceBucketName(bucketName string) string {
 	name := strings.TrimSpace(bucketName)
+	// An omitted logical name maps to Engine's stable default bucket identity.
 	if name == "" {
 		return "default"
 	}
@@ -969,33 +838,13 @@ func resolveMaybeEnv(value string) (string, error) {
 	return "", nil
 }
 
-// canonicalStaticAuthType accepts only the public config vocabulary; provider
-// import spellings are normalized inside the Engine, not in user config.
-func canonicalStaticAuthType(authType string) string {
-	normalized := strings.ToLower(strings.TrimSpace(authType))
-	normalized = strings.ReplaceAll(normalized, "-", "_")
-	switch normalized {
-	case "api_key", "oauth", "oidc", "basic", "bearer", "mtls":
-		return normalized
-	default:
-		return normalized
-	}
-}
-
-// lookupRequiredEnv fails closed so an unset local secret cannot silently apply
-// an empty OAuth client credential into Engine's encrypted connect config.
+// lookupRequiredEnv fails closed so an unset local secret cannot silently apply empty credential material.
 func lookupRequiredEnv(envName string) (string, error) {
 	resolved := os.Getenv(envName)
 	if strings.TrimSpace(resolved) == "" {
 		return "", fmt.Errorf("%s is not set", envName)
 	}
 	return resolved, nil
-}
-
-// isEnvRef keeps validation aligned with apply-time resolution: client_secret
-// may be present in config only when it is a local-env pointer, never a secret.
-func isEnvRef(value string) bool {
-	return IsEnvironmentReference(value)
 }
 
 // IsEnvironmentReference exposes the parser's canonical whole-value $ENV

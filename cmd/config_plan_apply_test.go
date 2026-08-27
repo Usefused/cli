@@ -90,73 +90,7 @@ services:
 	runCommandInDir(t, dir, server.URL, []string{"workspace", "plan", "-f", path})
 }
 
-func TestWorkspacePlanAndApplyPreserveNamedSameFamilyAuth(t *testing.T) {
-	t.Setenv("PRIMARY_API_KEY", "primary-secret")
-	t.Setenv("SECONDARY_API_KEY", "secondary-secret")
-	dir := t.TempDir()
-	path := writeSprintConfig(t, dir, "workspace.yaml", `
-apiVersion: fused/v1
-kind: workspace
-services:
-  billing:
-    service_id: "00000000-0000-0000-0000-000000000001"
-    versions: [{version: "2026-08-01"}]
-buckets:
-  primary:
-    service_config:
-      billing:
-        auth: {auth_type: api_key, auth_name: primaryHeader, api_key: $PRIMARY_API_KEY}
-  secondary:
-    service_config:
-      billing:
-        auth: {auth_type: api_key, auth_name: secondaryHeader, api_key: $SECONDARY_API_KEY}
-`)
-
-	var sourceHash string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/health":
-			_, _ = w.Write([]byte(`{"status":"ok","plane":"engine","environment":"staging"}`))
-		case "/workspace/config/plan":
-			var body map[string]any
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				t.Fatal(err)
-			}
-			sourceHash, _ = body["source_hash"].(string)
-			config := body["config"].(map[string]any)
-			buckets := config["buckets"].(map[string]any)
-			assertPlanAuthName(t, buckets, "primary", "primaryHeader")
-			assertPlanAuthName(t, buckets, "secondary", "secondaryHeader")
-			_, _ = w.Write([]byte(`{"plan_id":"plan-workspace","config_key":"workspace","source_hash":"` + sourceHash + `","summary":{}}`))
-		case "/workspace/config/apply":
-			var body map[string]any
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				t.Fatal(err)
-			}
-			materials := body["auth_materials"].(map[string]any)
-			if materials["primary\x00billing"].(map[string]any)["api_key"] != "primary-secret" || materials["secondary\x00billing"].(map[string]any)["api_key"] != "secondary-secret" {
-				t.Fatalf("named scheme materials changed: %#v", materials)
-			}
-			_, _ = w.Write([]byte(`{"status":"applied","plan_id":"plan-workspace"}`))
-		default:
-			t.Fatalf("unexpected path %s", r.URL.Path)
-		}
-	}))
-	defer server.Close()
-
-	runCommandInDir(t, dir, server.URL, []string{"workspace", "plan", "-f", path})
-	runCommandInDir(t, dir, server.URL, []string{"workspace", "apply", "-f", path})
-}
-
-func assertPlanAuthName(t *testing.T, buckets map[string]any, bucket, want string) {
-	t.Helper()
-	serviceConfig := buckets[bucket].(map[string]any)["service_config"].(map[string]any)
-	auth := serviceConfig["billing"].(map[string]any)["auth"].(map[string]any)
-	if auth["auth_type"] != "api_key" || auth["auth_name"] != want {
-		t.Fatalf("%s auth selection = %#v, want api_key/%s", bucket, auth, want)
-	}
-}
-
+// TestMCPPlanAndApplyUseDedicatedEngineRoutes verifies hosted app routing and auth-ref plan transport.
 func TestMCPPlanAndApplyUseDedicatedEngineRoutes(t *testing.T) {
 	dir := t.TempDir()
 	path := writeSprintConfig(t, dir, "mcp.yaml", `
@@ -171,6 +105,8 @@ services:
     operations: [reposList]
     auth:
       type: oauth
+      name: githubOAuth
+      ref: "${bucket.auth.github-app.sharedOAuth}"
     connect:
       scopes: [read:user]
 `)
@@ -183,6 +119,12 @@ services:
 			var body map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			sourceHash = body["source_hash"].(string)
+			config := body["config"].(map[string]any)
+			auth := config["services"].(map[string]any)["github"].(map[string]any)["auth"].(map[string]any)
+			// The plan request must preserve the reference once without resolving source credential material.
+			if auth["ref"] != "${bucket.auth.github-app.sharedOAuth}" {
+				t.Fatalf("MCP plan auth ref = %#v", auth)
+			}
 			if body["config_key"] != "mcp:github-agent:1.0.0" {
 				t.Fatalf("unexpected config key: %#v", body)
 			}
@@ -211,128 +153,48 @@ services:
 	}
 }
 
-func TestWorkspaceApplyPostsStaticAuthMaterialsFromDollarRefs(t *testing.T) {
-	t.Setenv("FUSED_BASIC_USER", "alice")
-	t.Setenv("FUSED_BASIC_PASS", "s3cr3t")
+// TestSDKPlanPreservesAppAuthReference proves generated apps use the same exact JSON reference transport as MCP.
+func TestSDKPlanPreservesAppAuthReference(t *testing.T) {
 	dir := t.TempDir()
-	path := writeSprintConfig(t, dir, "workspace.yaml", `
+	path := writeSprintConfig(t, dir, "sdk.yaml", `
 apiVersion: fused/v1
-kind: workspace
+kind: sdk
+name: github-client
+version: 1.0.0
+language: typescript
 services:
   github:
-    service_id: "00000000-0000-0000-0000-000000000001"
-    versions: [{version: "2026-07-01"}]
-buckets:
-  prod:
-    service_config:
-      github:
-        auth:
-          auth_type: basic
-          username: $FUSED_BASIC_USER
-          password: ${FUSED_BASIC_PASS}
+    version: "2026-07-01"
+    operations: [reposList]
+    auth:
+      type: oidc
+      name: githubOIDC
+      ref: "${bucket.auth.github-app.sharedOIDC}"
 `)
-	parsed, err := configfile.ParseFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/health" {
-			w.Write([]byte(`{"status":"ok","plane":"engine","environment":"staging"}`))
-			return
+		if r.URL.Path != "/sdk-config/plan" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
 		var body map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Fatalf("decode body: %v", err)
+			t.Fatal(err)
 		}
-		materials := body["auth_materials"].(map[string]any)["prod\x00github"].(map[string]any)
-		if materials["username"] != "alice" || materials["password"] != "s3cr3t" {
-			t.Fatalf("expected resolved auth materials during apply, got %#v", materials)
+		config := body["config"].(map[string]any)
+		auth := config["services"].(map[string]any)["github"].(map[string]any)["auth"].(map[string]any)
+		// Plan must carry only the opaque reference, never a locally resolved credential value.
+		if auth["ref"] != "${bucket.auth.github-app.sharedOIDC}" {
+			t.Fatalf("SDK plan auth ref = %#v", auth)
 		}
-		_, _ = w.Write([]byte(`{"status":"applied","plan_id":"plan-workspace"}`))
-	}))
-	defer server.Close()
-	writeReceipt(t, dir, planReceipt{ConfigKey: "workspace", PlanID: "plan-workspace", SourceHash: parsed.SourceHash, EngineURL: server.URL})
-
-	runCommandInDir(t, dir, server.URL, []string{"workspace", "apply", "-f", path})
-}
-
-// TestWorkspaceApplyPostsMTLSAuthMaterialsFromDollarRefs proves cert/key env
-// refs resolve only during apply, not during shareable plan creation.
-func TestWorkspaceApplyPostsMTLSAuthMaterialsFromDollarRefs(t *testing.T) {
-	t.Setenv("FUSED_CLIENT_CERT", "CERT-PEM")
-	t.Setenv("FUSED_CLIENT_KEY", "KEY-PEM")
-	dir := t.TempDir()
-	path := writeSprintConfig(t, dir, "workspace.yaml", `
-apiVersion: fused/v1
-kind: workspace
-services:
-  github:
-    service_id: "00000000-0000-0000-0000-000000000001"
-    versions: [{version: "2026-07-01"}]
-buckets:
-  prod:
-    service_config:
-      github:
-        auth:
-          auth_type: mtls
-          cert: $FUSED_CLIENT_CERT
-          key: ${FUSED_CLIENT_KEY}
-`)
-	parsed, err := configfile.ParseFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/health" {
-			w.Write([]byte(`{"status":"ok","plane":"engine","environment":"staging"}`))
-			return
-		}
-		var body map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Fatalf("decode body: %v", err)
-		}
-		materials := body["auth_materials"].(map[string]any)["prod\x00github"].(map[string]any)
-		if materials["cert"] != "CERT-PEM" || materials["key"] != "KEY-PEM" {
-			t.Fatalf("expected resolved mTLS auth materials during apply, got %#v", materials)
-		}
-		_, _ = w.Write([]byte(`{"status":"applied","plan_id":"plan-workspace"}`))
-	}))
-	defer server.Close()
-	writeReceipt(t, dir, planReceipt{ConfigKey: "workspace", PlanID: "plan-workspace", SourceHash: parsed.SourceHash, EngineURL: server.URL})
-
-	runCommandInDir(t, dir, server.URL, []string{"workspace", "apply", "-f", path})
-}
-
-func TestWorkspacePlanRejectsInlineStaticAuthMaterial(t *testing.T) {
-	dir := t.TempDir()
-	path := writeSprintConfig(t, dir, "workspace.yaml", `
-apiVersion: fused/v1
-kind: workspace
-services:
-  github:
-    service_id: "00000000-0000-0000-0000-000000000001"
-    versions: [{version: "2026-07-01"}]
-buckets:
-  prod:
-    service_config:
-      github:
-        auth:
-          auth_type: basic
-          username: alice
-          password: s3cr3t
-`)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Fatalf("inline static auth material must fail before posting to Engine")
+		_, _ = w.Write([]byte(`{"plan_id":"plan-sdk","config_key":"sdk:github-client:1.0.0","source_hash":"` + body["source_hash"].(string) + `","summary":{}}`))
 	}))
 	defer server.Close()
 
-	out := runCommandInDirExpectError(t, dir, server.URL, []string{"workspace", "plan", "-f", path})
-	if !strings.Contains(out, "$ENV credential fields") {
-		t.Fatalf("expected inline auth material rejection, got %s", out)
-	}
+	runCommandInDir(t, dir, server.URL, []string{"sdk", "plan", "-f", path})
 }
 
+// TestWorkspaceApplyUsesReceiptWithoutReplanning verifies receipts and generic secret material share one apply request.
 func TestWorkspaceApplyUsesReceiptWithoutReplanning(t *testing.T) {
+	t.Setenv("FUSED_TEST_WEBHOOK_SECRET", "resolved-webhook-secret")
 	dir := t.TempDir()
 	path := writeSprintConfig(t, dir, "workspace.yaml", `
 apiVersion: fused/v1
@@ -341,6 +203,10 @@ services:
   okta:
     service_id: "00000000-0000-0000-0000-000000000001"
     versions: [{version: "2026-07-01"}]
+buckets:
+  default:
+    secrets:
+      webhook_signing: $FUSED_TEST_WEBHOOK_SECRET
 `)
 	parsed, err := configfile.ParseFile(path)
 	if err != nil {
@@ -362,12 +228,21 @@ services:
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
 		sawApply = true
-		var body map[string]string
+		var body map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatalf("decode body: %v", err)
 		}
 		if body["plan_id"] != "plan-workspace" || body["source_hash"] != parsed.SourceHash {
 			t.Fatalf("unexpected apply body %#v", body)
+		}
+		// Retired provider-auth material must remain absent from the apply contract.
+		if _, present := body["auth_materials"]; present {
+			t.Fatalf("workspace apply retained auth_materials: %#v", body)
+		}
+		// Generic named secrets remain supported for webhook and similar consumers.
+		bucketSecrets, ok := body["bucket_secret_materials"].(map[string]any)
+		if !ok || bucketSecrets["default\x00webhook_signing"] != "resolved-webhook-secret" {
+			t.Fatalf("workspace apply generic secrets = %#v", body)
 		}
 		_, _ = w.Write([]byte(`{"status":"applied","plan_id":"plan-workspace"}`))
 	}))

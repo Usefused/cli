@@ -708,34 +708,20 @@ visible candidate. Run connect with that exact candidate; on `bucket.use`
 denial, stop and report it instead of creating a fallback. Create only for an
 explicit user request or stated enterprise, tenant, or environment isolation
 requirement with workspace `bucket.manage`; creation does not grant
-`bucket.use`, and self-granting is forbidden. Register the OAuth app under the
-selected bucket, which will also hold the resulting user tokens.
-`auth`/`connect` live under `buckets.<bucket>.service_config.<slug>`, not under
-the service itself (see `fused-bucket`). Registration is a separate, immediate
-admin action, not a workspace.yaml field. This ordinary example uses `default`:
+`bucket.use`, and self-granting is forbidden. Store the OAuth application pair
+under the selected bucket, which will hold resulting connected-user tokens as
+distinct records. The pair is an immediate secret mutation, not a
+workspace.yaml field. This ordinary example uses `default`:
 
 ```shell
 fused-cli bucket list
-printf '%s' 'client_id=...;client_secret=...;redirect_uri=https://engine.example.com/workspace/connect/callback' | \
-  fused-cli connect set jira --bucket default --value-stdin
+printf '%s' 'client_id=...;client_secret=...' | \
+  fused-cli secret set jira --bucket default --type oauth --auth-name oauth2 --value-stdin
 ```
 
-(Omit the value and add `-i` to be prompted per field instead, or see
-`fused-bucket` for how to rotate just one field later without resupplying
-the others.) This is the only way to register the app -- there is no
-workspace.yaml `connect:` field; it was removed in favor of this single
-imperative command, since two ways to declare the same registration (one
-requiring every field on every apply, one supporting partial updates) was
-duplicated decision-making with no upside.
-
-```shell
-fused-cli connect get jira --bucket default
-```
-
-Checks what's actually registered (`auth_type`/`enabled`/`redirect_uri` plus
-`has_client_id`/`has_client_secret` -- never the decrypted values) -- useful
-since neither `workspace.yaml` nor `workspace sync` reflect this at all, not
-even read-only.
+(Omit the value and add `-i` to be prompted per field instead.) Always provide
+the complete pair atomically. Do not provide a redirect URI; Engine derives it
+from its validated canonical public URL.
 
 The `profile` block is omitted above because Registry has exactly one public
 match for this version/auth_type -- see `fused-config` for when you'd need to
@@ -745,8 +731,16 @@ Start one user's OAuth session (see `fused-bucket`):
 
 ```shell
 fused-cli workspace service connect jira --bucket default \
-  --user-ref user_123 --scope read:jira-work --scope write:jira-work --scope offline_access
+  --user-ref user_123 \
+  --scope read:jira-work --scope write:jira-work --scope offline_access
 ```
+
+For a standalone target that reuses another enabled service's application
+registration, pass the independent selector
+`--auth-ref '${bucket.auth.<source-service>.<source-auth-name>}'`. The standalone
+initialization/debug command has no SDK or MCP identity selector and never
+impersonates a generated runtime. Generated runtimes use the `auth.ref` in
+their SDK/MCP app config.
 
 If that user has more than one Jira site, confirm/set which one is default
 (see `fused-bucket`):
@@ -770,8 +764,11 @@ services:
   jira:
     version: "2026-07-01"
     operations: [getIssue, createIssue]
-    auth:    { type: "oauth" }
-    connect: { scopes: ["read:jira-work", "write:jira-work"] }
+    auth:
+      type: "oauth"
+      name: "oauth2"
+      ref: "${bucket.auth.jira.oauth2}"
+    connect: { scopes: ["read:jira-work", "write:jira-work", offline_access] }
 ```
 
 ```shell

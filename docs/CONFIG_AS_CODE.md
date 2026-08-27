@@ -50,13 +50,26 @@ kind: sdk
 name: my-sdk
 version: "1.0.0"
 language: typescript
+bucket: default
 services:
   okta:
     version: "2026-07-09"
     operations:
       - listLogEvents
       - getUser
+    auth:
+      type: oidc
+      name: oktaOidc
+      ref: "${bucket.auth.okta.oktaOidc}"
+    connect:
+      scopes: [openid, profile]
 ```
+
+`auth.ref` reuses the complete OAuth/OIDC application pair stored for the
+named source service/auth family in this app's `bucket`. The source service
+need not be selected by the app, but it must be enabled in the workspace with
+that named pair stored in the bucket. Target scopes and connected-user grants
+remain service-specific; neither credentials nor grants belong in this file.
 
 Operation values are OpenAPI `operationId`s for the selected version. Browse
 and update selections with:
@@ -181,8 +194,9 @@ during planning. If versions are omitted, the Engine resolves the latest public
 version during planning and records its exact identity.
 
 Each version entry can carry `public`, `execution_policy`, and
-`connection_profiles` overrides. Credentials and OAuth/OIDC app registrations
-do not belong in workspace YAML; use `secret set` and `connect set`.
+`connection_profiles` overrides. Credentials, including OAuth/OIDC application
+`client_id`/`client_secret` pairs, do not belong in workspace YAML; use
+`secret set`.
 
 ## Plan and apply
 

@@ -140,11 +140,13 @@ func appInjectionsEqual(a, b []configfile.InjectionConfig) bool {
 	return true
 }
 
+// appAuthEqual includes credential-family references in portable sync drift detection.
 func appAuthEqual(a, b *configfile.AppAuth) bool {
+	// Nil selectors are equivalent only when both sides leave auth resolution implicit.
 	if a == nil || b == nil {
 		return a == b
 	}
-	return a.Type == b.Type && a.Name == b.Name
+	return a.Type == b.Type && a.Name == b.Name && a.Ref == b.Ref
 }
 
 func cloneAppAuth(auth *configfile.AppAuth) *configfile.AppAuth {
@@ -246,11 +248,13 @@ func sdkSyncInjections(injections []api.InjectionConfig) []configfile.InjectionC
 	return out
 }
 
+// sdkSyncAuth reconstructs the exact authored selector and canonical reference projected by Engine.
 func sdkSyncAuth(selection api.AppSelection) *configfile.AppAuth {
+	// An absent type means there is no explicit auth selector to reconstruct.
 	if strings.TrimSpace(selection.AuthType) == "" {
 		return nil
 	}
-	return &configfile.AppAuth{Type: selection.AuthType, Name: selection.AuthName}
+	return &configfile.AppAuth{Type: selection.AuthType, Name: selection.AuthName, Ref: selection.AuthRef}
 }
 
 func sdkSyncConnect(selection api.AppSelection) *configfile.AppConnect {

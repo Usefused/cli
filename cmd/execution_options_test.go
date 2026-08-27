@@ -51,9 +51,6 @@ func TestNoInputStopsPromptingHelpersBeforeSideEffects(t *testing.T) {
 	NoInput = true
 	t.Cleanup(func() { NoInput = oldNoInput })
 
-	if _, err := connectSetFields("oauth2", "oauth", ""); err == nil {
-		t.Fatal("expected connect prompt to be rejected")
-	}
 	if _, _, err := selectSDKOperationsInteractively("missing.yaml", ""); err == nil {
 		t.Fatal("expected SDK prompt to be rejected before reading config")
 	}

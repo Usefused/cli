@@ -45,9 +45,8 @@ func TestListWorkspaceServices_SendsNameFilterAsGraphQLVariable(t *testing.T) {
 	}
 }
 
-// TestListWorkspaceConnectConfigsUsesEngineGraphQL verifies sync reads bucket
-// connect state through the authenticated GraphQL surface rather than REST.
-func TestListWorkspaceConnectConfigsUsesEngineGraphQL(t *testing.T) {
+// TestListWorkspaceConnectionProfilesUsesEngineGraphQL verifies sync reads routing policy through GraphQL.
+func TestListWorkspaceConnectionProfilesUsesEngineGraphQL(t *testing.T) {
 	var sawPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sawPath = r.URL.Path
@@ -57,35 +56,35 @@ func TestListWorkspaceConnectConfigsUsesEngineGraphQL(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatalf("decode graphql body: %v", err)
 		}
-		assertEngineQueryContains(t, body.Query, "workspaceConnectConfigs", "profiles", "auth_name")
+		assertEngineQueryContains(t, body.Query, "workspaceConnectionProfiles", "service_version_id", "profile")
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"data":{"workspaceConnectConfigs":[{"bucket_id":"bucket-1","bucket_name":"customers","service_id":"svc-1","auth_type":"oauth","auth_name":"primaryOAuth","enabled":true,"redirect_uri":"https://engine.example.com/callback","has_client_id":true,"has_client_secret":true,"profiles":[{"service_version_id":"ver-1","auth_type":"oauth","provenance":"workspace","profile":{"auth_type":"oauth"}}]}]}}`))
+		_, _ = w.Write([]byte(`{"data":{"workspaceConnectionProfiles":[{"service_id":"svc-1","service_version_id":"ver-1","auth_type":"oauth","provenance":"workspace","profile":{"auth_type":"oauth"}}]}}`))
 	}))
 	defer srv.Close()
 
 	client := api.NewClient(srv.URL, "test-key")
-	configs, err := client.ListWorkspaceConnectConfigs()
+	profiles, err := client.ListWorkspaceConnectionProfiles()
 
 	if err != nil {
-		t.Fatalf("ListWorkspaceConnectConfigs: %v", err)
+		t.Fatalf("ListWorkspaceConnectionProfiles: %v", err)
 	}
 	if sawPath != "/engine/graphql" {
 		t.Fatalf("expected /engine/graphql, got %s", sawPath)
 	}
-	assertWorkspaceConnectConfig(t, configs)
+	assertWorkspaceConnectionProfile(t, profiles)
 }
 
-func assertWorkspaceConnectConfig(t *testing.T, configs []api.WorkspaceConnectConfig) {
+// assertWorkspaceConnectionProfile validates that the flat credential-free projection decodes intact.
+func assertWorkspaceConnectionProfile(t *testing.T, profiles []api.WorkspaceConnectionProfile) {
 	t.Helper()
-	if len(configs) != 1 {
-		t.Fatalf("workspace connect configs = %#v, want one", configs)
+	// One fixture row keeps failures attributable to projection rather than ordering.
+	if len(profiles) != 1 {
+		t.Fatalf("workspace connection profiles = %#v, want one", profiles)
 	}
-	config := configs[0]
-	if config.BucketName != "customers" || config.AuthName != "primaryOAuth" || !config.HasClientSecret {
-		t.Fatalf("unexpected workspace connect config: %#v", config)
-	}
-	if len(config.Profiles) != 1 || config.Profiles[0].AuthType != "oauth" {
-		t.Fatalf("unexpected workspace profile: %#v", config.Profiles)
+	profile := profiles[0]
+	// Service and version identity are required for deterministic YAML placement.
+	if profile.ServiceID != "svc-1" || profile.ServiceVersionID != "ver-1" || profile.AuthType != "oauth" {
+		t.Fatalf("unexpected workspace connection profile: %#v", profile)
 	}
 }
 

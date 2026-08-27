@@ -81,8 +81,10 @@ printf '%s' "$GITHUB_TOKEN" | fused-cli secret set github --value-stdin
 
 Use `fused-cli service show <slug> --json` to inspect a service's available
 authentication schemes before setting credentials. OAuth/OIDC app
-registrations use `fused-cli connect set`; they are separate from static
-secrets and workspace configuration.
+credentials use `fused-cli secret set <slug> --bucket <bucket> --type
+oauth|oidc --auth-name <scheme> --value-stdin` with
+`client_id=...;client_secret=...`. They remain
+separate from connected-user tokens and workspace configuration.
 
 ## Teams, people, and shared access
 

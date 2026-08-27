@@ -78,8 +78,7 @@ func credentialAuthLabel(requirement MissingCredentialRequirement) string {
 	return label
 }
 
-// credentialFieldLabels includes exact secret-key names, not values, and keeps
-// OAuth/OIDC app registration distinct from an end-user provider connection.
+// credentialFieldLabels includes exact secret-key names, not values, for actionable setup guidance.
 func credentialFieldLabels(requirement MissingCredentialRequirement) string {
 	labels := make([]string, 0, min(len(requirement.RequiredFields), 8))
 	// Field order follows the authoritative Engine response.
@@ -100,10 +99,6 @@ func credentialFieldLabels(requirement MissingCredentialRequirement) string {
 
 // credentialFieldLabel describes only reviewed prompt labels and secret keys.
 func credentialFieldLabel(authType string, field MissingCredentialField) string {
-	// Readiness's connection marker means app registration, not an end-user access token.
-	if field.Name == "connection" && (authType == "oauth" || authType == "oidc") {
-		return "OAuth/OIDC app registration (connect configuration)"
-	}
 	label := safeCredentialMetadata(field.Name)
 	// Unsafe or absent labels get a neutral fallback rather than being echoed.
 	if label == "" {

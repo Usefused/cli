@@ -110,20 +110,21 @@ func TestMergeSDKServicesFromRemote_RemoteWinsOnConflict(t *testing.T) {
 	}
 }
 
+// TestMergeSDKServicesFromRemote_RestoresPortableMetadata includes auth references in synchronized app intent.
 func TestMergeSDKServicesFromRemote_RestoresPortableMetadata(t *testing.T) {
 	cfg := &configfile.SDKConfig{Services: map[string]configfile.SDKService{
 		"jira": {Version: "1.0.0", Auth: &configfile.AppAuth{Type: "bearer"}},
 	}}
 	remote := []sdkSyncRemoteService{{
 		Name: "Jira", Ref: "jira", Version: "1.0.0", Operations: []string{"listIssues"},
-		Auth:       &configfile.AppAuth{Type: "oauth", Name: "jiraOAuth"},
+		Auth:       &configfile.AppAuth{Type: "oauth", Name: "jiraOAuth", Ref: "${bucket.auth.shared.sharedOAuth}"},
 		Connect:    &configfile.AppConnect{Scopes: []string{"write:jira-work", "read:jira-work"}},
 		Injections: []configfile.InjectionConfig{{Location: "header", Name: "X-Tenant", Value: "$connection.tenant", Mode: "replace"}},
 	}}
 
 	result := mustMergeSDKServicesFromRemote(t, cfg, "1.0.0", remote)
 	service := cfg.Services["jira"]
-	if !reflect.DeepEqual(result.Updated, []string{"jira"}) || service.Auth == nil || service.Auth.Type != "oauth" || service.Auth.Name != "jiraOAuth" {
+	if !reflect.DeepEqual(result.Updated, []string{"jira"}) || service.Auth == nil || service.Auth.Type != "oauth" || service.Auth.Name != "jiraOAuth" || service.Auth.Ref != "${bucket.auth.shared.sharedOAuth}" {
 		t.Fatalf("remote auth did not win: result=%+v service=%+v", result, service)
 	}
 	if service.Connect == nil || !reflect.DeepEqual(service.Connect.Scopes, []string{"read:jira-work", "write:jira-work"}) {
@@ -396,6 +397,7 @@ func TestSDKNameDownloadResolvesExactEngineAppBeforeDownload(t *testing.T) {
 	}
 }
 
+// TestSDKSyncCreatesDefaultFusedConfig verifies a new config serializes the Engine-projected auth reference.
 func TestSDKSyncCreatesDefaultFusedConfig(t *testing.T) {
 	dir := t.TempDir()
 	server := newSDKSyncServer(t, "1.0.0")
@@ -408,7 +410,8 @@ func TestSDKSyncCreatesDefaultFusedConfig(t *testing.T) {
 		t.Fatalf("expected default sdk config to be created: %v", err)
 	}
 	text := string(data)
-	if !strings.Contains(text, "version: 1.0.0") || !strings.Contains(text, "kind: sdk") || !strings.Contains(text, "name: security-sdk") || !strings.Contains(text, "language: python") || !strings.Contains(text, "github-rest-api:") || !strings.Contains(text, "repos_list_for_authenticated_user") || !strings.Contains(text, "type: oauth") || !strings.Contains(text, "X-Tenant") {
+	// The authored reference must survive YAML serialization alongside the rest of portable selection metadata.
+	if !strings.Contains(text, "version: 1.0.0") || !strings.Contains(text, "kind: sdk") || !strings.Contains(text, "name: security-sdk") || !strings.Contains(text, "language: python") || !strings.Contains(text, "github-rest-api:") || !strings.Contains(text, "repos_list_for_authenticated_user") || !strings.Contains(text, "type: oauth") || !strings.Contains(text, `ref: ${bucket.auth.github-app.sharedOAuth}`) || !strings.Contains(text, "X-Tenant") {
 		t.Fatalf("unexpected sdk sync file:\n%s", text)
 	}
 }
@@ -546,6 +549,7 @@ func newSDKSyncServer(t *testing.T, sdkVersion string) *httptest.Server {
 	}))
 }
 
+// handleSDKSyncGraphQL serves Engine's canonical app selection projection for sync tests.
 func handleSDKSyncGraphQL(t *testing.T, w http.ResponseWriter, r *http.Request, sdkVersion string) {
 	t.Helper()
 	if r.URL.Path != "/engine/graphql" {
@@ -567,7 +571,11 @@ func handleSDKSyncGraphQL(t *testing.T, w http.ResponseWriter, r *http.Request, 
 		if !strings.Contains(body.Query, "schema_version") || strings.Contains(body.Query, "definition_schema_version") {
 			t.Fatalf("app query does not use the exact selection schema field: %s", body.Query)
 		}
-		_, _ = w.Write([]byte(`{"data":{"app":{"app_family_id":"family-1","app_id":"app-1","name":"security-sdk","version":"` + sdkVersion + `","kind":"sdk","status":"active","created_at":"now","target_language":"python","selections":[{"service_id":"svc-github","service_version_id":"sv-1","schema_version":3,"endpoint_ids":["ep-1"],"operation_names":["repos_list_for_authenticated_user"],"webhook_ids":[],"webhook_names":[],"select_all":false,"webhook_select_all":false,"auth_type":"oauth","auth_name":"githubOAuth","required_auth":[{"auth_type":"oauth","auth_name":"githubOAuth","basic_password_mode":""}],"connect_scopes":["repo"],"injections":[{"location":"header","name":"X-Tenant","value":"$connection.tenant","mode":"replace"}]}]}}}`))
+		// Sync must request the authored reference rather than reconstructing it from mutable service labels.
+		if !strings.Contains(body.Query, "auth_ref") {
+			t.Fatal("app query omitted portable auth reference metadata")
+		}
+		_, _ = w.Write([]byte(`{"data":{"app":{"app_family_id":"family-1","app_id":"app-1","name":"security-sdk","version":"` + sdkVersion + `","kind":"sdk","status":"active","created_at":"now","target_language":"python","selections":[{"service_id":"svc-github","service_version_id":"sv-1","schema_version":3,"endpoint_ids":["ep-1"],"operation_names":["repos_list_for_authenticated_user"],"webhook_ids":[],"webhook_names":[],"select_all":false,"webhook_select_all":false,"auth_type":"oauth","auth_name":"githubOAuth","auth_ref":"${bucket.auth.github-app.sharedOAuth}","required_auth":[{"auth_type":"oauth","auth_name":"githubOAuth","basic_password_mode":""}],"connect_scopes":["repo"],"injections":[{"location":"header","name":"X-Tenant","value":"$connection.tenant","mode":"replace"}]}]}}}`))
 	case strings.Contains(body.Query, "appServices"):
 		_, _ = w.Write([]byte(`{"data":{"appServices":[{"service_id":"svc-github","service_slug":"github-rest-api","service_name":"GitHub REST API","version":"1.1.4","select_all":false,"endpoint_count":1,"webhook_count":0}]}}`))
 	default:

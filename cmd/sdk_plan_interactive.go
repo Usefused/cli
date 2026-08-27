@@ -100,18 +100,21 @@ func validBasicPasswordMode(mode api.BasicPasswordMode) bool {
 	return mode == "" || mode == "required" || mode == "optional" || mode == "empty"
 }
 
+// validateMissingCredentialFields accepts only Engine fields that map to the
+// deterministic bucket keys used by the shared secret mutation path.
 func validateMissingCredentialFields(requirement api.MissingCredentialRequirement) error {
-	if isConnectAuthType(requirement.AuthType) {
-		return validateMissingConnectFields(requirement.RequiredFields)
-	}
+	// Every supplied field must be safe before any value is collected from the operator.
 	for _, field := range requirement.RequiredFields {
+		// Readiness metadata is untrusted input and must never choose an arbitrary secret key.
 		if invalidRemediationSecretKey(field.SecretKey) {
 			return fmt.Errorf("Engine returned invalid %s credential field %q", requirement.AuthType, field.Name)
 		}
 	}
 	expected := expectedSecretFields(missingCredentialAuth(requirement))
+	// Semantic names and storage keys must agree with the shared mutation contract.
 	for _, field := range requirement.RequiredFields {
 		name := canonicalSecretTypeName(field.Name)
+		// Rejecting unknown or mismatched keys prevents Engine metadata from creating ad-hoc secrets.
 		if expected[name] == "" || field.SecretKey != expected[name] {
 			return fmt.Errorf("Engine returned invalid %s credential field %q", requirement.AuthType, field.Name)
 		}
@@ -124,17 +127,11 @@ func invalidRemediationSecretKey(key string) bool {
 	return key == "" || len(key) > 256 || strings.ContainsAny(key, "\r\n\x00") || strings.HasPrefix(key, "<")
 }
 
-func validateMissingConnectFields(fields []api.MissingCredentialField) error {
-	for _, field := range fields {
-		if canonicalSecretTypeName(field.Name) != "connection" || strings.TrimSpace(field.SecretKey) != "" {
-			return fmt.Errorf("Engine returned invalid connection credential field %q", field.Name)
-		}
-	}
-	return nil
-}
-
+// expectedSecretFields mirrors Engine readiness naming so interactive planning
+// cannot write credentials under keys that runtime resolution will not read.
 func expectedSecretFields(auth *api.AuthConfig) map[string]string {
 	name := secretAuthCredentialName(auth)
+	// Each supported family maps provider semantics onto its deterministic bucket keys.
 	switch canonicalSecretAuthType(auth) {
 	case "basic":
 		return map[string]string{"username": name + "_username", "password": name + "_password"}
@@ -144,6 +141,9 @@ func expectedSecretFields(auth *api.AuthConfig) map[string]string {
 		return map[string]string{"token": name}
 	case "api_key":
 		return map[string]string{"api_key": name}
+	case "oauth", "oidc":
+		// OAuth and OIDC registrations are stored atomically under one named application family.
+		return map[string]string{"client_id": name + "_client_id", "client_secret": name + "_client_secret"}
 	default:
 		return nil
 	}
@@ -197,8 +197,8 @@ func applySDKPlanCredentialRequirement(client *api.Client, bucket *api.MissingCr
 	}
 	display := credentialServiceDisplay(requirement)
 	if isConnectAuthType(requirement.AuthType) {
-		mutation.resourceKind = "connect_config"
-		return setConnectConfig(client, bucket.ID, requirement.ServiceID, requirement.AuthType, requirement.AuthName, "", opts.output, mutation)
+		mutation.resourceKind = "secret"
+		return setSecretForAuth(client, requirement.ServiceID, bucket.ID, missingCredentialAuth(requirement), "", nil, display, opts.output, mutation)
 	}
 	mutation.resourceKind = "secret"
 	return setSecretForAuth(client, requirement.ServiceID, bucket.ID, missingCredentialAuth(requirement), "", nil, display, opts.output, mutation)

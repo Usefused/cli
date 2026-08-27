@@ -24,45 +24,19 @@ func (fn sdkPlanRoundTripFunc) RoundTrip(request *http.Request) (*http.Response,
 	return fn(request)
 }
 
+// TestSDKPlanInteractiveStoresBearerInTypedBucketAndRetriesOnce covers the shared single-secret remediation path.
 func TestSDKPlanInteractiveStoresBearerInTypedBucketAndRetriesOnce(t *testing.T) {
 	const secret = "provider-token-never-print"
 	planCalls, secretCalls := 0, 0
 	client := sdkPlanTestClient(t, func(request *http.Request) (int, string) {
-		switch request.URL.Path {
-		case "/sdk-config/plan":
-			planCalls++
-			if planCalls == 1 {
-				return http.StatusBadRequest, sdkPlanMissingCredentialError("bearer", "jiraBearer", "token", "jiraBearer")
-			}
-			return http.StatusOK, `{"plan_id":"plan-ok","summary":{}}`
-		case "/workspace/secrets":
-			secretCalls++
-			var payload map[string]any
-			decodeSDKPlanRequest(t, request, &payload)
-			if payload["bucket_id"] != sdkPlanTestBucketID || payload["service_id"] != sdkPlanTestServiceID {
-				t.Fatalf("secret payload = %#v", payload)
-			}
-			if payload["key_name"] != "jiraBearer" || payload["value"] != secret {
-				t.Fatalf("stored secret metadata = %#v", payload)
-			}
-			return http.StatusOK, `{}`
-		default:
-			t.Fatalf("unexpected request path %s", request.URL.Path)
-			return http.StatusNotFound, `{}`
-		}
+		return sdkPlanBearerResponse(t, request, secret, &planCalls, &secretCalls)
 	})
 
 	withSDKPlanPromptFakes(t,
 		func(*api.AuthConfig, string) (secretCredentialInput, error) {
 			return secretCredentialInput{token: secret}, nil
 		},
-		nil,
-		func(message string) (bool, error) {
-			if !strings.Contains(message, `bucket "production"`) || !strings.Contains(message, "Jira") {
-				t.Fatalf("confirmation = %q", message)
-			}
-			return true, nil
-		},
+		confirmSDKPlanBearerMutation(t),
 	)
 
 	var output bytes.Buffer
@@ -80,38 +54,88 @@ func TestSDKPlanInteractiveStoresBearerInTypedBucketAndRetriesOnce(t *testing.T)
 	}
 }
 
+// sdkPlanBearerResponse serves the two plan attempts and one exact secret mutation.
+func sdkPlanBearerResponse(t *testing.T, request *http.Request, secret string, planCalls, secretCalls *int) (int, string) {
+	t.Helper()
+	// Route ownership distinguishes planning from the one authorized credential mutation.
+	switch request.URL.Path {
+	case "/sdk-config/plan":
+		*planCalls++
+		// The first attempt reports the typed remediation target; the retry succeeds.
+		if *planCalls == 1 {
+			return http.StatusBadRequest, sdkPlanMissingCredentialError("bearer", "jiraBearer", "token", "jiraBearer")
+		}
+		return http.StatusOK, `{"plan_id":"plan-ok","summary":{}}`
+	case "/workspace/secrets":
+		*secretCalls++
+		assertSDKPlanBearerSecretRequest(t, request, secret)
+		return http.StatusOK, `{}`
+	default:
+		// Any additional route would indicate remediation escaped the shared secret path.
+		t.Fatalf("unexpected request path %s", request.URL.Path)
+		return http.StatusNotFound, `{}`
+	}
+}
+
+// assertSDKPlanBearerSecretRequest validates identity and value without echoing the token on success.
+func assertSDKPlanBearerSecretRequest(t *testing.T, request *http.Request, secret string) {
+	t.Helper()
+	var payload map[string]any
+	decodeSDKPlanRequest(t, request, &payload)
+	// Bucket and service identity must come from the typed readiness error.
+	if payload["bucket_id"] != sdkPlanTestBucketID || payload["service_id"] != sdkPlanTestServiceID {
+		t.Fatalf("secret payload = %#v", payload)
+	}
+	// The provider-declared key receives exactly the securely collected value.
+	if payload["key_name"] != "jiraBearer" || payload["value"] != secret {
+		t.Fatalf("stored secret metadata = %#v", payload)
+	}
+}
+
+// confirmSDKPlanBearerMutation verifies the prompt names the authoritative remediation target.
+func confirmSDKPlanBearerMutation(t *testing.T) func(string) (bool, error) {
+	t.Helper()
+	return func(message string) (bool, error) {
+		// The operator must see both the exact bucket and service before approving storage.
+		if !strings.Contains(message, `bucket "production"`) || !strings.Contains(message, "Jira") {
+			t.Fatalf("confirmation = %q", message)
+		}
+		return true, nil
+	}
+}
+
+// TestSDKPlanInteractiveRegistersOAuthAppWithoutProviderToken stores only the application pair through secret set.
 func TestSDKPlanInteractiveRegistersOAuthAppWithoutProviderToken(t *testing.T) {
 	const clientSecret = "oauth-client-secret-never-print"
-	planCalls, connectCalls := 0, 0
+	planCalls, secretCalls := 0, 0
 	client := sdkPlanTestClient(t, func(request *http.Request) (int, string) {
 		switch {
 		case request.URL.Path == "/sdk-config/plan":
 			planCalls++
+			// The first response mirrors Engine's deterministic OAuth readiness fields.
 			if planCalls == 1 {
-				return http.StatusBadRequest, sdkPlanMissingCredentialError("oauth", "googleOAuth", "connection", "")
+				return http.StatusBadRequest, sdkPlanOAuthMissingCredentialError("oauth", "googleOAuth")
 			}
 			return http.StatusOK, `{"plan_id":"plan-oauth","summary":{}}`
-		case strings.HasSuffix(request.URL.Path, "/connect-config"):
-			connectCalls++
-			var payload api.ConnectConfigUpsertRequest
-			decodeSDKPlanRequest(t, request, &payload)
-			if payload.ClientSecret == nil || *payload.ClientSecret != clientSecret || payload.AuthType == nil || *payload.AuthType != "oauth" {
-				t.Fatalf("connect payload = %#v", payload)
+		case request.URL.Path == "/workspace/secrets/bulk":
+			secretCalls++
+			var payload struct {
+				CredentialFamily api.CredentialFamilyUpsertRequest `json:"credential_family"`
 			}
-			return http.StatusOK, `{"id":"cfg-1","bucket_id":"` + sdkPlanTestBucketID + `","service_id":"` + sdkPlanTestServiceID + `","auth_type":"oauth","auth_name":"googleOAuth","enabled":true,"redirect_uri":"http://localhost:8081/workspace/connect/callback","has_client_id":true,"has_client_secret":true,"created_at":"2026-08-22T00:00:00Z","updated_at":"2026-08-22T00:00:00Z"}`
+			decodeSDKPlanRequest(t, request, &payload)
+			if payload.CredentialFamily.Values["client_secret"] != clientSecret || payload.CredentialFamily.CredentialType != "oauth" {
+				t.Fatalf("secret family payload = %#v", payload)
+			}
+			return http.StatusNoContent, ``
 		default:
 			t.Fatalf("unexpected request path %s", request.URL.Path)
 			return http.StatusNotFound, `{}`
 		}
 	})
 
-	withSDKPlanPromptFakes(t, nil,
-		func(authType, authName, _ string) (api.ConnectConfigUpsertRequest, error) {
-			clientID, redirectURI := "client-id", "http://localhost:8081/workspace/connect/callback"
-			return api.ConnectConfigUpsertRequest{
-				AuthType: &authType, AuthName: &authName, ClientID: &clientID,
-				ClientSecret: stringPointer(clientSecret), RedirectURI: &redirectURI,
-			}, nil
+	withSDKPlanPromptFakes(t,
+		func(*api.AuthConfig, string) (secretCredentialInput, error) {
+			return secretCredentialInput{clientID: "client-id", clientSecret: clientSecret}, nil
 		},
 		func(string) (bool, error) { return true, nil },
 	)
@@ -121,11 +145,12 @@ func TestSDKPlanInteractiveRegistersOAuthAppWithoutProviderToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("interactive OAuth plan: %v", err)
 	}
-	if planCalls != 2 || connectCalls != 1 || strings.Contains(output.String(), clientSecret) {
-		t.Fatalf("plan_calls=%d connect_calls=%d output=%q", planCalls, connectCalls, output.String())
+	if planCalls != 2 || secretCalls != 1 || strings.Contains(output.String(), clientSecret) {
+		t.Fatalf("plan_calls=%d secret_calls=%d output=%q", planCalls, secretCalls, output.String())
 	}
 }
 
+// TestSDKPlanInteractiveDoesNotHandleOtherErrorsOrLoop bounds remediation to one typed retry.
 func TestSDKPlanInteractiveDoesNotHandleOtherErrorsOrLoop(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -155,7 +180,7 @@ func TestSDKPlanInteractiveDoesNotHandleOtherErrorsOrLoop(t *testing.T) {
 			withSDKPlanPromptFakes(t, func(*api.AuthConfig, string) (secretCredentialInput, error) {
 				prompts++
 				return secretCredentialInput{token: "value"}, nil
-			}, nil, func(string) (bool, error) { return true, nil })
+			}, func(string) (bool, error) { return true, nil })
 
 			if _, err := planConfigWithRemediation(client, sdkPlanTestConfig(), "http://engine.test", planOptions{interactive: true}); err == nil {
 				t.Fatal("expected plan error")
@@ -167,6 +192,7 @@ func TestSDKPlanInteractiveDoesNotHandleOtherErrorsOrLoop(t *testing.T) {
 	}
 }
 
+// TestSDKPlanInteractiveCancellationDoesNotMutateOrRetry preserves explicit operator cancellation.
 func TestSDKPlanInteractiveCancellationDoesNotMutateOrRetry(t *testing.T) {
 	planCalls, mutationCalls := 0, 0
 	client := sdkPlanTestClient(t, func(request *http.Request) (int, string) {
@@ -186,7 +212,6 @@ func TestSDKPlanInteractiveCancellationDoesNotMutateOrRetry(t *testing.T) {
 		func(*api.AuthConfig, string) (secretCredentialInput, error) {
 			return secretCredentialInput{token: "never-stored"}, nil
 		},
-		nil,
 		func(string) (bool, error) { return false, nil },
 	)
 
@@ -222,13 +247,23 @@ func TestValidateSDKPlanCredentialTargetAcceptsEngineDefaultWhenYAMLOmitsBucket(
 	}
 }
 
-func TestMissingCredentialValidationAllowsUnnamedOAuthAndRejectsArbitraryStaticKey(t *testing.T) {
+// TestMissingCredentialValidationRequiresExactOAuthKeys rejects both the
+// retired connection sentinel and arbitrary static-secret destinations.
+func TestMissingCredentialValidationRequiresExactOAuthKeys(t *testing.T) {
 	oauth := api.MissingCredentialRequirement{
-		ServiceID: sdkPlanTestServiceID, AuthType: "oauth", AuthName: "",
-		RequiredFields: []api.MissingCredentialField{{Name: "connection"}},
+		ServiceID: sdkPlanTestServiceID, AuthType: "oauth", AuthName: "googleOAuth",
+		RequiredFields: []api.MissingCredentialField{
+			{Name: "client_id", SecretKey: "googleOAuth_client_id"},
+			{Name: "client_secret", SecretKey: "googleOAuth_client_secret"},
+		},
 	}
 	if err := validateMissingCredentialRequirement(oauth); err != nil {
-		t.Fatalf("unnamed OAuth requirement: %v", err)
+		t.Fatalf("OAuth requirement: %v", err)
+	}
+	// The removed workspace-connect shape must fail instead of reviving a second credential path.
+	oauth.RequiredFields = []api.MissingCredentialField{{Name: "connection"}}
+	if err := validateMissingCredentialRequirement(oauth); err == nil {
+		t.Fatal("expected retired connection field to be rejected")
 	}
 	bearer := api.MissingCredentialRequirement{
 		ServiceID: sdkPlanTestServiceID, AuthType: "bearer", AuthName: "jiraBearer",
@@ -265,6 +300,26 @@ func sdkPlanMissingCredentialError(authType, authName, fieldName, secretKey stri
 	return string(encoded)
 }
 
+// sdkPlanOAuthMissingCredentialError mirrors the two-field readiness contract
+// emitted by Engine for one atomic OAuth/OIDC application pair.
+func sdkPlanOAuthMissingCredentialError(authType, authName string) string {
+	details := map[string]any{
+		"bucket": map[string]string{"id": sdkPlanTestBucketID, "name": "production"},
+		"missing_credentials": []any{map[string]any{
+			"service_id": sdkPlanTestServiceID, "service": "Jira", "auth_type": authType,
+			"auth_name": authName, "required_fields": []any{
+				map[string]string{"name": "client_id", "secret_key": authName + "_client_id"},
+				map[string]string{"name": "client_secret", "secret_key": authName + "_client_secret"},
+			},
+		}},
+	}
+	payload := map[string]any{"error": map[string]any{
+		"code": "bucket_credentials_missing", "message": "missing", "category": "validation", "details": details,
+	}}
+	encoded, _ := json.Marshal(payload)
+	return string(encoded)
+}
+
 func sdkPlanTestClient(t *testing.T, handler func(*http.Request) (int, string)) *api.Client {
 	t.Helper()
 	client := api.NewClient("http://engine.test", "control-key")
@@ -284,24 +339,21 @@ func decodeSDKPlanRequest(t *testing.T, request *http.Request, target any) {
 	}
 }
 
+// withSDKPlanPromptFakes scopes secure input and confirmation doubles to one test.
 func withSDKPlanPromptFakes(
 	t *testing.T,
 	secret func(*api.AuthConfig, string) (secretCredentialInput, error),
-	connect func(string, string, string) (api.ConnectConfigUpsertRequest, error),
 	confirm func(string) (bool, error),
 ) {
 	t.Helper()
-	oldSecret, oldConnect, oldConfirm := collectSecretCredentialInput, collectConnectSetFields, promptCredentialMutationConfirmation
+	oldSecret, oldConfirm := collectSecretCredentialInput, promptCredentialMutationConfirmation
 	if secret != nil {
 		collectSecretCredentialInput = secret
-	}
-	if connect != nil {
-		collectConnectSetFields = connect
 	}
 	if confirm != nil {
 		promptCredentialMutationConfirmation = confirm
 	}
 	t.Cleanup(func() {
-		collectSecretCredentialInput, collectConnectSetFields, promptCredentialMutationConfirmation = oldSecret, oldConnect, oldConfirm
+		collectSecretCredentialInput, promptCredentialMutationConfirmation = oldSecret, oldConfirm
 	})
 }

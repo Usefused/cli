@@ -26,12 +26,12 @@ type BucketValuePageResponse struct {
 }
 
 type BucketServiceSummaryResponse struct {
-	ServiceID          string `json:"service_id"`
-	ServiceName        string `json:"service_name"`
-	SecretCount        int    `json:"secret_count"`
-	ValueCount         int    `json:"value_count"`
-	ConnectConfigCount int    `json:"connect_config_count"`
-	ConnectedUserCount int    `json:"connected_user_count"`
+	ServiceID                  string `json:"service_id"`
+	ServiceName                string `json:"service_name"`
+	SecretCount                int    `json:"secret_count"`
+	ValueCount                 int    `json:"value_count"`
+	ApplicationCredentialCount int    `json:"application_credential_count"`
+	ConnectedUserCount         int    `json:"connected_user_count"`
 }
 
 type BucketServiceSummaryPageResponse struct {
@@ -184,7 +184,7 @@ func (c *Client) ListBucketServicePage(bucketID string, opts PageOptions) (*Buck
 		query BucketServicePage($bucketId: String!, $limit: Int!, $offset: Int!) {
 			bucketServicePage(bucket_id: $bucketId, limit: $limit, offset: $offset) {
 				total
-				items { service_id service_name secret_count value_count connect_config_count connected_user_count }
+				items { service_id service_name secret_count value_count application_credential_count connected_user_count }
 			}
 		}
 	`

@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-const credentialReadinessFixture = `{"error":{"code":"bucket_credentials_missing","message":"The selected credential set is missing required authentication material.","category":"validation","retryable":false,"details":{"bucket":{"id":"11111111-1111-4111-8111-111111111111","name":"default"},"missing_credentials":[{"service_id":"22222222-2222-4222-8222-222222222222","service":"Jira","auth_type":"basic","auth_name":"basicAuth","required_fields":[{"name":"username","secret_key":"basicAuth_username"},{"name":"password","secret_key":"basicAuth_password","value":"never-print-this-value"}]},{"service_id":"22222222-2222-4222-8222-222222222222","service":"Jira","auth_type":"oauth","auth_name":"oauth2","required_fields":[{"name":"connection"}]}]},"remediation":"Add the required credentials to the credential set and create the plan again."}}`
+const credentialReadinessFixture = `{"error":{"code":"bucket_credentials_missing","message":"The selected credential set is missing required authentication material.","category":"validation","retryable":false,"details":{"bucket":{"id":"11111111-1111-4111-8111-111111111111","name":"default"},"missing_credentials":[{"service_id":"22222222-2222-4222-8222-222222222222","service":"Jira","auth_type":"basic","auth_name":"basicAuth","required_fields":[{"name":"username","secret_key":"basicAuth_username"},{"name":"password","secret_key":"basicAuth_password","value":"never-print-this-value"}]},{"service_id":"22222222-2222-4222-8222-222222222222","service":"Jira","auth_type":"oauth","auth_name":"oauth2","required_fields":[{"name":"client_id","secret_key":"oauth2_client_id"},{"name":"client_secret","secret_key":"oauth2_client_secret"}]}]},"remediation":"Add the required credentials to the credential set and create the plan again."}}`
 
 // TestPlanCredentialErrorNamesEveryRequirement exercises actual plan HTTP
 // wrapping and proves two requirements for Jira are not mistaken for two services.
@@ -51,7 +51,7 @@ func assertPlanCredentialDiagnostic(t *testing.T, apiErr *APIError, message stri
 	}
 	want := []string{"HTTP 400", "bucket_credentials_missing", `Missing credential requirements: 2 in bucket "default"`,
 		`"Jira" (basic, auth "basicAuth")`, `username (secret key "basicAuth_username")`, `password (secret key "basicAuth_password")`,
-		`"Jira" (oauth, auth "oauth2")`, "app registration (connect configuration)", "create the plan again"}
+		`"Jira" (oauth, auth "oauth2")`, `client_id (secret key "oauth2_client_id")`, `client_secret (secret key "oauth2_client_secret")`, "create the plan again"}
 	// Exact field and scheme names tell the operator which material to supply.
 	for _, fragment := range want {
 		if !strings.Contains(message, fragment) {

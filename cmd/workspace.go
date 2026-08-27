@@ -729,7 +729,9 @@ func workspaceWebhookResults(baseURL, serviceSlug string, webhooks []cliapi.Work
 
 var workspaceServiceConnectBucket string
 var workspaceServiceConnectUserRef string
-var workspaceServiceConnectSDKReference string
+var workspaceServiceConnectAuthType string
+var workspaceServiceConnectAuthName string
+var workspaceServiceConnectAuthRef string
 var workspaceServiceConnectResourceInput []string
 var workspaceServiceConnectScopes []string
 
@@ -757,30 +759,26 @@ func runWorkspaceServiceConnect(cmd *cobra.Command, serviceSlug string) error {
 	if err != nil {
 		return err
 	}
-	sdkID := strings.TrimSpace(workspaceServiceConnectSDKReference)
-	if sdkID != "" {
-		if err := validateExactAppReference(sdkID, "workspace service connect --sdk"); err != nil {
-			return err
-		}
-		// Exact version resolution prevents audit attribution from drifting when
-		// another version is published under the same SDK family.
-		sdkName, sdkVersion := parseSDKDownloadName(sdkID)
-		sdkID, err = client.ResolveSDKAppReference(sdkName, sdkVersion)
-		if err != nil {
-			return err
-		}
-	}
 	resourceInput, err := parseResourceInputFlags(workspaceServiceConnectResourceInput)
 	if err != nil {
 		return err
 	}
-	session, err := client.StartConnectSession(bucketID, serviceID, workspaceServiceConnectUserRef, sdkID, resourceInput, workspaceServiceConnectScopes)
+	// Standalone initialization must pin an exact scheme without impersonating a generated app identity.
+	if invalidConnectAuthSelector(workspaceServiceConnectAuthType, workspaceServiceConnectAuthName) {
+		return errors.New("--type and --auth-name must be provided together")
+	}
+	session, err := client.StartConnectSession(bucketID, serviceID, workspaceServiceConnectUserRef, "", workspaceServiceConnectAuthType, workspaceServiceConnectAuthName, workspaceServiceConnectAuthRef, resourceInput, workspaceServiceConnectScopes)
 	if err != nil {
 		return err
 	}
 	recordAppliedChange(cmd.Context(), cmd.CommandPath(), "connect_session")
 	fmt.Fprintf(cmd.OutOrStdout(), "%s\n", session.AuthorizeURL)
 	return nil
+}
+
+// invalidConnectAuthSelector keeps exact family and scheme selection atomic at the CLI boundary.
+func invalidConnectAuthSelector(authType, authName string) bool {
+	return (strings.TrimSpace(authType) == "") != (strings.TrimSpace(authName) == "")
 }
 
 // parseResourceInputFlags converts repeatable key=value flags into the map the
@@ -948,26 +946,23 @@ func runForceRemoveWorkspace(serviceID string, version string) error {
 	return applyForceRemoveWorkspacePlan(client, cfg, planResp)
 }
 
-// applyForceRemoveWorkspacePlan reuses the normal apply material collection so
-// force-remove cannot accidentally skip encrypted runtime credential writes.
+// applyForceRemoveWorkspacePlan reuses ordinary apply material collection without restoring provider credentials to YAML.
 func applyForceRemoveWorkspacePlan(client *cliapi.Client, cfg *configfile.ParsedConfig, planResp *cliapi.ConfigPlanResponse) error {
 	sourceHash := planResp.SourceHash
+	// Older plan responses may omit the hash, so the parsed source remains the exact fallback.
 	if sourceHash == "" {
 		sourceHash = cfg.SourceHash
-	}
-	authMaterials, err := workspaceAuthMaterials(cfg)
-	if err != nil {
-		return err
 	}
 	profileMaterials, err := workspaceProfileMaterials(cfg)
 	if err != nil {
 		return err
 	}
 	bucketSecretMaterials, err := cfg.WorkspaceBucketSecretMaterials()
+	// Force removal must retain generic webhook-style secrets exactly like ordinary apply.
 	if err != nil {
 		return err
 	}
-	_, err = client.ApplyWorkspaceConfig(planResp.PlanID, sourceHash, authMaterials, profileMaterials, bucketSecretMaterials)
+	_, err = client.ApplyWorkspaceConfig(planResp.PlanID, sourceHash, profileMaterials, bucketSecretMaterials)
 	return err
 }
 
@@ -1045,7 +1040,9 @@ func init() {
 
 	workspaceServiceConnectCmd.Flags().StringVar(&workspaceServiceConnectBucket, "bucket", "", "Workspace bucket name or UUID (required)")
 	workspaceServiceConnectCmd.Flags().StringVar(&workspaceServiceConnectUserRef, "user-ref", "", "Stable user reference (required)")
-	workspaceServiceConnectCmd.Flags().StringVar(&workspaceServiceConnectSDKReference, "sdk", "", "Optional SDK name@version or app UUID for audit attribution")
+	workspaceServiceConnectCmd.Flags().StringVar(&workspaceServiceConnectAuthType, "type", "", "OAuth/OIDC type when the service has multiple schemes")
+	workspaceServiceConnectCmd.Flags().StringVar(&workspaceServiceConnectAuthName, "auth-name", "", "Exact OAuth/OIDC scheme name when the service has multiple schemes")
+	workspaceServiceConnectCmd.Flags().StringVar(&workspaceServiceConnectAuthRef, "auth-ref", "", "Source application registration as ${bucket.auth.<service>.<auth-name>}")
 	workspaceServiceConnectCmd.Flags().StringSliceVar(&workspaceServiceConnectResourceInput, "resource-input", nil, "Tenant input as key=value; repeat for multiple declared fields")
 	workspaceServiceConnectCmd.Flags().StringArrayVar(&workspaceServiceConnectScopes, "scope", nil, "OAuth/OIDC scope to request; repeat to reduce provider consent")
 

@@ -315,6 +315,7 @@ func TestFusedSDKSkillKeepsIDEAgentWorkflowLocalAndCompact(t *testing.T) {
 	}
 }
 
+// TestSDKSkillsDocumentInteractivePlanCredentialBoundary keeps remediation on the shared secret path.
 func TestSDKSkillsDocumentInteractivePlanCredentialBoundary(t *testing.T) {
 	paths := []string{
 		filepath.Join("..", "skills", "dev", "fused-sdk", "SKILL.md"),
@@ -329,15 +330,13 @@ func TestSDKSkillsDocumentInteractivePlanCredentialBoundary(t *testing.T) {
 		combined.Write(data)
 		combined.WriteByte('\n')
 	}
-	// Why: the installed agent guidance must preserve the same secret and
-	// bucket boundary enforced by the interactive command, not teach a second
-	// setup path that creates buckets or collects end-user OAuth tokens.
+	// Installed guidance must preserve the same secret and bucket boundary as the interactive command.
 	for _, token := range []string{
 		"sdk plan --interactive",
 		"exact YAML-resolved bucket",
 		"retry once",
 		"never creates a bucket",
-		"OAuth/OIDC app-registration fields",
+		"OAuth/OIDC application credential fields",
 		"Never collect an end-user provider token",
 	} {
 		if !strings.Contains(combined.String(), token) {
