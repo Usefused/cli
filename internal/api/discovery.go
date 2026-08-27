@@ -200,7 +200,9 @@ func (c *Client) GetDiscoverySession(ctx context.Context, sessionID string) (*Di
 		return nil, err
 	}
 	c.addDiscoveryAuth(request)
-	response, err := c.HTTP.Do(request)
+	response, err := c.doRequest(request)
+	// Discovery reads use the shared transport projection so private session URLs
+	// never escape through raw net/http errors.
 	if err != nil {
 		return nil, err
 	}
@@ -242,7 +244,9 @@ func (c *Client) StreamDiscovery(ctx context.Context, sessionID string, onEvent 
 		return err
 	}
 	c.addDiscoveryAuth(request)
-	response, err := c.HTTP.Do(request)
+	response, err := c.doRequest(request)
+	// Stream setup shares the ordinary control-plane transport contract; SSE read
+	// failures after headers remain stream-specific and preserve their local cause.
 	if err != nil {
 		return err
 	}
@@ -285,7 +289,9 @@ func (c *Client) postDiscoveryJSON(ctx context.Context, path string, requestBody
 	}
 	request.Header.Set("Content-Type", "application/json")
 	c.addDiscoveryAuth(request)
-	response, err := c.HTTP.Do(request)
+	response, err := c.doRequest(request)
+	// Discovery mutations use the common secret-safe transport projection before
+	// Registry has accepted a response at this client boundary.
 	if err != nil {
 		return err
 	}

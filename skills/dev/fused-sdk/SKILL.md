@@ -7,28 +7,17 @@ description: "Build, generate, configure, manage, or call a typed Fused SDK dire
 
 ## IDE-agent workflow boundary
 
-Never run `fused-cli sdk prompt` from a coding-agent task. That user-invoked
-command starts the Fused-hosted agent. Run the deterministic CLI workflow
-yourself. Do not delegate the work to another agent or call an AI endpoint.
+Never run `fused-cli sdk prompt` from a coding-agent task. That user-invoked command starts the Fused-hosted agent. Run the deterministic CLI workflow yourself. Do not delegate the work to another agent or call an AI endpoint.
 
-Maintain one compact working-facts record: CLI/Engine context, config paths,
-SDK identity, exact service/operation selections, bucket, ownership, and open
-credential or permission decisions. Reuse local facts and read only the
-relevant CLI `--help` branch. Do not load every sibling skill up front:
+Maintain one compact working-facts record: CLI/Engine context, config paths, SDK identity, exact service/operation selections, bucket, ownership, and open credential or permission decisions. Reuse local facts and read only the relevant CLI `--help` branch. Do not load every sibling skill up front:
 
 - read `fused-workspace` only when service activation is required; read `fused-bucket` only when credentials or OAuth are unresolved;
 - read `fused-config` only for auth, connect scopes, injections, or policy;
 - read `fused-cli` and `reference/access-management.md` only for setup or permission remediation.
 
-For a business goal without a complete config, follow the `fused-cli` skill's
-`reference/build-sdk-or-mcp.md` SDK path, then return here after Engine setup,
-service activation, and credential requirements are known. Apply or download
-only when requested and no authority or production decision remains open.
+For a business goal without a complete config, follow the `fused-cli` skill's `reference/build-sdk-or-mcp.md` SDK path, then return here after Engine setup, service activation, and credential requirements are known. Apply or download only when requested and no authority or production decision remains open.
 Use `service operations --json` for bounded discovery, inspect body contracts only with `service operation show` opt-in flags, and run `sdk validate --json` after writing the config.
-Use `--json` on every SDK command whose confirmed help exposes it. In
-particular, never parse SDK/Version IDs or the one-time token from human apply
-text: use `sdk plan --json`, `sdk apply --json`, `sdk token generate --json`,
-`sdk download --json`, `sdk invoke --json`, and `sdk activity --json`.
+Use `--json` on every SDK command whose confirmed help exposes it. In particular, never parse SDK/Version IDs or the one-time token from human apply text: use `sdk plan --json`, `sdk apply --json`, `sdk token generate --json`, `sdk download --json`, `sdk invoke --json`, and `sdk activity --json`.
 
 `kind: sdk`, managed by `fused-cli sdk ...`, declares a typed SDK package from a bucket's already-configured services.
 For service-bearing config, `sdk init` lists `bucket.read`-visible buckets once

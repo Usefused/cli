@@ -252,11 +252,43 @@ Use the recommended Streamable HTTP URL returned by `mcp apply` or `mcp list`:
 https://<engine-host>/mcp/<version-id>
 ```
 
+Non-loopback transport discovery always returns HTTPS. Plain HTTP is reserved
+for explicit localhost or loopback development origins; clients must not rely
+on redirects preserving the execution token.
+
 POST a JSON-RPC `initialize` request with `Authorization: Bearer <token>`.
-Engine returns `Mcp-Session-Id`; send that opaque header on subsequent POST,
-GET, and DELETE requests. Send the negotiated `MCP-Protocol-Version` when the
-client supports it. DELETE terminates only that session. Revoke access with
+Engine returns `Mcp-Session-Id` and the negotiated `MCP-Protocol-Version`.
+Before `tools/list` or any tool call, POST a JSON-RPC
+`notifications/initialized` notification with both returned headers; Engine
+acknowledges it with HTTP 202 and no JSON-RPC response body. Send both headers
+on subsequent POST, GET, and DELETE requests. The MCP client owns that
+transport identity: never expose it to the model, ask the model to invent it,
+or add it to `execute` arguments.
+The `execute` tool description and `com.usefused/session` tool metadata tell
+capable hosts that `session.get`, `session.set`, and `session.page` are already
+attached inside each script and share state only across execute calls on the
+same connection. A reinitialized connection has fresh state and cannot read
+prior result references. DELETE terminates only that session. Revoke access with
 `fused-cli mcp token revoke`; do not treat session deletion as token revocation.
+
+An unavailable Streamable session returns HTTP 404 with a compact recovery
+contract: `recovery_action: reinitialize_connection`,
+`execute_request: reformat_if_session_state_used`,
+`provider_execution: not_started`, and `automatic_replay: false`. The client
+must initialize a new connection. An `execute` script independent of prior
+session state can then keep its arguments; a script using `session.get`,
+`session.page`, or a prior `result_ref` must be rebuilt because those values do
+not cross the reset. `MCP_EXECUTION_OUTCOME_UNKNOWN` instead returns
+`execute_request: do_not_replay` and `provider_execution: unknown`; inspect
+external state before deciding whether to issue new work. Recovery fields never
+contain the opaque session ID or bearer token, and detailed transport phase,
+delivery, and side-effect classifications remain internal OTEL attributes.
+When `execute_request` is `correct_arguments`, reformat the current `execute`
+arguments; `provider_execution: not_started` proves that correction cannot
+duplicate provider work. `adjust_projection` means the provider execution is
+complete and only the session-local result shape or byte projection should
+change. `use_next_request` means run the supplied request verbatim. These
+closed actions replace inference from prose.
 The same output also exposes the legacy SSE URL:
 
 ```text
@@ -290,7 +322,15 @@ exact token count or a model-context guarantee. Larger
 admitted values (up to the existing 1 MiB ceiling) are automatically retained
 as JSON snapshots in the same session. The small `MCP_RESULT_STORED` envelope
 contains `result_ref`, byte size, expiry, and an explicitly incomplete
-structural preview with field names, types, and collection counts; previews
+structural preview with field names, types, and collection counts. It also
+contains `recovery_action: continue_stored_result`,
+`execute_request: use_next_request`, `provider_execution: complete`, and
+`automatic_replay: false`, together with an exact `next_request` for a
+session-only `execute` retrieval. `complete: false` describes visible preview
+delivery, not provider pagination. Run that request directly instead of
+reconstructing a session call or repeating the provider operation. Every
+incomplete retained page supplies its next exact request with the same selector,
+cursor, and byte budget. Previews
 never sample scalar values. `collections` also advertises exact RFC 6901 array
 paths, counts, observed immediate field names, and `fields_complete`.
 `collections_complete` describes traversal completeness. The final model-facing
@@ -315,16 +355,20 @@ array. Fields are literal immediate keys, never dotted selectors; omit them
 for whole or mixed-type rows. Sparse missing keys remain absent, and a field
 that exists in no row is rejected. Empty collections return a complete empty
 page. An individually oversized row fails with `MCP_RESULT_ROW_TOO_LARGE`;
-narrow fields or use `session.get` for a custom field/string slice, never
-retry the provider operation. Very long paths may require a larger byte budget
+narrow fields or use the supplied bounded inspection result to construct a
+session-only property, key, or string-slice projection. These failures use
+`recovery_action: adjust_result_projection`; never retry the provider
+operation. Very long paths may require a larger byte budget
 for metadata. For totals or analysis, compute inside `execute` and return the
 answer instead of transferring every row.
 
 Discovery inspects at most eight collections, 256 nodes, eight levels, 32
 children per node, 512 rows per collection, and 32 field names (128 UTF-8 bytes
 each). Output budgets may trim metadata further. Incomplete flags never imply
-missing data: select advertised fields immediately, and use `session.get` with
-`Object.keys` to inspect additional keys only when needed. Large custom
+missing data: select advertised fields immediately, and use
+`Object.keys(session.get(result_ref))` to inspect additional keys only when
+needed. `session.get` accepts exactly one string key; extra arguments fail with
+`MCP_SESSION_GET_ARGUMENTS_INVALID` instead of being ignored. Large custom
 retrievals still produce a bounded envelope. Do not repeat `call()` to inspect
 an already executed operation. Automatic retention is limited to 16 snapshots
 and 4 MiB per session, with oldest-first eviction and an absolute five-minute
@@ -345,8 +389,27 @@ create another provider-execution receipt for a session-only read.
 
 Pagination is inherited automatically from the selected endpoint and its
 effective service-version policy. Do not add pagination fields to MCP config or
-tool schemas. Engine performs the provider requests and streams each successful
-page as a separate execution chunk.
+physical operation schemas. An ordinary `call(operationId, params)` completes
+the reviewed provider pagination loop inside Engine and returns one aggregate;
+MCP result retention and `session.get`/`session.page` happen only afterward.
+Provider page-size parameters such as Gmail `maxResults` do not limit total
+traversal. When the goal intentionally needs only the first N provider pages,
+use the canonical caller bound as a separate third argument:
+
+```typescript
+await call(operationId, params, { pagination: { maxPages: N } })
+```
+
+This option can only tighten the reviewed Engine policy. It never belongs in
+provider params, never bypasses Engine pagination, and is rejected for a
+non-paginated operation. Unified calls retain their target-keyed `pagination`
+inside the documented Unified invocation object.
+
+If automatic traversal reaches an Engine pagination limit before provider
+termination, narrow the provider query or deliberately choose a smaller caller
+bound. Do not hide continuation fields through a provider partial-response
+selector merely to make the Engine mistake an unfinished collection for a
+complete one.
 
 Neither the tool schema nor its `call()` function accepts provider tokens,
 API keys, auth scheme names, Fused user selectors, or server-routing variables

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"time"
 )
@@ -74,7 +73,7 @@ func (c *Client) UpsertConnectConfig(bucketID, serviceID string, payload Connect
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody := readBoundedHTTPErrorBody(resp.Body)
 		return nil, fmt.Errorf("upsert connect config failed (HTTP %d): %w", resp.StatusCode, newHTTPError(resp.StatusCode, respBody))
 	}
 	var out ConnectConfigResponse
@@ -106,12 +105,18 @@ func (c *Client) GetConnectConfig(bucketID, serviceID string) (*ConnectConfigRes
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, ErrConnectConfigNotFound
-	}
+	// Read every error response before classifying 404 because a missing bucket
+	// is not the same state as an unset connect registration.
 	if resp.StatusCode >= 400 {
-		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("get connect config failed (HTTP %d): %w", resp.StatusCode, newHTTPError(resp.StatusCode, respBody))
+		respBody := readBoundedHTTPErrorBody(resp.Body)
+		requestErr := newHTTPError(resp.StatusCode, respBody)
+		var apiErr *APIError
+		// Only the exact 404/code pairing represents the friendly not-configured state;
+		// other statuses and 404 diagnoses must remain actionable to the operator.
+		if resp.StatusCode == http.StatusNotFound && errors.As(requestErr, &apiErr) && apiErr.Code == "connect_config_not_found" {
+			return nil, ErrConnectConfigNotFound
+		}
+		return nil, fmt.Errorf("get connect config failed (HTTP %d): %w", resp.StatusCode, requestErr)
 	}
 	var out ConnectConfigResponse
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {

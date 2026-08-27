@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 	"sort"
 	"strings"
 
@@ -207,9 +206,10 @@ func fetchSDKSyncData(client *api.Client, sdkName, sdkVersion string) (appVersio
 			return "", "", nil, fmt.Errorf("sdk sync missing service metadata for service %s", sel.ServiceID)
 		}
 		ref := strings.TrimSpace(service.ServiceSlug)
+		// Full-mirror removal is destructive, so incomplete remote identity must
+		// fail before merge can mistake a skipped service for a remote deletion.
 		if ref == "" {
-			fmt.Fprintf(os.Stderr, "Warning: skipping remote service %q because it is missing a slug\n", service.ServiceName)
-			continue
+			return "", "", nil, fmt.Errorf("sdk sync missing service slug for service %q (%s)", service.ServiceName, service.ServiceID)
 		}
 		remote = append(remote, sdkSyncRemoteService{
 			Name: service.ServiceName, Ref: ref, Version: service.Version,

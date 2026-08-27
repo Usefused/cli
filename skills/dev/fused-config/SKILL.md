@@ -108,6 +108,14 @@ use a bucket secret (`fused-cli secret set <service-slug>` -- see
 whether `apply` runs from a laptop or CI. Binding literal values have the
 same bucket-secret path via `fused-cli value`.
 
+When two services can use compatible static credential families in one
+bucket, the destination may instead select its exact `auth_type`/`auth_name`
+and set `ref: "${bucket.auth.<source-service>.<source-auth-name>}"`. This is a
+complete, one-level bundle reference, not a field substitution: do not combine
+it with any literal or `$ENV` auth field. Engine resolves it dynamically so
+source rotation reaches consumers without copying material or reapplying the
+workspace. The canonical syntax and constraints live in `fused-bucket`.
+
 OAuth `connect` app registration is the exception, and does **not** follow
 that path. `client_id`/`client_secret`/`redirect_uri` are not bucket secrets
 and have no `${bucket...}` or `$ENV` reference form for anything to resolve.

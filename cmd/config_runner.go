@@ -750,6 +750,8 @@ func printAppliedWebhookRegistrations(baseURL, label string, registrations []api
 // applyWorkspaceConfig sends resolved local material out-of-band from the
 // shareable YAML so plans stay reviewable without carrying secrets.
 func applyWorkspaceConfig(client *api.Client, cfg *configfile.ParsedConfig, receipt planReceipt, payload *workspaceApplyPayload) error {
+	// A missing prepared payload is a local invariant failure, so it must not be
+	// presented as an Engine rejection with remote recovery metadata.
 	if payload == nil {
 		return errors.New("workspace apply payload was not prepared")
 	}
@@ -760,12 +762,67 @@ func applyWorkspaceConfig(client *api.Client, cfg *configfile.ParsedConfig, rece
 		payload.profileMaterials,
 		payload.bucketSecretMaterials,
 	)
+	// Engine cannot know the caller's local file path. Enrich only proven
+	// pre-mutation auth failures so the recovery command re-plans the exact file
+	// without weakening the Engine-owned phase or commit-state contract.
 	if err != nil {
-		return fmt.Errorf("failed to apply workspace %s: %w", cfg.ConfigKey, err)
+		return fmt.Errorf("failed to apply workspace %s: %w", cfg.ConfigKey, enrichWorkspaceApplyRecovery(err, cfg.Path))
 	}
 	fmt.Printf("Successfully applied workspace config\n")
 	printAppliedWebhooks(client.BaseURL, resp.Webhooks)
 	return nil
+}
+
+// enrichWorkspaceApplyRecovery copies a typed Engine error before attaching
+// the exact local plan command, preserving the shared API error instance for
+// any other caller that may still inspect it.
+func enrichWorkspaceApplyRecovery(err error, configPath string) error {
+	var apiError *api.APIError
+	// Arbitrary transport and application failures retain their authoritative
+	// recovery because a local re-plan is safe only for a proven admission reject.
+	if !errors.As(err, &apiError) || !workspaceAuthFailureCanReplan(apiError) {
+		return err
+	}
+	recovery := workspacePlanRecoveryCommand(configPath)
+	// An unsafe or inexact path must never be emitted as a copyable command; the
+	// Engine's path-neutral recovery remains preferable to a misleading retry.
+	if recovery == "" {
+		return err
+	}
+	enriched := *apiError
+	enriched.Recovery = recovery
+	return &enriched
+}
+
+// workspaceAuthFailureCanReplan limits local recovery enrichment to the
+// stable auth-reference errors whose apply outcome is proven uncommitted.
+func workspaceAuthFailureCanReplan(apiError *api.APIError) bool {
+	// Re-planning is unsafe when admission or commit proof is absent, even when
+	// an error code happens to share the workspace-auth prefix.
+	if apiError.Phase != "apply_admission" || apiError.CommitState != "not_committed" {
+		return false
+	}
+	switch apiError.Code {
+	case "workspace_auth_contract_drift", "workspace_auth_reference_invalid", "workspace_auth_reference_in_use":
+		return true
+	default:
+		// Explicit enumeration keeps future auth mutations from inheriting a
+		// recovery promise before their own commit semantics are reviewed.
+		return false
+	}
+}
+
+// workspacePlanRecoveryCommand builds a shell-safe plan for the exact config
+// file that produced the failed apply, reusing the composite command's bounded
+// local-value and POSIX-quoting policy.
+func workspacePlanRecoveryCommand(configPath string) string {
+	safePath := safeWorkspaceRecoveryValue(configPath)
+	// The shared sanitizer may replace or trim an unsafe path. In either case it
+	// is no longer exact, so leave recovery path-neutral instead of emitting it.
+	if safePath == workspaceServiceSafeValue || safePath != configPath {
+		return ""
+	}
+	return "fused-cli workspace plan -f " + shellQuoteWorkspaceServiceArg(safePath)
 }
 
 // workspaceAuthMaterials adapts configfile's apply-only static auth material to

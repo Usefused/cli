@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -24,6 +25,81 @@ type discoveryRoundTripFunc func(*http.Request) (*http.Response, error)
 // RoundTrip lets focused discovery tests observe HTTP decisions without a listener.
 func (fn discoveryRoundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
 	return fn(request)
+}
+
+// TestDiscoveryFailureIncludesTerminalRegistryDiagnostic verifies human and
+// structured output retain the fixed failure explanation but not prior warnings.
+func TestDiscoveryFailureIncludesTerminalRegistryDiagnostic(t *testing.T) {
+	snapshot := &cliapi.DiscoverySnapshot{Payload: json.RawMessage(`{
+		"failure_code":"operations_not_discovered",
+		"diagnostics":[
+			{"code":"crawl_partial_failures","message":"Some documentation pages could not be admitted."},
+			{"code":"operations_not_discovered","message":"No selectable REST operations were found in the admitted documentation pages."}
+		]
+	}`)}
+	err := discoveryFailure(snapshot)
+	// The matching terminal classifier and explanation form the human contract.
+	if !strings.Contains(err.Error(), "operations_not_discovered") || !strings.Contains(err.Error(), "No selectable REST operations") {
+		t.Fatalf("human failure = %q", err)
+	}
+	// Prior review warnings must not be promoted into the terminal failure prose.
+	if strings.Contains(err.Error(), "Some documentation pages") {
+		t.Fatalf("human failure exposed non-terminal warning: %q", err)
+	}
+	result := classifyCommandError(&cobra.Command{Use: "discover"}, err)
+	// JSON callers receive a stable local classifier rather than the remote code.
+	if result.Code != "discovery_session_failed" || result.Category != "dependency" {
+		t.Fatalf("structured failure metadata = %#v", result)
+	}
+	diagnostics, ok := result.Details["diagnostics"].([]cliapi.DiscoveryDiagnostic)
+	// The structured detail must retain exactly the one safe terminal diagnostic.
+	if !ok || len(diagnostics) != 1 || diagnostics[0].Code != "operations_not_discovered" || diagnostics[0].Message == "" {
+		t.Fatalf("structured diagnostics = %#v", result.Details["diagnostics"])
+	}
+}
+
+// TestDiscoveryFailureRejectsUnsafeOrUnboundedDiagnosticContent proves that a
+// matching remote payload cannot expose credentials and that safe prose is capped.
+func TestDiscoveryFailureRejectsUnsafeOrUnboundedDiagnosticContent(t *testing.T) {
+	unsafe := &cliapi.DiscoverySnapshot{Payload: json.RawMessage(`{
+		"failure_code":"operations_not_discovered",
+		"diagnostics":[{"code":"operations_not_discovered","message":"inspect https://provider.example with fsk_never_return"}]
+	}`)}
+	unsafeErr := discoveryFailure(unsafe)
+	// Credential- and URL-bearing messages must fall back to code-only output.
+	if strings.Contains(unsafeErr.Error(), "https://") || strings.Contains(unsafeErr.Error(), "fsk_") {
+		t.Fatalf("unsafe terminal diagnostic leaked: %q", unsafeErr)
+	}
+
+	longMessage := strings.Repeat("a", maxDiscoveryFailureDiagnosticRunes+20)
+	bounded := &cliapi.DiscoverySnapshot{Payload: json.RawMessage(`{"failure_code":"operations_not_discovered","diagnostics":[{"code":"operations_not_discovered","message":` + strconv.Quote(longMessage) + `}]}`)}
+	boundedErr := discoveryFailure(bounded)
+	// Safe diagnostic prose is truncated at the CLI-owned character ceiling.
+	if !strings.Contains(boundedErr.Error(), "…") || strings.Contains(boundedErr.Error(), longMessage) {
+		t.Fatalf("bounded terminal diagnostic = %q", boundedErr)
+	}
+}
+
+// TestPrintDiscoveryDiagnosticsSanitizesProgressMessages verifies non-terminal
+// SSE and snapshot diagnostics cannot bypass the terminal-safe failure path.
+func TestPrintDiscoveryDiagnosticsSanitizesProgressMessages(t *testing.T) {
+	var output bytes.Buffer
+	printDiscoveryDiagnostics(&output, []cliapi.DiscoveryDiagnostic{
+		{Severity: "warning", Code: "crawl_warning", Message: "safe bounded explanation"},
+		{Severity: "error\u001b[2J", Code: "provider\u202Espoof", Message: "inspect https://private.example with fsk_hidden"},
+	})
+	rendered := output.String()
+	// Safe prose remains useful while controls, URLs, credentials, and malformed classifier values are suppressed.
+	for _, want := range []string{"WARNING [crawl_warning] safe bounded explanation", "INFO [diagnostic] diagnostic detail omitted"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("diagnostic output %q does not contain %q", rendered, want)
+		}
+	}
+	for _, forbidden := range []string{"\x1b", "\u202e", "private.example", "fsk_hidden"} {
+		if strings.Contains(strings.ToLower(rendered), strings.ToLower(forbidden)) {
+			t.Fatalf("diagnostic output leaked %q: %q", forbidden, rendered)
+		}
+	}
 }
 
 // TestImportDiscoverProducesAReceiptWithoutApplying verifies the CLI stops at the ordinary plan boundary.

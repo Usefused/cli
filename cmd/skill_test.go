@@ -414,6 +414,23 @@ func TestDevAppSkillsDocumentVersionedLifecycle(t *testing.T) {
 	}
 }
 
+// TestMCPDevSkillDocumentsInitializedLifecycle keeps installed agents on the protocol-required handshake order.
+func TestMCPDevSkillDocumentsInitializedLifecycle(t *testing.T) {
+	path := filepath.Join("..", "skills", "dev", "fused-mcp", "SKILL.md")
+	data, err := os.ReadFile(path)
+	// A missing bundled skill would make the installed guidance unverifiable.
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	content := string(data)
+	for _, required := range []string{"notifications/initialized", "Before `tools/list`", "HTTP 202", "MCP-Protocol-Version"} {
+		// Every lifecycle marker is needed so an agent cannot skip the notification or its negotiated headers.
+		if !strings.Contains(content, required) {
+			t.Errorf("MCP skill is missing initialized lifecycle guidance %q", required)
+		}
+	}
+}
+
 func TestDevAppSkillsDocumentExactSelectionSchemaVersion(t *testing.T) {
 	tests := []struct {
 		name     string

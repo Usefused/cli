@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 )
@@ -17,6 +16,7 @@ type BucketValueResponse struct {
 	Value     string `json:"value"`
 }
 
+// CreateBucket creates one Engine credential bucket and bounds rejected responses.
 func (c *Client) CreateBucket(name string) error {
 	reqBody := map[string]interface{}{
 		"name": name,
@@ -42,13 +42,14 @@ func (c *Client) CreateBucket(name string) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody := readBoundedHTTPErrorBody(resp.Body)
 		return fmt.Errorf("create bucket failed (HTTP %d): %w", resp.StatusCode, newHTTPError(resp.StatusCode, respBody))
 	}
 
 	return nil
 }
 
+// UpsertBucketValue writes one bucket value while keeping failure bodies bounded.
 func (c *Client) UpsertBucketValue(bucketID, serviceID, keyName, location, value string) error {
 	reqBody := map[string]interface{}{
 		"service_id": serviceID,
@@ -77,13 +78,14 @@ func (c *Client) UpsertBucketValue(bucketID, serviceID, keyName, location, value
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody := readBoundedHTTPErrorBody(resp.Body)
 		return fmt.Errorf("upsert bucket value failed (HTTP %d): %w", resp.StatusCode, newHTTPError(resp.StatusCode, respBody))
 	}
 
 	return nil
 }
 
+// DeleteBucketValue removes one scoped value and safely projects Engine errors.
 func (c *Client) DeleteBucketValue(bucketID, serviceID, keyName string) error {
 	req, err := http.NewRequest("DELETE", fmt.Sprintf("%s/workspace/buckets/%s/values?service_id=%s&key_name=%s", c.BaseURL, bucketID, url.QueryEscape(serviceID), url.QueryEscape(keyName)), nil)
 	if err != nil {
@@ -100,13 +102,14 @@ func (c *Client) DeleteBucketValue(bucketID, serviceID, keyName string) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody := readBoundedHTTPErrorBody(resp.Body)
 		return fmt.Errorf("delete bucket value failed (HTTP %d): %w", resp.StatusCode, newHTTPError(resp.StatusCode, respBody))
 	}
 
 	return nil
 }
 
+// DeleteBucket removes one bucket and bounds any rejected response payload.
 func (c *Client) DeleteBucket(name string) error {
 	req, err := http.NewRequest("DELETE", c.BaseURL+"/workspace/buckets/"+name, nil)
 	if err != nil {
@@ -123,7 +126,7 @@ func (c *Client) DeleteBucket(name string) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody := readBoundedHTTPErrorBody(resp.Body)
 		return fmt.Errorf("delete bucket failed (HTTP %d): %w", resp.StatusCode, newHTTPError(resp.StatusCode, respBody))
 	}
 

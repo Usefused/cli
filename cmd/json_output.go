@@ -123,6 +123,15 @@ func classifyCommandError(cmd *cobra.Command, err error) jsonErrorResult {
 		result.Details = map[string]any{"diagnostics": strictError.Diagnostics}
 		return result
 	}
+	var discoveryError *discoveryFailureError
+	// Discovery terminal failures carry only locally bounded Registry diagnostics,
+	// so both human and JSON callers receive the same actionable explanation.
+	if errors.As(err, &discoveryError) {
+		result.Code, result.Message, result.Category = "discovery_session_failed", discoveryError.Error(), "dependency"
+		result.Remediation = "Review the terminal diagnostic, then resume or restart discovery after correcting the reported condition."
+		result.Details = discoveryError.jsonDetails()
+		return result
+	}
 	var apiError *cliapi.APIError
 	var workspaceApply *workspaceServiceApplyOutcomeError
 	// Composite activation has sibling outcome state that the wrapped one-target
@@ -151,14 +160,23 @@ func classifyCommandError(cmd *cobra.Command, err error) jsonErrorResult {
 		result.Details = mergeJSONDetails(result.Details, apiErrorJSONDetails(apiError))
 		return result
 	}
+	return classifyGenericCommandError(result, err)
+}
+
+// classifyGenericCommandError handles local usage and context outcomes after
+// every richer typed command and API contract has declined the error.
+func classifyGenericCommandError(result jsonErrorResult, err error) jsonErrorResult {
+	// Cobra argument errors are caller-correctable and should not look like CLI faults.
 	if isCommandUsageError(err.Error()) {
 		result.Code, result.Category = "invalid_arguments", "validation"
 		return result
 	}
+	// Deadlines are retryable dependency outcomes with an explicit timeout recovery.
 	if errors.Is(err, context.DeadlineExceeded) {
 		result.Code, result.Category, result.Retryable = "request_timeout", "dependency", true
 		result.Remediation = "Increase --timeout or retry the command."
 	}
+	// Explicit cancellation remains distinct from timeouts for automation policy.
 	if errors.Is(err, context.Canceled) {
 		result.Code, result.Category = "request_cancelled", "cancelled"
 	}

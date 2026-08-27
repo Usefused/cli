@@ -186,6 +186,9 @@ type AuthConfig struct {
 	Bucket   string `yaml:"bucket,omitempty" json:"bucket,omitempty"`
 	AuthType string `yaml:"auth_type" json:"auth_type"`
 	AuthName string `yaml:"auth_name,omitempty" json:"auth_name,omitempty"`
+	// Ref binds this complete static credential family to another named auth
+	// family in the same bucket, so rotations stay live without copying values.
+	Ref      string `yaml:"ref,omitempty" json:"ref,omitempty"`
 	Username string `yaml:"username,omitempty" json:"username,omitempty"`
 	Password string `yaml:"password,omitempty" json:"password,omitempty"`
 	Token    string `yaml:"token,omitempty" json:"token,omitempty"`

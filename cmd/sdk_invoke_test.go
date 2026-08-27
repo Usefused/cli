@@ -362,6 +362,21 @@ func TestDecodeSDKInvokeHTTPResponsePreservesLargeIntegers(t *testing.T) {
 	}
 }
 
+// TestDecodeSDKInvokeHTTPErrorPreservesProviderStatus verifies the CLI keeps
+// Engine-reviewed status metadata without needing provider response text.
+func TestDecodeSDKInvokeHTTPErrorPreservesProviderStatus(t *testing.T) {
+	err := decodeSDKInvokeHTTPError(http.StatusBadGateway, []byte(`{"error":{"code":"provider_error","message":"provider returned an unsuccessful response","details":{"provider_http_status":429}}}`))
+	var invokeErr *sdkInvokeError
+	// Structured execution failures must remain typed for renderer and telemetry handling.
+	if !errors.As(err, &invokeErr) {
+		t.Fatalf("decode error type = %T", err)
+	}
+	// Both the Engine boundary and provider status remain distinguishable to callers.
+	if invokeErr.details["provider_http_status"] != json.Number("429") || invokeErr.details["http_status"] != http.StatusBadGateway {
+		t.Fatalf("decoded details = %#v", invokeErr.details)
+	}
+}
+
 // TestReadBoundedSDKInvokeResponseAllowsUnifiedAggregate verifies multiple bounded results may exceed the input cap.
 func TestReadBoundedSDKInvokeResponseAllowsUnifiedAggregate(t *testing.T) {
 	resultPayload := strings.Repeat("x", 600<<10)

@@ -1,11 +1,88 @@
 package cmd
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/Usefused/cli/internal/api"
 )
+
+// TestSecretSetRejectsMalformedInlineInputBeforeRequests verifies Basic and
+// mTLS callers share command-level validation before service resolution.
+func TestSecretSetRejectsMalformedInlineInputBeforeRequests(t *testing.T) {
+	previousInteractive, previousStdin := secretSetInteractive, secretSetValueStdin
+	previousType := secretSetType
+	t.Cleanup(func() {
+		secretSetInteractive, secretSetValueStdin = previousInteractive, previousStdin
+		secretSetType = previousType
+		secretSetCmd.SetIn(nil)
+	})
+	secretSetInteractive, secretSetValueStdin = false, true
+
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		requests++
+	}))
+	defer server.Close()
+
+	secretSetCmd.SetIn(strings.NewReader("username=alice;password"))
+	out := runCommandInDirExpectError(t, t.TempDir(), server.URL, []string{
+		"secret", "set", "jira", "--type", "basic", "--value-stdin",
+	})
+	// The local diagnostic should identify the exact malformed segment.
+	if !strings.Contains(out, "segment 2 must contain '='") {
+		t.Fatalf("expected actionable local validation error, got %q", out)
+	}
+	// No metadata or mutation request may occur after malformed credential input.
+	if requests != 0 {
+		t.Fatalf("malformed secret input sent %d request(s)", requests)
+	}
+}
+
+// TestMultiFieldSecretResolversRejectMalformedAssignments verifies both
+// parser consumers preserve the actionable shared diagnostic.
+func TestMultiFieldSecretResolversRejectMalformedAssignments(t *testing.T) {
+	tests := []struct {
+		name    string
+		resolve func() error
+	}{
+		{name: "basic", resolve: func() error {
+			_, _, err := resolveBasicSecretInput(api.BasicPasswordMode("required"), "username=alice;password=")
+			return err
+		}},
+		{name: "mtls", resolve: func() error {
+			_, _, err := resolveMTLSSecretInput("cert=certificate;key")
+			return err
+		}},
+	}
+	// Both multi-field credential families must expose the same parser contract.
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := test.resolve()
+			// Each resolver must retain the parser's precise local failure instead of replacing it with missing-field text.
+			if err == nil || !strings.Contains(err.Error(), "invalid inline key=value input") {
+				t.Fatalf("expected shared inline validation error, got %v", err)
+			}
+		})
+	}
+}
+
+// TestBasicEmptyPasswordModeRetainsDeliberateEmptyValue verifies strict inline
+// parsing does not erase the reviewed passwordless Basic-auth contract.
+func TestBasicEmptyPasswordModeRetainsDeliberateEmptyValue(t *testing.T) {
+	username, password, err := resolveBasicSecretInput(api.BasicPasswordMode("empty"), "username=alice;password=")
+	// The explicit empty field is valid only because the selected auth contract requires it.
+	if err != nil || username != "alice" || password != "" {
+		t.Fatalf("empty-password Basic input = %q/%q, err=%v", username, password, err)
+	}
+	_, _, err = resolveBasicSecretInput(api.BasicPasswordMode("required"), "username=alice;password=")
+	// Required-password Basic auth still rejects the same blank assignment locally.
+	if err == nil || !strings.Contains(err.Error(), "empty value") {
+		t.Fatalf("required-password blank error = %v", err)
+	}
+}
 
 func TestSelectSecretAuthByTypeRequiresNameForSameFamilySchemes(t *testing.T) {
 	previousType, previousName := secretSetType, secretSetAuthName

@@ -219,9 +219,11 @@ func TestPlanSpecImportDecodesStrictRejectionWithoutRawBody(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnprocessableEntity)
 		_, _ = w.Write([]byte(`{
-			"error":"strict_import_rejected",
-			"message":"strict import rejected provider contract diagnostics",
-			"diagnostics":[{"severity":"warning","code":"unsupported_request_media_type","scope":"operation","method":"POST","path":"/widgets","message":"Request body was skipped."}],
+			"error":{
+				"code":"strict_import_rejected",
+				"message":"strict import rejected provider contract diagnostics",
+				"diagnostics":[{"severity":"warning","code":"unsupported_request_media_type","scope":"operation","method":"POST","path":"/widgets","message":"Request body was skipped."}]
+			},
 			"unrecognized_secret":"must-not-leak"
 		}`))
 	}))
@@ -239,12 +241,56 @@ func TestPlanSpecImportDecodesStrictRejectionWithoutRawBody(t *testing.T) {
 	}
 }
 
+// TestPlanSpecImportKeepsLegacyStrictRejectionOpaque proves the removed
+// top-level diagnostic shape cannot regain purpose-specific classification.
+func TestPlanSpecImportKeepsLegacyStrictRejectionOpaque(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = w.Write([]byte(`{"error":"strict_import_rejected","message":"legacy detail must stay hidden","diagnostics":[{"message":"legacy diagnostic"}]}`))
+	}))
+	defer server.Close()
+
+	_, err := api.NewClient(server.URL, "test-key").PlanSpecImport(api.SpecImportPlanRequest{Name: "Widgets", Strict: true})
+	var strictError *api.SpecImportStrictError
+	// Legacy responses use the shared 422 fallback and cannot expose removed prose or diagnostics.
+	if errors.As(err, &strictError) || err == nil || !strings.Contains(err.Error(), "request_rejected") || strings.Contains(err.Error(), "legacy") {
+		t.Fatalf("legacy strict rejection was not opaque: %v", err)
+	}
+}
+
+// TestPlanSpecImportSanitizesStrictDiagnostics verifies the current nested
+// contract preserves useful fields without reflecting secrets or terminal controls.
+func TestPlanSpecImportSanitizesStrictDiagnostics(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = w.Write([]byte(`{"error":{"code":"strict_import_rejected","message":"Rejected password=hunter2 at https://private.example","diagnostics":[{"severity":"warning","code":"unsupported_request_media_type","scope":"operation","method":"POST","path":"/widgets","message":"Skipped token=fsk_hidden","recommendation":"Inspect https://private.example","source":"source\u001b[2J"}]}}`))
+	}))
+	defer server.Close()
+
+	_, err := api.NewClient(server.URL, "test-key").PlanSpecImport(api.SpecImportPlanRequest{Name: "Widgets", Strict: true})
+	var strictError *api.SpecImportStrictError
+	// The safe current envelope remains typed and retains its non-sensitive diagnostic identity.
+	if !errors.As(err, &strictError) || len(strictError.Diagnostics) != 1 || strictError.Diagnostics[0].Code != "unsupported_request_media_type" {
+		t.Fatalf("current strict rejection lost typed diagnostics: %#v", strictError)
+	}
+	encoded, marshalErr := json.Marshal(strictError)
+	if marshalErr != nil {
+		t.Fatal(marshalErr)
+	}
+	// Human and JSON paths consume the sanitized object and must not recover discarded fragments.
+	for _, forbidden := range []string{"hunter2", "private.example", "fsk_hidden", "\u001b"} {
+		if strings.Contains(err.Error(), forbidden) || strings.Contains(string(encoded), forbidden) {
+			t.Fatalf("strict rejection leaked %q: error=%q json=%s", forbidden, err, encoded)
+		}
+	}
+}
+
 // TestPlanSpecImport_HandlesError verifies an owner sees the exact bounded
 // parser decision while the stable error category remains machine-readable.
 func TestPlanSpecImport_HandlesError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte(`{"error":"operation \"listCampaigns\" (GET /campaigns): invalid x-fused-pagination: json: unknown field \"items_path\""}`))
+		w.Write([]byte(`{"error":{"code":"invalid_request","message":"operation \"listCampaigns\" (GET /campaigns): invalid x-fused-pagination: json: unknown field \"items_path\"","category":"validation","retryable":false}}`))
 	}))
 	defer srv.Close()
 
@@ -253,7 +299,7 @@ func TestPlanSpecImport_HandlesError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error on 400 response")
 	}
-	if !strings.Contains(err.Error(), "HTTP 400") || !strings.Contains(err.Error(), "request_rejected") {
+	if !strings.Contains(err.Error(), "HTTP 400") || !strings.Contains(err.Error(), "invalid_request") {
 		t.Errorf("expected safe HTTP error category, got: %v", err)
 	}
 	if !strings.Contains(err.Error(), `unknown field "items_path"`) {

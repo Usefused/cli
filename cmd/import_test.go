@@ -532,14 +532,16 @@ func TestImportPlanTelemetryLabelsAreBounded(t *testing.T) {
 	}
 }
 
+// TestRunImportPlanPrintsStrictRejectionDiagnostics verifies the current
+// nested contract retains actionable, bounded parser guidance.
 func TestRunImportPlanPrintsStrictRejectionDiagnostics(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnprocessableEntity)
-		_, _ = w.Write([]byte(`{
-			"error":"strict_import_rejected",
+		_, _ = w.Write([]byte(`{"error":{
+			"code":"strict_import_rejected",
 			"message":"strict import rejected provider contract diagnostics",
 			"diagnostics":[{"severity":"warning","code":"unsupported_request_media_type","scope":"operation","method":"POST","path":"/widgets","message":"Request body was skipped.","recommendation":"Declare application/json."}]
-		}`))
+		}}`))
 	}))
 	defer server.Close()
 	setImportTestAPI(t, server.URL)

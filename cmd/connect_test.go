@@ -76,7 +76,11 @@ func TestSelectConnectAuthTypeRequiresExactNameForTwoOAuthSchemes(t *testing.T) 
 // Engine), not a zero-value empty string (which Engine rejects as "blanked
 // out").
 func TestConnectFieldsFromInline_OnlySendsProvidedKeys(t *testing.T) {
-	req := connectFieldsFromInline("oauth", "jiraOAuth", "redirect_uri=https://engine.example.com/connect/callback")
+	req, err := connectFieldsFromInline("oauth", "jiraOAuth", "redirect_uri=https://engine.example.com/connect/callback")
+	// Valid connect assignments should survive the parser unchanged.
+	if err != nil {
+		t.Fatalf("parse connect fields: %v", err)
+	}
 	if req.AuthType == nil || *req.AuthType != "oauth" {
 		t.Fatalf("expected auth_type to always be set, got %#v", req.AuthType)
 	}
@@ -91,14 +95,56 @@ func TestConnectFieldsFromInline_OnlySendsProvidedKeys(t *testing.T) {
 	}
 }
 
-// TestConnectFieldsFromInline_BlankValueIsExplicit proves a key present but
-// blank ("client_secret=") is NOT treated the same as an omitted key -- it
-// becomes an explicit empty-string pointer, which is what lets Engine tell
-// "leave unchanged" apart from "caller tried to blank this out".
-func TestConnectFieldsFromInline_BlankValueIsExplicit(t *testing.T) {
-	req := connectFieldsFromInline("oauth", "jiraOAuth", "client_secret=")
-	if req.ClientSecret == nil || *req.ClientSecret != "" {
-		t.Fatalf("expected an explicit empty client_secret pointer, got %#v", req.ClientSecret)
+// TestConnectFieldsFromInlineRejectsBlankValue proves an unset shell expansion
+// cannot become an explicit empty credential patch.
+func TestConnectFieldsFromInlineRejectsBlankValue(t *testing.T) {
+	_, err := connectFieldsFromInline("oauth", "jiraOAuth", "client_secret=")
+	// Empty connect fields must identify the local input problem rather than build a patch.
+	if err == nil || !strings.Contains(err.Error(), "empty value") {
+		t.Fatalf("expected an actionable empty-value error, got %v", err)
+	}
+}
+
+// TestConnectFieldsFromInlineRejectsUnknownField prevents a misspelled
+// credential name from becoming a successful no-op patch.
+func TestConnectFieldsFromInlineRejectsUnknownField(t *testing.T) {
+	_, err := connectFieldsFromInline("oauth", "jiraOAuth", "client_secert=mistyped")
+	// The diagnostic must identify the exact unsupported key before any mutation can be authorized.
+	if err == nil || !strings.Contains(err.Error(), `invalid connect field "client_secert"`) {
+		t.Fatalf("expected an actionable unknown-field error, got %v", err)
+	}
+}
+
+// TestConnectSetRejectsMalformedInlineInputBeforeRequests verifies command
+// preflight runs before bucket and service metadata resolution.
+func TestConnectSetRejectsMalformedInlineInputBeforeRequests(t *testing.T) {
+	previousInteractive, previousStdin := connectSetInteractive, connectSetValueStdin
+	previousBucket := connectSetBucketID
+	t.Cleanup(func() {
+		connectSetInteractive, connectSetValueStdin = previousInteractive, previousStdin
+		connectSetBucketID = previousBucket
+		RootCmd.SetIn(nil)
+	})
+	connectSetInteractive, connectSetValueStdin = false, true
+
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		requests++
+	}))
+	defer server.Close()
+
+	RootCmd.SetIn(strings.NewReader("client_id=valid;client_secret="))
+	out := runCommandInDirExpectError(t, t.TempDir(), server.URL, []string{
+		"connect", "set", "jira", "--value-stdin",
+		"--bucket", "11111111-1111-4111-8111-111111111111",
+	})
+	// The local diagnostic should tell users to check shell expansion or choose interactive input.
+	if !strings.Contains(out, `key "client_secret" has an empty value`) || !strings.Contains(out, "shell variables") {
+		t.Fatalf("expected actionable local validation error, got %q", out)
+	}
+	// No metadata or mutation request may occur after malformed credential input.
+	if requests != 0 {
+		t.Fatalf("malformed connect input sent %d request(s)", requests)
 	}
 }
 
@@ -264,7 +310,9 @@ func TestConnectGet_ReturnsExistingConfig(t *testing.T) {
 // not a raw HTTP 404.
 func TestConnectGet_NotFoundReportsFriendlyError(t *testing.T) {
 	server := connectTargetServer(t, func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "connect config not found", http.StatusNotFound)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"error":{"code":"connect_config_not_found","message":"No connect configuration exists for this bucket and service.","category":"not_found","retryable":false,"remediation":"Create it with fused-cli connect set."}}`))
 	})
 	defer server.Close()
 

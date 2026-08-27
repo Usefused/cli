@@ -64,6 +64,8 @@ func (c *Client) cliLoginRequest(method, path string, input any, expectedStatus 
 	return nil
 }
 
+// cliLoginRequestStatus performs one unauthenticated enrollment request and
+// routes failures through the same current control-plane decoder as every command.
 func (c *Client) cliLoginRequestStatus(method, path string, input, output any) (int, error) {
 	body, err := json.Marshal(input)
 	if err != nil {
@@ -79,10 +81,12 @@ func (c *Client) cliLoginRequestStatus(method, path string, input, output any) (
 		return 0, err
 	}
 	defer resp.Body.Close()
+	// Failed managed-login responses use the current bounded Engine envelope.
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusAccepted {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
-		return resp.StatusCode, fmt.Errorf("CLI login request failed (HTTP %d)", resp.StatusCode)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+		return resp.StatusCode, fmt.Errorf("CLI login request failed (HTTP %d): %w", resp.StatusCode, newHTTPError(resp.StatusCode, body))
 	}
+	// Success payloads are bounded independently from the smaller error envelope.
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 16<<10)).Decode(output); err != nil {
 		return resp.StatusCode, errors.New("Engine returned an invalid CLI login response")
 	}

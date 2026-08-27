@@ -52,6 +52,12 @@ A bucket service's static `auth` uses `auth_type` for the credential type
 and optional `auth_name` for the exact provider scheme. `auth_name` is required
 when the provider declares multiple named schemes of one type; plan/apply
 must not rely on declaration order. See `fused-config` for the field matrix.
+For a complete same-bucket bundle reuse, the destination must select its exact
+static `auth_type` and `auth_name`, then set
+`ref: "${bucket.auth.<source-service>.<source-auth-name>}"` instead of any
+credential field. The source is resolved dynamically and may use a different
+scheme name, but references cannot cross buckets or chain through another
+reference. See `fused-bucket` for the canonical syntax and lifecycle rules.
 
 There is no `runtime_config` field on a workspace service anymore -- it was
 removed with no backward compatibility once `kind: webhook` shipped (a
