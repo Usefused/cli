@@ -1,14 +1,13 @@
 ---
 name: fused-workspace
-description: "Use when the user wants to configure a Fused workspace's service allowlist using fused-cli -- enabling/disabling or publishing services or versions, distinguishing service visibility from version visibility, listing a service's existing webhook registrations (read-only), or scheduling a deprecation. Trigger on 'workspace config', 'enable a service', 'publish a service', 'service visibility', 'version visibility', 'fused-cli workspace', 'deprecate a service version', or 'kind: workspace' files. For registering a new inbound webhook read fused-webhook instead; for rate limits/retries/pagination/outbound-webhook-verification (execution_policy) or auth/connect/dynamic-binding config, read fused-config instead; for bucket credentials read fused-bucket."
+description: "Use when the user wants to configure a Fused workspace's service allowlist using fused-cli -- enabling/disabling or publishing services or versions, distinguishing service visibility from version visibility, listing a service's existing webhook registrations (read-only), or scheduling a deprecation. Trigger on 'workspace config', 'enable a service', 'publish a service', 'service visibility', 'version visibility', 'fused-cli workspace', 'deprecate a service version', or 'kind: workspace' files. For registering a new inbound webhook read fused-webhook instead; for rate limits/retries/pagination/outbound-webhook-verification (execution_policy), connection-profile attachments, or SDK/MCP auth/connect config, read fused-config instead; for bucket credentials read fused-bucket."
 ---
 
 # Workspace config
 
 `kind: workspace`, managed by `fused-cli workspace ...`. This is the service
-allowlist: which services and versions are enabled, plus the deprecation
-schedule and per-service runtime behavior that isn't rate-limit or auth
-related.
+allowlist: which services and versions are enabled, plus their deprecation
+schedule and credential-free execution/profile policy.
 
 ```yaml
 apiVersion: fused/v1
@@ -23,8 +22,6 @@ services:
         public: false                # per-version Registry visibility override -- owner-only
         execution_policy: {...}      # overrides the service-level default for just this version -- see fused-config skill
         connection_profiles: [...]   # raw, Engine-validated, scoped to this version -- see fused-config skill
-buckets:
-  <bucket-name>: {...}           # see fused-bucket skill
 deprecations:
   - service_id: "..."
     effective_at: "YYYY-MM-DD"
@@ -38,26 +35,11 @@ these overrides is just `{version: "v1"}`. Version identity and all overrides
 must be nested in that one entry. Flat version strings and service-level
 override lists fail to parse so no policy can be detached from its version.
 
-`buckets.<name>` here only configures an *existing* bucket's
-`service_config`/`secrets` -- **it cannot create the bucket itself.** Apply
-resolves `<bucket-name>` against a bucket that must already exist and fails
-with "bucket not found" if it doesn't; it never creates one implicitly. Run
-`bucket list`, treat listed buckets as visible through `bucket.read` rather than
-proven usable, and choose visible `default` or another visible candidate. Let
-the intended plan/apply check permissions on that exact candidate; on denial,
-stop and report it instead of creating a fallback. Follow `fused-bucket` before
-creating an explicitly requested or stated isolation bucket.
-
-A bucket service's static `auth` uses `auth_type` for the credential type
-and optional `auth_name` for the exact provider scheme. `auth_name` is required
-when the provider declares multiple named schemes of one type; plan/apply
-must not rely on declaration order. See `fused-config` for the field matrix.
-For a complete same-bucket bundle reuse, the destination must select its exact
-static `auth_type` and `auth_name`, then set
-`ref: "${bucket.auth.<source-service>.<source-auth-name>}"` instead of any
-credential field. The source is resolved dynamically and may use a different
-scheme name, but references cannot cross buckets or chain through another
-reference. See `fused-bucket` for the canonical syntax and lifecycle rules.
+Workspace YAML has no bucket credential configuration. Select an existing
+bucket in each `kind: sdk` or `kind: mcp` file, and store credentials with the
+bucket commands in `fused-bucket`. OAuth/OIDC targets may reuse an application
+credential pair with the app service's `auth.ref`; the workspace allowlist
+does not own that choice.
 
 There is no `runtime_config` field on a workspace service anymore -- it was
 removed with no backward compatibility once `kind: webhook` shipped (a
@@ -67,7 +49,8 @@ not a bug). Everything that used to live there moved out: webhook
 registration is now its own `kind: webhook` config file, spanning one or more
 services and attached to whichever SDK should receive delivery
 (see `fused-webhook`); `auth`/`connect` moved to
-`buckets.<bucket>.service_config.<slug>` (see `fused-bucket`);
+each `kind: sdk` or `kind: mcp` service selection (see `fused-sdk`,
+`fused-mcp`, and `fused-bucket`);
 `pagination`/`pagination_overrides` moved under `execution_policy.pagination`
 (one composable v3 policy per service/version, no workspace per-operation
 overrides map; provider-contract endpoint pagination remains the more specific tier); and
@@ -149,7 +132,7 @@ fused-cli workspace service deprecate <slug> --at <date> --reason "..."
 fused-cli workspace service version add <slug> <v|latest>
 fused-cli workspace service version delete <slug> <v> [--force]
 fused-cli workspace service version deprecate <slug> <v> --at <date> [--reason "..."]
-fused-cli workspace service connect <service-slug> --bucket <bucket-name-or-id> --user-ref <end-user-reference> [--scope ...]
+fused-cli workspace service connect <service-slug> --bucket <bucket-name-or-id> --user-ref <end-user-reference> [--type oauth|oidc --auth-name <scheme>] [--auth-ref '${bucket.auth.<source-service>.<source-auth-name>}'] [--scope ...]
 ```
 
 Use the first command to create `.fused/workspace.yaml` without replacing an
@@ -159,9 +142,14 @@ intact. This local authoring step neither activates the service nor creates a
 bucket; run `workspace plan` and review its permission-aware result before
 apply.
 
-`connect` starts an OAuth/OIDC session for one user against a bucket -- the
-full flow (buckets, secrets, connection resources) is documented in
-`fused-bucket`.
+`connect` starts an OAuth/OIDC session for one user against a bucket. Select
+the target scheme directly and use `--auth-ref` when standalone consent reuses
+another service's registration. This initialization/debug command has no SDK or
+MCP identity selector and sends no synthetic app ID. Generated SDK consent uses
+the reference pinned in app configuration and attaches only its embedded app ID
+as provenance on the bucket-owned connection; the standalone command never
+infers one from app identity. The full flow
+(buckets, secrets, connection resources) is documented in `fused-bucket`.
 
 Use `workspace service add <query-or-slug> [query-or-slug...]` as the single discovery-and-author
 action. It checks the access-filtered workspace first by exact name or slug
@@ -296,8 +284,7 @@ it's a full mirror, not a merge of additions only:
   `fused-config`) are never touched by sync, since the Engine's local
   override table those feed into (separate from anything this reads) isn't
   something sync queries at all.
-- A `buckets.<bucket>.service_config.<slug>.connect` block with no remote
-  projection is left alone (a workspace-local profile isn't erased just
-  because the Registry has nothing to report for it); Registry-sourced
-  profile attachments sync back as `profile_id`, workspace-local ones as an
-  inline `profile` (see `fused-config`).
+- Registry-sourced profile attachments sync back as `profile_id`, while an
+  inline credential-free profile remains inline. Sync never projects bucket
+  credentials or SDK/MCP auth selections into `workspace.yaml` (see
+  `fused-config`).

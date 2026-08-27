@@ -129,8 +129,8 @@ func runSecretSet(cmd *cobra.Command, serviceSlug, value string) error {
 // validateSecretInlineInput checks only explicit multi-field credential
 // grammars while preserving opaque token values for provider-aware handling.
 func validateSecretInlineInput(requestedType, value string) error {
-	// Empty or opaque token input needs no assignment parsing at this stage.
-	if value == "" || requestedType != "basic" && requestedType != "mtls" {
+	// Empty or opaque single-value input needs no assignment parsing at this stage.
+	if value == "" || requestedType != "basic" && requestedType != "mtls" && requestedType != "oauth" && requestedType != "oidc" {
 		return nil
 	}
 	// Basic may intentionally author an empty password only when the later reviewed auth contract requires it.
@@ -138,7 +138,7 @@ func validateSecretInlineInput(requestedType, value string) error {
 		_, err := parseInlineKeyValuePairsAllowingEmpty(value, "password")
 		return err
 	}
-	// mTLS requires both assignment values to be present before remote lookup.
+	// Paired families require valid assignments before remote metadata lookup.
 	_, err := parseInlineKeyValuePairs(value)
 	return err
 }
@@ -252,11 +252,13 @@ func promptSecretAuthSelect(info *api.ServiceInfo) (*api.AuthConfig, error) {
 }
 
 type secretCredentialInput struct {
-	username string
-	password string
-	cert     string
-	key      string
-	token    string
+	username     string
+	password     string
+	cert         string
+	key          string
+	clientID     string
+	clientSecret string
+	token        string
 }
 
 var collectSecretCredentialInput = resolveSecretCredentialInput
@@ -281,7 +283,9 @@ func setSecretForAuth(client *api.Client, serviceID, bucketID string, auth *api.
 	return nil
 }
 
+// resolveSecretCredentialInput routes each declared family through its one secure collector.
 func resolveSecretCredentialInput(auth *api.AuthConfig, value string) (secretCredentialInput, error) {
+	// Family dispatch prevents OAuth application pairs from entering the opaque token path.
 	switch canonicalSecretAuthType(auth) {
 	case "basic":
 		username, password, err := resolveBasicSecretInput(auth.BasicPasswordMode, value)
@@ -289,14 +293,19 @@ func resolveSecretCredentialInput(auth *api.AuthConfig, value string) (secretCre
 	case "mtls":
 		cert, key, err := resolveMTLSSecretInput(value)
 		return secretCredentialInput{cert: cert, key: key}, err
+	case "oauth", "oidc":
+		clientID, clientSecret, err := resolveOAuthApplicationSecretInput(value)
+		return secretCredentialInput{clientID: clientID, clientSecret: clientSecret}, err
 	default:
 		token, err := resolveTokenSecretInput(auth, value)
 		return secretCredentialInput{token: token}, err
 	}
 }
 
+// persistSecretCredential maps validated input to the atomic API contract owned by its family.
 func persistSecretCredential(client *api.Client, serviceID, bucketID string, auth *api.AuthConfig, input secretCredentialInput, expiresAt *time.Time) error {
 	name := secretAuthCredentialName(auth)
+	// Paired families use one bulk transaction while single values retain point writes.
 	switch canonicalSecretAuthType(auth) {
 	case "basic":
 		return client.UpsertSecrets(bucketID, []api.SecretUpsertRequest{
@@ -308,15 +317,23 @@ func persistSecretCredential(client *api.Client, serviceID, bucketID string, aut
 			{ServiceID: serviceID, KeyName: name + "_cert", CredentialType: "mtls", Value: input.cert, ExpiresAt: expiresAt},
 			{ServiceID: serviceID, KeyName: name + "_key", CredentialType: "mtls", Value: input.key, ExpiresAt: expiresAt},
 		})
+	case "oauth", "oidc":
+		return client.UpsertCredentialFamily(bucketID, api.CredentialFamilyUpsertRequest{
+			ServiceID: serviceID, CredentialType: canonicalSecretAuthType(auth), AuthName: name,
+			Values: map[string]string{"client_id": input.clientID, "client_secret": input.clientSecret}, ExpiresAt: expiresAt,
+		})
 	default:
 		return client.UpsertSecret(serviceID, name, canonicalSecretAuthType(auth), input.token, bucketID, expiresAt)
 	}
 }
 
+// printSecretSetResult confirms the credential family without echoing names or secret material.
 func printSecretSetResult(out io.Writer, auth *api.AuthConfig, serviceDisplay string, expiresAt *time.Time) {
+	// A nil writer is valid for silent interactive remediation paths.
 	if out == nil {
 		out = io.Discard
 	}
+	// Family-specific messages make atomic pair behavior visible to the caller.
 	if canonicalSecretAuthType(auth) == "basic" {
 		fmt.Fprintln(out, "Basic Auth secrets set successfully.")
 		return
@@ -325,11 +342,49 @@ func printSecretSetResult(out io.Writer, auth *api.AuthConfig, serviceDisplay st
 		fmt.Fprintln(out, "mTLS secrets set successfully.")
 		return
 	}
+	if authType := canonicalSecretAuthType(auth); authType == "oauth" || authType == "oidc" {
+		fmt.Fprintln(out, "OAuth application credentials set successfully.")
+		return
+	}
+	// Expiry is shown only for single credentials because paired success already has a dedicated result.
 	if expiresAt != nil {
 		fmt.Fprintf(out, "Secret set successfully for %s (expires %s).\n", serviceDisplay, expiresAt.Format(time.RFC3339))
 		return
 	}
 	fmt.Fprintf(out, "Secret set successfully for %s.\n", serviceDisplay)
+}
+
+// resolveOAuthApplicationSecretInput collects the two application-registration values as one mutation.
+func resolveOAuthApplicationSecretInput(value string) (string, string, error) {
+	// Structured non-interactive input shares the assignment parser used by Basic and mTLS.
+	if value != "" {
+		pairs, err := parseInlineKeyValuePairs(value)
+		if err != nil {
+			return "", "", err
+		}
+		return validateOAuthApplicationSecretInput(pairs["client_id"], pairs["client_secret"], len(pairs))
+	}
+	if err := requireInteractive("provide client_id and client_secret using the command's value input"); err != nil {
+		return "", "", err
+	}
+	var clientID, clientSecret string
+	if err := huh.NewInput().Title("OAuth client ID:").Value(&clientID).Run(); err != nil {
+		return "", "", err
+	}
+	// Client secrets are always masked even though client identifiers are visible provider metadata.
+	if err := huh.NewInput().Title("OAuth client secret:").EchoMode(huh.EchoModePassword).Value(&clientSecret).Run(); err != nil {
+		return "", "", err
+	}
+	return validateOAuthApplicationSecretInput(clientID, clientSecret, 2)
+}
+
+// validateOAuthApplicationSecretInput keeps the accepted structured shape closed and complete.
+func validateOAuthApplicationSecretInput(clientID, clientSecret string, fieldCount int) (string, string, error) {
+	// Redirects and token fields are Engine-managed or user-grant material and cannot enter this family.
+	if fieldCount != 2 || strings.TrimSpace(clientID) == "" || strings.TrimSpace(clientSecret) == "" {
+		return "", "", errors.New("OAuth/OIDC application credentials require exactly 'client_id=...;client_secret=...'")
+	}
+	return clientID, clientSecret, nil
 }
 
 // resolveBasicSecretInput collects and validates Basic-auth credential fields.
@@ -427,8 +482,6 @@ func resolveTokenSecretInput(auth *api.AuthConfig, value string) (string, error)
 
 	if authType == "bearer" {
 		promptTitle = "Enter Bearer Token:"
-	} else if authType == "oauth" {
-		promptTitle = "Enter OAuth Token:"
 	}
 
 	if value == "" {

@@ -17,8 +17,8 @@ type credentialMutationOptions struct {
 var promptCredentialMutationConfirmation = confirmCredentialMutation
 
 // authorizeCredentialMutation keeps confirmation semantics shared by every
-// compound workflow while explicit `secret set`/`connect set` commands remain
-// confirmation-free because naming that command is already the user's intent.
+// compound workflow while explicit `secret set` remains confirmation-free
+// because naming that command is already the user's intent.
 func authorizeCredentialMutation(opts credentialMutationOptions) error {
 	if opts.confirmation == "" {
 		return nil

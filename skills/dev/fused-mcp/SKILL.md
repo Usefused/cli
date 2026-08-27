@@ -34,13 +34,29 @@ services:
   <service-slug>:
     version: "v1"
     operations: ["getIssue", "createIssue"]   # or select_all: true
-    auth:    { type: "oauth" }                # see fused-config
+    auth:                                     # see fused-config
+      type: "oauth"
+      name: "<target-auth-name>"
+      ref: "${bucket.auth.<source-service>.<source-auth-name>}"
     connect: { scopes: ["read:jira-work"] }   # see fused-config
     injections:                               # optional dynamic variable injection
       - location: body
         name: from
         value: ${bucket.env.FROM_EMAIL}       # Supports ${bucket.env.*}, ${bucket.values.*} (identical alias), and ${bucket.secrets.*}
 ```
+
+Keep OAuth/OIDC selection to the target `auth.type`/`auth.name`, an optional
+complete-pair `auth.ref`, and sibling service-specific `connect.scopes`. The ref
+resolves the source service/auth name in this MCP server's selected bucket; the
+source need not be selected by the MCP server, but it must be an enabled
+workspace service with that named pair stored in the bucket. MCP readiness,
+consent, callback exchange, execution, and managed refresh use the same Engine
+application-credential resolver as SDKs; MCP hosting does not add another
+credential store or decision path.
+
+For standalone CLI consent, pass the complete reference explicitly with
+`workspace service connect --auth-ref`. That command has no `--mcp` selector
+and does not load an MCP app to infer credential routing.
 
 `injections[].value` tags always resolve against *this MCP server's* `bucket:` -- there's no way to name a different bucket here, unlike `kind: webhook`'s `${bucket.<name>.secret.<key>}` (see `fused-webhook`). A value can also merge a tag with surrounding text (e.g. `"Bearer ${bucket.secrets.API_KEY}"`), which a webhook's secret field cannot. Writing a webhook-style named-bucket reference here (e.g. `${bucket.prod.secrets.API_KEY}`) is rejected at dispatch time with an explicit error naming the unsupported reference, rather than one of the three ambient forms above.
 

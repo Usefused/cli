@@ -41,7 +41,10 @@ services:
     version: "v1"
     operations: ["listUsers", "createUser"]   # or select_all: true
     webhooks: ["user.created"]                # event names, requires webhook_attachment -- or webhooks_select_all: true
-    auth:    { type: "api_key" }              # see fused-config for the full auth_type reference
+    auth:                                     # see fused-config
+      type: "oauth"
+      name: "<target-auth-name>"
+      ref: "${bucket.auth.<source-service>.<source-auth-name>}"
     connect: { scopes: ["read:users"] }       # OAuth/OIDC consent ceiling, see fused-config
     injections:                               # optional dynamic variable injection
       - location: header
@@ -73,8 +76,9 @@ declared OR branch at runtime. `connect.scopes` narrows OAuth/OIDC consent
 -- an application can request fewer scopes per user but never more than
 declared here. Credential material itself never lives in this file -- it's
 resolved from `bucket` at generation/dispatch time (see `fused-bucket`).
-
-Ordinary `sdk plan` is read-only. `sdk plan --interactive` may respond only to typed `bucket_credentials_missing`: show the exact YAML-resolved bucket, securely prompt for the reported static secret or OAuth/OIDC app-registration fields, confirm the write, and retry once. Never collect an end-user provider token, create/substitute a bucket, or prompt with `--json`, `--no-input`, or `CI=true`; denied credential writes stop without fallback or self-grant (see `fused-bucket`).
+For OAuth/OIDC, use target `auth.type`/`auth.name`, optional `auth.ref`, and sibling `connect.scopes`.
+The source need not be selected by the SDK, but must be enabled with that named pair in its bucket; one Engine resolver owns readiness, consent, callback, execution, and refresh.
+Ordinary `sdk plan` is read-only. `sdk plan --interactive` may respond only to typed `bucket_credentials_missing`: show the exact YAML-resolved bucket, securely prompt for the reported static secret or OAuth/OIDC application credential fields, confirm the write, and retry once. Never collect an end-user provider token, create/substitute a bucket, or prompt with `--json`, `--no-input`, or `CI=true`; denied credential writes stop without fallback or self-grant (see `fused-bucket`).
 
 The selected operation's imported `security_requirements` is authoritative:
 alternatives are OR, schemes within one alternative are AND, and an empty

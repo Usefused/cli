@@ -13,13 +13,13 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
+// TestCanonicalCommandParentsRequireAction covers only command groups that remain part of the public tree.
 func TestCanonicalCommandParentsRequireAction(t *testing.T) {
 	parents := []struct {
 		name string
 		args []string
 	}{
 		{name: "bucket", args: []string{"bucket"}},
-		{name: "connect", args: []string{"connect"}},
 		{name: "secret", args: []string{"secret"}},
 		{name: "service", args: []string{"service"}},
 		{name: "value", args: []string{"value"}},
@@ -145,30 +145,30 @@ func TestCanonicalCommandsRejectSupersededForms(t *testing.T) {
 	}
 }
 
+// TestActionFlagsStayOnConsumingSubcommand keeps removed command paths from leaving inherited flags behind.
 func TestActionFlagsStayOnConsumingSubcommand(t *testing.T) {
-	if secretCmd.Flags().Lookup("bucket") != nil {
-		t.Fatal("secret parent must not expose action-specific --bucket")
+	tests := []struct {
+		command *cobra.Command
+		flag    string
+		present bool
+	}{
+		{secretCmd, "bucket", false}, {secretSetCmd, "bucket", true}, {secretListCmd, "bucket", true}, {secretDeleteCmd, "bucket", true},
+		{serviceCmd, "q", false}, {serviceWebhooksCmd, "q", false}, {serviceOperationsCmd, "q", true},
+		{workspaceServiceCmd, "force", false}, {workspaceServiceVersionCmd, "force", false},
+		{workspaceServiceDeleteCmd, "force", true}, {workspaceServiceVersionDeleteCmd, "force", true},
 	}
-	if secretSetCmd.Flags().Lookup("bucket") == nil || secretListCmd.Flags().Lookup("bucket") == nil || secretDeleteCmd.Flags().Lookup("bucket") == nil {
-		t.Fatal("secret actions must expose their own --bucket flag")
+	for _, test := range tests {
+		assertCommandFlagPresence(t, test.command, test.flag, test.present)
 	}
-	if serviceCmd.Flags().Lookup("q") != nil || serviceWebhooksCmd.Flags().Lookup("q") != nil {
-		t.Fatal("service --q must only be available on operations")
-	}
-	if serviceOperationsCmd.Flags().Lookup("q") == nil {
-		t.Fatal("service operations must expose --q")
-	}
-	if connectCmd.Flags().Lookup("interactive") != nil || connectGetCmd.Flags().Lookup("interactive") != nil {
-		t.Fatal("connect interactive input must only be available on set")
-	}
-	if connectSetCmd.Flags().Lookup("interactive") == nil || connectSetCmd.Flags().Lookup("value-stdin") == nil {
-		t.Fatal("connect set must expose secret-safe input modes")
-	}
-	if workspaceServiceCmd.Flags().Lookup("force") != nil || workspaceServiceVersionCmd.Flags().Lookup("force") != nil {
-		t.Fatal("workspace service parents must not expose delete-only --force")
-	}
-	if workspaceServiceDeleteCmd.Flags().Lookup("force") == nil || workspaceServiceVersionDeleteCmd.Flags().Lookup("force") == nil {
-		t.Fatal("workspace delete actions must expose --force")
+}
+
+// assertCommandFlagPresence checks one ownership rule so the table remains easy to extend.
+func assertCommandFlagPresence(t *testing.T, command *cobra.Command, flag string, present bool) {
+	t.Helper()
+	found := command.Flags().Lookup(flag) != nil
+	// A mismatch identifies the exact command/flag pair instead of a compound assertion.
+	if found != present {
+		t.Fatalf("%s flag --%s presence=%v, want %v", command.CommandPath(), flag, found, present)
 	}
 }
 

@@ -1,64 +1,59 @@
 # Connection profiles
 
-A connection profile declares how a service authenticates and, for
-OAuth/OIDC services that front multiple tenants, how a selected provider
-resource's fields get bound into a request. It's the same canonical shape
-whether it comes from a workspace config, a bucket, or an OpenAPI/Postman
-document (see `reference/openapi-postman.md`).
+A connection profile declares credential-free OAuth/OIDC discovery and routing
+behavior, including how a selected provider resource's fields bind into a
+request. It may come from the imported OpenAPI/Postman contract or a workspace
+service-version `connection_profiles` attachment. Bucket credentials and
+SDK/MCP auth references are separate concerns.
 
 ## Auth vs. connect vs. profile
 
-Three related but distinct things, all under a bucket's
-`service_config.<slug>` (see `fused-bucket`):
+Three related but distinct things use different owners:
 
-- `auth` (`AuthConfig`) — a static credential the Engine attaches to every
-  call for this service. `auth_type` selects the public credential type; optional
-  `auth_name` selects the exact Registry-declared scheme when the provider has
-  more than one scheme of that type. Never omit `auth_name` in that case,
-  because choosing the first same-type scheme is intentionally unsupported.
-  Which credential fields it needs depends on `auth_type`:
+- SDK/MCP `services.<target>.auth` selects the target scheme. `type` selects the
+  public credential type; `name` selects the exact Registry-declared scheme.
+  OAuth/OIDC targets may set a complete-pair `ref` to application credentials
+  stored for another service in the same selected app bucket:
 
-  | `auth_type` | required fields |
+  ```yaml
+  auth:
+    type: oauth
+    name: calendarOAuth
+    ref: "${bucket.auth.gmail.gmailOAuth}"
+  connect:
+    scopes: ["https://www.googleapis.com/auth/calendar.readonly"]
+  ```
+
+  The source service need not be selected by the app, but it must be enabled in
+  the workspace with that named pair stored in the selected bucket. Engine
+  validates the exact source scheme, completeness, compatibility, and
+  non-chaining invariant.
+  Credential fields depend on the selected type:
+
+  | `type` | required bucket fields |
   |---|---|
   | `basic` | `username`, `password` |
   | `api_key` | `api_key` |
   | `mtls` | `cert`, `key` |
   | `bearer` | `token` |
-  | `oauth` / `oidc` | `token` — a *pre-obtained* static token, not the interactive flow below |
+  | `oauth` / `oidc` | application `client_id`/`client_secret` pair plus an interactive connected-user grant |
 
-  Credential values themselves belong in a bucket secret (see
-  `fused-bucket`), not inline here.
-- `connect` — the interactive per-user OAuth/OIDC flow: app registration
-  (`client_id`/`client_secret`) plus `redirect_uri`. Only `auth_type: oauth`
-  or `oidc` are valid here — `basic`/`api_key`/`bearer`/`mtls` credentials
-  don't have a browser consent step, so they only ever go through `auth`
-  above.
+  Credential values themselves belong in a bucket secret, never in workspace
+  or app YAML (see `fused-bucket`).
+- SDK/MCP `services.<target>.connect.scopes` is the service-specific consent
+  ceiling for the interactive per-user OAuth/OIDC flow. Store the application's
+  complete `client_id`/`client_secret` pair atomically with `fused-cli secret
+  set <service-slug> --bucket <bucket> --type oauth|oidc --auth-name <scheme>
+  --value-stdin|--interactive`. The pair uses deterministic encrypted bucket
+  secret rows and is distinct from connected-user access, refresh, and ID
+  tokens. Blank, partial, extra, token, and `redirect_uri` fields are rejected.
 
-  Registered via `fused-cli connect set <service-slug>` only (see
-  `fused-bucket`) — there is no workspace.yaml field for it. This registers
-  the app registration directly against the Engine admin endpoint — no
-  plan/apply, immediate effect, the same "upsert with no separate apply
-  step" category as `secret set`/`value set`. It is also *not* the same
-  storage as `auth`'s bucket secrets: `auth` credentials and `connect`'s
-  client_id/client_secret used to be reachable through the same `fused-cli
-  secret set <service-slug>` command and the same derived key, which meant a
-  static credential and an app registration could silently overwrite each
-  other if both were ever configured for the same service+bucket. `connect
-  set` writes to its own dedicated storage instead, so that collision cannot
-  happen. It also supports partial updates — e.g. `printf '%s'
-  'redirect_uri=https://...' | fused-cli connect set jira --bucket <bucket>
-  --value-stdin` rotates only `redirect_uri` without resupplying
-  `client_id`/`client_secret`, since the admin API never returns decrypted
-  values for a caller to resend anyway. Credential values are never accepted
-  in argv, so the whole registration goes over stdin as one `;`-delimited
-  value or through `--interactive`; a key present but blank is rejected as an
-  attempt to erase a credential, while an omitted key means leave-as-is. A
-  declarative workspace.yaml `connect:` block used to exist alongside this
-  command but was removed —
-  it always required every field on every apply, which `connect set`'s
-  partial-update support made strictly worse, and having two ways to
-  register the same app was the exact kind of duplicated decision-making
-  workspace.yaml is meant to avoid.
+  Engine derives the callback from its validated canonical public URL and
+  persists it with the consent session; neither credential input nor an HTTP
+  Host header can select the redirect. A target service may reuse a compatible
+  source application through `${bucket.auth.<source-service>.<authName>}`.
+  Consent, callback exchange, managed refresh, SDK readiness, and MCP readiness
+  use that same exact resolver.
 
   Registering the app is separate from any one user connecting: start an
   actual user session with `fused-cli workspace service connect <slug>
@@ -83,9 +78,11 @@ Three related but distinct things, all under a bucket's
   overwrites state, client credentials, redirect URI, grant/code/refresh
   values, scopes, nonce, and PKCE fields; imported maps can never supply those
   fields or secret references.
-- `profile` — the fuller `resource_discovery`/`resource_input`/`metadata`/
-  `bindings` rule set below, for OAuth/OIDC services where one token can
-  reach several sites/shops/portals/accounts.
+- A connection profile is the fuller `resource_discovery`/`resource_input`/
+  `metadata`/`bindings` rule set below, for OAuth/OIDC services where one token
+  can reach several sites/shops/portals/accounts. Its `auth_type` and
+  `auth_name` identify provider contract metadata; they are not credentials or
+  an app bucket selection.
 
 This same `basic | api_key | mtls | bearer | oauth | oidc` vocabulary is also
 what `auth.type` in an SDK or MCP server config accepts (see `fused-sdk` /

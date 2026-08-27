@@ -10,161 +10,141 @@ import (
 	"testing"
 
 	"github.com/Usefused/cli/internal/configfile"
-	"gopkg.in/yaml.v3"
 )
 
-func TestWorkspaceAuthConfigNamedSchemeJSONAndYAML(t *testing.T) {
-	auth := configfile.AuthConfig{AuthType: "api_key", AuthName: "primaryHeader", APIKey: "$PRIMARY_API_KEY"}
-
-	jsonValue, err := json.Marshal(auth)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got, want := string(jsonValue), `{"auth_type":"api_key","auth_name":"primaryHeader","api_key":"$PRIMARY_API_KEY"}`; got != want {
-		t.Fatalf("auth JSON = %s, want %s", got, want)
-	}
-
-	yamlValue, err := yaml.Marshal(auth)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got, want := string(yamlValue), "auth_type: api_key\nauth_name: primaryHeader\napi_key: $PRIMARY_API_KEY\n"; got != want {
-		t.Fatalf("auth YAML = %q, want %q", got, want)
-	}
-}
-
-func TestWorkspaceAuthConfigParsesTwoNamedSchemesInOneFamily(t *testing.T) {
-	path := writeFile(t, t.TempDir(), "workspace.yaml", `
+// TestWorkspaceRejectsBucketCredentialState proves generic buckets cannot transport provider credential configuration.
+func TestWorkspaceRejectsBucketCredentialState(t *testing.T) {
+	_, err := configfile.Parse([]byte(`
 apiVersion: fused/v1
 kind: workspace
 services:
-  billing:
-    service_id: "00000000-0000-0000-0000-000000000001"
-    versions: [{version: "2026-08-01"}]
+  jira:
+    versions: [{version: "v1"}]
 buckets:
-  primary:
+  default:
     service_config:
-      billing:
-        auth: {auth_type: api_key, auth_name: primaryHeader, api_key: $PRIMARY_API_KEY}
-  secondary:
-    service_config:
-      billing:
-        auth: {auth_type: api_key, auth_name: secondaryHeader, api_key: $SECONDARY_API_KEY}
-`)
-
-	parsed, err := configfile.ParseFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	primary := parsed.Workspace.Buckets["primary"].ServiceConfig["billing"].Auth
-	secondary := parsed.Workspace.Buckets["secondary"].ServiceConfig["billing"].Auth
-	if primary == nil || secondary == nil || primary.AuthName != "primaryHeader" || secondary.AuthName != "secondaryHeader" {
-		t.Fatalf("named same-family schemes were not preserved: primary=%#v secondary=%#v", primary, secondary)
+      jira:
+        auth: {auth_type: bearer, token: $TOKEN}
+`), "workspace.yaml")
+	// Strict decoding must reject the retired provider-credential field while preserving generic buckets.
+	if err == nil || !strings.Contains(err.Error(), "field service_config not found") {
+		t.Fatalf("legacy workspace service_config error = %v", err)
 	}
 }
 
-// TestWorkspaceAuthReferencePreservesExactSelectorsWithoutCopyingMaterial
-// proves the CLI transports a same-bucket bundle edge while leaving live
-// credential resolution to Engine instead of freezing source values at apply.
-func TestWorkspaceAuthReferencePreservesExactSelectorsWithoutCopyingMaterial(t *testing.T) {
-	t.Setenv("FUSED_TEST_JIRA_USER", "jira-user")
-	t.Setenv("FUSED_TEST_JIRA_PASSWORD", "jira-password")
+// TestWorkspaceBucketSecretsRemainApplyOnly preserves the generic webhook-secret path without admitting provider auth.
+func TestWorkspaceBucketSecretsRemainApplyOnly(t *testing.T) {
+	t.Setenv("FUSED_TEST_WEBHOOK_SECRET", "resolved-webhook-secret")
 	parsed, err := configfile.Parse([]byte(`
 apiVersion: fused/v1
 kind: workspace
-services:
-  jira:
-    versions: [{version: "v1"}]
-  confluence:
-    versions: [{version: "v1"}]
+services: {}
 buckets:
-  shared:
-    service_config:
-      jira:
-        auth:
-          auth_type: basic
-          auth_name: basicAuth
-          username: $FUSED_TEST_JIRA_USER
-          password: $FUSED_TEST_JIRA_PASSWORD
-      confluence:
-        auth:
-          auth_type: basic
-          auth_name: confluenceBasic
-          ref: "${bucket.auth.jira.basicAuth}"
+  prod:
+    secrets:
+      webhook_signing: $FUSED_TEST_WEBHOOK_SECRET
 `), "workspace.yaml")
-	// A valid complete-bundle edge must survive strict config admission.
+	// A generic named secret remains valid because it is not provider credential state.
 	if err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
-	auth := parsed.Workspace.Buckets["shared"].ServiceConfig["confluence"].Auth
-	// Destination and source selectors remain distinct so Engine can validate
-	// compatibility without assuming both services use the same scheme name.
-	if auth == nil || auth.AuthType != "basic" || auth.AuthName != "confluenceBasic" || auth.Ref != "${bucket.auth.jira.basicAuth}" {
-		t.Fatalf("auth reference identity changed: %#v", auth)
-	}
-	materials, err := parsed.WorkspaceAuthMaterials()
-	// Local source material still follows the existing apply-only env path.
-	if err != nil {
-		t.Fatalf("WorkspaceAuthMaterials() error = %v", err)
-	}
-	// Excluding the destination proves the CLI does not copy a snapshot that
-	// would defeat dynamic source rotation.
-	if len(materials) != 1 || materials["shared\x00confluence"] != (configfile.AuthMaterial{}) {
-		t.Fatalf("reference produced copied apply material: %#v", materials)
-	}
-	source := materials["shared\x00jira"]
-	// The source bundle remains complete rather than being split into field refs.
-	if source.Username != "jira-user" || source.Password != "jira-password" {
-		t.Fatalf("source credential bundle changed: %#v", source)
-	}
-	payload, err := json.Marshal(parsed.Workspace)
-	// Plan transport must retain the exact reference for Engine-side resolution.
-	if err != nil || !strings.Contains(string(payload), `"ref":"${bucket.auth.jira.basicAuth}"`) {
-		t.Fatalf("auth reference changed during JSON transport: payload=%s err=%v", payload, err)
+	materials, err := parsed.WorkspaceBucketSecretMaterials()
+	// Apply-time resolution must preserve bucket and key scope without exposing the value in YAML.
+	if err != nil || materials["prod\x00webhook_signing"] != "resolved-webhook-secret" {
+		t.Fatalf("WorkspaceBucketSecretMaterials() = %#v, %v", materials, err)
 	}
 }
 
-// TestWorkspaceAuthReferenceRejectsAmbiguousIntent keeps the slim reference
-// contract exact: one same-bucket source, one static destination scheme, and
-// no competing literal or environment-backed credential fields.
-func TestWorkspaceAuthReferenceRejectsAmbiguousIntent(t *testing.T) {
-	tests := []struct {
-		name    string
-		auth    string
-		wantErr string
-	}{
-		{name: "environment material", auth: `auth_type: basic, auth_name: targetBasic, ref: "${bucket.auth.jira.basicAuth}", username: $USER`, wantErr: "cannot include credential fields"},
-		{name: "literal material", auth: `auth_type: basic, auth_name: targetBasic, ref: "${bucket.auth.jira.basicAuth}", password: literal`, wantErr: "cannot include credential fields"},
-		{name: "named bucket", auth: `auth_type: basic, auth_name: targetBasic, ref: "${bucket.other.auth.jira.basicAuth}"`, wantErr: "must use ${bucket.auth.<service>.<authName>}"},
-		{name: "nested source", auth: `auth_type: basic, auth_name: targetBasic, ref: "${bucket.auth.team.jira.basicAuth}"`, wantErr: "must name one service and auth scheme"},
-		{name: "missing source auth", auth: `auth_type: basic, auth_name: targetBasic, ref: "${bucket.auth.jira}"`, wantErr: "must name one service and auth scheme"},
-		{name: "missing target auth", auth: `auth_type: basic, ref: "${bucket.auth.jira.basicAuth}"`, wantErr: "auth_name"},
-		{name: "missing target type", auth: `auth_name: targetBasic, ref: "${bucket.auth.jira.basicAuth}"`, wantErr: "unsupported auth_type"},
-		{name: "non static target type", auth: `auth_type: interactive, auth_name: targetAuth, ref: "${bucket.auth.jira.basicAuth}"`, wantErr: "unsupported auth_type"},
-	}
-	// Table coverage makes every invalid shape pass through the same strict
-	// parser path, avoiding a second test-only interpretation of the grammar.
-	for _, test := range tests {
-		// Subtests keep failures tied to the rejected ambiguity rather than input order.
-		t.Run(test.name, func(t *testing.T) {
-			body := fmt.Sprintf(`
+// TestWorkspaceBucketSecretsRejectLiteralValue keeps plaintext generic secrets out of workspace YAML.
+func TestWorkspaceBucketSecretsRejectLiteralValue(t *testing.T) {
+	_, err := configfile.Parse([]byte(`
 apiVersion: fused/v1
 kind: workspace
-services:
-  jira:
-    versions: [{version: "v1"}]
-  confluence:
-    versions: [{version: "v1"}]
+services: {}
 buckets:
-  shared:
-    service_config:
-      confluence:
-        auth: {%s}
+  prod:
+    secrets:
+      webhook_signing: literal
+`), "workspace.yaml")
+	// Only an environment reference may cross the declarative parse boundary.
+	if err == nil || !strings.Contains(err.Error(), "requires a $ENV reference") {
+		t.Fatalf("literal workspace bucket secret error = %v", err)
+	}
+}
+
+// TestAppAuthReferenceRoundTripsSDKAndMCP proves both app kinds preserve one exact Engine-owned credential reference.
+func TestAppAuthReferenceRoundTripsSDKAndMCP(t *testing.T) {
+	for _, kind := range []string{"sdk", "mcp"} {
+		// Shared app parsing must keep the same reference contract for generated and hosted runtimes.
+		t.Run(kind, func(t *testing.T) {
+			language := ""
+			// Only SDK configs select a generated package language.
+			if kind == "sdk" {
+				language = "language: typescript\n"
+			}
+			parsed, err := configfile.Parse([]byte(fmt.Sprintf(`apiVersion: fused/v1
+kind: %s
+name: support
+version: 1.0.0
+%sservices:
+  confluence:
+    version: v1
+    operations: [issues.list]
+    auth:
+      type: oauth
+      name: confluenceOAuth
+      ref: "${bucket.auth.jira.jiraOAuth}"
+`, kind, language)), kind+".yaml")
+			if err != nil {
+				t.Fatalf("Parse() error = %v", err)
+			}
+			config := parsed.SDK
+			// MCP and SDK aliases share one AppConfig transport shape.
+			if kind == "mcp" {
+				config = parsed.MCP
+			}
+			auth := config.Services["confluence"].Auth
+			if auth == nil || auth.Type != "oauth" || auth.Name != "confluenceOAuth" || auth.Ref != "${bucket.auth.jira.jiraOAuth}" {
+				t.Fatalf("auth reference changed: %#v", auth)
+			}
+			payload, err := json.Marshal(config)
+			if err != nil || !strings.Contains(string(payload), `"ref":"${bucket.auth.jira.jiraOAuth}"`) {
+				t.Fatalf("plan JSON lost auth ref: payload=%s err=%v", payload, err)
+			}
+		})
+	}
+}
+
+// TestAppAuthReferenceRejectsInvalidSelectors pins the local syntax and OAuth/OIDC destination boundary.
+func TestAppAuthReferenceRejectsInvalidSelectors(t *testing.T) {
+	tests := []struct{ name, auth, want string }{
+		{name: "static family", auth: `type: basic, name: target, ref: "${bucket.auth.jira.source}"`, want: "requires type oauth or oidc"},
+		{name: "missing target name", auth: `type: oauth, ref: "${bucket.auth.jira.source}"`, want: "requires an exact name"},
+		{name: "padded target name", auth: `type: oauth, name: " target ", ref: "${bucket.auth.jira.source}"`, want: "requires an exact name"},
+		{name: "named bucket", auth: `type: oauth, name: target, ref: "${bucket.prod.auth.jira.source}"`, want: "must use ${bucket.auth.<source-service>.<source-authName>}"},
+		{name: "padded reference", auth: `type: oauth, name: target, ref: " ${bucket.auth.jira.source}"`, want: "must use ${bucket.auth.<source-service>.<source-authName>}"},
+		{name: "missing source auth", auth: `type: oidc, name: target, ref: "${bucket.auth.jira}"`, want: "must name one source service and auth scheme"},
+		{name: "nested source", auth: `type: oauth, name: target, ref: "${bucket.auth.team.jira.source}"`, want: "must name one source service and auth scheme"},
+		{name: "spaced source", auth: `type: oauth, name: target, ref: "${bucket.auth.jira team.source}"`, want: "must name one source service and auth scheme"},
+		{name: "extra terminator", auth: `type: oauth, name: target, ref: "${bucket.auth.jira.source}}"`, want: "must name one source service and auth scheme"},
+	}
+	for _, test := range tests {
+		// Each malformed selector passes through the production strict parser.
+		t.Run(test.name, func(t *testing.T) {
+			body := fmt.Sprintf(`apiVersion: fused/v1
+kind: sdk
+name: support
+version: 1.0.0
+language: typescript
+services:
+  confluence:
+    version: v1
+    operations: [issues.list]
+    auth: {%s}
 `, test.auth)
-			_, err := configfile.Parse([]byte(body), "workspace.yaml")
-			// Each invalid form must name the violated invariant for direct recovery.
-			if err == nil || !strings.Contains(err.Error(), test.wantErr) {
-				t.Fatalf("Parse() error = %v, want substring %q", err, test.wantErr)
+			_, err := configfile.Parse([]byte(body), "sdk.yaml")
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Parse() error = %v, want %q", err, test.want)
 			}
 		})
 	}
@@ -542,85 +522,6 @@ services:
 	}
 }
 
-// TestWorkspaceBucketSecrets_RejectsLiteralValue pins
-// plans/plan-service-config-restructure.md item 4's core safety property:
-// buckets.<name>.secrets.<key> must be a $ENV reference, never a literal, the
-// same discipline already enforced for Auth fields.
-func TestWorkspaceBucketSecrets_RejectsLiteralValue(t *testing.T) {
-	path := writeFile(t, t.TempDir(), "workspace.yaml", `
-apiVersion: fused/v1
-kind: workspace
-services:
-  github:
-    service_id: "00000000-0000-0000-0000-000000000001"
-    versions: [{version: "2026-07-01"}]
-buckets:
-  prod:
-    secrets:
-      webhook_signing: not-an-env-ref
-`)
-	_, err := configfile.ParseFile(path)
-	if err == nil || !strings.Contains(err.Error(), "requires a $ENV reference") {
-		t.Fatalf("expected literal bucket secret rejection, got %v", err)
-	}
-}
-
-// TestWorkspaceBucketSecretMaterials_ResolvesDollarEnvRefs mirrors
-// TestWorkspaceAuthMaterials-style resolution for the generic bucket secrets
-// field -- plan/state keeps the $ENV ref, apply resolves it out-of-band,
-// keyed the same "<bucket>\x00<key>" way as auth material.
-func TestWorkspaceBucketSecretMaterials_ResolvesDollarEnvRefs(t *testing.T) {
-	t.Setenv("FUSED_TEST_WEBHOOK_SECRET", "resolved-webhook-secret")
-	path := writeFile(t, t.TempDir(), "workspace.yaml", `
-apiVersion: fused/v1
-kind: workspace
-services:
-  github:
-    service_id: "00000000-0000-0000-0000-000000000001"
-    versions: [{version: "2026-07-01"}]
-buckets:
-  prod:
-    secrets:
-      webhook_signing: $FUSED_TEST_WEBHOOK_SECRET
-`)
-	parsed, err := configfile.ParseFile(path)
-	if err != nil {
-		t.Fatalf("ParseFile failed: %v", err)
-	}
-	materials, err := parsed.WorkspaceBucketSecretMaterials()
-	if err != nil {
-		t.Fatalf("WorkspaceBucketSecretMaterials failed: %v", err)
-	}
-	if got := materials["prod\x00webhook_signing"]; got != "resolved-webhook-secret" {
-		t.Fatalf("expected resolved secret value, got %q", got)
-	}
-}
-
-// TestWorkspaceBucketSecretMaterials_MissingEnvVarErrors ensures apply fails
-// loudly (not with a silently empty secret) when the referenced environment
-// variable is not set locally.
-func TestWorkspaceBucketSecretMaterials_MissingEnvVarErrors(t *testing.T) {
-	path := writeFile(t, t.TempDir(), "workspace.yaml", `
-apiVersion: fused/v1
-kind: workspace
-services:
-  github:
-    service_id: "00000000-0000-0000-0000-000000000001"
-    versions: [{version: "2026-07-01"}]
-buckets:
-  prod:
-    secrets:
-      webhook_signing: $FUSED_TEST_UNSET_WEBHOOK_SECRET
-`)
-	parsed, err := configfile.ParseFile(path)
-	if err != nil {
-		t.Fatalf("ParseFile failed: %v", err)
-	}
-	if _, err := parsed.WorkspaceBucketSecretMaterials(); err == nil {
-		t.Fatal("expected an error for an unset environment variable")
-	}
-}
-
 // ─── kind: webhook services[*].secret: ${bucket.<name>.secret.<key>} grammar ──
 // (migrated from the removed runtime_config.webhooks -- see
 // plans/plan-webhook-kind.md; no backward compatibility, so these now
@@ -660,11 +561,7 @@ services:
 	}
 }
 
-// TestWebhookSecret_RejectsLiteralValue proves a literal (or any other
-// malformed) value fails validation at parse time instead of only being
-// discovered once Engine apply rejects the reference -- mirrors
-// TestWorkspaceBucketSecrets_RejectsLiteralValue's discipline for the
-// declaration side of this mechanism.
+// TestWebhookSecret_RejectsLiteralValue proves literals cannot bypass webhook reference validation.
 func TestWebhookSecret_RejectsLiteralValue(t *testing.T) {
 	path := writeFile(t, t.TempDir(), "webhook.yaml", `
 apiVersion: fused/v1
@@ -720,9 +617,9 @@ services:
 	}
 }
 
-// TestWorkspaceConnectProfileDetachRequiresExclusiveIntent protects bucket
+// TestWorkspaceConnectionProfileDetachRequiresExclusiveIntent protects bucket
 // routing from a config that simultaneously requests replacement and removal.
-func TestWorkspaceConnectProfileDetachRequiresExclusiveIntent(t *testing.T) {
+func TestWorkspaceConnectionProfileDetachRequiresExclusiveIntent(t *testing.T) {
 	dir := t.TempDir()
 	valid := writeFile(t, dir, "detach.yaml", `
 apiVersion: fused/v1

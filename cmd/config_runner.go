@@ -129,7 +129,6 @@ func (err *sdkApplyStageError) jsonDetails() map[string]any {
 }
 
 type workspaceApplyPayload struct {
-	authMaterials         map[string]api.AuthMaterial
 	profileMaterials      map[string]api.ConnectMaterial
 	bucketSecretMaterials map[string]string
 }
@@ -526,21 +525,19 @@ func prepareConfigApply(cfg *configfile.ParsedConfig, opts applyOptions, engineU
 	return item, nil
 }
 
+// prepareWorkspaceApplyPayload resolves profile bindings and generic webhook-style secrets outside YAML.
 func prepareWorkspaceApplyPayload(cfg *configfile.ParsedConfig) (*workspaceApplyPayload, error) {
-	authMaterials, err := workspaceAuthMaterials(cfg)
-	if err != nil {
-		return nil, err
-	}
 	profileMaterials, err := workspaceProfileMaterials(cfg)
+	// Binding resolution must complete before any apply request is sent.
 	if err != nil {
 		return nil, err
 	}
 	bucketSecretMaterials, err := cfg.WorkspaceBucketSecretMaterials()
+	// Generic bucket secrets share the same all-or-nothing local preparation boundary.
 	if err != nil {
 		return nil, err
 	}
 	return &workspaceApplyPayload{
-		authMaterials:         authMaterials,
 		profileMaterials:      profileMaterials,
 		bucketSecretMaterials: bucketSecretMaterials,
 	}, nil
@@ -747,8 +744,7 @@ func printAppliedWebhookRegistrations(baseURL, label string, registrations []api
 	}
 }
 
-// applyWorkspaceConfig sends resolved local material out-of-band from the
-// shareable YAML so plans stay reviewable without carrying secrets.
+// applyWorkspaceConfig sends profile bindings and generic named secrets out-of-band, never provider credentials.
 func applyWorkspaceConfig(client *api.Client, cfg *configfile.ParsedConfig, receipt planReceipt, payload *workspaceApplyPayload) error {
 	// A missing prepared payload is a local invariant failure, so it must not be
 	// presented as an Engine rejection with remote recovery metadata.
@@ -758,96 +754,20 @@ func applyWorkspaceConfig(client *api.Client, cfg *configfile.ParsedConfig, rece
 	resp, err := client.ApplyWorkspaceConfig(
 		receipt.PlanID,
 		receipt.SourceHash,
-		payload.authMaterials,
 		payload.profileMaterials,
 		payload.bucketSecretMaterials,
 	)
-	// Engine cannot know the caller's local file path. Enrich only proven
-	// pre-mutation auth failures so the recovery command re-plans the exact file
-	// without weakening the Engine-owned phase or commit-state contract.
+	// Engine errors remain authoritative because CLI no longer owns workspace credential recovery.
 	if err != nil {
-		return fmt.Errorf("failed to apply workspace %s: %w", cfg.ConfigKey, enrichWorkspaceApplyRecovery(err, cfg.Path))
+		return fmt.Errorf("failed to apply workspace %s: %w", cfg.ConfigKey, err)
 	}
 	fmt.Printf("Successfully applied workspace config\n")
 	printAppliedWebhooks(client.BaseURL, resp.Webhooks)
 	return nil
 }
 
-// enrichWorkspaceApplyRecovery copies a typed Engine error before attaching
-// the exact local plan command, preserving the shared API error instance for
-// any other caller that may still inspect it.
-func enrichWorkspaceApplyRecovery(err error, configPath string) error {
-	var apiError *api.APIError
-	// Arbitrary transport and application failures retain their authoritative
-	// recovery because a local re-plan is safe only for a proven admission reject.
-	if !errors.As(err, &apiError) || !workspaceAuthFailureCanReplan(apiError) {
-		return err
-	}
-	recovery := workspacePlanRecoveryCommand(configPath)
-	// An unsafe or inexact path must never be emitted as a copyable command; the
-	// Engine's path-neutral recovery remains preferable to a misleading retry.
-	if recovery == "" {
-		return err
-	}
-	enriched := *apiError
-	enriched.Recovery = recovery
-	return &enriched
-}
-
-// workspaceAuthFailureCanReplan limits local recovery enrichment to the
-// stable auth-reference errors whose apply outcome is proven uncommitted.
-func workspaceAuthFailureCanReplan(apiError *api.APIError) bool {
-	// Re-planning is unsafe when admission or commit proof is absent, even when
-	// an error code happens to share the workspace-auth prefix.
-	if apiError.Phase != "apply_admission" || apiError.CommitState != "not_committed" {
-		return false
-	}
-	switch apiError.Code {
-	case "workspace_auth_contract_drift", "workspace_auth_reference_invalid", "workspace_auth_reference_in_use":
-		return true
-	default:
-		// Explicit enumeration keeps future auth mutations from inheriting a
-		// recovery promise before their own commit semantics are reviewed.
-		return false
-	}
-}
-
-// workspacePlanRecoveryCommand builds a shell-safe plan for the exact config
-// file that produced the failed apply, reusing the composite command's bounded
-// local-value and POSIX-quoting policy.
-func workspacePlanRecoveryCommand(configPath string) string {
-	safePath := safeWorkspaceRecoveryValue(configPath)
-	// The shared sanitizer may replace or trim an unsafe path. In either case it
-	// is no longer exact, so leave recovery path-neutral instead of emitting it.
-	if safePath == workspaceServiceSafeValue || safePath != configPath {
-		return ""
-	}
-	return "fused-cli workspace plan -f " + shellQuoteWorkspaceServiceArg(safePath)
-}
-
-// workspaceAuthMaterials adapts configfile's apply-only static auth material to
-// the API payload shape without writing it into plan receipts or config files.
-func workspaceAuthMaterials(cfg *configfile.ParsedConfig) (map[string]api.AuthMaterial, error) {
-	materials, err := cfg.WorkspaceAuthMaterials()
-	if err != nil {
-		return nil, err
-	}
-	out := make(map[string]api.AuthMaterial, len(materials))
-	for key, material := range materials {
-		out[key] = api.AuthMaterial{
-			Username: material.Username,
-			Password: material.Password,
-			Token:    material.Token,
-			APIKey:   material.APIKey,
-			Cert:     material.Cert,
-			Key:      material.Key,
-		}
-	}
-	return out, nil
-}
-
 // workspaceProfileMaterials carries dynamic binding values separately from
-// bucket OAuth client credentials because profiles are service-scoped policy.
+// workspace YAML because profiles are service-scoped policy rather than credentials.
 func workspaceProfileMaterials(cfg *configfile.ParsedConfig) (map[string]api.ConnectMaterial, error) {
 	materials, err := cfg.WorkspaceProfileMaterials()
 	if err != nil {

@@ -112,6 +112,7 @@ func TestListAppsUsesEngineGraphQL(t *testing.T) {
 	}
 }
 
+// TestGetAppUsesExactAppID verifies selection identity and authored auth references use exact GraphQL fields.
 func TestGetAppUsesExactAppID(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request struct {
@@ -124,16 +125,18 @@ func TestGetAppUsesExactAppID(t *testing.T) {
 		if request.Variables["appId"] != "app-1" {
 			t.Fatalf("unexpected app ID: %#v", request.Variables)
 		}
-		if !strings.Contains(request.Query, "schema_version") || strings.Contains(request.Query, "definition_schema_version") {
+		// The query must ask Engine for the canonical authored reference without reviving a legacy schema field.
+		if !strings.Contains(request.Query, "schema_version") || !strings.Contains(request.Query, "auth_ref") || strings.Contains(request.Query, "definition_schema_version") {
 			t.Fatalf("app query does not use the exact selection schema field: %s", request.Query)
 		}
-		_, _ = w.Write([]byte(`{"data":{"app":{"app_family_id":"family-1","app_id":"app-1","name":"support","version":"2.0.0","kind":"sdk","status":"active","created_at":"now","selections":[{"service_id":"service-1","service_version_id":"version-1","schema_version":3}]}}}`))
+		_, _ = w.Write([]byte(`{"data":{"app":{"app_family_id":"family-1","app_id":"app-1","name":"support","version":"2.0.0","kind":"sdk","status":"active","created_at":"now","selections":[{"service_id":"service-1","service_version_id":"version-1","schema_version":3,"auth_type":"oauth","auth_name":"targetOAuth","auth_ref":"${bucket.auth.source.sourceOAuth}"}]}}}`))
 	}))
 	defer server.Close()
 
 	client := NewClient(server.URL, "test-key")
 	app, err := client.GetApp("app-1")
-	if err != nil || app.AppID != "app-1" || app.Kind != "sdk" || len(app.Selections) != 1 || app.Selections[0].SchemaVersion != AppSelectionSchemaVersion {
+	// Decoding must preserve the exact reference Engine persisted at plan time.
+	if err != nil || app.AppID != "app-1" || app.Kind != "sdk" || len(app.Selections) != 1 || app.Selections[0].SchemaVersion != AppSelectionSchemaVersion || app.Selections[0].AuthRef != "${bucket.auth.source.sourceOAuth}" {
 		t.Fatalf("GetApp = %#v, %v", app, err)
 	}
 }

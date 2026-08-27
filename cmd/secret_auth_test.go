@@ -56,6 +56,10 @@ func TestMultiFieldSecretResolversRejectMalformedAssignments(t *testing.T) {
 			_, _, err := resolveMTLSSecretInput("cert=certificate;key")
 			return err
 		}},
+		{name: "oauth", resolve: func() error {
+			_, _, err := resolveOAuthApplicationSecretInput("client_id=id;client_secret")
+			return err
+		}},
 	}
 	// Both multi-field credential families must expose the same parser contract.
 	for _, test := range tests {
@@ -66,6 +70,19 @@ func TestMultiFieldSecretResolversRejectMalformedAssignments(t *testing.T) {
 				t.Fatalf("expected shared inline validation error, got %v", err)
 			}
 		})
+	}
+}
+
+// TestResolveOAuthApplicationSecretInputRequiresClosedPair distinguishes app registration from token material.
+func TestResolveOAuthApplicationSecretInputRequiresClosedPair(t *testing.T) {
+	clientID, clientSecret, err := resolveOAuthApplicationSecretInput("client_id=app-id;client_secret=app-secret")
+	if err != nil || clientID != "app-id" || clientSecret != "app-secret" {
+		t.Fatalf("OAuth application input = %q/%q, err=%v", clientID, clientSecret, err)
+	}
+	// Redirects are Engine-owned and extra fields must fail before service lookup or mutation.
+	_, _, err = resolveOAuthApplicationSecretInput("client_id=app-id;client_secret=app-secret;redirect_uri=https://attacker.example")
+	if err == nil || !strings.Contains(err.Error(), "exactly") {
+		t.Fatalf("extra OAuth field error = %v", err)
 	}
 }
 

@@ -266,17 +266,23 @@ specify the family. If that family has multiple named schemes, also pass the
 exact `--auth-name`; the CLI never silently chooses the first same-family
 scheme. Interactive mode selects the exact scheme directly.
 
-> **`basic`/`mtls` credentials are ONE value, not two.** There is no
+> **Paired credentials are ONE structured value, not two commands.** There is no
 > `--username`/`--password`/`--cert`/`--key` flag and no separate `set` call
 > per field. Send both fields as one `;`-delimited
 > `key=value;key=value` value over stdin:
 > ```shell
 > printf '%s' 'username=x;password=y' | fused-cli secret set jira --type basic --value-stdin
 > printf '%s' 'cert=...;key=...' | fused-cli secret set jira --type mtls --value-stdin
+> printf '%s' 'client_id=...;client_secret=...' | fused-cli secret set gmail --bucket default --type oauth --auth-name oauth2 --value-stdin
 > ```
 > Or pass `--interactive` to supply both fields via prompts.
 
-> **Recommended Pattern:** Pipe API keys, tokens, and service credentials to `fused-cli secret set <service-slug> --value-stdin`. Add `--bucket <bucket-name>` for a bucket override. This stores secrets securely in Fused's encrypted vault.
+OAuth/OIDC application credentials are encrypted bucket secrets, separate from
+each connected user's access, refresh, and ID tokens. The Engine derives the
+callback from its canonical public URL; `redirect_uri` is never accepted as
+credential input.
+
+> **Recommended Pattern:** Pipe API keys, tokens, and service credentials to `fused-cli secret set <service-slug> --value-stdin`. OAuth/OIDC application pairs must include the exact `--bucket <bucket-name>`; other schemes may use it to override the default. This stores secrets securely in Fused's encrypted vault.
 
 > **Tip:** To see available authentication families and their exact scheme names, run `fused-cli service show <service-slug>`.
 
@@ -286,7 +292,7 @@ scheme. Interactive mode selects the exact scheme directly.
 | `--value-stdin` | | Read the credential value from stdin | `false` |
 | `--type` | | Authentication family (for example `bearer`, `api_key`, or `oauth`) | `""` |
 | `--auth-name` | | Exact Registry auth scheme name; required when the selected family has multiple schemes | `""` |
-| `--bucket` | | Bucket name or full UUID; omit to use the default bucket | `""` |
+| `--bucket` | | Bucket name or full UUID; required for OAuth/OIDC application credentials | `""` |
 | `--expires-at` | | RFC3339 expiry timestamp (e.g. 2026-12-31T23:59:59Z) | `""` |
 
 ## `secret list`
@@ -360,32 +366,6 @@ the SDK.
 
 ## `bucket delete <bucket-name>`
 Delete a workspace bucket.
-
-## `connect set <service-slug>`
-Register or rotate a bucket's OAuth/OIDC app registration (`client_id`/`client_secret`/`redirect_uri`) for a service. This is an immediate admin action -- no workspace.yaml field, no plan/apply -- and it is the only way to register the app; a declarative `connect:` workspace.yaml block existed previously and was removed in favor of this single command. Every field is required the first time; afterward, omitting a field leaves it unchanged (a key present but blank is rejected as an attempt to blank out a credential).
-
-There is no `--client-id`/`--client-secret`/`--redirect-uri` flag. Send the
-whole registration as one `;`-delimited value over stdin; the literal key
-names must be `client_id`, `client_secret`, and `redirect_uri`:
-```shell
-printf '%s' 'client_id=...;client_secret=...;redirect_uri=https://engine.example.com/workspace/connect/callback' | fused-cli connect set jira --bucket company-credentials --value-stdin
-```
-Or use `--interactive` to be prompted per field. Values in argv are rejected.
-
-| Argument | Short | Description | Default |
-|----------|-------|-------------|---------|
-| `--bucket` | | Bucket name or full UUID to register this connect config against (required) | `""` |
-| `--type` | | Connect authentication type (`oauth` or `oidc`) | `""` |
-| `--auth-name` | | Exact Registry auth scheme name; required when the selected type has multiple schemes | `""` |
-| `--interactive` | `-i` | Prompt per field instead of parsing an inline value | `false` |
-| `--value-stdin` | | Read registration fields from stdin | `false` |
-
-## `connect get <service-slug>`
-Read back a bucket's registered OAuth/OIDC app: `auth_type`, `auth_name`, `enabled`, `redirect_uri` in plaintext, plus `has_client_id`/`has_client_secret` as booleans -- never the decrypted `client_id`/`client_secret`. This is the only way to check registration state on demand: `bucket services <bucket-name-or-id>` shows just a count, and neither `workspace.yaml` nor `workspace sync` reflect this at all. Fails with a clear error, not a raw 404, when nothing has been registered yet.
-
-| Argument | Short | Description | Default |
-|----------|-------|-------------|---------|
-| `--bucket` | | Bucket name or full UUID to look up (required) | `""` |
 
 ## `value set <bucket-name-or-id> <service-slug> <location> <key-name> <value>`
 Set a non-secret configuration value in a bucket. Location can be `env`, `body`, `query`, `header`, or `path`.
@@ -842,9 +822,16 @@ Start an OAuth/OIDC connection session for an end user.
 |----------|-------|-------------|---------|
 | `--bucket` | | Workspace bucket name or full UUID (required) | `""` |
 | `--user-ref` | | Stable end-user reference (required) | `""` |
-| `--sdk` | | Optional exact SDK `name@version` or app UUID for audit attribution | `""` |
+| `--type` | | OAuth/OIDC family; pass with `--auth-name` to select an exact scheme | `""` |
+| `--auth-name` | | Exact OAuth/OIDC scheme; pass with `--type` | `""` |
+| `--auth-ref` | | Optional source application registration in the exact form `${bucket.auth.<service>.<auth-name>}` | `""` |
 | `--resource-input` | | Tenant input as `key=value`; repeatable | |
 | `--scope` | | OAuth/OIDC scope; repeatable | |
+
+Standalone consent resolves a reused application registration only from the
+explicit `--auth-ref`. This initialization/debug command has no SDK or MCP
+identity selector. Generated runtimes instead use the
+`services.<target>.auth.ref` pinned in their app configuration.
 
 ## `workspace service version add <service-slug> <version>`
 Add an allowed version to a workspace service. Inherits global flags.

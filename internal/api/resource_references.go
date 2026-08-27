@@ -19,6 +19,7 @@ type AppSelection struct {
 	WebhookSelectAll bool              `json:"webhook_select_all"`
 	AuthType         string            `json:"auth_type"`
 	AuthName         string            `json:"auth_name"`
+	AuthRef          string            `json:"auth_ref"`
 	RequiredAuth     []AppRequiredAuth `json:"required_auth"`
 	ConnectScopes    []string          `json:"connect_scopes"`
 	Injections       []InjectionConfig `json:"injections"`
@@ -78,7 +79,7 @@ const appSummaryFields = `
 	selections {
 		service_id service_version_id schema_version
 		endpoint_ids operation_names webhook_ids webhook_names
-		select_all webhook_select_all auth_type auth_name connect_scopes
+		select_all webhook_select_all auth_type auth_name auth_ref connect_scopes
 		required_auth { auth_type auth_name basic_password_mode }
 		injections { location name value mode }
 	}`

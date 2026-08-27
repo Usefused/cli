@@ -172,9 +172,7 @@ func workspaceServiceWithLocalState(remote, local configfile.WorkspaceService) c
 		if existing.ExecutionPolicy != nil {
 			remote.Versions[i].ExecutionPolicy = existing.ExecutionPolicy
 		}
-		// ConnectionProfiles: carried forward as a placeholder in case the
-		// separate connect-config merge pass has nothing for this version;
-		// that pass overwrites it later if remote does have data.
+		// ConnectionProfiles stay as a placeholder until the independent profile export supplies live data.
 		if len(existing.ConnectionProfiles) > 0 {
 			remote.Versions[i].ConnectionProfiles = existing.ConnectionProfiles
 		}
@@ -185,19 +183,12 @@ func workspaceServiceWithLocalState(remote, local configfile.WorkspaceService) c
 	return remote
 }
 
-// mergeWorkspaceConnectConfigsFromRemote mirrors exportable routing policy
-// (connection profiles). Bucket-owned OAuth app registration is no longer a
-// workspace.yaml concept at all -- it's registered directly via `fused-cli
-// connect set <slug>` -- so there is nothing bucket-scoped left to strip here.
-func mergeWorkspaceConnectConfigsFromRemote(cfg *configfile.WorkspaceConfig, services []api.WorkspaceService, configs []api.WorkspaceConnectConfig) ([]string, error) {
+// mergeWorkspaceConnectionProfilesFromRemote mirrors routing policy without coupling sync to credential storage.
+func mergeWorkspaceConnectionProfilesFromRemote(cfg *configfile.WorkspaceConfig, services []api.WorkspaceService, profiles []api.WorkspaceConnectionProfile) ([]string, error) {
 	remoteServices := remoteWorkspaceServicesByID(services)
 	serviceKeys := workspaceServiceKeysByID(cfg.Services)
-	for _, remoteConfig := range configs {
-		if serviceKeys[remoteConfig.ServiceID] == "" {
-			return nil, fmt.Errorf("workspace sync received connect config for inactive service_id %s", remoteConfig.ServiceID)
-		}
-	}
-	updated, err := mergeWorkspaceConnectionProfilesFromRemote(cfg, remoteServices, serviceKeys, configs)
+	updated, err := mergeWorkspaceConnectionProfileRows(cfg, remoteServices, serviceKeys, profiles)
+	// Invalid remote ownership or version identity must stop before rewriting YAML.
 	if err != nil {
 		return nil, err
 	}
@@ -206,7 +197,7 @@ func mergeWorkspaceConnectConfigsFromRemote(cfg *configfile.WorkspaceConfig, ser
 }
 
 // workspaceServiceKeysByID indexes the already-synced service map so remote
-// profile/config rows can be validated without scanning every service per row.
+// profile rows can be validated without scanning every service per row.
 func workspaceServiceKeysByID(services map[string]configfile.WorkspaceService) map[string]string {
 	byID := make(map[string]string, len(services))
 	for key, service := range services {
@@ -242,17 +233,10 @@ func uniqueStrings(values []string) []string {
 	return out
 }
 
-// mergeWorkspaceConnectionProfilesFromRemote splices each version's routing
-// policy onto the matching entry in that service's already-merged Versions
-// list (by service_version_id), even when several buckets return the same
-// effective profile snapshot for that service/auth tuple. Connection profiles
-// used to be one flat service-level list carrying its own `version` field per
-// entry; now that Versions is itself the per-version container, an entry
-// only needs auth_type to disambiguate itself from siblings on the same
-// version. Exact scheme names belong to bucket Connect config, while the
-// effective routing profile remains shared by authentication family.
-func mergeWorkspaceConnectionProfilesFromRemote(cfg *configfile.WorkspaceConfig, services map[string]api.WorkspaceService, serviceKeys map[string]string, configs []api.WorkspaceConnectConfig) ([]string, error) {
-	grouped, err := workspaceConnectionProfilesByServiceVersion(services, serviceKeys, configs)
+// mergeWorkspaceConnectionProfileRows splices each effective profile into its immutable service version.
+func mergeWorkspaceConnectionProfileRows(cfg *configfile.WorkspaceConfig, services map[string]api.WorkspaceService, serviceKeys map[string]string, profiles []api.WorkspaceConnectionProfile) ([]string, error) {
+	grouped, err := workspaceConnectionProfilesByServiceVersion(services, serviceKeys, profiles)
+	// Grouping validates every immutable identity before mutating the config.
 	if err != nil {
 		return nil, err
 	}
@@ -263,12 +247,14 @@ func mergeWorkspaceConnectionProfilesFromRemote(cfg *configfile.WorkspaceConfig,
 		changed := false
 		for i := range service.Versions {
 			profiles, ok := byVersionID[service.Versions[i].ServiceVersionID]
+			// Unchanged or absent snapshots should not create noisy sync output.
 			if !ok || reflect.DeepEqual(service.Versions[i].ConnectionProfiles, profiles) {
 				continue
 			}
 			service.Versions[i].ConnectionProfiles = profiles
 			changed = true
 		}
+		// Services without profile changes retain their existing declarative entry.
 		if !changed {
 			continue
 		}
@@ -278,33 +264,30 @@ func mergeWorkspaceConnectionProfilesFromRemote(cfg *configfile.WorkspaceConfig,
 	return updated, nil
 }
 
-// workspaceConnectionProfilesByServiceVersion validates profile/version
-// ownership in one pass, de-duplicates rows repeated through multiple bucket
-// configs, and groups by the exact service_version_id each profile attaches
-// to so the caller can splice profiles onto the right Versions entry instead
-// of a flat service-level list.
-func workspaceConnectionProfilesByServiceVersion(services map[string]api.WorkspaceService, serviceKeys map[string]string, configs []api.WorkspaceConnectConfig) (map[string]map[string][]map[string]interface{}, error) {
+// workspaceConnectionProfilesByServiceVersion validates ownership and groups rows without per-profile reads.
+func workspaceConnectionProfilesByServiceVersion(services map[string]api.WorkspaceService, serviceKeys map[string]string, profiles []api.WorkspaceConnectionProfile) (map[string]map[string][]map[string]interface{}, error) {
 	grouped := map[string]map[string][]map[string]interface{}{}
 	seen := map[string]bool{}
-	for _, config := range configs {
-		if serviceKeys[config.ServiceID] == "" && len(config.Profiles) > 0 {
-			return nil, fmt.Errorf("workspace sync received a connection profile for inactive service_id %s", config.ServiceID)
+	for _, profile := range profiles {
+		// Sync must not attach routing policy to a service absent from the authoritative service list.
+		if serviceKeys[profile.ServiceID] == "" {
+			return nil, fmt.Errorf("workspace sync received a connection profile for inactive service_id %s", profile.ServiceID)
 		}
-		enabledVersionIDs := workspaceEnabledVersionIDs(services[config.ServiceID])
-		for _, profile := range config.Profiles {
-			if !enabledVersionIDs[profile.ServiceVersionID] {
-				return nil, fmt.Errorf("workspace sync received a connection profile for an inactive version of service_id %s", config.ServiceID)
-			}
-			dedupeKey := config.ServiceID + "\x00" + profile.ServiceVersionID + "\x00" + profile.AuthType
-			if seen[dedupeKey] {
-				continue
-			}
-			seen[dedupeKey] = true
-			if grouped[config.ServiceID] == nil {
-				grouped[config.ServiceID] = map[string][]map[string]interface{}{}
-			}
-			grouped[config.ServiceID][profile.ServiceVersionID] = append(grouped[config.ServiceID][profile.ServiceVersionID], workspaceConnectionProfileIntent(profile))
+		enabledVersionIDs := workspaceEnabledVersionIDs(services[profile.ServiceID])
+		// Profile identity is immutable-version scoped, so inactive versions cannot be reconstructed safely.
+		if !enabledVersionIDs[profile.ServiceVersionID] {
+			return nil, fmt.Errorf("workspace sync received a connection profile for an inactive version of service_id %s", profile.ServiceID)
 		}
+		dedupeKey := profile.ServiceID + "\x00" + profile.ServiceVersionID + "\x00" + profile.AuthType
+		// Duplicate effective rows must not create unstable YAML arrays.
+		if seen[dedupeKey] {
+			continue
+		}
+		seen[dedupeKey] = true
+		if grouped[profile.ServiceID] == nil {
+			grouped[profile.ServiceID] = map[string][]map[string]interface{}{}
+		}
+		grouped[profile.ServiceID][profile.ServiceVersionID] = append(grouped[profile.ServiceID][profile.ServiceVersionID], workspaceConnectionProfileIntent(profile))
 	}
 	return grouped, nil
 }
@@ -325,8 +308,9 @@ func workspaceEnabledVersionIDs(service api.WorkspaceService) map[string]bool {
 // only workspace-local attachments need to carry inline profile JSON.
 // Version is deliberately absent from the intent map -- it's implied by
 // which Versions entry this profile list gets attached to.
-func workspaceConnectionProfileIntent(profile api.WorkspaceConnectProfile) map[string]interface{} {
+func workspaceConnectionProfileIntent(profile api.WorkspaceConnectionProfile) map[string]interface{} {
 	intent := map[string]interface{}{"auth_type": profile.AuthType}
+	// Exact scheme identity is exported only when present in the safe snapshot.
 	if authName := workspaceConnectionProfileAuthName(profile); authName != "" {
 		// The outer selector lets Engine resolve the same named Registry stream after sync replaces an inline body with profile_id.
 		intent["auth_name"] = authName
@@ -347,7 +331,7 @@ func workspaceConnectionProfileIntent(profile api.WorkspaceConnectProfile) map[s
 }
 
 // workspaceConnectionProfileAuthName recovers the exact scheme identity from the safe profile snapshot without introducing another Engine sync field.
-func workspaceConnectionProfileAuthName(profile api.WorkspaceConnectProfile) string {
+func workspaceConnectionProfileAuthName(profile api.WorkspaceConnectionProfile) string {
 	authName, _ := profile.Profile["auth_name"].(string)
 	return strings.TrimSpace(authName)
 }
@@ -671,7 +655,7 @@ func PerformWorkspaceSync(ctx context.Context, client *api.Client, configPath st
 	if err != nil {
 		return nil, err
 	}
-	connectConfigs, err := client.ListWorkspaceConnectConfigs()
+	profiles, err := client.ListWorkspaceConnectionProfiles()
 	if err != nil {
 		return nil, err
 	}
@@ -687,15 +671,15 @@ func PerformWorkspaceSync(ctx context.Context, client *api.Client, configPath st
 	if err != nil {
 		return nil, err
 	}
-	connectUpdates, err := mergeWorkspaceConnectConfigsFromRemote(cfg, remote, connectConfigs)
+	profileUpdates, err := mergeWorkspaceConnectionProfilesFromRemote(cfg, remote, profiles)
 	if err != nil {
 		return nil, err
 	}
-	result.Updated = mergeWorkspaceSyncUpdates(result, connectUpdates)
+	result.Updated = mergeWorkspaceSyncUpdates(result, profileUpdates)
 	if err := writeWorkspaceConfig(path, cfg); err != nil {
 		return nil, err
 	}
-	recordWorkspaceSyncWrite(ctx, result, len(connectConfigs))
+	recordWorkspaceSyncWrite(ctx, result, len(profiles))
 	return &result, nil
 }
 
@@ -717,7 +701,7 @@ func mergeWorkspaceSyncUpdates(result workspaceSyncResult, updates []string) []s
 
 // recordWorkspaceSyncWrite attaches mutation counts to the command span and
 // emits an audit event only when the user-triggered sync changed local YAML.
-func recordWorkspaceSyncWrite(ctx context.Context, result workspaceSyncResult, connectConfigCount int) {
+func recordWorkspaceSyncWrite(ctx context.Context, result workspaceSyncResult, connectionProfileCount int) {
 	span := trace.SpanFromContext(ctx)
 	changed := len(result.Added)+len(result.Updated)+len(result.Removed) > 0
 	span.SetAttributes(
@@ -726,7 +710,7 @@ func recordWorkspaceSyncWrite(ctx context.Context, result workspaceSyncResult, c
 		attribute.Int("service_added_count", len(result.Added)),
 		attribute.Int("service_updated_count", len(result.Updated)),
 		attribute.Int("service_removed_count", len(result.Removed)),
-		attribute.Int("connect_config_count", connectConfigCount),
+		attribute.Int("connection_profile_count", connectionProfileCount),
 	)
 	if changed {
 		span.AddEvent("workspace_config_written")

@@ -1,6 +1,6 @@
 ---
 name: fused-bucket
-description: "Use when the user wants to manage Fused bucket credentials using fused-cli -- storing static secrets or values, registering or checking a service's OAuth/OIDC app (client_id/client_secret/redirect_uri), starting an OAuth/OIDC connect session for a user, or listing/selecting a connected user's provider resources. Trigger on 'bucket', 'secret', 'fused-cli secret', 'fused-cli value', 'fused-cli connect', 'OAuth connect', 'register OAuth app', 'check connect config', 'connection resources', or 'connected resource'. For the auth_type/connect config field shapes themselves, or how a resource's fields get bound into a request, read fused-config."
+description: "Use when the user wants to manage Fused bucket credentials using fused-cli -- storing static secrets or values, storing a service's OAuth/OIDC application client pair, starting an OAuth/OIDC connect session for a user, or listing/selecting a connected user's provider resources. Trigger on 'bucket', 'secret', 'fused-cli secret', 'fused-cli value', 'OAuth connect', 'register OAuth app', 'connection resources', or 'connected resource'. For auth field shapes or how a resource's fields get bound into a request, read fused-config."
 ---
 
 # Buckets, secrets, and connections
@@ -13,8 +13,9 @@ selected app/runtime *uses*.
 A workspace can have more than one bucket for the same service when an explicit
 environment, tenant, or enterprise isolation boundary requires separate
 credentials. Bucket read/value commands and workspace connect take bucket names
-(or full UUIDs as an automation fallback); secret set/delete may omit `--bucket`
-to use the default.
+(or full UUIDs as an automation fallback). OAuth/OIDC application credential
+writes always name the bucket explicitly so consent and app selection cannot
+silently diverge.
 
 Choose a bucket before writing configuration or credentials:
 
@@ -40,31 +41,13 @@ select the bucket for an SDK or MCP server, but does not let workspace members
 read values, change secrets, or manage connections. Use `workspace access
 bucket revoke <bucket-name>` to remove only that global use binding.
 
-```yaml
-buckets:
-  <bucket-name>:
-    service_config:
-      <service-slug>:
-        auth: {...}       # see fused-config for the auth_type shape
-```
-
-That `buckets:` block is real -- workspace.yaml can declaratively set
-`service_config.<slug>.auth` and generic `secrets.<key>` ($ENV-only, no
-literals) for a bucket, and `plan`/`apply` does read and apply it. What it
-cannot do is **create the bucket itself**: apply resolves each
-`buckets.<name>` key against an existing bucket by name, and if no bucket
-with that name exists yet, apply fails outright with "bucket not found" --
-it never creates one implicitly. **The only way to create a bucket is
-`fused-cli bucket create <bucket-name>`** below. For an explicitly requested or
-stated isolation bucket, create it under the policy above before declaring
-`buckets.<name>...` in workspace.yaml or running any `--bucket <name>` command.
-
-A service's OAuth/OIDC app registration (`connect`) is never a workspace.yaml
-field -- it's an immediate admin action against its own endpoint. Use
-`fused-cli connect set <slug>` directly, or let an explicitly interactive SDK
-plan invoke the same secure write after Engine reports that the SDK's exact
-YAML-selected bucket is missing it. Ordinary plan/apply remains declarative and
-does not mutate this registration.
+A bucket is selected by `bucket:` in each `kind: sdk` or `kind: mcp` file; it
+is not configured inside `workspace.yaml`. A service's OAuth/OIDC application
+credential pair is likewise never a workspace field. Use `fused-cli secret set
+<slug> --bucket <bucket> --type oauth|oidc` directly, or let an
+explicitly interactive SDK plan invoke that same atomic secure write after
+Engine reports the exact YAML-selected bucket is missing it. Ordinary
+plan/apply remains declarative and does not mutate credentials.
 
 Every command list below may be behind the CLI's actual flags/subcommands --
 run `fused-cli <command> --help` (e.g. `fused-cli bucket --help`, `fused-cli
@@ -79,47 +62,46 @@ rules -- easy to conflate since they look alike:
 | Context | Form | Bucket name | Can merge with surrounding text? |
 |---|---|---|---|
 | Ordinary SDK/MCP `injections[].value` (`fused-sdk`/`fused-mcp`) | `${bucket.env\|values\|secrets.<key>}` | Always that SDK or MCP server's own `bucket:` -- cannot name another | Yes (e.g. `"Bearer ${bucket.secrets.KEY}"`) |
-| Workspace static `service_config.<slug>.auth.ref` | `${bucket.auth.<service>.<authName>}` | Always the enclosing `buckets.<name>` -- cannot name another | No -- must be the entire `ref` value |
+| SDK/MCP service `auth.ref` | `${bucket.auth.<service>.<authName>}` | Always that app's selected `bucket:` | No -- must be the entire `ref` value |
 | `kind: webhook` `services.<slug>.secret` (`fused-webhook`) | `${bucket.<name>.env\|secret.<key>}` or `${bucket.env\|secret.<key>}` (default bucket) | Explicit (or defaults to `default`) -- webhook verification has no app/dispatch context to fall back on | No -- must be the entire field value |
 | Connection profile `${resource.*}` (`fused-config`) | `${resource.provider_resource_id\|base_url\|metadata.<key>}` | N/A -- not a bucket reference at all, resolves against the selected connection's resource | No -- must be the entire field value |
 
-A workspace static-auth reference reuses one complete credential bundle without
-copying its fields:
+A service in an SDK or MCP config can reuse one complete application pair
+without copying its fields:
 
 ```yaml
-buckets:
-  default:
-    service_config:
-      confluence:
-        auth:
-          auth_type: basic
-          auth_name: confluenceBasic
-          ref: "${bucket.auth.jira.basicAuth}"
+kind: sdk
+bucket: default
+services:
+  google-calendar:
+    auth:
+      type: oauth
+      name: calendarOAuth
+      ref: "${bucket.auth.gmail.gmailOAuth}"
+    connect:
+      scopes: ["https://www.googleapis.com/auth/calendar.readonly"]
 ```
 
-The outer `auth_type` and `auth_name` select the exact destination scheme;
-`jira.basicAuth` selects the exact source service and scheme in that same
-bucket. For the slim grammar, both source segments are non-empty and dot-free.
-Source and destination names need not match, but Engine requires
-compatible static credential schemes. `ref` is mutually exclusive with
-`username`, `password`, `token`, `api_key`, `cert`, and `key`. References are
-one level only: the source must contain credential material rather than another
-reference. Engine resolves the source at execution, so rotating the source
-bundle changes every consumer on its next request without another workspace
-apply. This mechanism does not reference OAuth/OIDC `connect` app registration
-or an end-user grant; those remain on their dedicated connection paths.
+The target `type` and `name` select the exact destination scheme;
+`gmail.gmailOAuth` selects the exact source service and scheme in that app's
+bucket. Both source segments are non-empty and dot-free. Source and destination
+names need not match, but Engine requires compatible OAuth/OIDC credential
+families. References are one level only: the source must contain credential
+material rather than another reference. The source service does not need to be
+selected by the app, but it must be enabled in the workspace with that named
+pair stored in the app's bucket. Engine resolves it from the bucket, so rotating
+the source pair changes every consumer on its next request without another app
+apply.
+References reuse only the source application's client pair; each target keeps
+its own scopes and connected-user grants.
 
-The binding is service-scoped, so every enabled immutable version of both the
-source and destination must retain the same exact scheme name, canonical auth
-type, and credential-key shape. Engine rejects drift before any workspace
-mutation. Removing an existing service config's `auth` block removes its live
-reference on the next apply but deliberately preserves independently stored
-direct credentials.
+Engine validates the exact source and destination auth metadata, compatible
+OAuth/OIDC types, complete pair, and non-chaining invariant during app planning and at
+runtime. Removing or changing `auth.ref` changes immutable app-version content;
+it never deletes independently stored source credentials.
 
-`fused-cli connect set <slug>` (below) takes `client_id`/`client_secret`/
-`redirect_uri` as literal values only -- it's an immediate admin action, not
-a declarative field, so there is no `${bucket...}`/`$ENV` reference form for
-it to resolve.
+The Engine alone derives OAuth/OIDC redirect URIs from its canonical public
+URL. Credential input and SDK/MCP auth references never contain one.
 
 Using the wrong form in the wrong place is rejected with an explicit error
 naming the unsupported reference -- e.g. a webhook-style named-bucket
@@ -133,7 +115,7 @@ fused-cli bucket list                    # NAME, ID, secret count, value count
 fused-cli bucket create <bucket-name>
 fused-cli bucket delete <bucket-name>
 fused-cli bucket show <bucket-name-or-id>             # + created_at
-fused-cli bucket services <bucket-name-or-id>         # per-service breakdown: secrets/values/connect-configs/connected-user counts
+fused-cli bucket services <bucket-name-or-id>         # per-service breakdown: secrets/values/OAuth application families/connected-user counts
 fused-cli bucket secrets <bucket-name-or-id>          # metadata only; never values
 fused-cli bucket values <bucket-name-or-id>
 fused-cli bucket connections <bucket-name-or-id> [--service <service-slug>] [--user <end-user-reference>]
@@ -155,7 +137,7 @@ Bucket operations use separate permissions by lifecycle:
   connection listings need `connection.read`.
 - Creating a bucket needs workspace `bucket.manage`. Changing bucket values
   needs `bucket.manage`; changing secrets needs `credentials.manage`.
-- `connect set` needs `credentials.manage` and `service.consume`.
+- OAuth/OIDC application `secret set` needs `credentials.manage`.
 - Starting a user connect session needs `connection.manage`, `bucket.use`, and
   `service.consume`. Changing or rediscovering connection resources needs
   `connection.manage`.
@@ -184,9 +166,9 @@ skill's `reference/access-management.md` for the complete role matrix.
 
 ```shell
 fused-cli secret list --bucket <bucket-name-or-id>
-# single-value scheme (api_key, bearer, oauth/oidc static token):
+# single-value scheme (api_key, bearer):
 printf '%s' "$TOKEN" | fused-cli secret set <service-slug> --value-stdin [--bucket <bucket-name-or-id>] [--type <auth-type>] [--auth-name <scheme>] [--expires-at <RFC3339>]
-# multi-field scheme (basic, mtls): send ONE ';'-joined value over stdin:
+# multi-field scheme (basic, mtls, oauth, oidc): send ONE ';'-joined value over stdin:
 printf '%s' 'username=x;password=y' | fused-cli secret set <service-slug> --value-stdin [--bucket <bucket-name-or-id>] --type basic
 # Basic schemes whose service metadata declares basic_password_mode=empty:
 printf '%s' 'username=api-key;password=' | fused-cli secret set <service-slug> --value-stdin [--bucket <bucket-name-or-id>] --type basic
@@ -198,8 +180,9 @@ fused-cli value list <bucket-name-or-id>
 fused-cli value delete <bucket-name-or-id> <service-slug> <key-name>
 ```
 
-**There is no `--username`/`--password`/`--cert`/`--key` flag, and `basic`/
-`mtls` are not two separate secrets.** The stdin value is *itself* the whole
+**There is no `--username`/`--password`/`--cert`/`--key` flag, and paired
+schemes are not entered through separate commands.** The stdin value is itself
+the whole
 credential: for these schemes it is a `key=value;key=value` string -- not
 comma-separated, not JSON, and not two sequential `set` calls. Credential
 values in argv are rejected so shell history and process listings cannot
@@ -229,8 +212,8 @@ blocks requests when a secret passes its expiry.
 `value` stores arbitrary bucket-scoped values, including literal binding
 values a connection profile references (see `fused-config`).
 
-An explicit `fused-cli sdk plan --interactive` may offer the same static-secret
-or connect-registration setup when Engine returns typed
+An explicit `fused-cli sdk plan --interactive` may offer the same secret setup
+when Engine returns typed
 `bucket_credentials_missing` details. The workflow must display and use the
 SDK YAML's resolved bucket, reuse the ordinary secure collector for each
 reported auth requirement, ask for confirmation before storage, and retry
@@ -240,65 +223,49 @@ automation instead.
 
 Prefer bucket secrets/values over local `_env`/`$VAR` handoffs for anything
 committed to source control -- a bucket secret is resolved server-side by
-the Engine, not read off the machine running `apply`. This covers `auth`
-static credentials and binding literals. It does *not* cover `connect`'s
-`client_id`/`client_secret` -- those have their own dedicated command below,
-not `secret set` (a static `auth` credential and a `connect` app registration
-used to be reachable through the same `secret set` command and the same
-derived key, which meant the two could silently overwrite each other if both
-were ever configured for the same service+bucket; `connect set` writes to
-its own storage instead).
+the Engine, not read off the machine running `apply`. This covers static
+`auth` credentials, OAuth/OIDC application credentials, and binding literals.
+OAuth/OIDC application credentials are an atomic pair with deterministic
+Engine-owned storage keys; they are not connected-user tokens.
 
-## Registering a service's OAuth/OIDC app (connect)
+## Storing a service's OAuth/OIDC application credentials
 
 ```shell
-printf '%s' 'client_id=...;client_secret=...;redirect_uri=https://...' | fused-cli connect set <service-slug> --bucket <bucket-name-or-id> --value-stdin [--type oauth|oidc] [--auth-name <scheme>]
-fused-cli connect set <service-slug> --bucket <bucket-name-or-id> --interactive
+printf '%s' 'client_id=...;client_secret=...' | fused-cli secret set <service-slug> --bucket <bucket-name-or-id> --type oauth --auth-name <scheme> --value-stdin
+fused-cli secret set <service-slug> --bucket <bucket-name-or-id> --type oidc --auth-name <scheme> --interactive
 ```
 
-This registers (or rotates) the app credentials a service's interactive
-OAuth/OIDC flow uses -- distinct from any one end user connecting, see the
-next section for that. Like `secret set`/`value set`, this is an **immediate
-admin action**: no workspace.yaml block, no plan/apply, takes effect on save.
-`--type` selects OAuth versus OIDC. When the selected type has multiple named
-schemes, `--auth-name` must select the exact Registry scheme; the CLI never
-uses declaration order as a fallback. A sole supported scheme is picked
-automatically.
+The pair is an immediate, atomic admin mutation. The input must contain exactly
+`client_id` and `client_secret`; blank, partial, extra, token, and
+`redirect_uri` fields are rejected. Engine encrypts both rows independently
+under deterministic names owned by one shared helper. It derives the callback
+as `<engine.public_url>/workspace/connect/callback`, never from credential
+input or an HTTP Host header.
 
-Every field is required the first time (there is nothing to fall back to),
-but afterward **omitting a field leaves it unchanged** -- rotating just
-`redirect_uri` does not require resupplying `client_id`/`client_secret`. A
-key present but blank (`'client_secret='`, or an empty interactive answer) is
-different from a key never mentioned: the former is rejected as an attempt
-to blank out a credential, the latter means "leave as-is." This works even
-though the admin API never returns decrypted values back to a caller --
-Engine merges an omitted field in from the existing encrypted row itself, not
-from anything the CLI resent.
-
-```shell
-fused-cli connect get <service-slug> --bucket <bucket-name-or-id>
-```
-
-Reads back whatever the last `set` saved -- `auth_type`, `enabled`,
-`redirect_uri` in plaintext, plus `has_client_id`/`has_client_secret` as
-booleans (never the actual `client_id`/`client_secret`, same as `set`'s
-response). This is the only way to check registration state on demand:
-`bucket services <bucket-name-or-id>` shows just a connect-config count, and
-workspace.yaml/`workspace sync` never reflect this at all -- app
-registration was deliberately taken out of the declarative surface entirely
-(see above), so there is nothing for `plan`/`apply`/`sync` to show. `get`
-fails with a clear error, not a raw 404, when nothing has been registered
-yet for that bucket+service.
+A target service can reuse a compatible source application's pair through
+`ref: "${bucket.auth.<source-service>.<source-auth-name>}"`. Consent start,
+callback exchange, managed refresh, SDK readiness, and MCP readiness all use
+the same exact resolver, so rotation reaches every consumer without copying
+credentials or publishing another app version.
 
 ## Starting an OAuth/OIDC connection
 
 ```shell
-fused-cli workspace service connect <service-slug> --bucket <bucket-name-or-id> --user-ref <end-user-reference> [--scope read:x --scope write:y]
+fused-cli workspace service connect <service-slug> --bucket <bucket-name-or-id> --user-ref <end-user-reference> [--type oauth --auth-name <scheme>] [--auth-ref '${bucket.auth.<source-service>.<source-auth-name>}'] [--scope read:x --scope write:y]
 ```
 
 Omitting `--scope` requests the service's declared scope catalogue. OIDC
 subsets must include `openid`. This is the same validation the SDK's
 `sdk.auth.startConnectSession(...)` call uses.
+Pass `--type` and `--auth-name` together when a service exposes multiple
+OAuth/OIDC schemes; otherwise Engine selects the sole compatible scheme.
+Pass `--auth-ref` only when this standalone connection should reuse a complete
+application pair stored for another enabled service in the same bucket. The
+standalone initialization/debug command has no SDK or MCP identity selector and
+never infers an app-configured ref or sends an app ID. Generated SDK/MCP
+runtimes resolve the `auth.ref` pinned in their own app configuration, but only
+a generated SDK attaches its embedded immutable app ID as provenance. The
+connected-user grant remains owned by the bucket.
 
 The user does not refresh a connected access token through `fused-cli` or the
 generated SDK. Engine refreshes eligible OAuth/OIDC connections at startup and

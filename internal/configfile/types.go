@@ -33,35 +33,10 @@ type WorkspaceConfig struct {
 	Deprecations []WorkspaceDeprecationDirective `yaml:"deprecations,omitempty" json:"deprecations,omitempty"`
 }
 
-// WorkspaceBucket owns runtime credential material keyed by service. Services
-// declare what is enabled; buckets declare which credentials a selected
-// app/runtime should use for those enabled services.
+// WorkspaceBucket declares only generic named secrets used by resources such
+// as webhooks; provider credentials remain operational Engine bucket state.
 type WorkspaceBucket struct {
-	ServiceConfig map[string]BucketServiceConfig `yaml:"service_config,omitempty" json:"service_config,omitempty"`
-	// Secrets are generic, bucket-scoped named secrets -- not tied to any one
-	// service, unlike ServiceConfig -- resolved at verification/dispatch time
-	// via an explicit bucket.<bucket-name>.secret.<key-name> reference rather
-	// than ambient SDK/app context (see
-	// plans/plan-service-config-restructure.md item 4). Motivated by webhook
-	// signing secrets needing to be shared across multiple SDKs/registrations,
-	// but deliberately general-purpose. Values require $ENV references, same
-	// discipline as Auth/Connect fields -- see validateWorkspaceBucketSecrets.
 	Secrets map[string]string `yaml:"secrets,omitempty" json:"secrets,omitempty"`
-}
-
-// Connect (the bucket's OAuth/OIDC app registration -- client_id/
-// client_secret/redirect_uri) was removed from here deliberately: it is now
-// an immediate admin action only, `fused-cli connect <slug> set` (see
-// fused-bucket), never a workspace.yaml field. Two ways to register the same
-// app registration -- one declarative-and-required-in-full, one imperative-
-// and-partial-update -- was the exact kind of duplicated decision-making
-// this config is meant to avoid; connect set's partial-update support also
-// made the declarative form strictly worse (it always required every
-// field). Auth is unaffected -- it is a fully static credential, not an
-// interactive flow, so it has no equivalent imperative-vs-declarative split.
-type BucketServiceConfig struct {
-	Auth       *AuthConfig       `yaml:"auth,omitempty" json:"auth,omitempty"`
-	Injections []InjectionConfig `yaml:"injections,omitempty" json:"injections,omitempty"`
 }
 
 // WorkspaceService represents service versions enabled for a workspace.
@@ -179,45 +154,10 @@ type RateLimitConfig = ratelimitpolicy.Config
 
 type RetryConfig = retrypolicy.Config
 
-// RuntimeConfig (workspace-level runtime_config.webhooks) was removed
-// outright with no backward compatibility once kind: webhook shipped -- see
-// plans/plan-webhook-kind.md and WorkspaceService's doc comment.
-type AuthConfig struct {
-	Bucket   string `yaml:"bucket,omitempty" json:"bucket,omitempty"`
-	AuthType string `yaml:"auth_type" json:"auth_type"`
-	AuthName string `yaml:"auth_name,omitempty" json:"auth_name,omitempty"`
-	// Ref binds this complete static credential family to another named auth
-	// family in the same bucket, so rotations stay live without copying values.
-	Ref      string `yaml:"ref,omitempty" json:"ref,omitempty"`
-	Username string `yaml:"username,omitempty" json:"username,omitempty"`
-	Password string `yaml:"password,omitempty" json:"password,omitempty"`
-	Token    string `yaml:"token,omitempty" json:"token,omitempty"`
-	APIKey   string `yaml:"api_key,omitempty" json:"api_key,omitempty"`
-	Cert     string `yaml:"cert,omitempty" json:"cert,omitempty"`
-	Key      string `yaml:"key,omitempty" json:"key,omitempty"`
-}
-
-type AuthMaterial struct {
-	Username string
-	Password string
-	Token    string
-	APIKey   string
-	Cert     string
-	Key      string
-}
-
 // ConnectMaterial carries apply-time-resolved values Engine never re-derives
-// itself. Only BindingValues is populated today -- a connection profile's
-// bindings referencing an $ENV placeholder (see WorkspaceProfileMaterials).
-// ClientID/ClientSecret remain on this type because it is also the value
-// api.ConnectMaterial's wire shape mirrors for that same profile-binding
-// path (see cmd/config_runner.go); they are not set by anything since the
-// bucket-level connect: block was removed in favor of `fused-cli connect
-// <slug> set` -- registering that app is now an immediate admin action, not
-// resolved as part of a workspace apply.
+// itself. BindingValues carries connection-profile bindings that reference an
+// $ENV placeholder; workspace YAML never carries bucket credential material.
 type ConnectMaterial struct {
-	ClientID      string
-	ClientSecret  string
 	BindingValues map[string]string
 }
 
@@ -331,6 +271,9 @@ type InjectionConfig struct {
 type AppAuth struct {
 	Type string `yaml:"type" json:"type"`
 	Name string `yaml:"name,omitempty" json:"name,omitempty"`
+	// Ref reuses one exact OAuth/OIDC application credential family from the
+	// selected bucket without copying secrets into app config or plan state.
+	Ref string `yaml:"ref,omitempty" json:"ref,omitempty"`
 }
 
 // AppConnect narrows OAuth/OIDC consent without carrying tokens or

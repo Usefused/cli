@@ -21,7 +21,7 @@ func TestAgentReadCommandsExposeJSON(t *testing.T) {
 		workspaceServicesListCmd, workspaceHasCmd, workspaceServiceVersionsCmd, workspaceServiceOperationsCmd, workspaceServiceWebhooksCmd,
 		bucketListCmd, bucketShowCmd, bucketServicesCmd, bucketSecretsCmd, bucketValuesCmd, bucketConnectionsCmd, bucketSDKsCmd,
 		secretListCmd, valueListCmd, sdkListCmd, sdkValidateCmd, sdkShowCmd, sdkServicesCmd, sdkBucketsCmd,
-		sdkActivityCmd, sdkInvokeCmd, mcpListCmd, mcpValidateCmd, sdkTokenListCmd, mcpTokenListCmd, connectGetCmd, workspaceConnectionResourcesListCmd,
+		sdkActivityCmd, sdkInvokeCmd, mcpListCmd, mcpValidateCmd, sdkTokenListCmd, mcpTokenListCmd, workspaceConnectionResourcesListCmd,
 		validateCmd, webhookValidateCmd, whoAmICmd, workspaceAccessListCmd, teamListCmd, teamShowCmd,
 		teamEligibleOwnersCmd, teamBuildAccessCmd, teamMemberListCmd, userListCmd, userShowCmd, configGetCmd, configListCmd, skillListCmd, skillPrintCmd,
 		importStatusCmd,

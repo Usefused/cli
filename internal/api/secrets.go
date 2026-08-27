@@ -135,6 +135,15 @@ type SecretUpsertRequest struct {
 	ExpiresAt      *time.Time `json:"expires_at,omitempty"`
 }
 
+// CredentialFamilyUpsertRequest keeps semantic paired fields free of Engine storage key details.
+type CredentialFamilyUpsertRequest struct {
+	ServiceID      string            `json:"service_id"`
+	CredentialType string            `json:"credential_type"`
+	AuthName       string            `json:"auth_name"`
+	Values         map[string]string `json:"values"`
+	ExpiresAt      *time.Time        `json:"expires_at,omitempty"`
+}
+
 // UpsertSecrets sends paired credential material as one admin action so Engine
 // can validate and persist the group atomically at the store boundary.
 func (c *Client) UpsertSecrets(bucketID string, secrets []SecretUpsertRequest) error {
@@ -165,6 +174,41 @@ func (c *Client) UpsertSecrets(bucketID string, secrets []SecretUpsertRequest) e
 	if resp.StatusCode >= 400 {
 		respBody := readBoundedHTTPErrorBody(resp.Body)
 		return fmt.Errorf("upsert secrets failed (HTTP %d): %w", resp.StatusCode, newHTTPError(resp.StatusCode, respBody))
+	}
+	return nil
+}
+
+// UpsertCredentialFamily sends one semantic family for atomic Engine-owned naming and persistence.
+func (c *Client) UpsertCredentialFamily(bucketID string, family CredentialFamilyUpsertRequest) error {
+	reqBody := map[string]interface{}{
+		"bucket_id":         bucketID,
+		"credential_family": family,
+	}
+	body, err := json.Marshal(reqBody)
+	// Serialization must finish before any credential-bearing request is created.
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequest("PUT", c.BaseURL+"/workspace/secrets/bulk", bytes.NewBuffer(body))
+	// Request construction errors cannot be retried with an incomplete body.
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	// Control authentication is optional only for explicitly unauthenticated test clients.
+	if c.APIKey != "" {
+		req.Header.Set("x-api-key", c.APIKey)
+	}
+	resp, err := c.doRequest(req)
+	// Transport errors are already bounded by the shared client.
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	// Engine errors are bounded before they become CLI output.
+	if resp.StatusCode >= 400 {
+		respBody := readBoundedHTTPErrorBody(resp.Body)
+		return fmt.Errorf("upsert credential family failed (HTTP %d): %w", resp.StatusCode, newHTTPError(resp.StatusCode, respBody))
 	}
 	return nil
 }

@@ -1,6 +1,6 @@
 ---
 name: fused-config
-description: "Use this skill for cross-cutting Fused config: execution policy (rate limits, retries, pagination, a base_url override for a wrong/missing spec URL, event_extraction_path, incoming_webhook_config, and whether it's published to the Registry vs. only enforced locally in this workspace), import overlays that supply reviewed non-secret provider facts missing from a machine-readable source, or connection profiles (auth type, OAuth/OIDC resource discovery, dynamic request bindings) whether declared in a workspace file, a bucket, or directly in an OpenAPI/Postman spec via x-fused-connect. Trigger on 'execution policy', 'rate limit'/'retry config', 'pagination', 'base_url override', 'import overlay', '--overlay', 'webhook verification'/'incoming_webhook_config', 'local override', 'connection profile', 'resource_discovery', 'binding', '${resource...}', or 'x-fused-connect'. For SDK package or MCP server selection, or bucket/secret storage, read fused-workspace/fused-sdk/fused-mcp/fused-bucket instead."
+description: "Use this skill for cross-cutting Fused config: execution policy (rate limits, retries, pagination, a base_url override for a wrong/missing spec URL, event_extraction_path, incoming_webhook_config, and whether it's published to the Registry vs. only enforced locally in this workspace), import overlays that supply reviewed non-secret provider facts missing from a machine-readable source, or connection profiles (auth type, OAuth/OIDC resource discovery, dynamic request bindings) attached to a workspace service version or declared directly in an OpenAPI/Postman spec via x-fused-connect. Trigger on 'execution policy', 'rate limit'/'retry config', 'pagination', 'base_url override', 'import overlay', '--overlay', 'webhook verification'/'incoming_webhook_config', 'local override', 'connection profile', 'resource_discovery', 'binding', '${resource...}', or 'x-fused-connect'. For SDK package or MCP server selection, or bucket/secret storage, read fused-workspace/fused-sdk/fused-mcp/fused-bucket instead."
 ---
 
 # Cross-cutting runtime config: execution policy & connection profiles
@@ -54,11 +54,11 @@ mapping decision. Mark omitted executable policies explicitly and distinguish
 provider limits from Fused-selected safety bounds; a bare link in research
 notes is not enough to reproduce or review the configuration.
 
-These two configs aren't owned by workspace, SDK, MCP, or bucket alone --
-they nest inside all of them (a workspace service's `execution_policy`, a
-bucket's `service_config.<slug>.connect`, an SDK/MCP service's `auth`/
-`connect` scoping) and, for connection profiles, can also be declared
-directly in the source OpenAPI/Postman document at import time.
+These concerns cross configuration boundaries: workspace service versions own
+execution-policy and credential-free profile attachments; SDK/MCP service
+selections own `auth` and `connect.scopes`; imported OpenAPI/Postman contracts
+may declare provider connection profiles. Workspace YAML never owns a bucket's
+credentials or an app's auth reference.
 
 **For exact flags and subcommand syntax, always run `fused-cli <command>
 --help` (or `fused-cli --readme` for the full CLI reference) rather than
@@ -108,22 +108,26 @@ use a bucket secret (`fused-cli secret set <service-slug>` -- see
 whether `apply` runs from a laptop or CI. Binding literal values have the
 same bucket-secret path via `fused-cli value`.
 
-When two services can use compatible static credential families in one
-bucket, the destination may instead select its exact `auth_type`/`auth_name`
-and set `ref: "${bucket.auth.<source-service>.<source-auth-name>}"`. This is a
-complete, one-level bundle reference, not a field substitution: do not combine
-it with any literal or `$ENV` auth field. Engine resolves it dynamically so
-source rotation reaches consumers without copying material or reapplying the
-workspace. The canonical syntax and constraints live in `fused-bucket`.
+When two OAuth/OIDC services can use compatible application credentials in one
+bucket, an SDK/MCP target service selects its exact `auth.type` and `auth.name`,
+then may set `auth.ref: "${bucket.auth.<source-service>.<source-auth-name>}"`.
+This is a complete,
+one-level application-pair reference, not field interpolation. Engine resolves
+it dynamically so source rotation reaches consumers without copying material.
+The source need not be selected by the app, but must be enabled in the workspace
+with the pair stored in the selected bucket. Target `connect.scopes` and
+connected-user grants remain service-specific. The canonical syntax and
+constraints live in `fused-bucket`.
 
-OAuth `connect` app registration is the exception, and does **not** follow
-that path. `client_id`/`client_secret`/`redirect_uri` are not bucket secrets
-and have no `${bucket...}` or `$ENV` reference form for anything to resolve.
-They are written directly by `fused-cli connect set <service-slug>
---bucket <bucket> --interactive|--value-stdin` -- an immediate admin action
-with no plan/apply -- into storage separate from `auth`'s bucket secrets, so
-the two cannot overwrite each other. Credential values in argv are rejected
-(see `reference/connection-profiles.md` and `fused-bucket`).
+OAuth/OIDC application `client_id`/`client_secret` pairs follow the bucket-secret
+path. Store the pair with `fused-cli secret set <service-slug> --bucket
+<bucket> --type oauth|oidc --auth-name <scheme>
+--interactive|--value-stdin`; never
+supply a redirect URI. Engine derives the callback from its canonical public
+URL and resolves direct or `${bucket.auth.<source>.<authName>}` application
+credential families for consent and refresh. Application credentials remain
+distinct from each connected user's access, refresh, and ID tokens (see
+`reference/connection-profiles.md` and `fused-bucket`).
 
 ## Permissions and team access
 
@@ -137,7 +141,7 @@ Follow the lifecycle of the command that owns the config:
   even when the caller otherwise has workspace access.
 - Importing `x-fused-connect` through OpenAPI/Postman needs `catalogue.import`;
   reading the import session needs `catalogue.read`.
-- `connect set` needs `credentials.manage` and `service.consume`; starting a
+- OAuth/OIDC application `secret set` needs `credentials.manage`; starting a
   connect session needs `connection.manage`, `bucket.use`, and
   `service.consume`.
 

@@ -1047,9 +1047,9 @@ type WorkspaceServiceVersion struct {
 	EnabledAt        string `json:"enabled_at"`
 }
 
-// WorkspaceConnectProfile is the secret-free attachment snapshot returned by
-// Engine GraphQL for declarative workspace reconstruction.
-type WorkspaceConnectProfile struct {
+// WorkspaceConnectionProfile is the secret-free routing snapshot returned for declarative reconstruction.
+type WorkspaceConnectionProfile struct {
+	ServiceID         string `json:"service_id"`
 	ServiceVersionID  string `json:"service_version_id"`
 	AuthType          string `json:"auth_type"`
 	RegistryProfileID string `json:"registry_profile_id"`
@@ -1059,22 +1059,6 @@ type WorkspaceConnectProfile struct {
 	// back into workspace.yaml instead of dropping it on the next sync.
 	IsPublic bool           `json:"is_public"`
 	Profile  map[string]any `json:"profile"`
-}
-
-// WorkspaceConnectConfig is the bucket-scoped, masked connect state consumed
-// by workspace sync; encrypted OAuth app credentials are presence flags only.
-type WorkspaceConnectConfig struct {
-	BucketID        string                    `json:"bucket_id"`
-	BucketName      string                    `json:"bucket_name"`
-	ServiceID       string                    `json:"service_id"`
-	AuthType        string                    `json:"auth_type"`
-	AuthName        string                    `json:"auth_name"`
-	Enabled         bool                      `json:"enabled"`
-	RedirectURI     string                    `json:"redirect_uri"`
-	HasClientID     bool                      `json:"has_client_id"`
-	HasClientSecret bool                      `json:"has_client_secret"`
-	Profiles        []WorkspaceConnectProfile `json:"profiles"`
-	Injections      []InjectionConfig         `json:"injections,omitempty"`
 }
 
 type InjectionConfig struct {
@@ -1110,30 +1094,26 @@ func (c *Client) ListWorkspaceServices(names ...string) ([]WorkspaceService, err
 	return resp.Services, err
 }
 
-// ListWorkspaceConnectConfigs uses the Engine GraphQL read model so CLI sync
-// never bypasses the product's authenticated GraphQL boundary.
-func (c *Client) ListWorkspaceConnectConfigs() ([]WorkspaceConnectConfig, error) {
+// ListWorkspaceConnectionProfiles reads routing policy without exposing or depending on bucket credentials.
+func (c *Client) ListWorkspaceConnectionProfiles() ([]WorkspaceConnectionProfile, error) {
 	query := `
-		query WorkspaceConnectConfigs {
-			workspaceConnectConfigs {
-				bucket_id
-				bucket_name
+		query WorkspaceConnectionProfiles {
+			workspaceConnectionProfiles {
 				service_id
+				service_version_id
 				auth_type
-				auth_name
-				enabled
-				redirect_uri
-				has_client_id
-				has_client_secret
-				profiles { service_version_id auth_type registry_profile_id provenance is_public profile }
+				registry_profile_id
+				provenance
+				is_public
+				profile
 			}
 		}
 	`
 	var resp struct {
-		Configs []WorkspaceConnectConfig `json:"workspaceConnectConfigs"`
+		Profiles []WorkspaceConnectionProfile `json:"workspaceConnectionProfiles"`
 	}
 	err := c.EngineGraphQL(query, nil, &resp)
-	return resp.Configs, err
+	return resp.Profiles, err
 }
 
 // WorkspaceWebhook is one registered webhook for a workspace service --
@@ -1233,12 +1213,11 @@ func (c *Client) RediscoverConnectionResources(connectionID string) ([]Connectio
 	return response.Resources, err
 }
 
-// StartConnectSession calls the Engine's bucket-scoped connect route so CLI
-// onboarding and scope reduction use the same policy as generated SDKs.
-func (c *Client) StartConnectSession(bucketID, serviceID, endUserRef, createdByAppID string, resourceInput map[string]string, scopes []string) (*ConnectSessionStartResponse, error) {
+// StartConnectSession sends app-agnostic bucket routing separately from optional audit attribution.
+func (c *Client) StartConnectSession(bucketID, serviceID, endUserRef, createdByAppID, authType, authName, authRef string, resourceInput map[string]string, scopes []string) (*ConnectSessionStartResponse, error) {
 	query := `
-		mutation StartConnectSession($bucketId: String!, $serviceId: String!, $endUserRef: String!, $createdByAppId: String, $resourceInput: EngineJSON, $scopes: [String!]) {
-			startConnectSession(bucket_id: $bucketId, service_id: $serviceId, end_user_ref: $endUserRef, created_by_app_id: $createdByAppId, resource_input: $resourceInput, scopes: $scopes) {
+		mutation StartConnectSession($bucketId: String!, $serviceId: String!, $endUserRef: String!, $createdByAppId: String, $authType: String, $authName: String, $authRef: String, $resourceInput: EngineJSON, $scopes: [String!]) {
+			startConnectSession(bucket_id: $bucketId, service_id: $serviceId, end_user_ref: $endUserRef, created_by_app_id: $createdByAppId, auth_type: $authType, auth_name: $authName, auth_ref: $authRef, resource_input: $resourceInput, scopes: $scopes) {
 				authorize_url
 				expires_at
 			}
@@ -1251,6 +1230,15 @@ func (c *Client) StartConnectSession(bucketID, serviceID, endUserRef, createdByA
 	}
 	if strings.TrimSpace(createdByAppID) != "" {
 		vars["createdByAppId"] = createdByAppID
+	}
+	// Explicit selectors are sent together; omission lets Engine choose the sole OAuth/OIDC scheme.
+	if strings.TrimSpace(authType) != "" || strings.TrimSpace(authName) != "" {
+		vars["authType"] = authType
+		vars["authName"] = authName
+	}
+	// The complete reference is forwarded as one value so the Engine owns grammar and source admission.
+	if strings.TrimSpace(authRef) != "" {
+		vars["authRef"] = authRef
 	}
 	if len(resourceInput) > 0 {
 		vars["resourceInput"] = resourceInput
@@ -1999,18 +1987,7 @@ type ConfigApplyResponse struct {
 }
 
 type ConnectMaterial struct {
-	ClientID      string            `json:"client_id"`
-	ClientSecret  string            `json:"client_secret"`
 	BindingValues map[string]string `json:"binding_values,omitempty"`
-}
-
-type AuthMaterial struct {
-	Username string `json:"username,omitempty"`
-	Password string `json:"password,omitempty"`
-	Token    string `json:"token,omitempty"`
-	APIKey   string `json:"api_key,omitempty"`
-	Cert     string `json:"cert,omitempty"`
-	Key      string `json:"key,omitempty"`
 }
 
 // AppliedWebhookConfig is one webhook registration the apply just created or
@@ -2277,19 +2254,17 @@ func (c *Client) ApplyWebhookConfig(planID, sourceHash string) (*WebhookConfigAp
 	return &out, nil
 }
 
-// ApplyWorkspaceConfig commits a reviewed workspace plan and bounds any
-// structured Engine failure independently from successful result decoding.
-func (c *Client) ApplyWorkspaceConfig(planID, sourceHash string, authMaterials map[string]AuthMaterial, profileMaterials map[string]ConnectMaterial, bucketSecretMaterials map[string]string) (*ConfigApplyResponse, error) {
+// ApplyWorkspaceConfig commits a reviewed plan with profile bindings and generic bucket secrets only.
+func (c *Client) ApplyWorkspaceConfig(planID, sourceHash string, profileMaterials map[string]ConnectMaterial, bucketSecretMaterials map[string]string) (*ConfigApplyResponse, error) {
 	reqBody := map[string]any{
 		"plan_id":     planID,
 		"source_hash": sourceHash,
 	}
-	if len(authMaterials) > 0 {
-		reqBody["auth_materials"] = authMaterials
-	}
+	// Profile environment bindings remain out-of-band while bucket credentials use operational APIs.
 	if len(profileMaterials) > 0 {
 		reqBody["profile_materials"] = profileMaterials
 	}
+	// Generic named secrets remain apply-only for webhook and similar consumers.
 	if len(bucketSecretMaterials) > 0 {
 		reqBody["bucket_secret_materials"] = bucketSecretMaterials
 	}

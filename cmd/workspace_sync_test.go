@@ -221,10 +221,8 @@ func sameVersionNameSet(got []configfile.WorkspaceServiceVersion, want ...string
 // compatibility -- see plans/plan-webhook-kind.md): there is nothing left to
 // preserve across a sync once the field no longer exists.
 
-// TestMergeWorkspaceConnectConfigsFromRemoteWritesProfilesWithoutBucketMaterial
-// proves sync exports routing policy without inventing $ENV placeholders for
-// Engine-held OAuth app material.
-func TestMergeWorkspaceConnectConfigsFromRemoteWritesProfilesWithoutBucketMaterial(t *testing.T) {
+// TestMergeWorkspaceConnectionProfilesFromRemoteWritesProfilesWithoutBucketMaterial proves credentials stay excluded.
+func TestMergeWorkspaceConnectionProfilesFromRemoteWritesProfilesWithoutBucketMaterial(t *testing.T) {
 	service := api.WorkspaceService{
 		ServiceID:       "svc-github",
 		EnabledVersions: remoteVersionsWithIDs("1.1.4", "ver-github"),
@@ -238,20 +236,15 @@ func TestMergeWorkspaceConnectConfigsFromRemoteWritesProfilesWithoutBucketMateri
 		},
 		"bindings": []interface{}{map[string]interface{}{"value": "${resource.base_url}", "location": "base_url", "mode": "force"}},
 	}
-	remote := []api.WorkspaceConnectConfig{{
-		BucketID: "bucket-1", BucketName: "customer-accounts", ServiceID: service.ServiceID,
-		AuthType: "oauth", Enabled: true, RedirectURI: "https://engine.example.com/workspace/connect/callback",
-		HasClientID: true, HasClientSecret: true,
-		Profiles: []api.WorkspaceConnectProfile{{ServiceVersionID: "ver-github", AuthType: "oauth", Provenance: "workspace", Profile: profile}},
-	}}
+	remote := []api.WorkspaceConnectionProfile{{ServiceID: service.ServiceID, ServiceVersionID: "ver-github", AuthType: "oauth", Provenance: "workspace", Profile: profile}}
 	cfg := &configfile.WorkspaceConfig{Services: map[string]configfile.WorkspaceService{
 		"github-user": {ServiceID: service.ServiceID, Versions: []configfile.WorkspaceServiceVersion{{Version: "1.1.4", ServiceVersionID: "ver-github"}}},
 	}}
 
-	updated, err := mergeWorkspaceConnectConfigsFromRemote(cfg, []api.WorkspaceService{service}, remote)
+	updated, err := mergeWorkspaceConnectionProfilesFromRemote(cfg, []api.WorkspaceService{service}, remote)
 
 	if err != nil || !reflect.DeepEqual(updated, []string{"github-user"}) {
-		t.Fatalf("merge connect config: updated=%v err=%v", updated, err)
+		t.Fatalf("merge connection profiles: updated=%v err=%v", updated, err)
 	}
 	if len(cfg.Buckets) != 0 {
 		t.Fatalf("sync must not export bucket connect material refs: %+v", cfg.Buckets)
@@ -262,27 +255,22 @@ func TestMergeWorkspaceConnectConfigsFromRemoteWritesProfilesWithoutBucketMateri
 	}
 }
 
-// TestMergeWorkspaceConnectConfigsFromRemoteWritesPublicForPublishedProfile
+// TestMergeWorkspaceConnectionProfilesFromRemoteWritesPublicForPublishedProfile
 // covers the connection-profile half of task 11: a profile the Engine has
 // recorded as published (is_public: true, set only after a successful,
 // owner-gated PublishConnectionProfile call) round-trips into
 // connection_profiles[*].public: true so a subsequent `fused apply` doesn't
 // silently drop the publish intent.
-func TestMergeWorkspaceConnectConfigsFromRemoteWritesPublicForPublishedProfile(t *testing.T) {
+func TestMergeWorkspaceConnectionProfilesFromRemoteWritesPublicForPublishedProfile(t *testing.T) {
 	service := api.WorkspaceService{ServiceID: "svc-github", EnabledVersions: remoteVersionsWithIDs("1.1.4", "ver-github")}
 	profile := map[string]interface{}{"auth_type": "oauth"}
-	remote := []api.WorkspaceConnectConfig{{
-		BucketID: "bucket-1", BucketName: "customer-accounts", ServiceID: service.ServiceID, AuthType: "oauth",
-		Profiles: []api.WorkspaceConnectProfile{
-			{ServiceVersionID: "ver-github", AuthType: "oauth", Provenance: "provider", IsPublic: true, Profile: profile},
-		},
-	}}
+	remote := []api.WorkspaceConnectionProfile{{ServiceID: service.ServiceID, ServiceVersionID: "ver-github", AuthType: "oauth", Provenance: "provider", IsPublic: true, Profile: profile}}
 	cfg := &configfile.WorkspaceConfig{Services: map[string]configfile.WorkspaceService{
 		"github-user": {ServiceID: service.ServiceID, Versions: []configfile.WorkspaceServiceVersion{{Version: "1.1.4", ServiceVersionID: "ver-github"}}},
 	}}
 
-	if _, err := mergeWorkspaceConnectConfigsFromRemote(cfg, []api.WorkspaceService{service}, remote); err != nil {
-		t.Fatalf("merge connect config: %v", err)
+	if _, err := mergeWorkspaceConnectionProfilesFromRemote(cfg, []api.WorkspaceService{service}, remote); err != nil {
+		t.Fatalf("merge connection profiles: %v", err)
 	}
 
 	profiles := cfg.Services["github-user"].Versions[0].ConnectionProfiles
@@ -294,24 +282,19 @@ func TestMergeWorkspaceConnectConfigsFromRemoteWritesPublicForPublishedProfile(t
 	}
 }
 
-// TestMergeWorkspaceConnectConfigsFromRemoteOmitsPublicForUnpublishedProfile
+// TestMergeWorkspaceConnectionProfilesFromRemoteOmitsPublicForUnpublishedProfile
 // ensures an ordinary (non-published) profile gets no public key at all,
 // rather than an explicit false, matching the omitempty YAML convention used
 // elsewhere in workspace.yaml.
-func TestMergeWorkspaceConnectConfigsFromRemoteOmitsPublicForUnpublishedProfile(t *testing.T) {
+func TestMergeWorkspaceConnectionProfilesFromRemoteOmitsPublicForUnpublishedProfile(t *testing.T) {
 	service := api.WorkspaceService{ServiceID: "svc-github", EnabledVersions: remoteVersionsWithIDs("1.1.4", "ver-github")}
-	remote := []api.WorkspaceConnectConfig{{
-		BucketID: "bucket-1", BucketName: "customer-accounts", ServiceID: service.ServiceID, AuthType: "oauth",
-		Profiles: []api.WorkspaceConnectProfile{
-			{ServiceVersionID: "ver-github", AuthType: "oauth", Provenance: "workspace", Profile: map[string]interface{}{"auth_type": "oauth"}},
-		},
-	}}
+	remote := []api.WorkspaceConnectionProfile{{ServiceID: service.ServiceID, ServiceVersionID: "ver-github", AuthType: "oauth", Provenance: "workspace", Profile: map[string]interface{}{"auth_type": "oauth"}}}
 	cfg := &configfile.WorkspaceConfig{Services: map[string]configfile.WorkspaceService{
 		"github-user": {ServiceID: service.ServiceID, Versions: []configfile.WorkspaceServiceVersion{{Version: "1.1.4", ServiceVersionID: "ver-github"}}},
 	}}
 
-	if _, err := mergeWorkspaceConnectConfigsFromRemote(cfg, []api.WorkspaceService{service}, remote); err != nil {
-		t.Fatalf("merge connect config: %v", err)
+	if _, err := mergeWorkspaceConnectionProfilesFromRemote(cfg, []api.WorkspaceService{service}, remote); err != nil {
+		t.Fatalf("merge connection profiles: %v", err)
 	}
 
 	profiles := cfg.Services["github-user"].Versions[0].ConnectionProfiles
@@ -323,18 +306,17 @@ func TestMergeWorkspaceConnectConfigsFromRemoteOmitsPublicForUnpublishedProfile(
 	}
 }
 
-// TestMergeWorkspaceConnectConfigsFromRemotePreservesRegistryIdentity proves
+// TestMergeWorkspaceConnectionProfilesFromRemotePreservesRegistryIdentity proves
 // sync emits profile_id instead of downgrading a Registry profile to inline.
-func TestMergeWorkspaceConnectConfigsFromRemotePreservesRegistryIdentity(t *testing.T) {
+func TestMergeWorkspaceConnectionProfilesFromRemotePreservesRegistryIdentity(t *testing.T) {
 	service := api.WorkspaceService{ServiceID: "svc-jira", EnabledVersions: remoteVersionsWithIDs("v1", "ver-1")}
 	cfg := &configfile.WorkspaceConfig{Services: map[string]configfile.WorkspaceService{
 		"jira": {ServiceID: service.ServiceID, Versions: []configfile.WorkspaceServiceVersion{{Version: "v1", ServiceVersionID: "ver-1"}}},
 	}}
 	profileID := "00000000-0000-0000-0000-000000000123"
-	updated, err := mergeWorkspaceConnectConfigsFromRemote(cfg, []api.WorkspaceService{service}, []api.WorkspaceConnectConfig{{
-		BucketName: "customers", ServiceID: service.ServiceID, AuthType: "oauth", Enabled: true,
-		RedirectURI: "https://engine.example.com/callback", HasClientID: true, HasClientSecret: true,
-		Profiles: []api.WorkspaceConnectProfile{{ServiceVersionID: "ver-1", RegistryProfileID: profileID, Profile: map[string]interface{}{"auth_type": "oauth", "auth_name": "jiraOAuth"}}},
+	updated, err := mergeWorkspaceConnectionProfilesFromRemote(cfg, []api.WorkspaceService{service}, []api.WorkspaceConnectionProfile{{
+		ServiceID: service.ServiceID, ServiceVersionID: "ver-1", RegistryProfileID: profileID,
+		AuthType: "oauth", Profile: map[string]interface{}{"auth_type": "oauth", "auth_name": "jiraOAuth"},
 	}})
 	if err != nil || !reflect.DeepEqual(updated, []string{"jira"}) {
 		t.Fatalf("merge Registry profile: updated=%v err=%v", updated, err)
@@ -345,10 +327,8 @@ func TestMergeWorkspaceConnectConfigsFromRemotePreservesRegistryIdentity(t *test
 	}
 }
 
-// TestMergeWorkspaceConnectConfigsFromRemoteRepresentsMultipleBucketsAndProfiles
-// proves the bucket-owned shape can safely export state the old singular
-// runtime_config.connect field could not represent.
-func TestMergeWorkspaceConnectConfigsFromRemoteRepresentsMultipleBucketsAndProfiles(t *testing.T) {
+// TestMergeWorkspaceConnectionProfilesFromRemoteRepresentsMultipleProfiles proves versions remain independent.
+func TestMergeWorkspaceConnectionProfilesFromRemoteRepresentsMultipleProfiles(t *testing.T) {
 	service := api.WorkspaceService{ServiceID: "svc-jira", EnabledVersions: remoteVersionsWithIDs("v1", "ver-1", "v2", "ver-2")}
 	cfg := &configfile.WorkspaceConfig{Services: map[string]configfile.WorkspaceService{
 		"jira": {ServiceID: service.ServiceID, Versions: []configfile.WorkspaceServiceVersion{
@@ -356,21 +336,15 @@ func TestMergeWorkspaceConnectConfigsFromRemoteRepresentsMultipleBucketsAndProfi
 		}},
 	}}
 
-	updated, err := mergeWorkspaceConnectConfigsFromRemote(cfg, []api.WorkspaceService{service}, []api.WorkspaceConnectConfig{
-		{BucketName: "a", ServiceID: service.ServiceID, AuthType: "oauth"},
-		{BucketName: "b", ServiceID: service.ServiceID, AuthType: "oauth"},
-	})
+	updated, err := mergeWorkspaceConnectionProfilesFromRemote(cfg, []api.WorkspaceService{service}, nil)
 	if err != nil || len(updated) != 0 || len(cfg.Buckets) != 0 {
 		t.Fatalf("bucket connect material should not be exported, updated=%v buckets=%+v err=%v", updated, cfg.Buckets, err)
 	}
 
-	_, err = mergeWorkspaceConnectConfigsFromRemote(cfg, []api.WorkspaceService{service}, []api.WorkspaceConnectConfig{{
-		BucketName: "a", ServiceID: service.ServiceID, AuthType: "oauth",
-		Profiles: []api.WorkspaceConnectProfile{
-			{ServiceVersionID: "ver-1", Profile: map[string]interface{}{"auth_type": "oauth", "metadata": map[string]interface{}{"region": "one"}}},
-			{ServiceVersionID: "ver-2", Profile: map[string]interface{}{"auth_type": "oauth", "metadata": map[string]interface{}{"region": "two"}}},
-		},
-	}})
+	_, err = mergeWorkspaceConnectionProfilesFromRemote(cfg, []api.WorkspaceService{service}, []api.WorkspaceConnectionProfile{
+		{ServiceID: service.ServiceID, ServiceVersionID: "ver-1", AuthType: "oauth", Profile: map[string]interface{}{"auth_type": "oauth", "metadata": map[string]interface{}{"region": "one"}}},
+		{ServiceID: service.ServiceID, ServiceVersionID: "ver-2", AuthType: "oauth", Profile: map[string]interface{}{"auth_type": "oauth", "metadata": map[string]interface{}{"region": "two"}}},
+	})
 	// The two profiles now attach to their own distinct Versions entry
 	// (ver-1, ver-2) rather than sharing one flat service-level list.
 	gotProfiles := 0
@@ -400,7 +374,7 @@ func TestRecordWorkspaceSyncWriteEmitsAuditEvent(t *testing.T) {
 	for _, value := range spans[0].Attributes {
 		attributes[string(value.Key)] = value.Value.AsInterface()
 	}
-	if attributes["user_action"] != "workspace.sync" || attributes["config_changed"] != true || attributes["connect_config_count"] != int64(1) {
+	if attributes["user_action"] != "workspace.sync" || attributes["config_changed"] != true || attributes["connection_profile_count"] != int64(1) {
 		t.Fatalf("unexpected workspace sync OTEL attributes: %#v", attributes)
 	}
 }
@@ -480,14 +454,15 @@ func TestMergeWorkspaceServicesFromRemote_LatestVersionIncludedInVersions(t *tes
 	}
 }
 
+// TestWorkspaceSyncCreatesDefaultFusedConfig covers an empty profile export alongside one active service.
 func TestWorkspaceSyncCreatesDefaultFusedConfig(t *testing.T) {
 	dir := t.TempDir()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/engine/graphql":
 			body := decodeTestGraphQLBody(t, r)
-			if strings.Contains(body.Query, "workspaceConnectConfigs") {
-				_, _ = w.Write([]byte(`{"data":{"workspaceConnectConfigs":[]}}`))
+			if strings.Contains(body.Query, "workspaceConnectionProfiles") {
+				_, _ = w.Write([]byte(`{"data":{"workspaceConnectionProfiles":[]}}`))
 				return
 			}
 			if strings.Contains(body.Query, "workspaceServices") {
@@ -515,14 +490,15 @@ func TestWorkspaceSyncCreatesDefaultFusedConfig(t *testing.T) {
 	}
 }
 
-func TestWorkspaceSyncDoesNotWriteConnectEnvRefs(t *testing.T) {
+// TestWorkspaceSyncDoesNotWriteCredentialMaterial proves profile export cannot reconstruct secrets.
+func TestWorkspaceSyncDoesNotWriteCredentialMaterial(t *testing.T) {
 	dir := t.TempDir()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/engine/graphql":
 			body := decodeTestGraphQLBody(t, r)
-			if strings.Contains(body.Query, "workspaceConnectConfigs") {
-				_, _ = w.Write([]byte(`{"data":{"workspaceConnectConfigs":[{"bucket_id":"bucket-1","bucket_name":"customer-accounts","service_id":"svc-github","auth_type":"oauth","enabled":true,"redirect_uri":"https://engine.example.test/callback","has_client_id":true,"has_client_secret":true,"profiles":[]}]}}`))
+			if strings.Contains(body.Query, "workspaceConnectionProfiles") {
+				_, _ = w.Write([]byte(`{"data":{"workspaceConnectionProfiles":[]}}`))
 				return
 			}
 			if strings.Contains(body.Query, "workspaceServices") {

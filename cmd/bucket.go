@@ -137,9 +137,9 @@ func runBucketServices(cmd *cobra.Command, nameOrID string) error {
 		return writeJSONPage(cmd, page.Items, page.Total, bucketServicesFlags)
 	}
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 8, 2, ' ', 0)
-	fmt.Fprintln(w, "SERVICE_NAME\tSERVICE_ID\tSECRETS\tVALUES\tCONNECT_CONFIGS\tUSERS")
+	fmt.Fprintln(w, "SERVICE_NAME\tSERVICE_ID\tSECRETS\tVALUES\tOAUTH_APPS\tUSERS")
 	for _, service := range page.Items {
-		fmt.Fprintf(w, "%s\t%s\t%d\t%d\t%d\t%d\n", service.ServiceName, service.ServiceID, service.SecretCount, service.ValueCount, service.ConnectConfigCount, service.ConnectedUserCount)
+		fmt.Fprintf(w, "%s\t%s\t%d\t%d\t%d\t%d\n", service.ServiceName, service.ServiceID, service.SecretCount, service.ValueCount, service.ApplicationCredentialCount, service.ConnectedUserCount)
 	}
 	w.Flush()
 	printPageSummary(cmd.OutOrStdout(), page.Total, bucketServicesFlags)
