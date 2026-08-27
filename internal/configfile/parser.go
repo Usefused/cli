@@ -268,15 +268,37 @@ func validateMCPConfig(cfg *MCPConfig) error { return validateAppConfig(cfg, Kin
 // validateAppConfig centralizes shared identity, selection, and auth
 // policy checks so SDK and MCP files cannot drift.
 func validateAppConfig(cfg *AppConfig, kind ConfigKind) error {
+	// Every app identity needs a stable human-readable name before deeper validation.
 	if cfg.Name == "" {
 		return fmt.Errorf("%s config requires a name", kind)
 	}
+	// Immutable app versions must remain compatible with Registry SemVer identity.
 	if !appVersionPattern.MatchString(cfg.Version) {
 		return fmt.Errorf("%s config requires a SemVer-compatible version", kind)
 	}
+	// SDK and MCP kind-specific fields are checked separately to keep shared selection logic small.
+	if err := validateAppKindFields(cfg, kind); err != nil {
+		return err
+	}
+	// An app without services cannot expose any generated or hosted operations.
+	if len(cfg.Services) == 0 {
+		return fmt.Errorf("%s config requires at least one service", kind)
+	}
+	// Per-service validation owns webhook and selection invariants for both app kinds.
+	if err := validateAppServices(cfg.Services, kind, cfg.WebhookAttachment); err != nil {
+		return err
+	}
+	return validateUnifiedOperations(cfg, kind)
+}
+
+// validateAppKindFields enforces the small set of SDK- and MCP-specific
+// package fields before shared service and Unified-operation validation.
+func validateAppKindFields(cfg *AppConfig, kind ConfigKind) error {
+	// SDK generation supports only Registry-owned emitters.
 	if kind == KindSDK && !isSDKLanguage(cfg.Language) {
 		return fmt.Errorf("invalid language %q", cfg.Language)
 	}
+	// MCP apps are hosted by Engine and therefore do not choose a package language.
 	if kind == KindMCP && strings.TrimSpace(cfg.Language) != "" {
 		return fmt.Errorf("mcp config must not set language")
 	}
@@ -287,13 +309,7 @@ func validateAppConfig(cfg *AppConfig, kind ConfigKind) error {
 	if kind == KindMCP && cfg.Generate != nil {
 		return fmt.Errorf("mcp config must not set generate")
 	}
-	if len(cfg.Services) == 0 {
-		return fmt.Errorf("%s config requires at least one service", kind)
-	}
-	if err := validateAppServices(cfg.Services, kind, cfg.WebhookAttachment); err != nil {
-		return err
-	}
-	return validateUnifiedOperations(cfg, kind)
+	return nil
 }
 
 // validateAppServices keeps per-service rules separate from app
@@ -673,8 +689,21 @@ func validateWorkspaceBucketSecrets(bucketName string, secrets map[string]string
 // validateWorkspaceAuthIntent keeps static auth material out of plan/state by
 // requiring local env references for every credential field.
 func validateWorkspaceAuthIntent(name string, auth *AuthConfig) error {
+	// Routing-only service config does not need a static credential declaration.
 	if auth == nil {
 		return nil
+	}
+	// A reference is a complete credential source, so mixing it with local
+	// material would make rotation precedence ambiguous.
+	if strings.TrimSpace(auth.Ref) != "" {
+		// A complete-bundle edge cannot coexist with local credential fields.
+		if workspaceAuthHasCredentialFields(auth) {
+			return fmt.Errorf("workspace service %q auth ref cannot include credential fields", name)
+		}
+		if err := validateWorkspaceAuthReferenceTarget(name, auth); err != nil {
+			return err
+		}
+		return validateWorkspaceAuthRef(name, auth.Ref)
 	}
 	switch canonicalStaticAuthType(auth.AuthType) {
 	case "basic":
@@ -688,6 +717,47 @@ func validateWorkspaceAuthIntent(name string, auth *AuthConfig) error {
 	default:
 		return fmt.Errorf("workspace service %q auth has unsupported auth_type", name)
 	}
+}
+
+// validateWorkspaceAuthReferenceTarget requires an exact static destination;
+// runtime must never infer which scheme receives another service's credential.
+func validateWorkspaceAuthReferenceTarget(name string, auth *AuthConfig) error {
+	switch canonicalStaticAuthType(auth.AuthType) {
+	case "basic", "api_key", "mtls", "bearer", "oauth", "oidc":
+		// A named selector is the durable reference target and cannot be omitted
+		// even when the current contract happens to expose only one scheme.
+		if strings.TrimSpace(auth.AuthName) == "" {
+			return fmt.Errorf("workspace service %q auth ref requires auth_name", name)
+		}
+		return nil
+	default:
+		return fmt.Errorf("workspace service %q auth ref has unsupported auth_type", name)
+	}
+}
+
+// workspaceAuthHasCredentialFields keeps the mutually-exclusive ref check in
+// one place as new static credential families are added.
+func workspaceAuthHasCredentialFields(auth *AuthConfig) bool {
+	return auth.Username != "" || auth.Password != "" || auth.Token != "" || auth.APIKey != "" || auth.Cert != "" || auth.Key != ""
+}
+
+// validateWorkspaceAuthRef performs local syntax admission while Engine later
+// resolves both exact service and auth identities authoritatively.
+func validateWorkspaceAuthRef(name, value string) error {
+	const prefix = "${bucket.auth."
+	trimmed := strings.TrimSpace(value)
+	// The slim MVP grammar deliberately uses two dot-free identity segments;
+	// rejecting ambiguous input is safer than guessing how to split it.
+	if !strings.HasPrefix(trimmed, prefix) || !strings.HasSuffix(trimmed, "}") {
+		return fmt.Errorf("workspace service %q auth ref must use ${bucket.auth.<service>.<authName>}", name)
+	}
+	parts := strings.Split(strings.TrimSuffix(strings.TrimPrefix(trimmed, prefix), "}"), ".")
+	// Exact arity prevents a malformed reference from selecting a different
+	// service or scheme after it crosses the apply boundary.
+	if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
+		return fmt.Errorf("workspace service %q auth ref must name one service and auth scheme", name)
+	}
+	return nil
 }
 
 // validateAuthEnvRefs treats static auth fields as secret material even when a
@@ -772,10 +842,16 @@ func (p *ParsedConfig) WorkspaceBucketSecretMaterials() (map[string]string, erro
 // workspaceServiceAuthMaterial resolves only bucket-scoped static auth so one
 // service's secrets cannot be accidentally reused by another bucket entry.
 func workspaceServiceAuthMaterial(name string, serviceConfig BucketServiceConfig) (AuthMaterial, bool, error) {
+	// Services without static auth contribute no apply-only material envelope.
 	if serviceConfig.Auth == nil {
 		return AuthMaterial{}, false, nil
 	}
 	auth := *serviceConfig.Auth
+	// References resolve inside Engine at dispatch time and therefore must not
+	// produce a duplicate apply-time material envelope from the CLI process.
+	if strings.TrimSpace(auth.Ref) != "" {
+		return AuthMaterial{}, false, nil
+	}
 	if err := resolveAuthEnv(name, &auth); err != nil {
 		return AuthMaterial{}, false, err
 	}

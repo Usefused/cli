@@ -20,13 +20,14 @@ type ExecutionContractEnvelope struct {
 // responsible for normalizing and executing provider semantics.
 type ServiceRuntimeContract struct {
 	ExecutionContractEnvelope
-	ServiceID        string                       `json:"service_id"`
-	ServiceVersionID string                       `json:"service_version_id"`
-	Version          string                       `json:"version"`
-	Catalog          *catalogcontract.Composition `json:"catalog,omitempty"`
-	Service          ServiceRuntimeMetadata       `json:"service"`
-	Operations       []ServiceRuntimeOperation    `json:"operations"`
-	Webhooks         []ServiceRuntimeWebhook      `json:"webhooks"`
+	ServiceID         string                                  `json:"service_id"`
+	ServiceVersionID  string                                  `json:"service_version_id"`
+	Version           string                                  `json:"version"`
+	Catalog           *catalogcontract.Composition            `json:"catalog,omitempty"`
+	Service           ServiceRuntimeMetadata                  `json:"service"`
+	Operations        []ServiceRuntimeOperation               `json:"operations"`
+	Webhooks          []ServiceRuntimeWebhook                 `json:"webhooks"`
+	SchemaDefinitions map[string]ServiceRuntimeSchemaContract `json:"schema_definitions,omitempty"`
 }
 
 type ServiceRuntimeMetadata struct {
@@ -146,6 +147,8 @@ type ServiceRuntimeSchemaContract struct {
 	ContentHash           string                                     `json:"content_hash"`
 	Projection            ServiceRuntimeSchema                       `json:"projection"`
 	ProjectionDiagnostics []ServiceRuntimeSchemaProjectionDiagnostic `json:"projection_diagnostics,omitempty"`
+	// The transport preserves scope; Registry and Engine remain the schema interpreters.
+	SharedDefinitions bool `json:"shared_definitions,omitempty"`
 }
 
 type ServiceRuntimeSchemaProjectionDiagnostic struct {

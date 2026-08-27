@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	cliapi "github.com/Usefused/cli/internal/api"
 	"github.com/charmbracelet/huh"
@@ -44,6 +45,7 @@ var (
 var errDiscoverySnapshotRequired = errors.New("reload discovery snapshot")
 
 const discoveryStreamReconnectDelay = 100 * time.Millisecond
+const maxDiscoveryFailureDiagnosticRunes = 512
 
 var (
 	openDiscoveryBrowser        = openSystemBrowser
@@ -836,13 +838,104 @@ func (runner *discoverySessionRunner) applyAction(snapshot *cliapi.DiscoverySnap
 	return runner.client.ApplyDiscoveryAction(runner.ctx, snapshot.SessionID, request)
 }
 
-// discoveryFailure returns the Registry's bounded code without exposing source or provider content.
+// discoveryFailure returns the Registry's bounded terminal diagnostic without
+// exposing source URLs, provider content, or credential-shaped text.
 func discoveryFailure(snapshot *cliapi.DiscoverySnapshot) error {
 	payload, err := cliapi.DecodeDiscoveryPayload(snapshot.Payload)
+	// An invalid terminal payload has no trustworthy Registry-authored detail.
 	if err != nil || strings.TrimSpace(payload.FailureCode) == "" {
 		return errors.New("discovery session failed")
 	}
-	return fmt.Errorf("discovery session failed: %s", payload.FailureCode)
+	failureCode := safeWorkspaceOutcomeToken(payload.FailureCode, "discovery_failed")
+	diagnostics := boundedDiscoveryFailureDiagnostics(failureCode, payload.Diagnostics)
+	return &discoveryFailureError{failureCode: failureCode, diagnostics: diagnostics}
+}
+
+// discoveryFailureError keeps the same bounded failure evidence available to
+// human output and the structured command envelope.
+type discoveryFailureError struct {
+	failureCode string
+	diagnostics []cliapi.DiscoveryDiagnostic
+}
+
+// Error renders only the terminal Registry diagnostic admitted by the CLI's
+// source-free diagnostic policy.
+func (e *discoveryFailureError) Error() string {
+	message := "discovery session failed: " + e.failureCode
+	// A safe terminal explanation is more actionable than the classifier alone.
+	if len(e.diagnostics) > 0 {
+		message += ": " + e.diagnostics[0].Message
+	}
+	return message
+}
+
+// jsonDetails returns a detached copy so presentation code cannot mutate the
+// failure evidence retained by the command error.
+func (e *discoveryFailureError) jsonDetails() map[string]any {
+	return map[string]any{
+		"failure_code": e.failureCode,
+		"diagnostics":  append([]cliapi.DiscoveryDiagnostic(nil), e.diagnostics...),
+	}
+}
+
+// boundedDiscoveryFailureDiagnostics selects only the terminal diagnostic
+// whose code matches the failure classifier and passes local content limits.
+func boundedDiscoveryFailureDiagnostics(failureCode string, diagnostics []cliapi.DiscoveryDiagnostic) []cliapi.DiscoveryDiagnostic {
+	for index := len(diagnostics) - 1; index >= 0; index-- {
+		diagnostic := diagnostics[index]
+		// Earlier review warnings may describe provider material; only the matching
+		// terminal diagnostic is eligible for failure output.
+		if safeWorkspaceOutcomeToken(diagnostic.Code, "") != failureCode {
+			continue
+		}
+		message := safeDiscoveryDiagnosticMessage(diagnostic.Message)
+		// Empty or rejected prose must not weaken the stable failure-code fallback.
+		if message == "" {
+			return nil
+		}
+		severity := safeWorkspaceOutcomeToken(diagnostic.Severity, "")
+		return []cliapi.DiscoveryDiagnostic{{Severity: severity, Code: failureCode, Message: message}}
+	}
+	return nil
+}
+
+// safeDiscoveryDiagnosticMessage admits bounded Registry prose while rejecting
+// URL-bearing, credential-shaped, or terminal-control content.
+func safeDiscoveryDiagnosticMessage(value string) string {
+	for _, char := range value {
+		// Control characters can alter terminal rendering even when the visible
+		// message otherwise resembles a fixed Registry diagnostic.
+		if unicode.Is(unicode.Cf, char) || unicode.IsControl(char) && !unicode.IsSpace(char) {
+			return ""
+		}
+	}
+	value = strings.Join(strings.Fields(value), " ")
+	// Empty messages have no diagnostic value and should not appear in output.
+	if value == "" {
+		return ""
+	}
+	lower := strings.ToLower(value)
+	unsafeMarkers := []string{
+		"fsk_", "-----begin ", "authorization:", "authorization=",
+		"http://", "https://", "postgres://", "postgresql://",
+		"access_token=", `"access_token":`, "refresh_token=", `"refresh_token":`, "token=", `"token":`,
+		"client_secret=", `"client_secret":`, "password=", `"password":`,
+		"api_key=", `"api_key":`, "apikey=", `"apikey":`, "private_key=", `"private_key":`,
+		"client_key=", `"client_key":`, "credential=", `"credential":`, "secret=", `"secret":`,
+	}
+	for _, marker := range unsafeMarkers {
+		// Remote or credential-shaped material invalidates the entire diagnostic
+		// instead of relying on partial redaction that could retain secrets.
+		if strings.Contains(lower, marker) {
+			return ""
+		}
+	}
+	runes := []rune(value)
+	// Registry prose remains bounded even if a compromised peer exceeds its own ceiling.
+	if len(runes) > maxDiscoveryFailureDiagnosticRunes {
+		return string(runes[:maxDiscoveryFailureDiagnosticRunes]) + "…"
+	}
+	return value
 }
 
 // finish writes the ordinary import receipt and never calls the apply endpoint implicitly.
@@ -873,10 +966,19 @@ func (runner *discoverySessionRunner) finish(snapshot *cliapi.DiscoverySnapshot)
 	return nil
 }
 
-// printDiscoveryDiagnostics renders fixed Registry review messages without interpreting their codes.
+// printDiscoveryDiagnostics renders only locally admitted Registry review
+// messages so progress output cannot bypass terminal and credential safeguards.
 func printDiscoveryDiagnostics(output io.Writer, diagnostics []cliapi.DiscoveryDiagnostic) {
 	for _, diagnostic := range diagnostics {
-		fmt.Fprintf(output, "%s [%s] %s\n", strings.ToUpper(diagnostic.Severity), diagnostic.Code, diagnostic.Message)
+		severity := strings.ToUpper(safeWorkspaceOutcomeToken(diagnostic.Severity, "INFO"))
+		code := safeWorkspaceOutcomeToken(diagnostic.Code, "diagnostic")
+		message := safeDiscoveryDiagnosticMessage(diagnostic.Message)
+		// Unsafe remote prose is omitted explicitly while its bounded classifier still identifies the event.
+		if message == "" {
+			fmt.Fprintf(output, "%s [%s] diagnostic detail omitted\n", severity, code)
+			continue
+		}
+		fmt.Fprintf(output, "%s [%s] %s\n", severity, code, message)
 	}
 }
 

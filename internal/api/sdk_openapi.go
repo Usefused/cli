@@ -82,10 +82,16 @@ func parseSDKOpenAPIBaseURL(raw string) (*url.URL, error) {
 func (c *Client) doRequestWithoutRedirect(request *http.Request) (*http.Response, error) {
 	client := *c.HTTP
 	client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
-		// Why: X-API-Key is a custom header and Go does not classify it as redirect-sensitive.
+		// X-API-Key is a custom header and Go does not classify it as redirect-sensitive.
 		return http.ErrUseLastResponse
 	}
-	return client.Do(request)
+	response, err := client.Do(request)
+	// The redirect boundary stays strict, while genuine transport failures share
+	// the same URL-hiding typed contract as other control-plane requests.
+	if err != nil {
+		return nil, safeControlPlaneTransportError(err)
+	}
+	return response, nil
 }
 
 // readSDKOpenAPIResponse enforces one explicit memory bound for success and error bodies.

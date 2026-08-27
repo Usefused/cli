@@ -157,13 +157,24 @@ func (c *Client) resolveAppReference(reference, version, kind string) (string, e
 	return response["appReference"].ID, err
 }
 
+// resolveAppFamilyReference requires an authoritative identity before a token
+// command can mutate state and gives reviewed missing results app-specific context.
 func (c *Client) resolveAppFamilyReference(reference, kind string) (string, error) {
 	query := `query ResolveAppFamilyReference($reference: String!, $kind: String!) {
 		appFamilyReference(reference: $reference, kind: $kind) { id kind }
 	}`
 	var response map[string]ResolvedResourceReference
 	err := c.EngineGraphQL(query, map[string]interface{}{"reference": reference, "kind": kind}, &response)
-	return response["appFamilyReference"].ID, err
+	// Permission, transport, and dependency errors must never be treated as absence.
+	if err != nil {
+		return "", appFamilyReferenceError(err, reference, kind)
+	}
+	id := response["appFamilyReference"].ID
+	// A null or incomplete response is not authority to issue a token or proof of absence.
+	if id == "" {
+		return "", errGraphQLDataMalformed
+	}
+	return id, nil
 }
 
 func (c *Client) resolveResourceReference(field, reference string) (string, error) {

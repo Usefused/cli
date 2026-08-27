@@ -93,6 +93,11 @@ var secretDeleteCmd = &cobra.Command{
 // so secret keys are stored under the same provider-specific names the Engine
 // later uses for request-time credential resolution.
 func runSecretSet(cmd *cobra.Command, serviceSlug, value string) error {
+	requestedType := canonicalSecretTypeName(secretSetType)
+	// Local assignment validation must finish before any metadata request can carry ambiguous input.
+	if err := validateSecretInlineInput(requestedType, value); err != nil {
+		return err
+	}
 	client, err := getAPIClient()
 	if err != nil {
 		return err
@@ -119,6 +124,23 @@ func runSecretSet(cmd *cobra.Command, serviceSlug, value string) error {
 	return setSecretForAuth(client, info.ID, bucketID, auth, value, expiresAt, serviceSlug, cmd.OutOrStdout(), credentialMutationOptions{
 		auditCtx: cmd.Context(), auditAction: cmd.CommandPath(), resourceKind: "secret",
 	})
+}
+
+// validateSecretInlineInput checks only explicit multi-field credential
+// grammars while preserving opaque token values for provider-aware handling.
+func validateSecretInlineInput(requestedType, value string) error {
+	// Empty or opaque token input needs no assignment parsing at this stage.
+	if value == "" || requestedType != "basic" && requestedType != "mtls" {
+		return nil
+	}
+	// Basic may intentionally author an empty password only when the later reviewed auth contract requires it.
+	if requestedType == "basic" {
+		_, err := parseInlineKeyValuePairsAllowingEmpty(value, "password")
+		return err
+	}
+	// mTLS requires both assignment values to be present before remote lookup.
+	_, err := parseInlineKeyValuePairs(value)
+	return err
 }
 
 // parseSecretExpiresAt validates expiry locally so malformed timestamps do not
@@ -310,9 +332,22 @@ func printSecretSetResult(out io.Writer, auth *api.AuthConfig, serviceDisplay st
 	fmt.Fprintf(out, "Secret set successfully for %s.\n", serviceDisplay)
 }
 
+// resolveBasicSecretInput collects and validates Basic-auth credential fields.
 func resolveBasicSecretInput(mode api.BasicPasswordMode, value string) (string, string, error) {
+	// Explicit Basic credentials must satisfy the shared assignment grammar before field validation.
 	if value != "" {
-		pairs := parseInlineKeyValuePairs(value)
+		var pairs map[string]string
+		var err error
+		// The reviewed empty-password mode is the sole exception to global blank-value rejection.
+		if mode == api.BasicPasswordMode("empty") {
+			pairs, err = parseInlineKeyValuePairsAllowingEmpty(value, "password")
+		} else {
+			pairs, err = parseInlineKeyValuePairs(value)
+		}
+		// Parser failures are already actionable and must not be replaced by a generic missing-field error.
+		if err != nil {
+			return "", "", err
+		}
 		return validateBasicSecretInput(mode, pairs["username"], pairs["password"])
 	}
 	if err := requireInteractive("provide Basic authentication material using the command's value input"); err != nil {
@@ -347,11 +382,16 @@ func basicPasswordRequired(mode api.BasicPasswordMode) bool {
 	return mode == "" || mode == api.BasicPasswordMode("required")
 }
 
+// resolveMTLSSecretInput collects and validates both halves of an mTLS credential.
 func resolveMTLSSecretInput(value string) (string, string, error) {
 	var cert, key string
 
 	if value != "" {
-		pairs := parseInlineKeyValuePairs(value)
+		pairs, err := parseInlineKeyValuePairs(value)
+		// Invalid inline mTLS assignments must fail before required-field validation obscures the cause.
+		if err != nil {
+			return "", "", err
+		}
 		cert, key = pairs["cert"], pairs["key"]
 		if cert == "" || key == "" {
 			return "", "", fmt.Errorf("mTLS auth requires both cert and key. Provide format 'cert=...;key=...' or use interactive mode (-i)")

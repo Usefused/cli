@@ -79,8 +79,42 @@ rules -- easy to conflate since they look alike:
 | Context | Form | Bucket name | Can merge with surrounding text? |
 |---|---|---|---|
 | Ordinary SDK/MCP `injections[].value` (`fused-sdk`/`fused-mcp`) | `${bucket.env\|values\|secrets.<key>}` | Always that SDK or MCP server's own `bucket:` -- cannot name another | Yes (e.g. `"Bearer ${bucket.secrets.KEY}"`) |
+| Workspace static `service_config.<slug>.auth.ref` | `${bucket.auth.<service>.<authName>}` | Always the enclosing `buckets.<name>` -- cannot name another | No -- must be the entire `ref` value |
 | `kind: webhook` `services.<slug>.secret` (`fused-webhook`) | `${bucket.<name>.env\|secret.<key>}` or `${bucket.env\|secret.<key>}` (default bucket) | Explicit (or defaults to `default`) -- webhook verification has no app/dispatch context to fall back on | No -- must be the entire field value |
 | Connection profile `${resource.*}` (`fused-config`) | `${resource.provider_resource_id\|base_url\|metadata.<key>}` | N/A -- not a bucket reference at all, resolves against the selected connection's resource | No -- must be the entire field value |
+
+A workspace static-auth reference reuses one complete credential bundle without
+copying its fields:
+
+```yaml
+buckets:
+  default:
+    service_config:
+      confluence:
+        auth:
+          auth_type: basic
+          auth_name: confluenceBasic
+          ref: "${bucket.auth.jira.basicAuth}"
+```
+
+The outer `auth_type` and `auth_name` select the exact destination scheme;
+`jira.basicAuth` selects the exact source service and scheme in that same
+bucket. For the slim grammar, both source segments are non-empty and dot-free.
+Source and destination names need not match, but Engine requires
+compatible static credential schemes. `ref` is mutually exclusive with
+`username`, `password`, `token`, `api_key`, `cert`, and `key`. References are
+one level only: the source must contain credential material rather than another
+reference. Engine resolves the source at execution, so rotating the source
+bundle changes every consumer on its next request without another workspace
+apply. This mechanism does not reference OAuth/OIDC `connect` app registration
+or an end-user grant; those remain on their dedicated connection paths.
+
+The binding is service-scoped, so every enabled immutable version of both the
+source and destination must retain the same exact scheme name, canonical auth
+type, and credential-key shape. Engine rejects drift before any workspace
+mutation. Removing an existing service config's `auth` block removes its live
+reference on the next apply but deliberately preserves independently stored
+direct credentials.
 
 `fused-cli connect set <slug>` (below) takes `client_id`/`client_secret`/
 `redirect_uri` as literal values only -- it's an immediate admin action, not

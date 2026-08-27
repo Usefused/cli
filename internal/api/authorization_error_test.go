@@ -11,6 +11,8 @@ import (
 	"testing"
 )
 
+// TestFormatHTTPAuthorizationErrors keeps access advice grounded in reviewed
+// missing grants and avoids inventing a role problem for generic Engine denials.
 func TestFormatHTTPAuthorizationErrors(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -22,68 +24,75 @@ func TestFormatHTTPAuthorizationErrors(t *testing.T) {
 		{
 			name:   "authentication required",
 			status: http.StatusUnauthorized,
-			body:   `{"error":"authentication_required"}`,
-			want:   []string{"authentication required", "valid Fused credential"},
+			body:   `{"error":{"code":"authentication_required","message":"Authentication is required.","category":"authentication","retryable":false,"remediation":"Provide a valid Fused credential."}}`,
+			want:   []string{"Authentication is required", "valid Fused credential"},
 		},
 		{
 			name:      "unnamed resource does not invent a name",
 			status:    http.StatusForbidden,
-			body:      `{"error":"permission_denied","missing":[{"permission":"bucket.values.read","resource_type":"bucket","resource_id":"11111111-1111-1111-1111-111111111111"}]}`,
+			body:      `{"error":{"code":"permission_denied","message":"Missing permission.","category":"authorization","retryable":false,"details":{"missing":[{"permission":"bucket.values.read","resource_type":"bucket","resource_id":"11111111-1111-1111-1111-111111111111"}]}}}`,
 			want:      []string{"permission denied", "view the selected bucket"},
 			doNotWant: []string{"production", "secret", "bucket.values.read", "11111111-1111-1111-1111-111111111111"},
 		},
 		{
 			name:      "safe display name is rendered",
 			status:    http.StatusForbidden,
-			body:      `{"error":"permission_denied","missing":[{"permission":"service.consume","resource_type":"service","resource_id":"22222222-2222-2222-2222-222222222222","display_name":"GitHub"}]}`,
+			body:      `{"error":{"code":"permission_denied","message":"Missing permission.","category":"authorization","retryable":false,"details":{"missing":[{"permission":"service.consume","resource_type":"service","resource_id":"22222222-2222-2222-2222-222222222222","display_name":"GitHub"}]}}}`,
 			want:      []string{`use service "GitHub"`},
 			doNotWant: []string{"service.consume", "22222222-2222-2222-2222-222222222222"},
 		},
 		{
-			name:   "empty missing list stays actionable",
-			status: http.StatusForbidden,
-			body:   `{"error":"permission_denied"}`,
-			want:   []string{"permission denied", "workspace administrator"},
+			name:      "empty missing list stays actionable",
+			status:    http.StatusForbidden,
+			body:      `{"error":{"code":"permission_denied","message":"Permission denied.","category":"authorization","retryable":false}}`,
+			want:      []string{"permission denied", "did not identify a missing permission", "config references", "fused-cli whoami"},
+			doNotWant: []string{"ask a workspace administrator"},
 		},
 		{
 			name:      "malformed missing entries stay actionable",
 			status:    http.StatusForbidden,
-			body:      `{"error":"permission_denied","missing":[null,{}, {"permission":"bucket.read"}, {"resource_type":"bucket","resource_id":"44444444-4444-4444-4444-444444444444"}]}`,
-			want:      []string{"permission denied", "workspace administrator"},
-			doNotWant: []string{" on ", "bucket.read", "44444444-4444-4444-4444-444444444444"},
+			body:      `{"error":{"code":"permission_denied","message":"Permission denied.","category":"authorization","retryable":false,"details":{"missing":[null,{}, {"permission":"bucket.read"}, {"resource_type":"bucket","resource_id":"44444444-4444-4444-4444-444444444444"}]}}}`,
+			want:      []string{"permission denied", "did not identify a missing permission"},
+			doNotWant: []string{" on ", "bucket.read", "44444444-4444-4444-4444-444444444444", "ask a workspace administrator"},
 		},
 		{
 			name:      "valid requirements survive malformed siblings",
 			status:    http.StatusForbidden,
-			body:      `{"error":"permission_denied","missing":[null,{"permission":"service.consume","resource_type":"service","resource_id":"55555555-5555-5555-5555-555555555555"}]}`,
+			body:      `{"error":{"code":"permission_denied","message":"Permission denied.","category":"authorization","retryable":false,"details":{"missing":[null,{"permission":"service.consume","resource_type":"service","resource_id":"55555555-5555-5555-5555-555555555555"}]}}}`,
 			want:      []string{"use the selected service"},
 			doNotWant: []string{"undefined", "null", "service.consume", "55555555-5555-5555-5555-555555555555"},
 		},
 		{
 			name:      "credential-shaped display name is omitted",
 			status:    http.StatusForbidden,
-			body:      `{"error":"permission_denied","missing":[{"permission":"service.consume","resource_type":"service","resource_id":"66666666-6666-6666-6666-666666666666","display_name":"fsk_never_log"}]}`,
+			body:      `{"error":{"code":"permission_denied","message":"Permission denied.","category":"authorization","retryable":false,"details":{"missing":[{"permission":"service.consume","resource_type":"service","resource_id":"66666666-6666-6666-6666-666666666666","display_name":"fsk_never_log"}]}}}`,
 			want:      []string{"permission denied", "use the selected service"},
 			doNotWant: []string{"fsk_never_log", "service.consume", "66666666-6666-6666-6666-666666666666"},
 		},
 		{
 			name:      "owning team membership is explained",
 			status:    http.StatusForbidden,
-			body:      `{"error":"permission_denied","missing":[{"permission":"access.manage","resource_type":"workspace","resource_id":"77777777-7777-7777-7777-777777777777"}]}`,
+			body:      `{"error":{"code":"permission_denied","message":"Permission denied.","category":"authorization","retryable":false,"details":{"missing":[{"permission":"access.manage","resource_type":"workspace","resource_id":"77777777-7777-7777-7777-777777777777"}]}}}`,
 			want:      []string{"not a member of the owning team", "access administrator"},
 			doNotWant: []string{"access.manage", "77777777-7777-7777-7777-777777777777"},
 		},
 	}
 
+	// Each response shape must preserve only its supported product-safe advice.
 	for _, test := range tests {
+		// Isolate cases so a malformed response cannot mask another formatting regression.
 		t.Run(test.name, func(t *testing.T) {
 			message := newHTTPError(test.status, []byte(test.body)).Error()
+			// Required fragments prove that actionable context survived parsing.
 			for _, value := range test.want {
+				// Missing context would recreate the hidden-diagnostic failure.
 				if !strings.Contains(message, value) {
 					t.Errorf("message %q does not contain %q", message, value)
 				}
 			}
+			// Internal identifiers and unsupported advice must not reach users.
 			for _, value := range test.doNotWant {
+				// Check case-insensitively to catch accidental disclosure variants.
 				if strings.Contains(strings.ToLower(message), value) {
 					t.Errorf("message %q unexpectedly contains %q", message, value)
 				}
@@ -92,17 +101,17 @@ func TestFormatHTTPAuthorizationErrors(t *testing.T) {
 	}
 }
 
-func TestAppOwnerErrorsUseAllowlistedProductMessages(t *testing.T) {
-	tests := map[string]string{
-		"app owner is immutable":                  "already has an owner",
-		"app owner is unavailable":                "workspace administrator",
-		"owner team was not found or is archived": "active team slug",
-		"app owner authorization denied":          "owning team",
+// TestRemovedAppOwnerStringAdaptersStayOpaque proves legacy prose no longer receives special CLI classification.
+func TestRemovedAppOwnerStringAdaptersStayOpaque(t *testing.T) {
+	legacyMessages := []string{
+		"app owner is immutable", "app owner is unavailable",
+		"owner team was not found or is archived", "app owner authorization denied",
 	}
-	for code, want := range tests {
-		message := newHTTPError(http.StatusConflict, []byte(`{"error":`+strconv.Quote(code)+`}`)).Error()
-		if !strings.Contains(message, want) {
-			t.Errorf("message for %q = %q", code, message)
+	for _, legacyMessage := range legacyMessages {
+		message := newHTTPError(http.StatusConflict, []byte(`{"error":`+strconv.Quote(legacyMessage)+`}`)).Error()
+		// Only the HTTP-owned fallback may survive a removed string contract.
+		if !strings.Contains(message, "request_conflict") || strings.Contains(message, legacyMessage) {
+			t.Errorf("message for %q = %q", legacyMessage, message)
 		}
 	}
 }
@@ -147,9 +156,10 @@ func TestStructuredEngineErrorRemainsTypedThroughWrapping(t *testing.T) {
 	}
 }
 
+// TestPermissionDeniedTypedDetailsRemainProductSafe proves current nested permission details lose raw identifiers.
 func TestPermissionDeniedTypedDetailsRemainProductSafe(t *testing.T) {
 	const resourceID = "22222222-2222-2222-2222-222222222222"
-	body := []byte(`{"error":"permission_denied","missing":[{"permission":"service.consume","resource_type":"service","resource_id":"` + resourceID + `","display_name":"GitHub"}]}`)
+	body := []byte(`{"error":{"code":"permission_denied","message":"Permission denied.","category":"authorization","retryable":false,"details":{"missing":[{"permission":"service.consume","resource_type":"service","resource_id":"` + resourceID + `","display_name":"GitHub"}]}}}`)
 	var apiError *APIError
 	if !errors.As(newHTTPError(http.StatusForbidden, body), &apiError) {
 		t.Fatal("permission error was not typed")
@@ -191,17 +201,18 @@ func TestUnstructuredAndCredentialBearingErrorDetailsAreNotReturned(t *testing.T
 	}
 }
 
-// TestLegacyEngineErrorsKeepSafeDependencyDetail prevents generic 5xx copy from hiding an actionable Engine diagnosis.
-func TestLegacyEngineErrorsKeepSafeDependencyDetail(t *testing.T) {
+// TestRemovedStringErrorEnvelopeStaysOpaque proves legacy JSON prose cannot re-enter terminal output.
+func TestRemovedStringErrorEnvelopeStaysOpaque(t *testing.T) {
 	err := newHTTPError(http.StatusInternalServerError, []byte(`{"error":"workspace snapshot write failed because the local schema is behind"}`))
 	message := err.Error()
-	if !strings.Contains(message, "workspace snapshot write failed") || !strings.Contains(message, "engine_request_failed") {
-		t.Fatalf("legacy dependency error = %q", message)
+	// The generic status contract remains actionable without reflecting removed payload fields.
+	if !strings.Contains(message, "engine_request_failed") || strings.Contains(message, "workspace snapshot write failed") {
+		t.Fatalf("removed error envelope = %q", message)
 	}
 }
 
-// TestValidationErrorDetailsAreBoundedAndStructured verifies only the reviewed
-// string fields from actionable validation responses reach terminal output.
+// TestValidationErrorDetailsAreBoundedAndStructured verifies only current
+// nested-envelope fields from actionable validation responses reach output.
 func TestValidationErrorDetailsAreBoundedAndStructured(t *testing.T) {
 	longDetail := strings.Repeat("a", 1100)
 	tests := []struct {
@@ -210,12 +221,12 @@ func TestValidationErrorDetailsAreBoundedAndStructured(t *testing.T) {
 		want      string
 		doNotWant string
 	}{
-		{name: "error string", body: `{"error":"invalid x-fused-pagination: unknown field items_path"}`, want: "unknown field items_path"},
-		{name: "message fallback", body: `{"message":"request schema is invalid"}`, want: "request schema is invalid"},
+		{name: "removed error string", body: `{"error":"invalid x-fused-pagination: unknown field items_path"}`, want: "request_rejected", doNotWant: "unknown field items_path"},
+		{name: "removed message fallback", body: `{"message":"request schema is invalid"}`, want: "request_rejected", doNotWant: "request schema is invalid"},
 		{name: "nested error", body: `{"error":{"debug":"internal detail"}}`, doNotWant: "internal detail"},
 		{name: "structured detail", body: `{"error":{"code":"request_rejected","message":"request rejected","details":{"server_detail":"schema dialect is unsupported"}}}`, want: "schema dialect is unsupported"},
 		{name: "structured credential", body: `{"error":{"code":"request_rejected","message":"request rejected","details":{"server_detail":"fsk_do_not_return"}}}`, doNotWant: "fsk_do_not_return"},
-		{name: "bounded detail", body: `{"error":` + strconv.Quote(longDetail) + `}`, want: "…", doNotWant: strings.Repeat("a", 1025)},
+		{name: "removed long string", body: `{"error":` + strconv.Quote(longDetail) + `}`, want: "request_rejected", doNotWant: strings.Repeat("a", 32)},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -230,6 +241,8 @@ func TestValidationErrorDetailsAreBoundedAndStructured(t *testing.T) {
 	}
 }
 
+// TestGraphQLDecodeErrorsDoNotReturnRemoteContent verifies every response-shape
+// failure keeps credential-like resolver content out of rendered errors.
 func TestGraphQLDecodeErrorsDoNotReturnRemoteContent(t *testing.T) {
 	const secret = "fsk_never_return_or_record"
 	tests := []struct {
@@ -238,7 +251,7 @@ func TestGraphQLDecodeErrorsDoNotReturnRemoteContent(t *testing.T) {
 		want string
 	}{
 		{name: "malformed envelope", body: `{"data":{"secret":"` + secret, want: "graphql_response_malformed"},
-		{name: "remote graphql message", body: `{"errors":[{"message":"` + secret + `"}]}`, want: "graphql_request_rejected"},
+		{name: "remote graphql message without code", body: `{"errors":[{"message":"` + secret + `"}]}`, want: "graphql_dependency_failed"},
 		{name: "malformed data", body: `{"data":{"value":"` + secret + `"}}`, want: "graphql_data_malformed"},
 	}
 	for _, test := range tests {
@@ -282,7 +295,7 @@ func TestGraphQLDecodeUsesOnlyAllowlistedSafeErrorCodes(t *testing.T) {
 }
 
 // TestGraphQLDecodePreservesSafeEngineDetail keeps resolver diagnostics visible
-// for both known and fallback codes without trusting remote codes as telemetry identity.
+// for stable lookup and dependency codes without trusting remote telemetry identity.
 func TestGraphQLDecodePreservesSafeEngineDetail(t *testing.T) {
 	tests := []struct {
 		name string
@@ -290,7 +303,7 @@ func TestGraphQLDecodePreservesSafeEngineDetail(t *testing.T) {
 		want string
 	}{
 		{name: "known", code: graphQLCodeResourceNotFound, want: "resource_not_found"},
-		{name: "fallback", code: "INTERNAL_SERVER_ERROR", want: "graphql_request_rejected"},
+		{name: "dependency", code: graphQLCodeInternalServer, want: "graphql_dependency_failed"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -299,6 +312,38 @@ func TestGraphQLDecodePreservesSafeEngineDetail(t *testing.T) {
 			// Safe detail must augment rather than replace the stable local code.
 			if err == nil || !strings.Contains(err.Error(), "workspace service version is not enabled") || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("GraphQL error = %v", err)
+			}
+		})
+	}
+}
+
+// TestGraphQLDecodeClassifiesOnlyKnownOutageCodesAsRetryable verifies that
+// remote extension values cannot invent dependency telemetry dimensions.
+func TestGraphQLDecodeClassifiesOnlyKnownOutageCodesAsRetryable(t *testing.T) {
+	tests := []struct {
+		name          string
+		code          string
+		wantCode      string
+		wantCategory  string
+		wantRetryable bool
+	}{
+		{name: "missing code", wantCode: "graphql_dependency_failed", wantCategory: "dependency", wantRetryable: true},
+		{name: "internal server", code: graphQLCodeInternalServer, wantCode: "graphql_dependency_failed", wantCategory: "dependency", wantRetryable: true},
+		{name: "service unavailable", code: graphQLCodeServiceUnavailable, wantCode: "graphql_dependency_failed", wantCategory: "dependency", wantRetryable: true},
+		{name: "unknown remote code", code: "REMOTE_FAILURE", wantCode: "graphql_request_rejected", wantCategory: "validation"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := safeGraphQLRequestError(test.code, "Engine resolver could not complete this request")
+			var apiError *APIError
+			// Typed metadata is the automation contract, so prose alone is not enough
+			// to prove that retry policy remains stable.
+			if !errors.As(err, &apiError) {
+				t.Fatalf("error type = %T, want *APIError", err)
+			}
+			// Code, category, and retryability must move together as one stable policy.
+			if apiError.Code != test.wantCode || apiError.Category != test.wantCategory || apiError.Retryable != test.wantRetryable {
+				t.Fatalf("error = %#v, want code/category/retryable %q/%q/%v", apiError, test.wantCode, test.wantCategory, test.wantRetryable)
 			}
 		})
 	}
@@ -316,11 +361,12 @@ func TestStructuredEnginePartialErrorRendersRecoveryIdentity(t *testing.T) {
 	}
 }
 
+// TestEngineGraphQLFormatsPermissionDeniedContract proves GraphQL HTTP denials use the current nested envelope.
 func TestEngineGraphQLFormatsPermissionDeniedContract(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusForbidden)
-		_, _ = w.Write([]byte(`{"error":"permission_denied","missing":[{"permission":"connection.manage","resource_type":"bucket","resource_id":"33333333-3333-3333-3333-333333333333"}]}`))
+		_, _ = w.Write([]byte(`{"error":{"code":"permission_denied","message":"Missing permission.","category":"authorization","retryable":false,"details":{"missing":[{"permission":"connection.manage","resource_type":"bucket","resource_id":"33333333-3333-3333-3333-333333333333"}]}}}`))
 	}))
 	defer server.Close()
 	client := NewClient(server.URL, "fsk_test")

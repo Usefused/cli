@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -135,6 +134,7 @@ func (t *AppTokenResponse) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// GenerateAppToken creates one family-scoped token and bounds rejected responses.
 func (c *Client) GenerateAppToken(appFamilyID string, input AppTokenGenerateRequest) (*AppTokenGenerateResponse, error) {
 	body, err := json.Marshal(input)
 	if err != nil {
@@ -165,7 +165,7 @@ func (c *Client) GenerateAppToken(appFamilyID string, input AppTokenGenerateRequ
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody := readBoundedHTTPErrorBody(resp.Body)
 		return nil, fmt.Errorf("generate app token failed (HTTP %d): %w", resp.StatusCode, newHTTPError(resp.StatusCode, respBody))
 	}
 
@@ -188,12 +188,13 @@ func (c *Client) ListAppTokens(appFamilyID string) ([]AppTokenResponse, error) {
 	var resp struct {
 		Tokens []AppTokenResponse `json:"appTokens"`
 	}
-	// Why: token listing is read-only metadata, while token generation and
+	// Token listing is read-only metadata, while token generation and
 	// revocation stay on REST because they mutate credential state.
 	err := c.EngineGraphQL(query, map[string]interface{}{"appFamilyId": appFamilyID}, &resp)
 	return resp.Tokens, err
 }
 
+// RevokeAppToken terminates one family-scoped token and bounds Engine failures.
 func (c *Client) RevokeAppToken(appFamilyID, name string) error {
 	u, err := url.Parse(c.BaseURL + appTokensPath)
 	if err != nil {
@@ -219,7 +220,7 @@ func (c *Client) RevokeAppToken(appFamilyID, name string) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody := readBoundedHTTPErrorBody(resp.Body)
 		return fmt.Errorf("revoke app token failed (HTTP %d): %w", resp.StatusCode, newHTTPError(resp.StatusCode, respBody))
 	}
 

@@ -103,6 +103,13 @@ func resolveConnectTarget(action, serviceSlug, bucketValue string) (client *api.
 // partial-update merge (see UpsertConnectConfigHandler) carries forward
 // whatever this call omits.
 func runConnectSet(cmd *cobra.Command, serviceSlug, value string) error {
+	// Validate stdin before resolving remote metadata so malformed credentials never trigger a request.
+	if value != "" {
+		// Stop immediately on unknown as well as malformed assignments so a typo cannot become a no-op mutation.
+		if _, err := parseConnectInlineFields(value); err != nil {
+			return err
+		}
+	}
 	client, bucketID, serviceID, err := resolveConnectTarget("set", serviceSlug, connectSetBucketID)
 	if err != nil {
 		return err
@@ -223,36 +230,60 @@ func connectAuthIdentity(auth *api.AuthConfig) (string, string, error) {
 	return canonicalSecretAuthType(auth), strings.TrimSpace(auth.Name), nil
 }
 
-// connectSetFields resolves which fields to send: parsed from the inline
-// "key=value;..." argument, or prompted interactively. An inline key that is
-// present but blank (e.g. "client_secret=") and a blank interactive prompt
-// both become an explicit empty string, which Engine rejects as "you tried
-// to blank this out" -- only a key that never appears at all means "leave
-// unchanged". That distinction is what makes a single-field rotation
-// possible without resending the other two.
+// connectSetFields resolves either validated inline assignments or interactive
+// prompts while preserving omitted fields for partial credential rotation.
 func connectSetFields(authType, authName, value string) (api.ConnectConfigUpsertRequest, error) {
+	// Non-empty input is an explicit inline mode and must satisfy the shared assignment grammar.
 	if value != "" {
-		return connectFieldsFromInline(authType, authName, value), nil
+		return connectFieldsFromInline(authType, authName, value)
 	}
+	// Interactive collection is only safe when a terminal is available.
 	if err := requireInteractive("provide connect fields in the value argument"); err != nil {
 		return api.ConnectConfigUpsertRequest{}, err
 	}
 	return connectFieldsFromPrompts(authType, authName)
 }
 
-func connectFieldsFromInline(authType, authName, value string) api.ConnectConfigUpsertRequest {
-	pairs := parseInlineKeyValuePairs(value)
+// connectFieldsFromInline maps validated inline fields to pointer-valued patch fields.
+func connectFieldsFromInline(authType, authName, value string) (api.ConnectConfigUpsertRequest, error) {
+	pairs, err := parseConnectInlineFields(value)
+	// Parser errors must stop request construction rather than producing an empty partial update.
+	if err != nil {
+		return api.ConnectConfigUpsertRequest{}, err
+	}
 	req := connectAuthRequest(authType, authName)
+	// Omitted client IDs remain nil so partial rotations leave stored values unchanged.
 	if v, ok := pairs["client_id"]; ok {
 		req.ClientID = &v
 	}
+	// Omitted client secrets remain nil so rotating another field cannot erase them.
 	if v, ok := pairs["client_secret"]; ok {
 		req.ClientSecret = &v
 	}
+	// Omitted redirect URIs remain nil so callers can rotate only sensitive fields.
 	if v, ok := pairs["redirect_uri"]; ok {
 		req.RedirectURI = &v
 	}
-	return req
+	return req, nil
+}
+
+// parseConnectInlineFields admits only fields implemented by the connect
+// patch contract so misspellings cannot be silently discarded.
+func parseConnectInlineFields(value string) (map[string]string, error) {
+	pairs, err := parseInlineKeyValuePairs(value)
+	// Shared grammar errors remain the most specific recovery for malformed input.
+	if err != nil {
+		return nil, err
+	}
+	for key := range pairs {
+		// The mutation maps exactly these three public fields; accepting anything else would report success without applying the caller's value.
+		switch key {
+		case "client_id", "client_secret", "redirect_uri":
+		default:
+			return nil, fmt.Errorf("invalid connect field %q; expected client_id, client_secret, or redirect_uri", key)
+		}
+	}
+	return pairs, nil
 }
 
 func connectFieldsFromPrompts(authType, authName string) (api.ConnectConfigUpsertRequest, error) {

@@ -49,6 +49,8 @@ func (c *Client) WhoAmI() (*WhoAmIResponse, error) {
 	return &identity, nil
 }
 
+// LogoutCLI revokes the currently saved managed CLI credential and uses the
+// common current-envelope decoder for any Engine failure.
 func (c *Client) LogoutCLI() error {
 	req, err := c.authRequest(http.MethodPost, "/auth/cli/logout")
 	if err != nil {
@@ -59,12 +61,17 @@ func (c *Client) LogoutCLI() error {
 		return err
 	}
 	defer resp.Body.Close()
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 16<<10))
+	// Bound the body before checking status so approved Engine codes remain
+	// actionable while arbitrary response content stays opaque.
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+	// An inactive or invalid saved credential has the same local cleanup result,
+	// independent of any untrusted body returned with the 401.
 	if resp.StatusCode == http.StatusUnauthorized {
 		return ErrCLILogoutAlreadyInactive
 	}
+	// Non-success logout failures use the same bounded decoder as every control-plane command.
 	if resp.StatusCode != http.StatusNoContent {
-		return fmt.Errorf("CLI logout failed (HTTP %d): %w", resp.StatusCode, genericHTTPError(resp.StatusCode))
+		return fmt.Errorf("CLI logout failed (HTTP %d): %w", resp.StatusCode, newHTTPError(resp.StatusCode, body))
 	}
 	return nil
 }

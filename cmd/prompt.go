@@ -19,6 +19,10 @@ var appVersion string
 var targetLanguage string
 var autoYes bool
 
+// promptCartActionRunner keeps the interactive boundary replaceable in tests
+// so cancellation and terminal failures can be verified without a real TTY.
+var promptCartActionRunner = promptCartAction
+
 var promptCmd = &cobra.Command{
 	Use:   "prompt",
 	Short: "Use AI to prompt and generate a new SDK config",
@@ -45,139 +49,208 @@ func init() {
 	sdkCmd.AddCommand(promptCmd)
 }
 
-func searchAndAddEndpoints(client *api.Client, searchString string, currentCart map[string]api.Integration, servicesMap map[string]api.Service, wsServicesMap map[string]api.WorkspaceService) {
-	ensurePromptWorkspace(client, promptWorkspaceTarget())
+// searchAndAddEndpoints resolves one natural-language request and persists any
+// workspace additions, returning every operational failure to the command.
+func searchAndAddEndpoints(client *api.Client, searchString string, currentCart map[string]api.Integration, servicesMap map[string]api.Service, wsServicesMap map[string]api.WorkspaceService) error {
+	// Prompt generation depends on the workspace snapshot, so a failed
+	// prerequisite sync must stop the command instead of using partial state.
+	if err := ensurePromptWorkspace(client, promptWorkspaceTarget()); err != nil {
+		return err
+	}
 
 	wsPath, wsCfg, err := loadWorkspaceConfigForSync(ConfigFile)
+	// Preserve the filesystem error so callers can identify the unreadable
+	// workspace path instead of seeing an empty-cart message.
 	if err != nil {
-		fmt.Printf("Failed to load workspace config: %v\n", err)
-		return
+		return fmt.Errorf("loading workspace config: %w", err)
 	}
 
 	intent, err := client.ParseSDKIntent(searchString)
+	// Engine error metadata remains available through wrapping for telemetry and
+	// human rendering at the command boundary.
 	if err != nil {
-		fmt.Printf("Failed to parse intent: %v\n", err)
-		return
+		return fmt.Errorf("parsing SDK intent: %w", err)
 	}
 
+	// A query with no recognized service cannot produce an SDK and is a
+	// validation failure, not a successful cancellation.
 	if len(intent.Services) == 0 {
-		fmt.Println("No services detected in your query.")
-		return
+		return fmt.Errorf("no services detected in query %q", searchString)
 	}
 
-	added, newWorkspaceServices := processPromptServiceIntents(client, intent.Services, wsCfg, currentCart, servicesMap, wsServicesMap)
-	persistPromptWorkspace(wsPath, wsCfg, newWorkspaceServices)
+	added, newWorkspaceServices, err := processPromptServiceIntents(client, intent.Services, wsCfg, currentCart, servicesMap, wsServicesMap)
+	// Partial intent results are not persisted because the generated SDK would
+	// otherwise conceal whichever service lookup failed.
+	if err != nil {
+		return err
+	}
+	// Workspace persistence is part of prompt generation and must be observable
+	// as a command failure when the local file cannot be replaced.
+	if err := persistPromptWorkspace(wsPath, wsCfg, newWorkspaceServices); err != nil {
+		return err
+	}
 
 	fmt.Printf("✅ Added %d new targeted endpoints to the cart.\n", added)
+	return nil
 }
 
+// promptWorkspaceTarget returns the explicit workspace path or the standard
+// project-local location used by prerequisite synchronization.
 func promptWorkspaceTarget() string {
+	// An explicit config path must also be the path checked before syncing.
 	if ConfigFile != "" {
 		return ConfigFile
 	}
 	return filepath.Join(".fused", "workspace.yaml")
 }
 
-func ensurePromptWorkspace(client *api.Client, target string) {
-	if _, err := os.Stat(target); !os.IsNotExist(err) {
-		return
+// ensurePromptWorkspace synchronizes only when the requested workspace file
+// is absent and exposes prerequisite or filesystem failures to the caller.
+func ensurePromptWorkspace(client *api.Client, target string) error {
+	_, err := os.Stat(target)
+	// An existing workspace needs no network prerequisite.
+	if err == nil {
+		return nil
+	}
+	// A stat failure other than absence can hide permission or path problems and
+	// should not be reinterpreted as a missing workspace.
+	if !os.IsNotExist(err) {
+		return fmt.Errorf("checking workspace config %s: %w", target, err)
 	}
 	fmt.Println("No local workspace config found. Syncing from Engine...")
-	// Why: the process execution context lets SIGINT stop the prerequisite
+	// The process execution context lets SIGINT stop the prerequisite
 	// sync instead of leaving an agent waiting on abandoned network work.
 	if _, err := PerformWorkspaceSync(executionContext, client, ConfigFile); err != nil {
-		fmt.Printf("Warning: Failed to sync workspace config: %v\n", err)
+		return fmt.Errorf("syncing workspace config from Engine: %w", err)
 	}
+	return nil
 }
 
-func processPromptServiceIntents(client *api.Client, intents []api.IntentService, wsCfg *configfile.WorkspaceConfig, cart map[string]api.Integration, servicesMap map[string]api.Service, wsServicesMap map[string]api.WorkspaceService) (int, []string) {
+// processPromptServiceIntents resolves intents in order and stops before
+// persistence when any service cannot be resolved completely.
+func processPromptServiceIntents(client *api.Client, intents []api.IntentService, wsCfg *configfile.WorkspaceConfig, cart map[string]api.Integration, servicesMap map[string]api.Service, wsServicesMap map[string]api.WorkspaceService) (int, []string, error) {
 	added := 0
 	var newWorkspaceServices []string
 	for _, intent := range intents {
-		addedEndpoints, serviceAdded := processServiceIntent(client, intent, wsCfg, cart, servicesMap, wsServicesMap)
+		addedEndpoints, serviceAdded, err := processServiceIntent(client, intent, wsCfg, cart, servicesMap, wsServicesMap)
+		// A partially-resolved intent set would make the generated config differ
+		// silently from the user's request, so propagate the first exact failure.
+		if err != nil {
+			return added, newWorkspaceServices, err
+		}
 		added += addedEndpoints
+		// Only newly-enabled services require a workspace file write.
 		if serviceAdded {
 			newWorkspaceServices = append(newWorkspaceServices, intent.Name)
 		}
 	}
-	return added, newWorkspaceServices
+	return added, newWorkspaceServices, nil
 }
 
-func persistPromptWorkspace(path string, cfg *configfile.WorkspaceConfig, addedServices []string) {
+// persistPromptWorkspace writes newly-enabled services and returns replacement
+// failures so prompt never reports a generated SDK against stale workspace state.
+func persistPromptWorkspace(path string, cfg *configfile.WorkspaceConfig, addedServices []string) error {
+	// No workspace mutation means no file replacement is necessary.
 	if len(addedServices) == 0 {
-		return
+		return nil
 	}
+	// Atomic write failures are command failures because the SDK will depend on
+	// the services that were just selected.
 	if err := writeWorkspaceConfig(path, cfg); err != nil {
-		fmt.Printf("Warning: failed to write updated workspace.yaml: %v\n", err)
-		return
+		return fmt.Errorf("writing updated workspace config %s: %w", path, err)
 	}
 	fmt.Printf("✅ Automatically added %s to your workspace config.\n", strings.Join(addedServices, ", "))
+	return nil
 }
 
-func processServiceIntent(client *api.Client, svcIntent api.IntentService, wsCfg *configfile.WorkspaceConfig, cart map[string]api.Integration, servicesMap map[string]api.Service, wsServicesMap map[string]api.WorkspaceService) (int, bool) {
+// processServiceIntent resolves one service, version, and endpoint query while
+// preserving the underlying API error at every remote boundary.
+func processServiceIntent(client *api.Client, svcIntent api.IntentService, wsCfg *configfile.WorkspaceConfig, cart map[string]api.Integration, servicesMap map[string]api.Service, wsServicesMap map[string]api.WorkspaceService) (int, bool, error) {
 	fmt.Printf("🔍 Searching for service matching %q...\n", svcIntent.Name)
 	services, err := client.SearchServices(svcIntent.Name)
-	if err != nil || len(services) == 0 {
-		fmt.Printf("   -> Could not find service matching %q\n", svcIntent.Name)
-		return 0, false
+	// Keep Engine error codes/details intact instead of coalescing them with an
+	// empty search result.
+	if err != nil {
+		return 0, false, fmt.Errorf("searching for service %q: %w", svcIntent.Name, err)
+	}
+	// A valid empty response is actionable input feedback rather than an API
+	// outage and therefore gets its own specific error.
+	if len(services) == 0 {
+		return 0, false, fmt.Errorf("no service matched %q", svcIntent.Name)
 	}
 
 	s := services[0]
 	servicesMap[s.ID] = s
 
 	visMap, err := client.ServiceVisibilities([]string{s.ID})
+	// Visibility determines the canonical workspace key, so generation cannot
+	// safely continue when that lookup fails.
 	if err != nil {
-		fmt.Printf("   -> Could not fetch visibility for %q\n", s.Name)
-		return 0, false
+		return 0, false, fmt.Errorf("fetching visibility for service %q: %w", s.Name, err)
 	}
-	vis := visMap[s.ID]
+	vis, found := visMap[s.ID]
+	// A missing canonical reference is a malformed dependency response, not evidence that the service has no published versions.
+	if !found || strings.TrimSpace(vis.Slug) == "" {
+		return 0, false, fmt.Errorf("visibility response omitted the canonical reference for service %q", s.Name)
+	}
 	key := serviceIntentConfigKey(vis)
 
-	svcAdded := false
-	var version string
-	// Prefer whatever version is already enabled locally over fetching the
-	// latest from Registry -- if the user already added this service to
-	// their workspace config, the Copilot should target that version rather
-	// than silently pinning a different (possibly newer) one underneath it.
-	if existing, ok := wsCfg.Services[key]; ok {
-		if len(existing.Versions) > 0 {
-			version = existing.Versions[0].Version
-		}
-	}
-
-	if version == "" {
-		// Not enabled locally yet -- fall back to Registry's latest version
-		// so intent-based discovery can add a brand-new service on its own.
-		// Intent discovery needs only the newest version name, so it must not
-		// pull every version's documentation and execution-policy payload.
-		versions, err := client.ServiceVersionSummaries(key)
-		if err != nil || len(versions) == 0 {
-			fmt.Printf("   -> Could not find any versions for %q\n", s.Name)
-			return 0, false
-		}
-		version = versions[0].Name
-
-		wsCfg.Services[key] = configfile.WorkspaceService{
-			ServiceID: s.ID,
-			Versions:  []configfile.WorkspaceServiceVersion{{Version: version}},
-		}
-		svcAdded = true
-		fmt.Printf("   -> 🌟 Automatically added %s (v%s) to workspace config\n", key, version)
+	version, svcAdded, err := resolveServiceIntentVersion(client, wsCfg, key, s)
+	// Version resolution failures retain the service-specific API or validation cause.
+	if err != nil {
+		return 0, false, err
 	}
 
 	wsServicesMap[s.ID] = api.WorkspaceService{
-		ServiceID: s.ID,
-		Version:   version,
+		ServiceID:   s.ID,
+		ServiceSlug: key,
+		Version:     version,
 	}
 
 	fmt.Printf("   -> Found %q (v%s)! Fetching endpoints (intent: %q)...\n", s.Name, version, svcIntent.EndpointQuery)
 	endpoints, err := client.SearchEndpoints(s.ID, version, svcIntent.EndpointQuery)
+	// Endpoint search failures must retain their Engine diagnostics at the CLI
+	// boundary instead of being printed and converted to success.
 	if err != nil {
-		fmt.Printf("Error fetching endpoints for service %s: %v\n", s.Name, err)
-		return 0, svcAdded
+		return 0, svcAdded, fmt.Errorf("searching endpoints for service %q: %w", s.Name, err)
+	}
+	// A completed search with no matching operations cannot satisfy this intent.
+	if len(endpoints) == 0 {
+		return 0, svcAdded, fmt.Errorf("no endpoints matched intent %q for service %q", svcIntent.EndpointQuery, s.Name)
 	}
 
-	return mergeNewEndpoints(cart, endpoints), svcAdded
+	return mergeNewEndpoints(cart, endpoints), svcAdded, nil
+}
+
+// resolveServiceIntentVersion reuses an existing local pin or fetches one
+// bounded latest-version summary before adding a new workspace service.
+func resolveServiceIntentVersion(client *api.Client, wsCfg *configfile.WorkspaceConfig, key string, service api.Service) (string, bool, error) {
+	var version string
+	// Existing pins take precedence so prompting never silently upgrades a declared service.
+	if existing, ok := wsCfg.Services[key]; ok && len(existing.Versions) > 0 {
+		version = existing.Versions[0].Version
+	}
+	// A local pin avoids a Registry lookup and leaves the workspace unchanged.
+	if version != "" {
+		return version, false, nil
+	}
+	// Intent discovery fetches only the newest summary, not every version's large policy payload.
+	versions, err := client.ServiceVersionSummaries(key)
+	// Preserve API diagnostics separately from a valid empty version list.
+	if err != nil {
+		return "", false, fmt.Errorf("fetching versions for service %q: %w", service.Name, err)
+	}
+	// A service without a published version cannot back a generated operation.
+	if len(versions) == 0 {
+		return "", false, fmt.Errorf("no versions are available for service %q", service.Name)
+	}
+	version = versions[0].Name
+	wsCfg.Services[key] = configfile.WorkspaceService{
+		ServiceID: service.ID,
+		Versions:  []configfile.WorkspaceServiceVersion{{Version: version}},
+	}
+	fmt.Printf("   -> 🌟 Automatically added %s (v%s) to workspace config\n", key, version)
+	return version, true, nil
 }
 
 func serviceIntentConfigKey(vis api.ServiceVisibility) string {
@@ -201,21 +274,30 @@ func mergeNewEndpoints(cart map[string]api.Integration, endpoints []api.Integrat
 // runPrompt retains the interactive endpoint cart for native SDKs. MCP
 // runtimes use the declarative `mcp plan` and `mcp apply` commands instead.
 func runPrompt(cmd *cobra.Command) error {
+	// The natural-language request is mandatory even though Cobra cannot mark a
+	// shared package variable as a positional argument.
 	if description == "" {
 		return fmt.Errorf("--description is required")
 	}
 
 	client, err := newPromptClient()
+	// Credential and Engine URL failures already carry their actionable detail.
 	if err != nil {
 		return err
 	}
 
-	cart, wsServicesMap, proceed := buildCart(client, description)
+	cart, wsServicesMap, proceed, err := buildCart(client, description)
+	// Operational failures are distinct from the explicit menu cancellation.
+	if err != nil {
+		return err
+	}
+	// The cancel action is the sole successful path that skips generation.
 	if !proceed {
 		return nil
 	}
 	cfg := promptSDKConfig(cart, wsServicesMap)
 	path, err := writePromptSDKConfig(cfg)
+	// Config persistence must complete before an applied change is recorded.
 	if err != nil {
 		return err
 	}
@@ -277,43 +359,85 @@ func newPromptClient() (*api.Client, error) {
 
 // buildCart runs the initial search plus the interactive cart-building menu
 // (proceed/modify/add/cancel) until the user confirms or cancels. Returns the
-// final cart and whether the caller should proceed to generation.
-func buildCart(client *api.Client, description string) (map[string]api.Integration, map[string]api.WorkspaceService, bool) {
+// final cart, whether the caller should proceed to generation, and any
+// operational failure distinct from an intentional cancellation.
+func buildCart(client *api.Client, description string) (map[string]api.Integration, map[string]api.WorkspaceService, bool, error) {
 	cart := make(map[string]api.Integration)
 	services := make(map[string]api.Service)
 	wsServicesMap := make(map[string]api.WorkspaceService)
-	searchAndAddEndpoints(client, description, cart, services, wsServicesMap)
+	// The initial request must resolve completely before the interactive cart is
+	// shown, otherwise users could approve an incomplete SDK unknowingly.
+	if err := searchAndAddEndpoints(client, description, cart, services, wsServicesMap); err != nil {
+		return cart, wsServicesMap, false, err
+	}
+	// A successful request that adds nothing cannot generate a useful SDK and is
+	// reported as validation rather than a successful no-op.
+	if len(cart) == 0 {
+		return cart, wsServicesMap, false, fmt.Errorf("no endpoints were added for query %q", description)
+	}
 
 	for {
+		// Removing every endpoint in the interactive modifier is an intentional
+		// abort, equivalent to choosing cancel after reviewing the cart.
 		if len(cart) == 0 {
 			fmt.Println("Cart is empty. Aborting.")
-			return cart, wsServicesMap, false
+			return cart, wsServicesMap, false, nil
 		}
 
 		printCartSummary(cart, services)
 
+		// Non-interactive confirmation deliberately bypasses only the menu, not
+		// any prerequisite or API work above.
 		if autoYes {
 			fmt.Println("Auto-confirm enabled. Proceeding to generation...")
-			return cart, wsServicesMap, true
+			return cart, wsServicesMap, true, nil
 		}
 
-		action, err := promptCartAction()
+		action, err := promptCartActionRunner()
+		// Terminal/menu failures are operational errors, not user cancellation.
 		if err != nil {
-			fmt.Printf("Menu error: %v\n", err)
-			return cart, wsServicesMap, false
+			return cart, wsServicesMap, false, fmt.Errorf("opening SDK cart menu: %w", err)
 		}
+		cart, proceed, done, err := handlePromptCartAction(action, client, cart, services, wsServicesMap)
+		// Action handlers preserve operational failures instead of treating them as cancellation.
+		if err != nil {
+			return cart, wsServicesMap, false, err
+		}
+		// Only cancel and proceed terminate the cart loop; edit actions return for another review.
+		if done {
+			return cart, wsServicesMap, proceed, nil
+		}
+	}
+}
 
-		switch action {
-		case "cancel":
-			fmt.Println("Cancelled.")
-			return cart, wsServicesMap, false
-		case "proceed":
-			return cart, wsServicesMap, true
-		case "modify":
-			cart = modifyCartSelection(cart, services)
-		case "add":
-			promptAndAddMore(client, cart, services, wsServicesMap)
+// handlePromptCartAction applies one reviewed menu choice and reports whether
+// the surrounding cart loop should terminate.
+func handlePromptCartAction(action string, client *api.Client, cart map[string]api.Integration, services map[string]api.Service, wsServicesMap map[string]api.WorkspaceService) (map[string]api.Integration, bool, bool, error) {
+	switch action {
+	// Explicit cancellation remains a successful exit that skips SDK output.
+	case "cancel":
+		fmt.Println("Cancelled.")
+		return cart, false, true, nil
+	// Confirmation hands the selected cart to config generation.
+	case "proceed":
+		return cart, true, true, nil
+	// Selection UI errors must not silently keep the old cart and continue.
+	case "modify":
+		modified, err := modifyCartSelection(cart, services)
+		// Failed selection leaves the caller with the last known cart and an explicit error.
+		if err != nil {
+			return cart, false, false, err
 		}
+		return modified, false, false, nil
+	// Additional searches use the same failure propagation as the initial natural-language request.
+	case "add":
+		if err := promptAndAddMore(client, cart, services, wsServicesMap); err != nil {
+			return cart, false, false, err
+		}
+		return cart, false, false, nil
+	default:
+		// Unexpected menu values fail instead of keeping the loop alive indefinitely.
+		return cart, false, false, fmt.Errorf("unsupported SDK cart action %q", action)
 	}
 }
 
@@ -374,9 +498,8 @@ func promptCartAction() (string, error) {
 }
 
 // modifyCartSelection prompts a multi-select of the current cart and returns
-// the rebuilt cart. On prompt error/cancel, the cart is returned unchanged
-// (matching the original behavior).
-func modifyCartSelection(cart map[string]api.Integration, services map[string]api.Service) map[string]api.Integration {
+// the rebuilt cart while exposing terminal failures to the command.
+func modifyCartSelection(cart map[string]api.Integration, services map[string]api.Service) (map[string]api.Integration, error) {
 	var options []huh.Option[string]
 	for id, ep := range cart {
 		svcName := services[ep.ServiceID].Name
@@ -394,10 +517,11 @@ func modifyCartSelection(cart map[string]api.Integration, services map[string]ap
 		),
 	).WithTheme(huh.ThemeBase()).Run()
 
+	// A failed selection prompt cannot be treated as approval of the old cart.
 	if err != nil {
-		return cart
+		return cart, fmt.Errorf("modifying SDK cart selection: %w", err)
 	}
-	return rebuildCart(cart, selectedIDs)
+	return rebuildCart(cart, selectedIDs), nil
 }
 
 // rebuildCart keeps only the selected IDs from cart. Pure, unit-tested.
@@ -410,16 +534,22 @@ func rebuildCart(cart map[string]api.Integration, selectedIDs []string) map[stri
 }
 
 // promptAndAddMore prompts for an additional free-text description and, if
-// given, searches for and merges more endpoints into the cart.
-func promptAndAddMore(client *api.Client, cart map[string]api.Integration, services map[string]api.Service, wsServicesMap map[string]api.WorkspaceService) {
+// given, searches for and merges more endpoints into the cart while returning
+// terminal, API, and workspace persistence failures.
+func promptAndAddMore(client *api.Client, cart map[string]api.Integration, services map[string]api.Service, wsServicesMap map[string]api.WorkspaceService) error {
 	var newDesc string
 	err := huh.NewInput().
 		Title("Enter additional description (e.g. 'stripe refunds')").
 		Value(&newDesc).
 		Run()
 
-	if err != nil || newDesc == "" {
-		return
+	// Input UI failures are operational and should produce a non-zero exit.
+	if err != nil {
+		return fmt.Errorf("reading additional SDK description: %w", err)
 	}
-	searchAndAddEndpoints(client, newDesc, cart, services, wsServicesMap)
+	// An intentionally blank additional query leaves the current cart intact.
+	if newDesc == "" {
+		return nil
+	}
+	return searchAndAddEndpoints(client, newDesc, cart, services, wsServicesMap)
 }

@@ -63,6 +63,113 @@ buckets:
 	}
 }
 
+// TestWorkspaceAuthReferencePreservesExactSelectorsWithoutCopyingMaterial
+// proves the CLI transports a same-bucket bundle edge while leaving live
+// credential resolution to Engine instead of freezing source values at apply.
+func TestWorkspaceAuthReferencePreservesExactSelectorsWithoutCopyingMaterial(t *testing.T) {
+	t.Setenv("FUSED_TEST_JIRA_USER", "jira-user")
+	t.Setenv("FUSED_TEST_JIRA_PASSWORD", "jira-password")
+	parsed, err := configfile.Parse([]byte(`
+apiVersion: fused/v1
+kind: workspace
+services:
+  jira:
+    versions: [{version: "v1"}]
+  confluence:
+    versions: [{version: "v1"}]
+buckets:
+  shared:
+    service_config:
+      jira:
+        auth:
+          auth_type: basic
+          auth_name: basicAuth
+          username: $FUSED_TEST_JIRA_USER
+          password: $FUSED_TEST_JIRA_PASSWORD
+      confluence:
+        auth:
+          auth_type: basic
+          auth_name: confluenceBasic
+          ref: "${bucket.auth.jira.basicAuth}"
+`), "workspace.yaml")
+	// A valid complete-bundle edge must survive strict config admission.
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	auth := parsed.Workspace.Buckets["shared"].ServiceConfig["confluence"].Auth
+	// Destination and source selectors remain distinct so Engine can validate
+	// compatibility without assuming both services use the same scheme name.
+	if auth == nil || auth.AuthType != "basic" || auth.AuthName != "confluenceBasic" || auth.Ref != "${bucket.auth.jira.basicAuth}" {
+		t.Fatalf("auth reference identity changed: %#v", auth)
+	}
+	materials, err := parsed.WorkspaceAuthMaterials()
+	// Local source material still follows the existing apply-only env path.
+	if err != nil {
+		t.Fatalf("WorkspaceAuthMaterials() error = %v", err)
+	}
+	// Excluding the destination proves the CLI does not copy a snapshot that
+	// would defeat dynamic source rotation.
+	if len(materials) != 1 || materials["shared\x00confluence"] != (configfile.AuthMaterial{}) {
+		t.Fatalf("reference produced copied apply material: %#v", materials)
+	}
+	source := materials["shared\x00jira"]
+	// The source bundle remains complete rather than being split into field refs.
+	if source.Username != "jira-user" || source.Password != "jira-password" {
+		t.Fatalf("source credential bundle changed: %#v", source)
+	}
+	payload, err := json.Marshal(parsed.Workspace)
+	// Plan transport must retain the exact reference for Engine-side resolution.
+	if err != nil || !strings.Contains(string(payload), `"ref":"${bucket.auth.jira.basicAuth}"`) {
+		t.Fatalf("auth reference changed during JSON transport: payload=%s err=%v", payload, err)
+	}
+}
+
+// TestWorkspaceAuthReferenceRejectsAmbiguousIntent keeps the slim reference
+// contract exact: one same-bucket source, one static destination scheme, and
+// no competing literal or environment-backed credential fields.
+func TestWorkspaceAuthReferenceRejectsAmbiguousIntent(t *testing.T) {
+	tests := []struct {
+		name    string
+		auth    string
+		wantErr string
+	}{
+		{name: "environment material", auth: `auth_type: basic, auth_name: targetBasic, ref: "${bucket.auth.jira.basicAuth}", username: $USER`, wantErr: "cannot include credential fields"},
+		{name: "literal material", auth: `auth_type: basic, auth_name: targetBasic, ref: "${bucket.auth.jira.basicAuth}", password: literal`, wantErr: "cannot include credential fields"},
+		{name: "named bucket", auth: `auth_type: basic, auth_name: targetBasic, ref: "${bucket.other.auth.jira.basicAuth}"`, wantErr: "must use ${bucket.auth.<service>.<authName>}"},
+		{name: "nested source", auth: `auth_type: basic, auth_name: targetBasic, ref: "${bucket.auth.team.jira.basicAuth}"`, wantErr: "must name one service and auth scheme"},
+		{name: "missing source auth", auth: `auth_type: basic, auth_name: targetBasic, ref: "${bucket.auth.jira}"`, wantErr: "must name one service and auth scheme"},
+		{name: "missing target auth", auth: `auth_type: basic, ref: "${bucket.auth.jira.basicAuth}"`, wantErr: "auth_name"},
+		{name: "missing target type", auth: `auth_name: targetBasic, ref: "${bucket.auth.jira.basicAuth}"`, wantErr: "unsupported auth_type"},
+		{name: "non static target type", auth: `auth_type: interactive, auth_name: targetAuth, ref: "${bucket.auth.jira.basicAuth}"`, wantErr: "unsupported auth_type"},
+	}
+	// Table coverage makes every invalid shape pass through the same strict
+	// parser path, avoiding a second test-only interpretation of the grammar.
+	for _, test := range tests {
+		// Subtests keep failures tied to the rejected ambiguity rather than input order.
+		t.Run(test.name, func(t *testing.T) {
+			body := fmt.Sprintf(`
+apiVersion: fused/v1
+kind: workspace
+services:
+  jira:
+    versions: [{version: "v1"}]
+  confluence:
+    versions: [{version: "v1"}]
+buckets:
+  shared:
+    service_config:
+      confluence:
+        auth: {%s}
+`, test.auth)
+			_, err := configfile.Parse([]byte(body), "workspace.yaml")
+			// Each invalid form must name the violated invariant for direct recovery.
+			if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+				t.Fatalf("Parse() error = %v, want substring %q", err, test.wantErr)
+			}
+		})
+	}
+}
+
 func TestWorkspacePaginationV2IsRejected(t *testing.T) {
 	_, err := configfile.ParseFile("testdata/workspace_pagination_v2.yaml")
 	if err == nil || !strings.Contains(err.Error(), "field type not found") {

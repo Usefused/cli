@@ -414,6 +414,54 @@ func TestDevAppSkillsDocumentVersionedLifecycle(t *testing.T) {
 	}
 }
 
+// TestMCPDevSkillDocumentsInitializedLifecycle keeps installed agents on the protocol-required handshake order.
+func TestMCPDevSkillDocumentsInitializedLifecycle(t *testing.T) {
+	path := filepath.Join("..", "skills", "dev", "fused-mcp", "SKILL.md")
+	data, err := os.ReadFile(path)
+	// A missing bundled skill would make the installed guidance unverifiable.
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	content := string(data)
+	for _, required := range []string{"notifications/initialized", "Before `tools/list`", "HTTP 202", "MCP-Protocol-Version"} {
+		// Every lifecycle marker is needed so an agent cannot skip the notification or its negotiated headers.
+		if !strings.Contains(content, required) {
+			t.Errorf("MCP skill is missing initialized lifecycle guidance %q", required)
+		}
+	}
+}
+
+// TestMCPDevSkillDocumentsPhysicalPaginationDiscovery prevents installed agents from guessing GET traversal.
+func TestMCPDevSkillDocumentsPhysicalPaginationDiscovery(t *testing.T) {
+	path := filepath.Join("..", "skills", "dev", "fused-mcp", "SKILL.md")
+	data, err := os.ReadFile(path)
+	// Missing skill content cannot satisfy the distributed pagination contract.
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	content := strings.Join(strings.Fields(string(data)), " ")
+	for _, required := range []string{
+		"`supported: true` and `exact_lookup_required: true`", "`usage` offers only an exact `operationId` lookup for full guidance or the safe two-argument `call(operationId, params)`",
+		"does not mention or authorize a numeric bound or third argument", "omits `caller_bound_supported` and `engine_max_pages`",
+		"Resolve exact detail before adding a physical pagination option, but not solely to make the safe two-argument call", "ranked query result may instead establish `supported: false`",
+		"still omits `caller_bound_supported`", "Exact mode alone exposes `caller_bound_supported` and `engine_max_pages`",
+		"Exact operation detail exposes `supported`, `caller_bound_supported`, optional `engine_max_pages`", "positive N strictly lower",
+		"Evaluate pagination separately for every physical call", "Never reuse pagination support or a page bound from another operation",
+		"guidance for `gmail.users.messages.list` cannot authorize a third argument for `gmail.users.messages.get`",
+		"Only when exact detail for that same `operationId` reports `caller_bound_supported: true`", "Never derive a numeric bound or third argument from a ranked query result",
+		"reports `caller_bound_supported: false`, must use the two-argument form `call(operationId, params)`",
+		"Physical-target pagination inside a Unified operation must stay target-keyed", "Never move it into the separate third argument",
+		"pre-provider argument correction only when no earlier or concurrent call", "`execute_request: correct_arguments` with `provider_execution: not_started`",
+		"`execute_request: do_not_replay` with `provider_execution: unknown`", "pre-provider correction only when isolated",
+		"Engine makes one provider request", "Never infer page, cursor, offset",
+	} {
+		// Every marker changes how a fresh agent formats physical call pagination.
+		if !strings.Contains(content, required) {
+			t.Errorf("MCP skill is missing physical pagination guidance %q", required)
+		}
+	}
+}
+
 func TestDevAppSkillsDocumentExactSelectionSchemaVersion(t *testing.T) {
 	tests := []struct {
 		name     string

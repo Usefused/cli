@@ -56,3 +56,17 @@ func TestLogoutCLIDoesNotReflectFailedResponseBody(t *testing.T) {
 		t.Fatalf("LogoutCLI error = %v", err)
 	}
 }
+
+// TestLogoutCLIRejectsLegacyTopLevelFailureCode proves logout requires the
+// current nested control-plane envelope before exposing a stable code.
+func TestLogoutCLIRejectsLegacyTopLevelFailureCode(t *testing.T) {
+	client := NewClient("https://engine.example", "fsk_saved")
+	client.HTTP.Transport = cliLoginRoundTripper(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusForbidden, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"code":"cli_logout_denied","secret":"fsk_do_not_reflect"}`))}, nil
+	})
+	err := client.LogoutCLI()
+	// Removed code-only responses fall back to HTTP status without reflecting their fields.
+	if err == nil || !strings.Contains(err.Error(), "request_forbidden") || strings.Contains(err.Error(), "cli_logout_denied") || strings.Contains(err.Error(), "fsk_do_not_reflect") {
+		t.Fatalf("LogoutCLI error = %v", err)
+	}
+}

@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 	"unicode"
@@ -32,6 +33,7 @@ const DefaultTimeout = time.Minute
 
 var (
 	errGraphQLResponseMalformed = &APIError{Code: "graphql_response_malformed", Message: "Engine returned a malformed GraphQL response", Category: "dependency", Retryable: true, Remediation: "Retry or check Engine logs."}
+	errGraphQLDependencyFailed  = &APIError{Code: "graphql_dependency_failed", Message: "Engine could not complete the GraphQL request", Category: "dependency", Retryable: true, Remediation: "Retry the command or check Engine availability and logs."}
 	errGraphQLRequestRejected   = &APIError{Code: "graphql_request_rejected", Message: "Engine rejected the GraphQL request", Category: "validation", Remediation: "Check command inputs and workspace permissions."}
 	errGraphQLDataMalformed     = &APIError{Code: "graphql_data_malformed", Message: "Engine returned malformed GraphQL data", Category: "dependency", Retryable: true, Remediation: "Retry or check Engine logs."}
 	errGraphQLResourceNotFound  = &APIError{Code: "resource_not_found", Message: "resource was not found", Category: "not_found", Remediation: "Use its name, slug, email, or full UUID."}
@@ -39,8 +41,14 @@ var (
 )
 
 const (
-	graphQLCodeResourceNotFound  = "FUSED_RESOURCE_NOT_FOUND"
-	graphQLCodeResourceAmbiguous = "FUSED_RESOURCE_AMBIGUOUS"
+	graphQLCodeResourceNotFound      = "FUSED_RESOURCE_NOT_FOUND"
+	graphQLCodeResourceAmbiguous     = "FUSED_RESOURCE_AMBIGUOUS"
+	graphQLCodeInternalServer        = "INTERNAL_SERVER_ERROR"
+	graphQLCodeServiceUnavailable    = "SERVICE_UNAVAILABLE"
+	graphQLCodeDependencyUnavailable = "DEPENDENCY_UNAVAILABLE"
+	graphQLCodeUpstreamError         = "UPSTREAM_ERROR"
+	graphQLCodeGatewayTimeout        = "GATEWAY_TIMEOUT"
+	graphQLCodeTimeout               = "TIMEOUT"
 )
 
 type ClientOptions struct {
@@ -109,12 +117,37 @@ func (c *Client) doRequest(req *http.Request) (*http.Response, error) {
 	isTTY := (fi.Mode() & os.ModeCharDevice) != 0
 
 	if c.showProgress && isTTY {
+		// Interactive calls retain the existing progress indicator while sharing the
+		// same transport-error projection as non-interactive control-plane calls.
 		_ = spinner.New().Title("Working...").Output(os.Stderr).Action(action).Run()
 	} else {
+		// Automation avoids terminal rendering but must receive the same stable error.
 		action()
 	}
 
-	return resp, err
+	// HTTP transport errors can embed the complete private Engine URL, so project
+	// them into a typed public contract before any command renders the failure.
+	if err != nil {
+		return nil, safeControlPlaneTransportError(err)
+	}
+	return resp, nil
+}
+
+// safeControlPlaneTransportError hides transport internals while retaining the
+// original cause for errors.Is cancellation and deadline checks.
+func safeControlPlaneTransportError(cause error) error {
+	apiErr := &APIError{Code: "engine_unavailable", Message: "Engine is unavailable", Category: "dependency", Retryable: true, Remediation: "Check Engine availability and retry.", cause: cause}
+	// Cancellation is a caller decision rather than evidence of an Engine outage.
+	if errors.Is(cause, context.Canceled) {
+		apiErr.Code, apiErr.Message, apiErr.Category, apiErr.Retryable, apiErr.Remediation = "request_cancelled", "Engine request was cancelled", "cancellation", false, "Retry when ready."
+		return apiErr
+	}
+	// Deadlines are retryable but need distinct automation semantics from a
+	// connection failure, while the wrapped cause preserves errors.Is behavior.
+	if errors.Is(cause, context.DeadlineExceeded) {
+		apiErr.Code, apiErr.Message, apiErr.Category, apiErr.Remediation = "request_timed_out", "Engine request timed out", "timeout", "Check Engine availability and retry."
+	}
+	return apiErr
 }
 
 func NewClient(baseURL, apiKey string) *Client {
@@ -153,6 +186,8 @@ func (c *Client) EngineGraphQL(query string, variables map[string]any, out any) 
 	return c.graphQLAt("/engine/graphql", query, variables, out)
 }
 
+// graphQLAt sends one GraphQL request and keeps HTTP and resolver failures on
+// the shared bounded, typed error boundary.
 func (c *Client) graphQLAt(path string, query string, variables map[string]any, out any) error {
 	payload := map[string]any{
 		"query":     query,
@@ -178,13 +213,17 @@ func (c *Client) graphQLAt(path string, query string, variables map[string]any, 
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return err
+	if resp.StatusCode >= 400 {
+		// Error envelopes are untrusted control-plane input and must remain bounded;
+		// successful GraphQL data retains its ordinary response semantics below.
+		respBody := readBoundedHTTPErrorBody(resp.Body)
+		return fmt.Errorf("graphql request failed (HTTP %d): %w", resp.StatusCode, newHTTPError(resp.StatusCode, respBody))
 	}
 
-	if resp.StatusCode >= 400 {
-		return fmt.Errorf("graphql request failed (HTTP %d): %w", resp.StatusCode, newHTTPError(resp.StatusCode, respBody))
+	respBody, err := io.ReadAll(resp.Body)
+	// A successful GraphQL response must be complete before its data is decoded.
+	if err != nil {
+		return err
 	}
 
 	return decodeGraphQLData(respBody, out)
@@ -193,46 +232,87 @@ func (c *Client) graphQLAt(path string, query string, variables map[string]any, 
 // decodeGraphQLData preserves bounded resolver diagnostics while keeping response-shape failures stable.
 func decodeGraphQLData(respBody []byte, out any) error {
 	var graphqlResp struct {
-		Data   json.RawMessage `json:"data"`
-		Errors []struct {
-			Message    string `json:"message"`
-			Extensions struct {
-				Code string `json:"code"`
-			} `json:"extensions"`
-		} `json:"errors"`
+		Data   json.RawMessage        `json:"data"`
+		Errors []graphQLResolverError `json:"errors"`
 	}
+	// An undecodable envelope cannot safely expose any fragment of remote content.
 	if err := json.Unmarshal(respBody, &graphqlResp); err != nil {
 		return errGraphQLResponseMalformed
 	}
+	// GraphQL may report one failure per selected field, so retain every bounded
+	// safe diagnostic while deriving one deterministic automation classifier.
 	if len(graphqlResp.Errors) > 0 {
-		// Engine-authored messages explain resolver failures that a generic rejection
-		// hides; the shared redactor still drops credential-shaped or URL-bearing text.
-		return safeGraphQLRequestError(graphqlResp.Errors[0].Extensions.Code, graphqlResp.Errors[0].Message)
+		return safeGraphQLRequestErrors(graphqlResp.Errors)
 	}
+	// A successful envelope with malformed data is an Engine dependency failure.
 	if err := json.Unmarshal(graphqlResp.Data, out); err != nil {
 		return errGraphQLDataMalformed
 	}
 	return nil
 }
 
+type graphQLResolverError struct {
+	Message    string `json:"message"`
+	Extensions struct {
+		Code string `json:"code"`
+	} `json:"extensions"`
+}
+
+// safeGraphQLRequestErrors selects classification by fixed local priority and
+// aggregates resolver messages within the shared diagnostic bound.
+func safeGraphQLRequestErrors(resolverErrors []graphQLResolverError) error {
+	base := errGraphQLResourceNotFound
+	priority := 0
+	diagnostics := make([]string, 0, len(resolverErrors))
+	seen := make(map[string]struct{}, len(resolverErrors))
+	for _, resolverError := range resolverErrors {
+		candidate, candidatePriority := graphQLRequestErrorClass(resolverError.Extensions.Code)
+		// A fixed severity ordering makes classification independent of resolver order.
+		if candidatePriority > priority {
+			base, priority = candidate, candidatePriority
+		}
+		detail := safeServerDetail(resolverError.Message)
+		// Empty or duplicate diagnostics add no actionable context and consume no bound.
+		if detail == "" {
+			continue
+		}
+		if _, duplicate := seen[detail]; duplicate {
+			continue
+		}
+		seen[detail] = struct{}{}
+		diagnostics = append(diagnostics, detail)
+	}
+	result := *base
+	// The final pass enforces one aggregate bound even when many individually safe
+	// resolver messages are returned in a single GraphQL response.
+	result.Details.ServerDetail = safeServerDetail(strings.Join(diagnostics, "; "))
+	return &result
+}
+
+// graphQLRequestErrorClass maps only reviewed resolver codes and returns a
+// fixed priority used to classify multi-resolver failures deterministically.
+func graphQLRequestErrorClass(code string) (*APIError, int) {
+	// Dependency failures outrank input and lookup failures because retry policy
+	// must not depend on the order of fields in a GraphQL selection.
+	switch code {
+	case "", graphQLCodeInternalServer, graphQLCodeServiceUnavailable,
+		graphQLCodeDependencyUnavailable, graphQLCodeUpstreamError,
+		graphQLCodeGatewayTimeout, graphQLCodeTimeout:
+		return errGraphQLDependencyFailed, 4
+	case graphQLCodeResourceAmbiguous:
+		return errGraphQLResourceAmbiguous, 2
+	case graphQLCodeResourceNotFound:
+		return errGraphQLResourceNotFound, 1
+	default:
+		return errGraphQLRequestRejected, 3
+	}
+}
+
 // safeGraphQLRequestError preserves actionable Engine detail without trusting it as telemetry identity.
 func safeGraphQLRequestError(code, message string) error {
-	var base *APIError
-	switch code {
-	case graphQLCodeResourceNotFound:
-		base = errGraphQLResourceNotFound
-	case graphQLCodeResourceAmbiguous:
-		base = errGraphQLResourceAmbiguous
-	default:
-		// Unknown extension codes stay locally classified to prevent unbounded OTEL
-		// dimensions instead of promoting remote codes into the public contract.
-		base = errGraphQLRequestRejected
-	}
-	// Each request owns its copy so an explanatory resolver message cannot mutate
-	// the package-level stable error reused by concurrent commands.
-	result := *base
-	result.Details.ServerDetail = safeServerDetail(message)
-	return &result
+	resolverError := graphQLResolverError{Message: message}
+	resolverError.Extensions.Code = code
+	return safeGraphQLRequestErrors([]graphQLResolverError{resolverError})
 }
 
 type PermissionRequirement struct {
@@ -243,9 +323,7 @@ type PermissionRequirement struct {
 }
 
 type apiErrorPayload struct {
-	Error   json.RawMessage         `json:"error"`
-	Message json.RawMessage         `json:"message"`
-	Missing []PermissionRequirement `json:"missing"`
+	Error json.RawMessage `json:"error"`
 }
 
 type APIError struct {
@@ -257,6 +335,7 @@ type APIError struct {
 		Bucket               *MissingCredentialBucket       `json:"bucket,omitempty"`
 		MissingCredentials   []MissingCredentialRequirement `json:"missing_credentials,omitempty"`
 		RequiredPermissions  []string                       `json:"required_permissions,omitempty"`
+		MissingPermissions   []PermissionRequirement        `json:"missing,omitempty"`
 		ServerDetail         string                         `json:"server_detail,omitempty"`
 		ApplyLeaseExpiresAt  string                         `json:"apply_lease_expires_at,omitempty"`
 		RetryAfterSeconds    int                            `json:"retry_after_seconds,omitempty"`
@@ -274,6 +353,13 @@ type APIError struct {
 	Recovery    string `json:"recovery,omitempty"`
 	TraceID     string `json:"trace_id,omitempty"`
 	HTTPStatus  int    `json:"-"`
+	cause       error
+}
+
+// Unwrap retains local transport cancellation and deadline semantics without
+// rendering a potentially secret-bearing request URL.
+func (e *APIError) Unwrap() error {
+	return e.cause
 }
 
 // MissingCredentialBucket is the exact Engine-owned target for interactive
@@ -306,22 +392,24 @@ func (e *APIError) Error() string {
 	// The detail is intentionally separate from the stable message so scripts can
 	// branch on the contract while an Engine owner still sees the parser decision.
 	message := e.Code + ": " + e.Message
+	// Concrete missing grants remain distinct from provider credential readiness.
 	if len(e.Details.RequiredPermissions) > 0 {
 		message += " Required permissions: " + strings.Join(e.Details.RequiredPermissions, ", ") + "."
 	}
-	if len(e.Details.MissingCredentials) > 0 {
-		message += fmt.Sprintf(" Missing credential requirements: %d.", len(e.Details.MissingCredentials))
-	}
+	// Only reviewed server detail is carried through the shared parser.
 	if e.Details.ServerDetail != "" {
 		message += " Server detail: " + e.Details.ServerDetail
 	}
+	// Lease evidence explains when a conflicting apply can be retried.
 	if e.Details.ApplyLeaseExpiresAt != "" {
 		message += " Apply lease expires: " + e.Details.ApplyLeaseExpiresAt + "."
 	}
+	// Do not invent retry timing when Engine supplied no delay.
 	if e.Details.RetryAfterSeconds > 0 {
 		message += fmt.Sprintf(" Retry after %d seconds.", e.Details.RetryAfterSeconds)
 	}
 	message += formatAPIErrorContext(e)
+	// Remediation is part of the stable Engine error contract, not a guessed command.
 	if e.Remediation != "" {
 		message += " " + e.Remediation
 	}
@@ -330,10 +418,11 @@ func (e *APIError) Error() string {
 	if e.Recovery != "" {
 		message += " Recovery: `" + e.Recovery + "`."
 	}
+	// Correlation remains optional for older Engine versions.
 	if e.TraceID != "" {
 		message += " Trace: " + e.TraceID
 	}
-	return message
+	return message + formatMissingCredentialDetails(e.Details.Bucket, e.Details.MissingCredentials)
 }
 
 // formatAPIErrorContext appends the slim operation proof only when the Engine supplied each field.
@@ -358,51 +447,63 @@ func formatAPIErrorContext(apiError *APIError) string {
 	return context.String()
 }
 
-// newHTTPError prefers structured Engine diagnostics and safely bounds legacy JSON strings.
+// newHTTPError accepts only the current nested Engine error envelope and keeps every other body opaque.
 func newHTTPError(status int, respBody []byte) error {
 	var payload apiErrorPayload
 	if err := json.Unmarshal(respBody, &payload); err == nil {
 		if parsed := parsedHTTPError(status, payload); parsed != nil {
 			return parsed
 		}
-		apiErr := genericHTTPError(status)
-		apiErr.Details.ServerDetail = legacyServerDetail(payload)
-		return apiErr
 	}
-	// Non-JSON bodies have no contract boundary and can contain proxy pages or
-	// credentials, so only JSON string diagnostics are displayable.
+	// Non-current bodies may be proxy pages, removed contracts, or credential-bearing payloads.
 	return genericHTTPError(status)
-}
-
-// legacyServerDetail preserves bounded Engine text when an older handler has not adopted the structured envelope yet.
-func legacyServerDetail(payload apiErrorPayload) string {
-	if detail := decodedErrorString(payload.Error); detail != "" {
-		return safeServerDetail(detail)
-	}
-	return safeServerDetail(decodedErrorString(payload.Message))
-}
-
-// decodedErrorString rejects nested or mixed response shapes because those
-// are not part of the Engine's user-facing validation-error contract.
-func decodedErrorString(raw json.RawMessage) string {
-	var value string
-	if len(raw) == 0 || json.Unmarshal(raw, &value) != nil {
-		return ""
-	}
-	return value
 }
 
 // safeServerDetail keeps terminal and JSON diagnostics useful without turning
 // a remotely supplied error into an unbounded or credential-bearing payload.
 func safeServerDetail(value string) string {
+	value = redactServerDetail(value)
+	for _, char := range value {
+		// Non-whitespace controls can rewrite terminal output and therefore invalidate the complete remote diagnostic.
+		if unicode.Is(unicode.Cf, char) || unicode.IsControl(char) && !unicode.IsSpace(char) {
+			return ""
+		}
+	}
+	// Private-key material is unsafe even when a malformed response omits its closing PEM delimiter.
+	if strings.Contains(strings.ToLower(value), "-----begin ") {
+		return ""
+	}
 	value = strings.Join(strings.Fields(value), " ")
-	if value == "" || containsCredentialMaterial(value) {
+	// Redaction may leave an empty diagnostic, which should not add presentation noise.
+	if value == "" {
 		return ""
 	}
 	const maxServerDetailRunes = 1024
 	runes := []rune(value)
+	// Bound after redaction so replacement text is included in the public limit.
 	if len(runes) > maxServerDetailRunes {
 		return string(runes[:maxServerDetailRunes]) + "…"
+	}
+	return value
+}
+
+var serverDetailRedactions = []struct {
+	pattern     *regexp.Regexp
+	replacement string
+}{
+	{regexp.MustCompile(`(?i)\bbearer\s+[a-z0-9._~+/=-]+`), "Bearer [redacted]"},
+	{regexp.MustCompile(`(?i)("?(?:access_token|refresh_token|token|client_secret|password|api_key|apikey|private_key|client_key|credential|secret|authorization)"?\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,;}\]]+)`), "${1}[redacted]"},
+	{regexp.MustCompile(`(?i)\b(?:https?|postgres(?:ql)?):\/\/[^\s"'<>]+`), "[redacted URL]"},
+	{regexp.MustCompile(`(?i)\bfsk_[a-z0-9._~-]+`), "[redacted token]"},
+}
+
+var errorMetadataTokenPattern = regexp.MustCompile(`^[A-Za-z0-9_.:/+\-]+$`)
+
+// redactServerDetail replaces only credential-bearing fragments so the
+// surrounding Engine-authored diagnosis remains useful to an operator.
+func redactServerDetail(value string) string {
+	for _, redaction := range serverDetailRedactions {
+		value = redaction.pattern.ReplaceAllString(value, redaction.replacement)
 	}
 	return value
 }
@@ -414,9 +515,10 @@ func containsCredentialMaterial(value string) bool {
 	markers := []string{
 		"fsk_", "-----begin ", "authorization:", "authorization=",
 		"http://", "https://", "postgres://", "postgresql://",
-		"access_token=", `"access_token":`, "refresh_token=", `"refresh_token":`,
+		"access_token=", `"access_token":`, "refresh_token=", `"refresh_token":`, "token=", `"token":`,
 		"client_secret=", `"client_secret":`, "password=", `"password":`,
-		"api_key=", `"api_key":`, "apikey=", `"apikey":`, "secret=", `"secret":`,
+		"api_key=", `"api_key":`, "apikey=", `"apikey":`, "private_key=", `"private_key":`,
+		"client_key=", `"client_key":`, "credential=", `"credential":`, "secret=", `"secret":`,
 	}
 	for _, marker := range markers {
 		if strings.Contains(lower, marker) {
@@ -431,38 +533,64 @@ func parsedHTTPError(status int, payload apiErrorPayload) error {
 	// owner detail still passes through the same bounded credential-safety gate.
 	var structured APIError
 	if len(payload.Error) > 0 && json.Unmarshal(payload.Error, &structured) == nil && structured.Code != "" && structured.Message != "" {
+		structured.Code = safeErrorMetadataToken(structured.Code)
+		// A stable code is the admission key for the current envelope; unsafe identity text falls back to the local HTTP classifier.
+		if structured.Code == "" {
+			return nil
+		}
 		structured.HTTPStatus = status
+		// Even reviewed envelope messages redact accidental credential assignments
+		// fragment-by-fragment while preserving their surrounding diagnosis.
+		structured.Message = safeServerDetail(structured.Message)
+		// Whitespace-only remote messages fall back to local status copy instead of
+		// producing a malformed-looking typed error.
+		if structured.Message == "" {
+			structured.Message = genericHTTPError(status).Message
+		}
 		// Structured Engine errors are the dedicated instance's reviewed public
 		// contract. Preserve their bounded detail across dependency/conflict
 		// statuses while retaining the local credential-material fail-closed gate.
 		structured.Details.ServerDetail = safeServerDetail(structured.Details.ServerDetail)
+		structured.Remediation = safeServerDetail(structured.Remediation)
+		structured.Recovery = safeServerDetail(structured.Recovery)
+		structured.Category = safeErrorMetadataToken(structured.Category)
+		structured.Phase = safeErrorMetadataToken(structured.Phase)
+		structured.OperationID = safeErrorMetadataToken(structured.OperationID)
+		structured.RequestID = safeErrorMetadataToken(structured.RequestID)
+		structured.CommitState = safeErrorMetadataToken(structured.CommitState)
+		structured.TraceID = safeErrorMetadataToken(structured.TraceID)
+		structured.Details.ApplyLeaseExpiresAt = safeErrorMetadataToken(structured.Details.ApplyLeaseExpiresAt)
+		structured.Details.Stage = safeErrorMetadataToken(structured.Details.Stage)
+		structured.Details.ServiceID = safeErrorMetadataToken(structured.Details.ServiceID)
+		structured.Details.ServiceVersionID = safeErrorMetadataToken(structured.Details.ServiceVersionID)
+		structured.Details.WorkspaceOutcome = safeErrorMetadataToken(structured.Details.WorkspaceOutcome)
+		// Current authorization guidance is derived from typed missing grants below; arbitrary string lists are never reflected.
+		structured.Details.RequiredPermissions = nil
+		// Current authorization envelopes carry reviewed missing requirements under details.
+		if structured.Code == "permission_denied" {
+			missing := structured.Details.MissingPermissions
+			structured.Message = formatPermissionDenied(missing)
+			structured.Details.RequiredPermissions = safePermissionDescriptions(missing)
+			structured.Details.MissingPermissions = nil
+			// Owning-team membership has a distinct safe next step from ordinary grants.
+			if containsPermission(missing, "access.manage") {
+				structured.Remediation = "You may not be a member of the owning team; ask an access administrator to review membership."
+			}
+		}
 		return &structured
 	}
-
-	var errorCode string
-	_ = json.Unmarshal(payload.Error, &errorCode)
-	if status == http.StatusUnauthorized && errorCode == "authentication_required" {
-		return &APIError{Code: "authentication_required", Message: "authentication required; provide a valid Fused credential", Category: "authentication", HTTPStatus: status}
-	}
-	if status == http.StatusForbidden && errorCode == "permission_denied" {
-		return permissionDeniedError(status, payload.Missing)
-	}
-	return appOwnerHTTPError(status, errorCode)
+	return nil
 }
 
-func appOwnerHTTPError(status int, code string) error {
-	switch code {
-	case "app owner is immutable":
-		return &APIError{Code: "app_owner_immutable", Message: "this app already has an owner", Category: "conflict", Remediation: "Omit --owner-team or use its existing team slug.", HTTPStatus: status}
-	case "app owner is unavailable":
-		return &APIError{Code: "app_owner_unavailable", Message: "the app owner is unavailable", Category: "authorization", Remediation: "Ask a workspace administrator for help.", HTTPStatus: status}
-	case "owner team was not found or is archived":
-		return &APIError{Code: "owner_team_unavailable", Message: "the owner team was not found or is archived", Category: "validation", Remediation: "Choose an active team slug.", HTTPStatus: status}
-	case "app owner authorization denied":
-		return &APIError{Code: "owner_team_access_denied", Message: "you or the owning team no longer have the required access", Category: "authorization", HTTPStatus: status}
-	default:
-		return nil
+// safeErrorMetadataToken admits only the compact token grammar used by error
+// classifiers, correlation IDs, phases, timestamps, and immutable identities.
+func safeErrorMetadataToken(value string) string {
+	value = strings.TrimSpace(value)
+	// Error metadata never needs prose, whitespace, URLs, or credential assignments.
+	if value == "" || len(value) > 256 || containsCredentialMaterial(value) || !errorMetadataTokenPattern.MatchString(value) {
+		return ""
 	}
+	return value
 }
 
 // genericHTTPError keeps stable error codes independent of mutable server text.
@@ -487,23 +615,17 @@ func genericHTTPError(status int) *APIError {
 	return apiErr
 }
 
-func permissionDeniedError(status int, missing []PermissionRequirement) error {
-	message := formatPermissionDenied(missing)
-	apiErr := &APIError{Code: "permission_denied", Message: message, Category: "authorization", HTTPStatus: status}
-	apiErr.Details.RequiredPermissions = safePermissionDescriptions(missing)
-	return apiErr
-}
-
+// formatPermissionDenied recommends access changes only when the Engine
+// identifies missing grants; an empty current details set does not prove a role problem.
 func formatPermissionDenied(missing []PermissionRequirement) string {
-	if len(missing) == 0 {
-		return "permission denied; ask a workspace administrator for access"
+	items := safePermissionDescriptions(missing)
+	// Empty or malformed metadata is not evidence that the caller needs a role change.
+	if len(items) == 0 {
+		return "permission denied; Engine did not identify a missing permission. Check your identity with `fused-cli whoami`, and verify the selected workspace and config references"
 	}
+	// A concrete owning-team requirement has its own actionable access remedy.
 	if containsPermission(missing, "access.manage") {
 		return "permission denied; you are not a member of the owning team; join that team or ask an access administrator to perform this action"
-	}
-	items := safePermissionDescriptions(missing)
-	if len(items) == 0 {
-		return "permission denied; ask a workspace administrator for access"
 	}
 	return "permission denied; ask a workspace administrator to allow you to " + strings.Join(items, "; ")
 }
@@ -637,7 +759,7 @@ func (c *Client) Health() (*HealthStatus, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody := readBoundedHTTPErrorBody(resp.Body)
 		return nil, fmt.Errorf("health check failed (HTTP %d): %w", resp.StatusCode, newHTTPError(resp.StatusCode, respBody))
 	}
 
@@ -982,7 +1104,7 @@ func (c *Client) ListWorkspaceServices(names ...string) ([]WorkspaceService, err
 	var resp struct {
 		Services []WorkspaceService `json:"workspaceServices"`
 	}
-	// Why: service listing is a read path, and Engine GraphQL now exposes the
+	// Service listing is a read path, and Engine GraphQL now exposes the
 	// same version/slug enrichment REST used to provide without client-side joins.
 	err := c.EngineGraphQL(query, map[string]any{"names": names}, &resp)
 	return resp.Services, err
@@ -1729,6 +1851,8 @@ type SDKEvent struct {
 	IntegrationID string `json:"integration_id,omitempty"`
 }
 
+// StreamSDKGenerationEvents consumes one SDK generation stream and reports a
+// bounded structured error when stream setup is rejected.
 func (c *Client) StreamSDKGenerationEvents(jobID string, eventChan chan<- SDKEvent, errChan chan<- error) {
 	defer close(eventChan)
 	defer close(errChan)
@@ -1750,7 +1874,7 @@ func (c *Client) StreamSDKGenerationEvents(jobID string, eventChan chan<- SDKEve
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody := readBoundedHTTPErrorBody(resp.Body)
 		errChan <- fmt.Errorf("stream failed (HTTP %d): %w", resp.StatusCode, newHTTPError(resp.StatusCode, respBody))
 		return
 	}
@@ -1798,6 +1922,8 @@ func emitSDKEvent(line []byte, eventChan chan<- SDKEvent) {
 	}
 }
 
+// DownloadSDK leaves successful package bytes uncapped while bounding only an
+// Engine error response before parsing it.
 func (c *Client) DownloadSDK(appID string) ([]byte, error) {
 	req, err := http.NewRequest("GET", c.BaseURL+"/sdks/"+appID+"/download", nil)
 	if err != nil {
@@ -1814,7 +1940,7 @@ func (c *Client) DownloadSDK(appID string) ([]byte, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody := readBoundedHTTPErrorBody(resp.Body)
 		return nil, fmt.Errorf("download failed (HTTP %d): %w", resp.StatusCode, newHTTPError(resp.StatusCode, respBody))
 	}
 
@@ -1959,7 +2085,7 @@ func (c *Client) planDesiredConfig(kind string, intent DesiredConfigPlanIntent) 
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody := readBoundedHTTPErrorBody(resp.Body)
 		return nil, fmt.Errorf("plan %s config failed (HTTP %d): %w", kind, resp.StatusCode, newHTTPError(resp.StatusCode, respBody))
 	}
 
@@ -1970,6 +2096,8 @@ func (c *Client) planDesiredConfig(kind string, intent DesiredConfigPlanIntent) 
 	return &out, nil
 }
 
+// PlanWorkspaceConfig requests a non-mutating workspace plan and safely
+// projects any Engine rejection.
 func (c *Client) PlanWorkspaceConfig(sourceHash, configKey string, config json.RawMessage) (*ConfigPlanResponse, error) {
 	reqBody := map[string]any{
 		"source_hash": sourceHash,
@@ -1997,7 +2125,7 @@ func (c *Client) PlanWorkspaceConfig(sourceHash, configKey string, config json.R
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody := readBoundedHTTPErrorBody(resp.Body)
 		return nil, fmt.Errorf("plan workspace config failed (HTTP %d): %w", resp.StatusCode, newHTTPError(resp.StatusCode, respBody))
 	}
 
@@ -2073,7 +2201,7 @@ func (c *Client) ApplySDKConfig(planID, sourceHash string) (*SDKConfigApplyRespo
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody := readBoundedHTTPErrorBody(resp.Body)
 		return nil, fmt.Errorf("apply SDK config failed (HTTP %d): %w", resp.StatusCode, newHTTPError(resp.StatusCode, respBody))
 	}
 
@@ -2106,7 +2234,7 @@ func (c *Client) ApplyMCPConfig(planID, sourceHash string) (*MCPConfigApplyRespo
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody := readBoundedHTTPErrorBody(resp.Body)
 		return nil, fmt.Errorf("apply mcp config failed (HTTP %d): %w", resp.StatusCode, newHTTPError(resp.StatusCode, respBody))
 	}
 	var out MCPConfigApplyResponse
@@ -2139,7 +2267,7 @@ func (c *Client) ApplyWebhookConfig(planID, sourceHash string) (*WebhookConfigAp
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody := readBoundedHTTPErrorBody(resp.Body)
 		return nil, fmt.Errorf("apply webhook config failed (HTTP %d): %w", resp.StatusCode, newHTTPError(resp.StatusCode, respBody))
 	}
 	var out WebhookConfigApplyResponse
@@ -2149,6 +2277,8 @@ func (c *Client) ApplyWebhookConfig(planID, sourceHash string) (*WebhookConfigAp
 	return &out, nil
 }
 
+// ApplyWorkspaceConfig commits a reviewed workspace plan and bounds any
+// structured Engine failure independently from successful result decoding.
 func (c *Client) ApplyWorkspaceConfig(planID, sourceHash string, authMaterials map[string]AuthMaterial, profileMaterials map[string]ConnectMaterial, bucketSecretMaterials map[string]string) (*ConfigApplyResponse, error) {
 	reqBody := map[string]any{
 		"plan_id":     planID,
@@ -2184,7 +2314,7 @@ func (c *Client) ApplyWorkspaceConfig(planID, sourceHash string, authMaterials m
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody := readBoundedHTTPErrorBody(resp.Body)
 		return nil, fmt.Errorf("apply workspace config failed (HTTP %d): %w", resp.StatusCode, newHTTPError(resp.StatusCode, respBody))
 	}
 
@@ -2195,6 +2325,8 @@ func (c *Client) ApplyWorkspaceConfig(planID, sourceHash string, authMaterials m
 	return &out, nil
 }
 
+// UpdateWorkspacePlanAction records one reviewed plan decision and safely
+// projects any control-plane rejection.
 func (c *Client) UpdateWorkspacePlanAction(planID string, actions []map[string]any, actionID, decision string) error {
 	updated := false
 	for i := range actions {
@@ -2229,7 +2361,7 @@ func (c *Client) UpdateWorkspacePlanAction(planID string, actions []map[string]a
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody := readBoundedHTTPErrorBody(resp.Body)
 		return fmt.Errorf("update workspace plan action failed (HTTP %d): %w", resp.StatusCode, newHTTPError(resp.StatusCode, respBody))
 	}
 
@@ -2417,14 +2549,16 @@ func (c *Client) PlanSpecImport(req SpecImportPlanRequest) (*SpecImportPlanRespo
 		httpReq.Header.Set("x-api-key", c.APIKey)
 	}
 
-	resp, err := c.HTTP.Do(httpReq)
+	resp, err := c.doRequest(httpReq)
+	// Planning is read-only, so it uses the shared secret-safe transport contract;
+	// the strict import rejection decoder below still owns response classification.
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody := readBoundedHTTPErrorBody(resp.Body)
 		if strictError := decodeSpecImportStrictError(resp.StatusCode, respBody); strictError != nil {
 			return nil, strictError
 		}
@@ -2438,22 +2572,60 @@ func (c *Client) PlanSpecImport(req SpecImportPlanRequest) (*SpecImportPlanRespo
 	return &out, nil
 }
 
+// decodeSpecImportStrictError admits only the current nested strict-import
+// rejection while leaving every removed or unrelated 422 shape opaque.
 func decodeSpecImportStrictError(status int, body []byte) *SpecImportStrictError {
+	// The purpose-specific diagnostic contract is valid only for strict import rejection status.
 	if status != http.StatusUnprocessableEntity {
 		return nil
 	}
 	var response struct {
-		Error       string                 `json:"error"`
-		Message     string                 `json:"message"`
-		Diagnostics []SpecImportDiagnostic `json:"diagnostics"`
+		Error struct {
+			Code        string                 `json:"code"`
+			Message     string                 `json:"message"`
+			Diagnostics []SpecImportDiagnostic `json:"diagnostics"`
+		} `json:"error"`
 	}
-	if err := json.Unmarshal(body, &response); err != nil || response.Error != "strict_import_rejected" {
+	// Exact code admission prevents another nested validation response from being misclassified as strict diagnostics.
+	if err := json.Unmarshal(body, &response); err != nil || response.Error.Code != "strict_import_rejected" {
 		return nil
 	}
 	return &SpecImportStrictError{
-		HTTPStatus: status, Code: response.Error, Message: response.Message,
-		Diagnostics: append([]SpecImportDiagnostic(nil), response.Diagnostics...),
+		HTTPStatus: status, Code: "strict_import_rejected", Message: safeServerDetail(response.Error.Message),
+		Diagnostics: safeSpecImportDiagnostics(response.Error.Diagnostics),
 	}
+}
+
+// safeSpecImportDiagnostics detaches and sanitizes the bounded diagnostic
+// collection before command JSON can render Registry-controlled fields.
+func safeSpecImportDiagnostics(diagnostics []SpecImportDiagnostic) []SpecImportDiagnostic {
+	result := make([]SpecImportDiagnostic, 0, len(diagnostics))
+	for _, diagnostic := range diagnostics {
+		result = append(result, safeSpecImportDiagnostic(diagnostic))
+	}
+	return result
+}
+
+// safeSpecImportDiagnostic applies prose and metadata guards without changing
+// the diagnostic's reviewed structure or numeric confidence evidence.
+func safeSpecImportDiagnostic(diagnostic SpecImportDiagnostic) SpecImportDiagnostic {
+	diagnostic.Severity = safeErrorMetadataToken(diagnostic.Severity)
+	diagnostic.Code = safeErrorMetadataToken(diagnostic.Code)
+	diagnostic.Scope = safeErrorMetadataToken(diagnostic.Scope)
+	diagnostic.Method = safeErrorMetadataToken(diagnostic.Method)
+	diagnostic.Path = safeCredentialMetadata(diagnostic.Path)
+	diagnostic.OperationID = safeCredentialMetadata(diagnostic.OperationID)
+	diagnostic.Message = safeServerDetail(diagnostic.Message)
+	diagnostic.Recommendation = safeServerDetail(diagnostic.Recommendation)
+	diagnostic.Source = safeCredentialMetadata(diagnostic.Source)
+	diagnostic.SourceFormat = safeErrorMetadataToken(diagnostic.SourceFormat)
+	diagnostic.SourceVersion = safeCredentialMetadata(diagnostic.SourceVersion)
+	diagnostic.Pointer = safeCredentialMetadata(diagnostic.Pointer)
+	diagnostic.Service = safeCredentialMetadata(diagnostic.Service)
+	diagnostic.Disposition = safeErrorMetadataToken(diagnostic.Disposition)
+	diagnostic.RequiredCapability = safeErrorMetadataToken(diagnostic.RequiredCapability)
+	diagnostic.Provenance = safeCredentialMetadata(diagnostic.Provenance)
+	return diagnostic
 }
 
 // ApplySpecImport commits the exact source and overlay reviewed by Registry.
@@ -2612,6 +2784,7 @@ func (c *Client) GetSpecImportStatus(operationID string) (*SpecImportStatusRespo
 	return &result, nil
 }
 
+// DeactivateApp disables one exact app version and bounds Engine error payloads.
 func (c *Client) DeactivateApp(appID string) error {
 	req, err := http.NewRequest(http.MethodDelete, c.BaseURL+"/apps/"+appID+"/", nil)
 	if err != nil {
@@ -2627,7 +2800,7 @@ func (c *Client) DeactivateApp(appID string) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		b, _ := io.ReadAll(resp.Body)
+		b := readBoundedHTTPErrorBody(resp.Body)
 		return fmt.Errorf("deactivate failed (HTTP %d): %w", resp.StatusCode, newHTTPError(resp.StatusCode, b))
 	}
 	return nil

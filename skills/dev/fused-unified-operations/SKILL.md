@@ -118,6 +118,18 @@ generated Unified output error with bounded forward and rollback diagnostics.
 Without operation output, binding output replaces only its target's `data` in
 the ordinary all-settled success envelope.
 
+For agent-facing workflows, author one root output that names the useful final
+objects (for example, `email` and `file`) and excludes dependency-list results.
+Request only the needed provider fields first; output projection does not
+reduce what the provider sent. For Gmail header-only reads, use metadata format
+and selected headers instead of a raw encoded message. Preserve parsed headers
+as a name/value array and look up names when consuming it, never assume array
+order. DynamicValue does not support header predicates or MIME decoding; do
+not add provider-specific normalization to the MCP parser. SDK and MCP use the
+same authored projection. MCP may wrap a large final value in a session-local
+navigation envelope, as documented in `fused-mcp`; this is delivery behavior,
+not a different Unified output contract.
+
 ### Call properties
 
 These properties are passed when invoking a generated method or MCP Unified

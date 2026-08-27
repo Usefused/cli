@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -76,7 +75,7 @@ func parseOptionalGraphQLTime(value string) (*time.Time, error) {
 }
 
 func parseGraphQLTime(value string) (time.Time, error) {
-	// Why: Engine GraphQL serializes optional timestamps as empty strings, so
+	// Engine GraphQL serializes optional timestamps as empty strings, so
 	// CLI decoding normalizes that API detail at the boundary instead of
 	// leaking string checks through command rendering.
 	if strings.TrimSpace(value) == "" {
@@ -90,6 +89,7 @@ type SecretMetaPageResponse struct {
 	Total int                  `json:"total"`
 }
 
+// UpsertSecret stores one credential value and safely bounds Engine failures.
 func (c *Client) UpsertSecret(serviceID, keyName, credentialType, value string, bucketID string, expiresAt *time.Time) error {
 	reqBody := map[string]interface{}{
 		"service_id":      serviceID,
@@ -120,7 +120,7 @@ func (c *Client) UpsertSecret(serviceID, keyName, credentialType, value string, 
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody := readBoundedHTTPErrorBody(resp.Body)
 		return fmt.Errorf("upsert secret failed (HTTP %d): %w", resp.StatusCode, newHTTPError(resp.StatusCode, respBody))
 	}
 
@@ -163,12 +163,13 @@ func (c *Client) UpsertSecrets(bucketID string, secrets []SecretUpsertRequest) e
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody := readBoundedHTTPErrorBody(resp.Body)
 		return fmt.Errorf("upsert secrets failed (HTTP %d): %w", resp.StatusCode, newHTTPError(resp.StatusCode, respBody))
 	}
 	return nil
 }
 
+// DeleteSecret removes one credential value and safely bounds Engine failures.
 func (c *Client) DeleteSecret(serviceID, keyName string, bucketID string) error {
 	u, err := url.Parse(c.BaseURL + "/workspace/secrets")
 	if err != nil {
@@ -197,7 +198,7 @@ func (c *Client) DeleteSecret(serviceID, keyName string, bucketID string) error 
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody := readBoundedHTTPErrorBody(resp.Body)
 		return fmt.Errorf("delete secret failed (HTTP %d): %w", resp.StatusCode, newHTTPError(resp.StatusCode, respBody))
 	}
 

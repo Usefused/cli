@@ -474,6 +474,71 @@ services:
 	}
 }
 
+// TestSDKSyncMissingRemoteSlugDoesNotOverwriteConfig verifies destructive
+// full-mirror sync fails before a skipped remote service can delete local state.
+func TestSDKSyncMissingRemoteSlugDoesNotOverwriteConfig(t *testing.T) {
+	dir := t.TempDir()
+	path := writeSprintConfig(t, dir, "security.yaml", `
+apiVersion: fused/v1
+kind: sdk
+name: security-sdk
+version: "1.0.0"
+language: typescript
+services:
+  github:
+    version: "1.1.4"
+    operations: ["known_operation"]
+`)
+	before, err := os.ReadFile(path)
+	// The preservation assertion needs the exact original bytes.
+	if err != nil {
+		t.Fatal(err)
+	}
+	// This fake Engine returns a current selection whose service metadata lacks
+	// the canonical slug required for safe full-mirror comparison.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Query string `json:"query"`
+		}
+		// Malformed test traffic should fail immediately instead of selecting a
+		// misleading GraphQL response branch.
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		switch {
+		case strings.Contains(body.Query, "appReference"):
+			// Resolve the exact local app version before reading its definition.
+			_, _ = w.Write([]byte(`{"data":{"appReference":{"id":"app-1","kind":"app"}}}`))
+		case strings.Contains(body.Query, "query App("):
+			// The selection is current; only the joined service slug is incomplete.
+			_, _ = w.Write([]byte(`{"data":{"app":{"app_family_id":"family-1","app_id":"app-1","name":"security-sdk","version":"1.0.0","kind":"sdk","status":"active","created_at":"now","target_language":"python","selections":[{"service_id":"svc-github","service_version_id":"sv-1","schema_version":3,"endpoint_ids":["ep-1"],"operation_names":["repos_list_for_authenticated_user"],"webhook_ids":[],"webhook_names":[],"select_all":false,"webhook_select_all":false,"connect_scopes":[],"injections":[]}]}}}`))
+		case strings.Contains(body.Query, "appServices"):
+			// An omitted service_slug decodes to the empty identity under test.
+			_, _ = w.Write([]byte(`{"data":{"appServices":[{"service_id":"svc-github","service_name":"GitHub REST API","version":"1.1.4","select_all":false,"endpoint_count":1,"webhook_count":0}]}}`))
+		default:
+			// Unexpected queries indicate the command contract changed underneath
+			// this focused fail-closed test.
+			t.Fatalf("unexpected query %s", body.Query)
+		}
+	}))
+	defer server.Close()
+
+	message := runCommandInDirExpectError(t, dir, server.URL, []string{"sdk", "sync", "security-sdk", "-f", path})
+	// The error names the incomplete identity instead of warning and continuing.
+	if !strings.Contains(message, "missing service slug") || !strings.Contains(message, "GitHub REST API") {
+		t.Fatalf("expected missing-slug error, got %q", message)
+	}
+	after, err := os.ReadFile(path)
+	// A read error would make the no-overwrite guarantee impossible to verify.
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Fetch validation occurs before merge/write, preserving the config byte-for-byte.
+	if !reflect.DeepEqual(before, after) {
+		t.Fatalf("missing-slug sync modified the existing config:\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+}
+
 func newSDKSyncServer(t *testing.T, sdkVersion string) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
