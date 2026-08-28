@@ -33,7 +33,7 @@ func TestScaffoldCommandCreatesRunnableConfigs(t *testing.T) {
 		},
 		{
 			name: "mcp",
-			args: []string{"mcp", "support-agent", "--service", "jira=1001.0.0", "--select-all", "jira", "--json"},
+			args: []string{"mcp", "support-agent", "--description", "Find and manage customer support issues in Jira.", "--service", "jira=1001.0.0", "--select-all", "jira", "--json"},
 			kind: configfile.KindMCP,
 		},
 	}
@@ -55,6 +55,10 @@ func TestScaffoldCommandCreatesRunnableConfigs(t *testing.T) {
 			}
 			if test.kind == configfile.KindMCP && parsed.MCP.Bucket != "default" {
 				t.Fatalf("MCP bucket = %q, want default", parsed.MCP.Bucket)
+			}
+			// MCP scaffolding must preserve the calling LLM's server-level prose exactly.
+			if test.kind == configfile.KindMCP && parsed.MCP.Description != "Find and manage customer support issues in Jira." {
+				t.Fatalf("MCP description = %q", parsed.MCP.Description)
 			}
 			var result scaffoldResult
 			if err := json.Unmarshal(output, &result); err != nil {
@@ -246,9 +250,12 @@ func assertScaffoldCommandAddsServerVariableBindings(t *testing.T, kind configfi
 		}, nil
 	}
 	path := filepath.Join(t.TempDir(), string(kind)+".yaml")
-	output := runScaffoldCommandWithResolverForTest(t, path, resolver,
-		string(kind), "sendbird-app", "--service", "send bird=v3", "--operation", "send bird=listUsers", "--json",
-	)
+	args := []string{string(kind), "sendbird-app", "--service", "send bird=v3", "--operation", "send bird=listUsers", "--json"}
+	// MCP configs require server-level prose while SDK scaffolds have no protocol identity description.
+	if kind == configfile.KindMCP {
+		args = append(args, "--description", "Manage users through the connected Sendbird service.")
+	}
+	output := runScaffoldCommandWithResolverForTest(t, path, resolver, args...)
 	parsed, err := configfile.ParseFile(path)
 	// Generated server-variable injections must remain valid app config.
 	if err != nil {

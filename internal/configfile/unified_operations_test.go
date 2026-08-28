@@ -835,6 +835,7 @@ func TestMCPUnifiedOperationsUsesSharedAuthoringContract(t *testing.T) {
 		strings.Replace(unifiedSDKDocument("unified_operations:\n  issues:\n    input: {type: object}\n    bindings: {github: createIssue}\n  issues.create:\n    input: {type: object}\n    bindings: {github: createIssue}\n"), "kind: sdk", "kind: mcp", 1),
 		"language: typescript\n", "", 1,
 	)
+	document = strings.Replace(document, "version: 1.0.0\n", "version: 1.0.0\ndescription: Create and coordinate GitHub issues.\n", 1)
 	parsed, err := configfile.Parse([]byte(document), "mcp-unified.yaml")
 	// Parser admission is the contract under test; any error means MCP still
 	// diverges before the shared Engine compiler can run.

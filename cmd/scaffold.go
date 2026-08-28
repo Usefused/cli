@@ -25,29 +25,32 @@ const (
 var scaffoldKeyCleaner = regexp.MustCompile(`[^A-Za-z0-9]+`)
 
 type scaffoldOptions struct {
-	extend     bool
-	services   []string
-	operations []string
-	selectAll  []string
-	version    string
-	language   string
-	bucket     string
+	extend      bool
+	services    []string
+	operations  []string
+	selectAll   []string
+	version     string
+	description string
+	language    string
+	bucket      string
 }
 
 type scaffoldRequest struct {
-	kind        configfile.ConfigKind
-	name        string
-	path        string
-	extend      bool
-	services    []scaffoldService
-	operations  []scaffoldOperation
-	selectAll   []string
-	version     string
-	language    string
-	bucket      string
-	versionSet  bool
-	languageSet bool
-	bucketSet   bool
+	kind           configfile.ConfigKind
+	name           string
+	path           string
+	extend         bool
+	services       []scaffoldService
+	operations     []scaffoldOperation
+	selectAll      []string
+	version        string
+	description    string
+	language       string
+	bucket         string
+	versionSet     bool
+	descriptionSet bool
+	languageSet    bool
+	bucketSet      bool
 }
 
 type scaffoldService struct {
@@ -130,6 +133,10 @@ merge %s into an existing config instead.`, kind, selectionDescription),
 	if kind == configfile.KindSDK {
 		command.Flags().StringVar(&opts.language, "language", defaultScaffoldLanguage, "SDK target language")
 	}
+	// MCP descriptions are authored by the calling agent and become server identity metadata, not tool documentation.
+	if kind == configfile.KindMCP {
+		command.Flags().StringVar(&opts.description, "description", "", "Human-readable summary of what this MCP server can do")
+	}
 	addJSONOutputFlag(command)
 	return command
 }
@@ -183,6 +190,7 @@ func defaultTestScaffoldBucket() (string, error) {
 	return "default", nil
 }
 
+// buildScaffoldRequest normalizes CLI fields while preserving which immutable identity values were explicitly supplied.
 func buildScaffoldRequest(cmd *cobra.Command, kind configfile.ConfigKind, args []string, opts *scaffoldOptions) (scaffoldRequest, error) {
 	name := ""
 	if len(args) == 1 {
@@ -207,12 +215,17 @@ func buildScaffoldRequest(cmd *cobra.Command, kind configfile.ConfigKind, args [
 	if err != nil {
 		return scaffoldRequest{}, err
 	}
+	descriptionSet := false
+	// Workspace and SDK commands do not register this MCP-only flag.
+	if kind == configfile.KindMCP {
+		descriptionSet = cmd.Flags().Changed("description")
+	}
 	return scaffoldRequest{
 		kind: kind, name: name, path: path, extend: opts.extend,
 		services: services, operations: operations, selectAll: selectAll,
-		version: opts.version, language: opts.language, bucket: strings.TrimSpace(opts.bucket),
+		version: opts.version, description: strings.TrimSpace(opts.description), language: opts.language, bucket: strings.TrimSpace(opts.bucket),
 		versionSet: cmd.Flags().Changed("version"), languageSet: cmd.Flags().Changed("language"),
-		bucketSet: cmd.Flags().Changed("bucket"),
+		descriptionSet: descriptionSet, bucketSet: cmd.Flags().Changed("bucket"),
 	}, nil
 }
 
@@ -343,6 +356,10 @@ func newScaffoldData(request scaffoldRequest, resolver scaffoldRequirementsResol
 		Version:    request.version,
 		Services:   map[string]configfile.AppService{},
 	}
+	// Only MCP uses the authored summary as protocol-level server identity.
+	if request.kind == configfile.KindMCP {
+		config.Description = request.description
+	}
 	if request.kind == configfile.KindSDK {
 		config.Language = request.language
 	}
@@ -446,27 +463,53 @@ func mergeWorkspaceServices(config *configfile.WorkspaceConfig, services []scaff
 	return changed
 }
 
+// mergeAppIdentity fills missing immutable app metadata without rewriting an existing authored value.
 func mergeAppIdentity(config *configfile.AppConfig, request scaffoldRequest) (bool, error) {
 	changed, err := mergeScaffoldField(&config.Name, request.name, request.name != "", "name")
+	// Identity conflicts must abort before any later field can be partially merged.
 	if err != nil {
 		return false, err
 	}
 	versionChanged, err := mergeScaffoldField(&config.Version, request.version, request.versionSet, "version")
+	// Immutable version conflicts must preserve the complete existing document.
 	if err != nil {
 		return false, err
 	}
 	changed = changed || versionChanged
-	if request.kind == configfile.KindSDK {
-		languageChanged, err := mergeScaffoldField(&config.Language, request.language, request.languageSet, "language")
-		if err != nil {
-			return false, err
-		}
-		changed = changed || languageChanged
-	} else if request.languageSet {
-		return false, errors.New("mcp config cannot set --language")
+	languageChanged, err := mergeAppLanguage(config, request)
+	// Kind-specific language rejection must happen before routing fields are touched.
+	if err != nil {
+		return false, err
+	}
+	descriptionChanged, err := mergeMCPDescription(config, request)
+	// Authored server prose is immutable, so a conflict stops the additive extension.
+	if err != nil {
+		return false, err
 	}
 	bucketChanged, err := mergeScaffoldField(&config.Bucket, request.bucket, request.bucketSet, "bucket")
-	return changed || bucketChanged, err
+	return changed || languageChanged || descriptionChanged || bucketChanged, err
+}
+
+// mergeAppLanguage keeps package-language handling out of hosted MCP identity merging.
+func mergeAppLanguage(config *configfile.AppConfig, request scaffoldRequest) (bool, error) {
+	// Only generated SDK packages have a language field that can be extended.
+	if request.kind == configfile.KindSDK {
+		return mergeScaffoldField(&config.Language, request.language, request.languageSet, "language")
+	}
+	// Rejecting an explicit MCP language prevents an apparently accepted flag from having no runtime effect.
+	if request.languageSet {
+		return false, errors.New("mcp config cannot set --language")
+	}
+	return false, nil
+}
+
+// mergeMCPDescription fills missing hosted-server prose without rewriting authored identity.
+func mergeMCPDescription(config *configfile.AppConfig, request scaffoldRequest) (bool, error) {
+	// SDK configs have no server metadata consumer, so their shared struct field remains untouched.
+	if request.kind != configfile.KindMCP {
+		return false, nil
+	}
+	return mergeScaffoldField(&config.Description, request.description, request.descriptionSet, "description")
 }
 
 func mergeScaffoldField(current *string, requested string, provided bool, field string) (bool, error) {
@@ -480,7 +523,7 @@ func mergeScaffoldField(current *string, requested string, provided bool, field 
 		*current = requested
 		return true, nil
 	}
-	// Why: --extend is additive. Refusing conflicting identity/routing fields
+	// --extend is additive. Refusing conflicting identity/routing fields
 	// prevents an innocent extension from silently retargeting a config.
 	return false, fmt.Errorf("cannot extend config: existing %s %q conflicts with %q", field, *current, requested)
 }
@@ -733,7 +776,7 @@ func decodeScaffoldDraft(data []byte, path string, expectedKind configfile.Confi
 	if err := decoder.Decode(target); err != nil {
 		return fmt.Errorf("parse config %s: %w", path, err)
 	}
-	// Why: the CLI loader owns one typed config per file. Rejecting a second
+	// The CLI loader owns one typed config per file. Rejecting a second
 	// document avoids appearing to extend content the loader would ignore.
 	var extra yaml.Node
 	if err := decoder.Decode(&extra); err != io.EOF {

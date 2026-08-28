@@ -199,8 +199,11 @@ type AppConfig struct {
 	BaseConfig `yaml:",inline"`
 	Name       string `yaml:"name" json:"name"`
 	Version    string `yaml:"version" json:"version"`
-	Language   string `yaml:"language,omitempty" json:"language,omitempty"`
-	Bucket     string `yaml:"bucket,omitempty" json:"bucket,omitempty"`
+	// Description is the LLM-authored, server-level capability summary that
+	// MCP hosts receive during initialization; operation detail stays in search_docs.
+	Description string `yaml:"description,omitempty" json:"description,omitempty"`
+	Language    string `yaml:"language,omitempty" json:"language,omitempty"`
+	Bucket      string `yaml:"bucket,omitempty" json:"bucket,omitempty"`
 	// Generate is SDK-only and tri-state on purpose: absent means the
 	// historical default of building a downloadable package. Only an explicit
 	// `generate: false` suppresses codegen, publishing an app version that is

@@ -78,15 +78,20 @@ func TestAppAuthReferenceRoundTripsSDKAndMCP(t *testing.T) {
 		// Shared app parsing must keep the same reference contract for generated and hosted runtimes.
 		t.Run(kind, func(t *testing.T) {
 			language := ""
+			description := ""
 			// Only SDK configs select a generated package language.
 			if kind == "sdk" {
 				language = "language: typescript\n"
+			}
+			// Only MCP configs advertise authored server identity during protocol initialization.
+			if kind == "mcp" {
+				description = "description: Find and coordinate customer support work.\n"
 			}
 			parsed, err := configfile.Parse([]byte(fmt.Sprintf(`apiVersion: fused/v1
 kind: %s
 name: support
 version: 1.0.0
-%sservices:
+%s%sservices:
   confluence:
     version: v1
     operations: [issues.list]
@@ -94,7 +99,7 @@ version: 1.0.0
       type: oauth
       name: confluenceOAuth
       ref: "${bucket.auth.jira.jiraOAuth}"
-`, kind, language)), kind+".yaml")
+`, kind, description, language)), kind+".yaml")
 			if err != nil {
 				t.Fatalf("Parse() error = %v", err)
 			}
@@ -932,6 +937,7 @@ apiVersion: fused/v1
 kind: mcp
 name: security
 version: "1.0.0"
+description: Search and review security events in Okta.
 services:
   okta:
     version: "2026-07-01"
@@ -1062,12 +1068,14 @@ func TestParseRejectsRetiredAppFields(t *testing.T) {
 	}
 }
 
+// TestParseMCPConfigCarriesAuthPolicyWithoutCredentials verifies MCP identity and routing policy remain credential-free.
 func TestParseMCPConfigCarriesAuthPolicyWithoutCredentials(t *testing.T) {
 	parsed, err := configfile.Parse([]byte(`
 apiVersion: fused/v1
 kind: mcp
 name: github-agent
 version: 1.0.0
+description: Review repositories and help manage GitHub work.
 bucket: customers
 services:
   github:
@@ -1083,8 +1091,26 @@ services:
 		t.Fatalf("Parse() error = %v", err)
 	}
 	service := parsed.MCP.Services["github"]
-	if parsed.ConfigKey != "mcp:github-agent:1.0.0" || service.Auth.Type != "oauth" || service.Connect.Scopes[0] != "read:user" {
+	if parsed.ConfigKey != "mcp:github-agent:1.0.0" || parsed.MCP.Description != "Review repositories and help manage GitHub work." || service.Auth.Type != "oauth" || service.Connect.Scopes[0] != "read:user" {
 		t.Fatalf("unexpected parsed MCP config: %#v", parsed)
+	}
+}
+
+// TestParseMCPConfigRequiresServerDescription prevents newly planned servers from advertising only generic runtime identity.
+func TestParseMCPConfigRequiresServerDescription(t *testing.T) {
+	_, err := configfile.Parse([]byte(`
+apiVersion: fused/v1
+kind: mcp
+name: github-agent
+version: 1.0.0
+services:
+  github:
+    version: "2026-07-01"
+    operations: [reposList]
+`), "mcp.yaml")
+	// The diagnostic must name the missing authoring field so an agent can repair the config directly.
+	if err == nil || !strings.Contains(err.Error(), "description") {
+		t.Fatalf("missing description error = %v", err)
 	}
 }
 
@@ -1147,5 +1173,25 @@ services:
 	}
 	if !strings.Contains(err.Error(), "generate") {
 		t.Fatalf("error must name the field, got %q", err)
+	}
+}
+
+// TestParseSDKConfigRejectsMCPDescription keeps server identity prose out of package-only immutable state.
+func TestParseSDKConfigRejectsMCPDescription(t *testing.T) {
+	_, err := configfile.Parse([]byte(`
+apiVersion: fused/v1
+kind: sdk
+name: github-client
+version: 1.0.0
+language: typescript
+description: Manage GitHub repositories.
+services:
+  github:
+    version: "2026-07-01"
+    operations: [reposList]
+`), "sdk.yaml")
+	// The diagnostic must identify the inert cross-kind field directly.
+	if err == nil || !strings.Contains(err.Error(), "description") {
+		t.Fatalf("SDK description error = %v", err)
 	}
 }

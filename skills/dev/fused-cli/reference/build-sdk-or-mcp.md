@@ -209,9 +209,14 @@ fused-cli sdk download <sdk-name>@<version>
 ```
 
 For MCP, use the same enrichment through service-bearing `mcp init` or
-`--extend`, then run:
+`--extend`. Before scaffolding, have the LLM write a concise one-to-three
+sentence summary of the user-facing work enabled by the selected services.
+Pass it with `--description`; do not enumerate operation IDs or describe the
+`search_docs`/`execute` mechanics because the prose is advertised as the MCP
+server's identity before tool discovery. Then run:
 
 ```shell
+fused-cli mcp init <name> --description '<LLM-authored capability summary>' [...selection flags]
 fused-cli mcp validate
 fused-cli mcp plan
 fused-cli mcp apply
