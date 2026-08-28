@@ -98,6 +98,7 @@ apiVersion: fused/v1
 kind: mcp
 name: github-agent
 version: 1.0.0
+description: Review repositories and help manage GitHub work.
 bucket: default
 services:
   github:

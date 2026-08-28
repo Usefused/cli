@@ -29,6 +29,9 @@ apiVersion: fused/v1
 kind: mcp
 name: customer-support
 version: "1.0.0"
+description: >-
+  Help support teams find customer context, manage issues, and coordinate
+  follow-up work through the connected services.
 bucket: default
 services:
   <service-slug>:
@@ -44,6 +47,17 @@ services:
         name: from
         value: ${bucket.env.FROM_EMAIL}       # Supports ${bucket.env.*}, ${bucket.values.*} (identical alias), and ${bucket.secrets.*}
 ```
+
+Author the top-level `description` with the LLM before planning. Summarize the
+user-facing work this MCP server enables in one to three concise sentences,
+using the business goal and selected services as evidence. Make the concrete
+capabilities obvious enough that an MCP host can choose this server before it
+lists tools. Do not include operation IDs, schema fields, `search_docs`,
+`execute`, setup instructions, credentials, or claims beyond the selected
+services. Pass the same prose to `mcp init --description` when scaffolding; it
+is immutable version metadata and is returned as MCP `serverInfo.description`.
+Every runnable MCP version requires complete authored server metadata; never
+substitute generic compatibility prose when it is absent.
 
 Keep OAuth/OIDC selection to the target `auth.type`/`auth.name`, an optional
 complete-pair `auth.ref`, and sibling service-specific `connect.scopes`. The ref
@@ -152,8 +166,8 @@ is part of canonical identity, so never recover a name by splitting a config
 key.
 
 Applying identical canonical content to the same version is a no-op. Changing
-its operation/auth/injection scope returns `app_version_immutable`; publish a
-new version. The runtime URL contains the exact opaque `app_id`, which is the
+its description or operation/auth/injection scope returns
+`app_version_immutable`; publish a new version. The runtime URL contains the exact opaque `app_id`, which is the
 authoritative version identity.
 
 MCP execution tokens are shared across versions. The token emitted once by the
@@ -183,7 +197,7 @@ This list may be behind the CLI's actual flags/subcommands -- run
 `fused-cli` skill documents init's batched server-variable enrichment.
 
 ```shell
-fused-cli mcp init <name> [--service '<service>=<version>'] [--operation '<service>=<operationId>']
+fused-cli mcp init <name> --description '<LLM-authored capability summary>' [--service '<service>=<version>'] [--operation '<service>=<operationId>']
 fused-cli mcp init <name> --extend --service '<service>=<version>' --select-all '<service>'
 fused-cli mcp plan
 fused-cli mcp apply

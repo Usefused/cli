@@ -294,20 +294,50 @@ func validateAppConfig(cfg *AppConfig, kind ConfigKind) error {
 // validateAppKindFields enforces the small set of SDK- and MCP-specific
 // package fields before shared service and Unified-operation validation.
 func validateAppKindFields(cfg *AppConfig, kind ConfigKind) error {
+	// Kind-specific helpers keep this shared boundary below the complexity budget as the contracts diverge.
+	if kind == KindSDK {
+		return validateSDKKindFields(cfg)
+	}
+	// MCP is the only remaining app kind with hosted-runtime-only fields.
+	if kind == KindMCP {
+		return validateMCPKindFields(cfg)
+	}
+	return nil
+}
+
+// validateSDKKindFields admits only fields that influence generated SDK output.
+func validateSDKKindFields(cfg *AppConfig) error {
 	// SDK generation supports only Registry-owned emitters.
-	if kind == KindSDK && !isSDKLanguage(cfg.Language) {
+	if !isSDKLanguage(cfg.Language) {
 		return fmt.Errorf("invalid language %q", cfg.Language)
 	}
+	// Server identity prose belongs only to MCP; accepting it on SDK would mutate source state without changing output.
+	if strings.TrimSpace(cfg.Description) != "" {
+		return fmt.Errorf("sdk config must not set description")
+	}
+	return nil
+}
+
+// validateMCPKindFields admits only fields consumed by the hosted MCP runtime.
+func validateMCPKindFields(cfg *AppConfig) error {
 	// MCP apps are hosted by Engine and therefore do not choose a package language.
-	if kind == KindMCP && strings.TrimSpace(cfg.Language) != "" {
+	if strings.TrimSpace(cfg.Language) != "" {
 		return fmt.Errorf("mcp config must not set language")
 	}
 	// generate: only describes whether a downloadable package is built, which
 	// has no meaning for an Engine-hosted MCP server. AppConfig is shared
 	// between the two kinds, so reject it here rather than letting it decode
 	// silently into a field nothing reads.
-	if kind == KindMCP && cfg.Generate != nil {
+	if cfg.Generate != nil {
 		return fmt.Errorf("mcp config must not set generate")
+	}
+	// MCP hosts need a useful server-level routing signal before clients decide which connector to invoke.
+	if strings.TrimSpace(cfg.Description) == "" {
+		return fmt.Errorf("mcp config requires a server description")
+	}
+	// The initialize response is model context, so bound authored prose independently from operation documentation.
+	if len(cfg.Description) > maxMCPServerDescriptionLength {
+		return fmt.Errorf("mcp config description must be at most %d bytes", maxMCPServerDescriptionLength)
 	}
 	return nil
 }
@@ -339,6 +369,8 @@ func validateAppServices(services map[string]SDKService, kind ConfigKind, webhoo
 }
 
 var appVersionPattern = regexp.MustCompile(`^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$`)
+
+const maxMCPServerDescriptionLength = 1024
 
 // isSDKLanguage limits package generation to emitters the Registry owns.
 func isSDKLanguage(language string) bool {
