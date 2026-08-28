@@ -2130,6 +2130,8 @@ type MCPConfigApplyResponse struct {
 	AppID            string           `json:"app_id"`
 	DefaultTransport string           `json:"default_transport"`
 	TransportURLs    MCPTransportURLs `json:"transport_urls"`
+	Stable           bool             `json:"stable"`
+	StableVersionID  string           `json:"stable_version_id"`
 	ExecutionToken   string           `json:"execution_token"`
 }
 

@@ -227,6 +227,7 @@ func TestSDKShowUsesPublicIDLabels(t *testing.T) {
 	}
 }
 
+// TestMCPListUsesEnginePaginationAndFixedKind verifies human output labels stable and pinned URLs.
 func TestMCPListUsesEnginePaginationAndFixedKind(t *testing.T) {
 	var sawVariables map[string]any
 	server := httptest.NewServer(mcpListTestHandler(t, &sawVariables))
@@ -237,6 +238,7 @@ func TestMCPListUsesEnginePaginationAndFixedKind(t *testing.T) {
 	assertMCPListOutput(t, out)
 }
 
+// assertMCPListVariables keeps MCP catalogue filtering scoped and bounded.
 func assertMCPListVariables(t *testing.T, variables map[string]any) {
 	t.Helper()
 	if variables["kind"] != "mcp" || variables["limit"] != float64(5) || variables["offset"] != float64(10) {
@@ -244,17 +246,22 @@ func assertMCPListVariables(t *testing.T, variables map[string]any) {
 	}
 }
 
+// assertMCPListOutput verifies upgrade-safe discovery remains the recommendation.
 func assertMCPListOutput(t *testing.T, out string) {
 	t.Helper()
 	if !strings.Contains(out, "support") || !strings.Contains(out, "mcp-1") || !strings.Contains(out, "family-1") ||
 		!strings.Contains(out, "MCP_ID") || !strings.Contains(out, "VERSION_ID") ||
+		!strings.Contains(out, "STABLE") || !strings.Contains(out, "STABLE_VERSION_ID") ||
 		!strings.Contains(out, "DEFAULT_TRANSPORT") || !strings.Contains(out, "streamable_http") ||
-		!strings.Contains(out, "STREAMABLE HTTP (RECOMMENDED)") || !strings.Contains(out, "https://public.engine.test/mcp/mcp-1") ||
-		!strings.Contains(out, "SSE (LEGACY)") || !strings.Contains(out, "https://public.engine.test/mcp/mcp-1/sse") {
+		!strings.Contains(out, "STREAMABLE HTTP (STABLE, RECOMMENDED)") || !strings.Contains(out, "https://public.engine.test/mcp/family-1") ||
+		!strings.Contains(out, "STREAMABLE HTTP (VERSION-PINNED)") || !strings.Contains(out, "https://public.engine.test/mcp/mcp-1") ||
+		!strings.Contains(out, "SSE (STABLE, LEGACY)") || !strings.Contains(out, "https://public.engine.test/mcp/family-1/sse") ||
+		!strings.Contains(out, "SSE (VERSION-PINNED, LEGACY)") || !strings.Contains(out, "https://public.engine.test/mcp/mcp-1/sse") {
 		t.Fatalf("unexpected MCP list output: %q", out)
 	}
 }
 
+// TestMCPListJSONRetainsTypedTransportEndpoints verifies automation receives all route choices without prose parsing.
 func TestMCPListJSONRetainsTypedTransportEndpoints(t *testing.T) {
 	server := httptest.NewServer(mcpListTestHandler(t, new(map[string]any)))
 	defer server.Close()
@@ -272,8 +279,11 @@ func TestMCPListJSONRetainsTypedTransportEndpoints(t *testing.T) {
 	item := page.Items[0]
 	transportURLs, ok := item["transport_urls"].(map[string]any)
 	if item["default_transport"] != "streamable_http" || !ok ||
-		transportURLs["streamable_http"] != "https://public.engine.test/mcp/mcp-1" ||
-		transportURLs["sse"] != "https://public.engine.test/mcp/mcp-1/sse" {
+		item["stable"] != true || item["stable_version_id"] != "mcp-1" ||
+		transportURLs["streamable_http"] != "https://public.engine.test/mcp/family-1" ||
+		transportURLs["sse"] != "https://public.engine.test/mcp/family-1/sse" ||
+		transportURLs["versioned_streamable_http"] != "https://public.engine.test/mcp/mcp-1" ||
+		transportURLs["versioned_sse"] != "https://public.engine.test/mcp/mcp-1/sse" {
 		t.Fatalf("typed MCP transport JSON = %#v", item)
 	}
 	if _, exists := item["url"]; exists {
@@ -284,6 +294,7 @@ func TestMCPListJSONRetainsTypedTransportEndpoints(t *testing.T) {
 	}
 }
 
+// mcpListTestHandler returns one MCP version with distinct stable and pinned transport identities.
 func mcpListTestHandler(t *testing.T, sawVariables *map[string]any) http.Handler {
 	t.Helper()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -292,7 +303,7 @@ func mcpListTestHandler(t *testing.T, sawVariables *map[string]any) http.Handler
 			t.Fatalf("expected MCP apps query, got %s", body.Query)
 		}
 		*sawVariables = body.Variables
-		_, _ = w.Write([]byte(`{"data":{"apps":{"total":1,"items":[{"app_family_id":"family-1","app_id":"mcp-1","name":"support","version":"1.0.0","kind":"mcp","status":"active","created_at":"now","default_transport":"streamable_http","transport_urls":{"streamable_http":"https://public.engine.test/mcp/mcp-1","sse":"https://public.engine.test/mcp/mcp-1/sse"},"selections":[]}]}}}`))
+		_, _ = w.Write([]byte(`{"data":{"apps":{"total":1,"items":[{"app_family_id":"family-1","app_id":"mcp-1","name":"support","version":"1.0.0","kind":"mcp","status":"active","created_at":"now","default_transport":"streamable_http","stable":true,"stable_version_id":"mcp-1","transport_urls":{"streamable_http":"https://public.engine.test/mcp/family-1","sse":"https://public.engine.test/mcp/family-1/sse","versioned_streamable_http":"https://public.engine.test/mcp/mcp-1","versioned_sse":"https://public.engine.test/mcp/mcp-1/sse"},"selections":[]}]}}}`))
 	})
 }
 

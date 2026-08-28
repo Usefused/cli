@@ -131,7 +131,7 @@ services:
 			}
 			_, _ = w.Write([]byte(`{"plan_id":"plan-mcp","config_key":"mcp:github-agent:1.0.0","source_hash":"` + sourceHash + `","summary":{}}`))
 		case "/mcp-config/apply":
-			_, _ = w.Write([]byte(`{"status":"applied","plan_id":"plan-mcp","config_key":"mcp:github-agent:1.0.0","app_family_id":"family-1","app_id":"runtime-1","default_transport":"streamable_http","transport_urls":{"streamable_http":"https://public.engine.test/mcp/runtime-1","sse":"https://public.engine.test/mcp/runtime-1/sse"},"execution_token":"shown-once"}`))
+			_, _ = w.Write([]byte(`{"status":"applied","plan_id":"plan-mcp","config_key":"mcp:github-agent:1.0.0","app_family_id":"family-1","app_id":"runtime-1","default_transport":"streamable_http","stable":true,"stable_version_id":"runtime-1","transport_urls":{"streamable_http":"https://public.engine.test/mcp/family-1","sse":"https://public.engine.test/mcp/family-1/sse","versioned_streamable_http":"https://public.engine.test/mcp/runtime-1","versioned_sse":"https://public.engine.test/mcp/runtime-1/sse"},"execution_token":"shown-once"}`))
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
@@ -145,8 +145,10 @@ services:
 	}
 	for _, expected := range []string{
 		"Default transport: streamable_http",
-		"Streamable HTTP (recommended): https://public.engine.test/mcp/runtime-1",
-		"SSE (legacy): https://public.engine.test/mcp/runtime-1/sse",
+		"Streamable HTTP (stable, recommended): https://public.engine.test/mcp/family-1",
+		"Streamable HTTP (version-pinned): https://public.engine.test/mcp/runtime-1",
+		"SSE (stable, legacy): https://public.engine.test/mcp/family-1/sse",
+		"SSE (version-pinned, legacy): https://public.engine.test/mcp/runtime-1/sse",
 	} {
 		if !strings.Contains(applyOutput, expected) {
 			t.Fatalf("apply output %q is missing %q", applyOutput, expected)

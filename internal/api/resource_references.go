@@ -25,12 +25,13 @@ type AppSelection struct {
 	Injections       []InjectionConfig `json:"injections"`
 }
 
-// MCPTransportURLs is Engine-owned discovery for one immutable MCP version.
-// Keeping both endpoints typed prevents clients from treating transitional SSE
-// as equivalent to the recommended Streamable HTTP transport.
+// MCPTransportURLs keeps the upgrade-safe family routes distinct from exact
+// immutable-version routes and transitional SSE compatibility.
 type MCPTransportURLs struct {
-	StreamableHTTP string `json:"streamable_http"`
-	SSE            string `json:"sse"`
+	StreamableHTTP          string `json:"streamable_http"`
+	SSE                     string `json:"sse"`
+	VersionedStreamableHTTP string `json:"versioned_streamable_http"`
+	VersionedSSE            string `json:"versioned_sse"`
 }
 
 type AppRequiredAuth struct {
@@ -55,6 +56,8 @@ type AppSummary struct {
 	PlannedDeactivationAt string            `json:"planned_deactivation_at"`
 	DefaultTransport      string            `json:"default_transport,omitempty"`
 	TransportURLs         *MCPTransportURLs `json:"transport_urls,omitempty"`
+	Stable                bool              `json:"stable"`
+	StableVersionID       string            `json:"stable_version_id,omitempty"`
 }
 
 type AppSummaryPage struct {
@@ -75,7 +78,8 @@ type AppServiceSummary struct {
 const appSummaryFields = `
 	app_family_id app_id name description version kind status created_at
 	target_language generator_version readme planned_deactivation_at
-	default_transport transport_urls { streamable_http sse }
+	default_transport stable stable_version_id
+	transport_urls { streamable_http sse versioned_streamable_http versioned_sse }
 	selections {
 		service_id service_version_id schema_version
 		endpoint_ids operation_names webhook_ids webhook_names

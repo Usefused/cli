@@ -183,6 +183,35 @@ If the goal is already being handled by a coding agent, install and use the
 `fused-sdk` skill instead. The coding agent should perform the deterministic
 workflow directly rather than start a second agent through `sdk prompt`.
 
+## Deploy an MCP server
+
+Describe the server's business capability in the config so an MCP client can
+understand when to use it before calling `search_docs`:
+
+```yaml
+apiVersion: fused/v1
+kind: mcp
+name: support-agent
+version: "1.0.0"
+description: Read and update support issues, then notify the owning team.
+bucket: default
+services:
+  linear:
+    version: "v1"
+    operations: [getIssue, updateIssue]
+```
+
+```bash
+fused-cli mcp plan -f .fused/mcps/support-agent.yaml
+fused-cli mcp apply -f .fused/mcps/support-agent.yaml
+fused-cli mcp list
+```
+
+An MCP name keeps one stable MCP ID and URL across versions. Applying a new
+version explicitly promotes that version for new sessions on the stable URL;
+existing sessions remain pinned to the version they initialized. The CLI also
+shows a version-pinned URL for clients that must stay on one immutable version.
+
 ## More documentation
 
 - [CLI setup and operation](docs/SETUP.md) — authentication, automation,

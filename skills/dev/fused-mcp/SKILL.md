@@ -160,15 +160,19 @@ Treat webhook delivery as an SDK-only surface today (see `fused-webhook`).
 ## Identity, versions, and authentication
 
 One MCP name has one stable MCP ID shared by all its versions. Each explicit
-`version` also has an immutable Version ID. Multiple versions may run together
-and there is no implicit latest/default. Name punctuation, including colons,
-is part of canonical identity, so never recover a name by splitting a config
-key.
+`version` also has an immutable Version ID. Multiple versions may run together.
+Applying a version explicitly promotes it as the MCP ID's stable transport
+target; reapplying an older immutable version explicitly rolls that target back.
+This is a persisted promotion, not an implicit latest-version choice. Name
+punctuation, including colons, is part of canonical identity, so never recover a
+name by splitting a config key.
 
 Applying identical canonical content to the same version is a no-op. Changing
 its description or operation/auth/injection scope returns
-`app_version_immutable`; publish a new version. The runtime URL contains the exact opaque `app_id`, which is the
-authoritative version identity.
+`app_version_immutable`; publish a new version. The recommended runtime URL
+contains the stable MCP ID and resolves to the promoted immutable Version ID at
+session initialization. The optional pinned URL contains the exact Version ID.
+An established session keeps its resolved Version ID across later promotions.
 
 MCP execution tokens are shared across versions. The token emitted once by the
 first apply allows every selected operation and does not expire, preserving the
@@ -225,15 +229,18 @@ explicit `--bucket` remains authoritative. Init never creates a bucket, and
 plan/apply remains the authoritative `bucket.use` check.
 
 `mcp apply` doesn't just validate config -- it stands up (or updates) a
-persistent, named Engine-hosted server with its own URL, which stays live
-until explicitly deactivated. `mcp list` shows each server's name, version, ID,
-active state, recommended Streamable HTTP URL, and legacy SSE URL. Give new
-clients the Streamable HTTP URL. Use the SSE URL only when a client explicitly
-requires the older transport (see below).
+persistent, named Engine-hosted server with a stable MCP URL. `mcp list` shows
+each immutable version's name, version, IDs, active state, whether it is the
+promoted target, the stable target Version ID, and stable plus pinned transport
+URLs. Give new clients the stable Streamable HTTP URL. Use the pinned URL only
+when a client deliberately must remain on one immutable version, and use SSE
+only when the client explicitly requires the older transport (see below).
 Deactivating one is
 an irreversible hard deactivation of that exact version: Engine writes a
 tombstone, stops its runtime, and will not allow that MCP/version to be
-recreated. Sibling versions and shared tokens remain. Deactivation is immediate and
+recreated. Sibling versions and shared tokens remain. Deactivating the promoted
+version leaves the stable URL unavailable; Engine does not choose a sibling.
+Explicitly apply or reapply the intended sibling to promote it. Deactivation is immediate and
 not gated behind the same SDK-config blocker `fused-workspace` describes for
 removing a workspace service. The CLI currently exposes no MCP deprecate or
 undeprecate command; do not invent one.
@@ -304,6 +311,13 @@ access bucket grant <bucket-name>` while its secrets remain platform-managed.
 Use the recommended Streamable HTTP URL returned by `mcp apply` or `mcp list`:
 
 ```text
+https://<engine-host>/mcp/<mcp-id>
+```
+
+Use the immutable pinned URL only when deliberately freezing one client to a
+specific version:
+
+```text
 https://<engine-host>/mcp/<version-id>
 ```
 
@@ -344,16 +358,20 @@ duplicate provider work. `adjust_projection` means the provider execution is
 complete and only the session-local result shape or byte projection should
 change. `use_next_request` means run the supplied request verbatim. These
 closed actions replace inference from prose.
-The same output also exposes the legacy SSE URL:
+The same output also exposes stable and pinned legacy SSE URLs:
 
 ```text
+https://<engine-host>/mcp/<mcp-id>/sse
 https://<engine-host>/mcp/<version-id>/sse
 ```
 
-It addresses the same immutable MCP version and uses the same execution token,
-but it is transitional compatibility and must not be recommended for new
-clients. Human output labels Streamable HTTP as recommended and SSE as legacy;
-JSON output uses `default_transport` and the typed `transport_urls` object.
+They use the same MCP execution token. A stable SSE session snapshots its
+promoted immutable version when it connects, just like Streamable HTTP. SSE is
+transitional compatibility and must not be recommended for new clients. Human
+output labels stable Streamable HTTP as recommended, distinguishes pinned
+endpoints, and keeps SSE under legacy compatibility; JSON output uses
+`default_transport`, `stable`, `stable_version_id`, and the typed
+`transport_urls` object.
 
 Engine applies non-configurable ceilings before MCP data crosses a process or
 transport boundary: 256 KiB request/call payloads, 64 KiB documentation,

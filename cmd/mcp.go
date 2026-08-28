@@ -76,6 +76,7 @@ var mcpValidateCmd = &cobra.Command{
 	}),
 }
 
+// runMCPList renders Engine-owned stable and pinned routes without deriving public URLs locally.
 func runMCPList(cmd *cobra.Command) error {
 	client, err := getAPIClient()
 	if err != nil {
@@ -89,15 +90,18 @@ func runMCPList(cmd *cobra.Command) error {
 		return writeJSONPage(cmd, page.Items, page.Total, mcpListFlags)
 	}
 	writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 8, 2, ' ', 0)
-	fmt.Fprintln(writer, "NAME\tVERSION\tMCP_ID\tVERSION_ID\tSTATUS\tCREATED\tDEFAULT_TRANSPORT\tSTREAMABLE HTTP (RECOMMENDED)\tSSE (LEGACY)")
+	fmt.Fprintln(writer, "NAME\tVERSION\tMCP_ID\tVERSION_ID\tSTABLE\tSTABLE_VERSION_ID\tSTATUS\tCREATED\tDEFAULT_TRANSPORT\tSTREAMABLE HTTP (STABLE, RECOMMENDED)\tSTREAMABLE HTTP (VERSION-PINNED)\tSSE (STABLE, LEGACY)\tSSE (VERSION-PINNED, LEGACY)")
 	for _, app := range page.Items {
-		streamableHTTP, sse := "", ""
+		streamableHTTP, versionedStreamableHTTP, sse, versionedSSE := "", "", "", ""
+		// A hard-deactivated promoted version leaves stable endpoints empty until
+		// an explicit apply selects the next immutable target.
 		if app.TransportURLs != nil {
-			streamableHTTP, sse = app.TransportURLs.StreamableHTTP, app.TransportURLs.SSE
+			streamableHTTP, versionedStreamableHTTP = app.TransportURLs.StreamableHTTP, app.TransportURLs.VersionedStreamableHTTP
+			sse, versionedSSE = app.TransportURLs.SSE, app.TransportURLs.VersionedSSE
 		}
-		fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			app.Name, app.Version, app.AppFamilyID, app.AppID, app.Status, app.CreatedAt,
-			app.DefaultTransport, streamableHTTP, sse)
+		fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%t\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			app.Name, app.Version, app.AppFamilyID, app.AppID, app.Stable, app.StableVersionID, app.Status, app.CreatedAt,
+			app.DefaultTransport, streamableHTTP, versionedStreamableHTTP, sse, versionedSSE)
 	}
 	_ = writer.Flush()
 	printPageSummary(cmd.OutOrStdout(), page.Total, mcpListFlags)

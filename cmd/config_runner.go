@@ -706,6 +706,7 @@ func applyPreparedSDK(client *api.Client, cfg *configfile.ParsedConfig, receipt 
 	return downloadSDKByID(client, resp.AppID, cfg.SDK.Name, ".")
 }
 
+// applyPreparedMCP publishes one immutable version and surfaces its stable and pinned connection routes.
 func applyPreparedMCP(client *api.Client, cfg *configfile.ParsedConfig, receipt planReceipt) error {
 	resp, err := client.ApplyMCPConfig(receipt.PlanID, receipt.SourceHash)
 	if err != nil {
@@ -715,7 +716,9 @@ func applyPreparedMCP(client *api.Client, cfg *configfile.ParsedConfig, receipt 
 	// Engine owns public URL projection so reverse-proxy origins and transport
 	// recommendations stay identical across apply, GraphQL, UI, and CLI.
 	fmt.Printf("  MCP ID: %s\n  Version ID: %s\n  Default transport: %s\n", resp.AppFamilyID, resp.AppID, resp.DefaultTransport)
-	fmt.Printf("  Streamable HTTP (recommended): %s\n  SSE (legacy): %s\n", resp.TransportURLs.StreamableHTTP, resp.TransportURLs.SSE)
+	fmt.Printf("  Streamable HTTP (stable, recommended): %s\n", resp.TransportURLs.StreamableHTTP)
+	fmt.Printf("  Streamable HTTP (version-pinned): %s\n", resp.TransportURLs.VersionedStreamableHTTP)
+	fmt.Printf("  SSE (stable, legacy): %s\n  SSE (version-pinned, legacy): %s\n", resp.TransportURLs.SSE, resp.TransportURLs.VersionedSSE)
 	if resp.ExecutionToken != "" {
 		fmt.Printf("  Token (shown once): %s\n", resp.ExecutionToken)
 	}

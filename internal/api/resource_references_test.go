@@ -78,6 +78,7 @@ func TestResolveAppAndFamilyReferencesUseSeparateNamespaces(t *testing.T) {
 	}
 }
 
+// TestListAppsUsesEngineGraphQL verifies typed stable and version-pinned MCP transport discovery.
 func TestListAppsUsesEngineGraphQL(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request struct {
@@ -90,12 +91,14 @@ func TestListAppsUsesEngineGraphQL(t *testing.T) {
 		if !strings.Contains(request.Query, "apps(kind: $kind") || request.Variables["kind"] != "mcp" {
 			t.Fatalf("unexpected app request: %#v", request)
 		}
-		for _, field := range []string{"default_transport", "transport_urls", "streamable_http", "sse"} {
+		// The CLI must request every route explicitly so it never reconstructs public Engine URLs.
+		for _, field := range []string{"default_transport", "stable", "stable_version_id", "transport_urls", "streamable_http", "sse", "versioned_streamable_http", "versioned_sse"} {
+			// A missing field would silently erase one supported upgrade or pinning path.
 			if !strings.Contains(request.Query, field) {
 				t.Fatalf("apps query does not request %s: %s", field, request.Query)
 			}
 		}
-		_, _ = w.Write([]byte(`{"data":{"apps":{"total":1,"items":[{"app_family_id":"family-1","app_id":"app-1","name":"support","version":"1.0.0","kind":"mcp","status":"active","created_at":"now","default_transport":"streamable_http","transport_urls":{"streamable_http":"https://public.engine.test/mcp/app-1","sse":"https://public.engine.test/mcp/app-1/sse"},"selections":[]}]}}}`))
+		_, _ = w.Write([]byte(`{"data":{"apps":{"total":1,"items":[{"app_family_id":"family-1","app_id":"app-1","name":"support","version":"1.0.0","kind":"mcp","status":"active","created_at":"now","default_transport":"streamable_http","stable":true,"stable_version_id":"app-1","transport_urls":{"streamable_http":"https://public.engine.test/mcp/family-1","sse":"https://public.engine.test/mcp/family-1/sse","versioned_streamable_http":"https://public.engine.test/mcp/app-1","versioned_sse":"https://public.engine.test/mcp/app-1/sse"},"selections":[]}]}}}`))
 	}))
 	defer server.Close()
 
@@ -105,9 +108,12 @@ func TestListAppsUsesEngineGraphQL(t *testing.T) {
 		t.Fatalf("ListApps = %#v, %v", page, err)
 	}
 	app := page.Items[0]
-	if app.DefaultTransport != "streamable_http" || app.TransportURLs == nil ||
-		app.TransportURLs.StreamableHTTP != "https://public.engine.test/mcp/app-1" ||
-		app.TransportURLs.SSE != "https://public.engine.test/mcp/app-1/sse" {
+	// Stable and pinned routes must decode into separate typed fields.
+	if app.DefaultTransport != "streamable_http" || !app.Stable || app.StableVersionID != "app-1" || app.TransportURLs == nil ||
+		app.TransportURLs.StreamableHTTP != "https://public.engine.test/mcp/family-1" ||
+		app.TransportURLs.SSE != "https://public.engine.test/mcp/family-1/sse" ||
+		app.TransportURLs.VersionedStreamableHTTP != "https://public.engine.test/mcp/app-1" ||
+		app.TransportURLs.VersionedSSE != "https://public.engine.test/mcp/app-1/sse" {
 		t.Fatalf("ListApps transport discovery = %#v", app)
 	}
 }
