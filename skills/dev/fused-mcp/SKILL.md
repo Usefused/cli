@@ -539,6 +539,12 @@ preserves embedded `/` separators and still escapes unsafe segment characters.
 Do not pre-encode the value in the MCP call.
 
 `X-Fused-End-User-Ref` is required only for connected OAuth/OIDC calls.
+When a dynamic token reaches one of those calls without the header, Engine
+returns `MCP_END_USER_REF_REQUIRED` with
+`execute_request: correct_arguments` and `provider_execution: not_started`.
+Configure the header on the MCP client connection and retry; do not add it to
+`execute` script arguments. This error does not create a provider connection or
+start OAuth.
 `X-Fused-Resource-ID` is required when that connection has multiple
 provider sites/shops/portals/accounts and no default is set (see
 `fused-bucket` for setting a default resource). Engine middleware resolves

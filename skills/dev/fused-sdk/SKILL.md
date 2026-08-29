@@ -60,6 +60,36 @@ registers *which events* this SDK receives, not the webhook registration
 itself (that's `fused-webhook`). Setting either without `webhook_attachment`
 is rejected at plan time.
 
+Those fields select provider-originated events only. When the selected auth
+path for an SDK service uses connected OAuth/OIDC, Engine implicitly registers
+that service's Fused auth-lifecycle subjects for the SDK family and the
+generated package includes the same webhook receiver and event types even when
+there is no `webhook_attachment`. A service merely declaring an unused OAuth
+alternative does not qualify. Do not add a `kind: webhook`, provider callback
+URL, signing secret, or SDK YAML event selection for these Fused-owned events.
+They use the existing receiver under the reserved suffixes
+`fused.auth.connection.completed`, `fused.auth.token.refreshed`,
+`fused.auth.token.refresh_failed`, and
+`fused.auth.connection.reconnect_required`. The generated service webhook enum
+is the caller surface; its values retain the existing
+`<service-id>.<event-name>` wire shape, for example
+`JiraWebhook.FUSED_AUTH_CONNECTION_COMPLETED`. Do not invent a separate
+auth-event RPC or client.
+
+Listening remains explicit application behavior: construct
+`FusedWebhooks.listen`/`registerReceiver`, register the desired namespaced event
+handlers, and close the receiver at shutdown. Once a lifecycle event reaches
+the durable receiver, delivery is at least once, so nack failed work and make
+handlers idempotent by event ID. The post-commit lifecycle publication is
+best-effort; without a transactional outbox, a broker outage at that boundary
+can prevent emission even though the auth state committed.
+The credential-free auth payload includes that ID and lifecycle state but omits
+internal app provenance, provider payloads, scopes, URLs, and token material.
+Implicit subjects are scoped to the SDK family and service. A newer version in
+the same family can continue consuming its connection lifecycle, while another
+SDK sharing the bucket cannot; a standalone CLI-created connection has no SDK
+provenance and is not routed into an SDK receiver.
+
 `auth.type` selects a Registry-declared scheme (`basic`, `bearer`,
 `api_key`, `oauth`, `oidc`, `mtls` -- the same list `fused-config` documents
 for workspace `auth`); `auth.name` disambiguates two schemes of the same

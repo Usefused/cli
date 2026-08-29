@@ -283,6 +283,12 @@ token is expired, revoked, or rejected—the connection becomes
 bucket, service, auth name, and stable user reference. Never interpret an
 unexpected provider 401/403 as permission to replay a mutation.
 
+Engine publishes a credential-free internal lifecycle event after a connection
+completes, a token rotates, a retryable refresh failure is persisted, or a
+connection becomes `reconnect_required`. These events are infrastructure for
+future CLI/SDK notification delivery; they do not require users to poll or
+manually refresh tokens, and they never contain provider credentials.
+
 Refresh concurrency is an Engine operator setting, not bucket or workspace
 configuration. `engine.connected_auth_refresh_workers` (or
 `FUSED_ENGINE_CONNECTED_AUTH_REFRESH_WORKERS`) accepts 1 through 64 workers and

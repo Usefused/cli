@@ -1,6 +1,6 @@
 ---
 name: fused-webhook
-description: "Use when the user wants to register inbound webhook ingress (a provider calling into Fused) using fused-cli -- creating a kind: webhook config, attaching it to an SDK via webhook_attachment so that SDK receives delivery, or running webhook plan/apply/validate. Trigger on 'register a webhook', 'kind: webhook', 'webhook_attachment', 'receive webhooks in my SDK', or 'fused-cli webhook'. For the read-only workspace service webhooks command read fused-workspace instead; for the auth_type/connect scope shape itself read fused-config."
+description: "Use when the user wants to register inbound provider webhook ingress using fused-cli -- creating a kind: webhook config, attaching it to an SDK via webhook_attachment, or running webhook plan/apply/validate. Trigger on 'register a webhook', 'kind: webhook', 'webhook_attachment', 'provider events in my SDK', or 'fused-cli webhook'. Fused-owned connected-auth lifecycle events need no ingress registration; read fused-sdk for that generated receiver behavior. For the read-only workspace service webhooks command read fused-workspace instead."
 ---
 
 # Webhook registration config
@@ -49,14 +49,14 @@ duplicate names. Only when a `signature_header` list is absent does OpenAPI
 import infer it from required header parameters on webhook operations. Do not
 add guessed provider headers or put header values in the Registry contract.
 
-## Attaching to an SDK/MCP so it actually receives events
+## Attaching provider events to an SDK
 
 Registering a webhook here only makes Fused *accept* the inbound delivery --
-it does not, by itself, route that event to any SDK or MCP. A `kind: sdk` or
-`kind: mcp` config opts into delivery with `webhook_attachment` (top-level,
-sibling to `name`/`bucket` -- not nested under `services`, since one
-`kind: webhook` config can span services the attaching config also uses)
-plus a per-service explicit event allowlist:
+it does not, by itself, route that event to an SDK. A `kind: sdk` config opts
+into provider delivery with `webhook_attachment` (top-level, sibling to
+`name`/`bucket` -- not nested under `services`, since one `kind: webhook`
+config can span services the attaching config also uses) plus a per-service
+explicit event allowlist:
 
 The ordinary attachment example chooses visible `default` as its candidate.
 SDK plan/apply must pass `bucket.use` for that exact bucket, or the action stops
@@ -96,12 +96,33 @@ services:
 - `webhooks_select_all: true` is the webhook-only counterpart to the
   operations `select_all: true` you already know from `fused-sdk`/
   `fused-mcp` -- either can be set independent of the other. `kind: mcp`
-  cannot select webhooks at all (neither field is valid on an MCP service).
+  cannot select provider webhooks at all (neither field is valid on an MCP
+  service).
 - Delivery is scoped to exactly this attachment: the WS bridge resolves
-  which `kind: webhook` config a connecting SDK/MCP attached
+  which `kind: webhook` config a connecting SDK attached
   server-side (from its own applied config), so two different registrations
-  for the same service+event never cross-deliver to an SDK/MCP that only
+  for the same service+event never cross-deliver to an SDK that only
   attached to one of them.
+
+## Fused-owned auth lifecycle events
+
+Do not create a `kind: webhook` config for connected-auth lifecycle events.
+When an SDK's selected auth path uses connected OAuth/OIDC, Engine implicitly
+adds family- and service-scoped Fused subjects and generated event types to the
+same SDK webhook receiver. No callback URL, signing secret,
+`webhook_attachment`, `services.<slug>.webhooks`, or separate listener is
+needed. Their reserved suffixes are `fused.auth.connection.completed`,
+`fused.auth.token.refreshed`, `fused.auth.token.refresh_failed`, and
+`fused.auth.connection.reconnect_required`. Use the generated per-service enum,
+such as `JiraWebhook.FUSED_AUTH_CONNECTION_COMPLETED`, because the wire value
+keeps the existing `<service-id>.<event-name>` receiver namespace.
+
+The application still starts the generated receiver and registers handlers at
+runtime. Provider events and Fused-owned events share its durable ack/nack and
+reconnect behavior; retained deliveries are at least once. Auth lifecycle
+publication after the database commit is best-effort until Fused has a
+transactional outbox. Read `fused-sdk` for SDK-family routing and runtime
+consumption.
 
 ## Commands
 
