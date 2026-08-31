@@ -172,23 +172,39 @@ func assertCommandFlagPresence(t *testing.T, command *cobra.Command, flag string
 	}
 }
 
-func TestSecretSetRequiresSecretSafeInput(t *testing.T) {
-	previousInteractive, previousStdin := secretSetInteractive, secretSetValueStdin
+// TestSecretSetDefaultsToPromptsAndRequiresStdinWithoutInput verifies the
+// terminal default and the explicit automation-safe credential channel.
+func TestSecretSetDefaultsToPromptsAndRequiresStdinWithoutInput(t *testing.T) {
+	previousInteractive, previousStdin, previousNoInput := secretSetInteractive, secretSetValueStdin, NoInput
 	t.Cleanup(func() {
 		secretSetInteractive = previousInteractive
 		secretSetValueStdin = previousStdin
+		NoInput = previousNoInput
 	})
+	t.Setenv("CI", "")
 
 	secretSetInteractive, secretSetValueStdin = false, false
-	if err := validateSecretSetArgs(secretSetCmd, []string{"github"}); err == nil || !strings.Contains(err.Error(), "choose exactly one") {
-		t.Fatalf("expected missing input mode error, got %v", err)
+	NoInput = false
+	// A normal terminal invocation defers value collection to the selected auth prompt.
+	if err := validateSecretSetArgs(secretSetCmd, []string{"github"}); err != nil {
+		t.Fatalf("default interactive validation: %v", err)
+	}
+	value, err := readSecretValue(secretSetCmd)
+	if err != nil || value != "" {
+		t.Fatalf("default prompt seed = %q, %v", value, err)
+	}
+	NoInput = true
+	// Disabling prompts without providing stdin must fail before any service lookup.
+	if err := validateSecretSetArgs(secretSetCmd, []string{"github"}); err == nil || !strings.Contains(err.Error(), "--value-stdin") {
+		t.Fatalf("expected missing non-interactive input error, got %v", err)
 	}
 	secretSetValueStdin = true
+	// Extra positional values remain forbidden so secrets cannot leak through argv.
 	if err := validateSecretSetArgs(secretSetCmd, []string{"github", "visible-secret"}); err == nil {
 		t.Fatal("secret values in argv must be rejected")
 	}
 	secretSetCmd.SetIn(strings.NewReader("sensitive-value\n"))
-	value, err := readSecretValue(secretSetCmd)
+	value, err = readSecretValue(secretSetCmd)
 	if err != nil {
 		t.Fatalf("read stdin credential: %v", err)
 	}

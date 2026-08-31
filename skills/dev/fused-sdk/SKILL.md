@@ -16,18 +16,11 @@ Maintain one compact working-facts record: CLI/Engine context, config paths, SDK
 - read `fused-cli` and `reference/access-management.md` only for setup or permission remediation.
 
 For a business goal without a complete config, follow the `fused-cli` skill's `reference/build-sdk-or-mcp.md` SDK path, then return here after Engine setup, service activation, and credential requirements are known. Apply or download only when requested and no authority or production decision remains open.
-Use `service operations --json` for bounded discovery, inspect body contracts only with `service operation show` opt-in flags, and run `sdk validate --json` after writing the config.
-Use `--json` on every SDK command whose confirmed help exposes it. In particular, never parse SDK/Version IDs or the one-time token from human apply text: use `sdk plan --json`, `sdk apply --json`, `sdk token generate --json`, `sdk download --json`, `sdk invoke --json`, and `sdk activity --json`.
+Use `service operations --json` for bounded discovery and inspect body contracts only with `service operation show` opt-in flags. `sdk plan` runs local validation before its Engine request; use standalone `sdk validate --json` only when an offline-only check is useful.
+Except for service-bearing `sdk init`, use `--json` on every SDK command whose confirmed help exposes it. Never parse SDK/Version IDs or the one-time token from human apply text: use `sdk plan --json`, `sdk apply --json`, `sdk token generate --json`, `sdk download --json`, `sdk invoke --json`, and `sdk activity --json`.
 
 `kind: sdk`, managed by `fused-cli sdk ...`, declares a typed SDK package from a bucket's already-configured services.
-For service-bearing config, `sdk init` lists `bucket.read`-visible buckets once
-and writes visible `default` or the first candidate unless `--bucket` is set.
-Plan/apply proves exact `bucket.use`; init never creates a bucket or replaces an
-existing selection. Follow `fused-bucket` for permitted creation workflows.
-
-Each service map key is an activated service's persisted Registry slug. Confirm
-it with `fused-cli workspace services list -q <slug> --json`; Registry
-visibility alone grants neither activation nor `service.consume`.
+For service-bearing config, `sdk init` selects a `bucket.read`-visible bucket without creating one; plan/apply proves exact `bucket.use` (see `fused-bucket`). It pins an omitted provider version to an enabled or latest public version and composes existing workspace and SDK lifecycle functions. When activation is needed, a terminal asks once while retaining separate workspace and SDK receipts; typed credential remediation runs during SDK plan. `--no-input`/`CI=true` fail on ambiguity or missing credentials, and service-bearing init rejects `--json` before mutation. Each service key is the activated Registry slug; Registry visibility alone grants neither activation nor `service.consume`.
 ```yaml
 apiVersion: fused/v1
 kind: sdk
@@ -108,7 +101,7 @@ declared here. Credential material itself never lives in this file -- it's
 resolved from `bucket` at generation/dispatch time (see `fused-bucket`).
 For OAuth/OIDC, use target `auth.type`/`auth.name`, optional `auth.ref`, and sibling `connect.scopes`.
 The source need not be selected by the SDK, but must be enabled with that named pair in its bucket; one Engine resolver owns readiness, consent, callback, execution, and refresh.
-Ordinary `sdk plan` is read-only. `sdk plan --interactive` may respond only to typed `bucket_credentials_missing`: show the exact YAML-resolved bucket, securely prompt for the reported static secret or OAuth/OIDC application credential fields, confirm the write, and retry once. Never collect an end-user provider token, create/substitute a bucket, or prompt with `--json`, `--no-input`, or `CI=true`; denied credential writes stop without fallback or self-grant (see `fused-bucket`).
+In a terminal, `sdk plan` may respond only to typed `bucket_credentials_missing`: show the exact YAML-resolved bucket, securely prompt for the reported static secret or OAuth/OIDC application credential fields, confirm the write, and retry once. Never collect an end-user provider token, create/substitute a bucket, or prompt with `--json`, `--no-input`, or `CI=true`; those modes remain read-only, and denied credential writes stop without fallback or self-grant (see `fused-bucket`).
 
 The selected operation's imported `security_requirements` is authoritative:
 alternatives are OR, schemes within one alternative are AND, and an empty
@@ -188,8 +181,8 @@ This list may be behind the CLI's actual flags/subcommands -- run
 `fused-cli` skill documents init's batched server-variable enrichment.
 
 ```shell
-fused-cli sdk init <name> [--extend] [--service '<service>=<version>'] [--operation '<service>=<operationId>']
-fused-cli sdk plan [--interactive]
+fused-cli sdk init <name> [--extend] [--service '<service>[=<version>]'] [--operation '<service>=<operationId>'] [--no-input]
+fused-cli sdk plan [--no-input]
 fused-cli sdk apply
 fused-cli sdk validate
 fused-cli sdk download <sdk-name@version-or-version-id>

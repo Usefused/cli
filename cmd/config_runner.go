@@ -139,6 +139,7 @@ type preparedConfigApply struct {
 	workspacePayload *workspaceApplyPayload
 }
 
+// runConfigPlan loads and validates local desired state before using the shared planner and optional SDK credential remediation.
 func runConfigPlan(opts planOptions) error {
 	run, err := configfile.LoadRun(effectiveConfigFile())
 	if err != nil {
@@ -170,17 +171,21 @@ func runConfigPlan(opts planOptions) error {
 	return printPlanResult(planned, opts.jsonOut)
 }
 
-// planConfigWithRemediation retries only the explicit interactive SDK
-// credential workflow. Every other planner error retains the ordinary
-// read-only, single-request behavior expected by CI and automation.
+// planConfigWithRemediation retries only the terminal SDK credential workflow.
+// Every other planner error retains the read-only, single-request behavior
+// expected by JSON output, CI, and --no-input automation.
 func planConfigWithRemediation(client *api.Client, cfg *configfile.ParsedConfig, engineURL string, opts planOptions) (plannedConfig, error) {
 	result, err := planOneConfig(client, cfg, engineURL, opts.ownerTeamSlug)
+	// Successful plans, non-interactive callers, and other config kinds never
+	// cross the credential-mutation boundary.
 	if err == nil || !opts.interactive || cfg.Kind != configfile.KindSDK {
 		return result, err
 	}
+	// Only the Engine's typed missing-credential contract authorizes remediation.
 	if !isBucketCredentialsMissing(err) {
 		return plannedConfig{}, err
 	}
+	// A declined or failed secure write ends the plan without fallback behavior.
 	if err := remediateSDKPlanCredentials(client, cfg, err, opts); err != nil {
 		return plannedConfig{}, err
 	}

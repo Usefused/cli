@@ -135,7 +135,7 @@ fused-cli mcp init support-agent
 
 # Complete selections during creation
 fused-cli sdk init google-workspace \
-  --service '@google/drive=v3' \
+  --service '@google/drive' \
   --operation '@google/drive=listFiles'
 
 # Add to the same file without replacing existing selections
@@ -144,11 +144,14 @@ fused-cli sdk init google-workspace --extend \
   --operation 'gmail=listMessages'
 ```
 
-`--service <key>=<version>`, `--operation <service>=<operationId>`, and
-`--select-all <service>` are repeatable. Workspace services may omit the
-version. New SDK/MCP configs default to version `1.0.0`; SDKs default to
-TypeScript. `--bucket` only references an existing bucket and is omitted by
-default—it never creates a bucket.
+`--service <key>[=<version>]`, `--operation <service>=<operationId>`, and
+`--select-all <service>` are repeatable for SDK init. An omitted SDK service
+version resolves to the latest enabled workspace version, or the latest public
+Registry version when activation is needed. Workspace services may also omit
+the version; MCP services still require `<key>=<version>`. New SDK/MCP configs
+default to app version `1.0.0`; SDKs default to TypeScript. `--bucket` only
+references an existing bucket and is omitted by default—it never creates a
+bucket.
 
 Creation refuses to replace an existing path. Extension is additive and
 idempotent: it preserves existing selections, reports `unchanged` when the
@@ -156,14 +159,23 @@ requested entries already exist, and rejects conflicting names, versions,
 languages, buckets, or service versions before writing. One file contains one
 typed YAML document.
 
-When SDK/MCP init or `--extend` includes services, the CLI queries Engine once
-and adds missing required bucket-backed `server_variable` injections. Existing
-injections remain authoritative, and workspace policy or native
-`x-fused-connect` routing is not duplicated. With `--json`, output reports
-`generated_binding_count`; read the generated service/variable/key from the
-written config, never from a returned value. See the `fused-config`
-OpenAPI/Postman reference for the canonical Sendbird binding and bucket-value
-setup.
+When SDK init or `--extend` includes services, it composes the existing
+workspace resolution/config-edit/plan/apply and SDK scaffold/plan/apply
+functions. If an exact version is not enabled, a terminal presents one combined
+confirmation; governance remains split into a workspace plan receipt and an SDK
+plan receipt. SDK planning securely remediates only typed missing credentials
+in the exact selected bucket and retries once. `--no-input` and `CI=true` skip
+prompts and fail on ambiguity or missing credentials. Service-bearing SDK init
+rejects `--json` before remote or local mutation because the composed lifecycle
+currently has human apply output.
+
+SDK and MCP scaffolding add only missing required bucket-backed
+`server_variable` injections. Existing injections remain authoritative, and
+workspace policy or native `x-fused-connect` routing is not duplicated. Empty
+SDK scaffolds and MCP init retain JSON output with `generated_binding_count`;
+read the generated service/variable/key from the written config, never from a
+returned value. See the `fused-config` OpenAPI/Postman reference for the
+canonical Sendbird binding and bucket-value setup.
 
 ## `skill`
 
@@ -257,10 +269,11 @@ List Registry webhook definitions for a service.
 Pass `--json` to return webhook definitions directly.
 
 ## `secret set <service-slug>`
-Set authentication credentials for a workspace service. Choose exactly one
-input mode: `--interactive` for protected prompts or `--value-stdin` for
-automation. Credential values are rejected in argv so they cannot leak through
-shell history or process listings.
+Set authentication credentials for a workspace service. In a terminal, the
+command prompts for a supported authentication method and securely collects its
+value by default. Use `--value-stdin` for automation; it is required with
+`--no-input` or `CI=true`. Credential values are rejected in argv so they cannot
+leak through shell history or process listings.
 If the service supports multiple authentication families, use `--type` to
 specify the family. If that family has multiple named schemes, also pass the
 exact `--auth-name`; the CLI never silently chooses the first same-family
@@ -275,7 +288,7 @@ scheme. Interactive mode selects the exact scheme directly.
 > printf '%s' 'cert=...;key=...' | fused-cli secret set jira --type mtls --value-stdin
 > printf '%s' 'client_id=...;client_secret=...' | fused-cli secret set gmail --bucket default --type oauth --auth-name oauth2 --value-stdin
 > ```
-> Or pass `--interactive` to supply both fields via prompts.
+> Without `--value-stdin`, a terminal supplies both fields through protected prompts.
 
 OAuth/OIDC application credentials are encrypted bucket secrets, separate from
 each connected user's access, refresh, and ID tokens. The Engine derives the
@@ -288,7 +301,7 @@ credential input.
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
-| `--interactive` | `-i` | Force interactive mode to select the authentication method | `false` |
+| `--interactive` | `-i` | Explicitly require authentication prompts (the terminal default) | `false` |
 | `--value-stdin` | | Read the credential value from stdin | `false` |
 | `--type` | | Authentication family (for example `bearer`, `api_key`, or `oauth`) | `""` |
 | `--auth-name` | | Exact Registry auth scheme name; required when the selected family has multiple schemes | `""` |
@@ -472,17 +485,20 @@ Revoke a personal credential.
 ## `sdk plan` / `mcp plan`
 Preview SDK package or MCP server changes. Each command reads only its matching
 config kind, so an MCP plan never generates SDK code and an SDK plan never
-deploys an MCP server.
+deploys an MCP server. Plan runs the same local/offline validation as
+`validate` before its first Engine request.
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
 | `--json` | | Print plan result JSON, including summary and notifications; the default receipt is still written | `false` |
-| `--interactive` | `-i` | For SDK plans only, securely configure credentials reported missing from the YAML-resolved bucket, confirm storage, then retry once; incompatible with `--json`, CI, and `--no-input` | `false` |
+| `--interactive` | `-i` | Explicitly require SDK credential prompting when needed (the terminal default); incompatible with `--json`, CI, and `--no-input` | `false` |
 | `--receipt-out` | | Write the plan receipt to a specific path | `""` |
 | `--owner-team` | | Optional owning team slug; defaults to the authenticated person | `""` |
 
-Interactive SDK planning never creates or substitutes a bucket. Static auth is
-stored through the ordinary secret path; OAuth/OIDC prompts for the bucket's
+Terminal SDK planning responds only to typed `bucket_credentials_missing`,
+confirms one secure write to the exact YAML-resolved bucket, and retries once.
+It never creates or substitutes a bucket. Static auth is stored through the
+ordinary secret path; OAuth/OIDC prompts for the bucket's
 client registration rather than an end-user provider token. MCP planning has
 no interactive credential-remediation flag.
 
@@ -502,7 +518,9 @@ Full-mirror a local SDK config from the exact Engine app version declared in tha
 Usage: `fused-cli sdk sync <sdk-name> -f .fused/sdks/<sdk-name>.yaml`
 
 ## `sdk validate` / `mcp validate`
-Validate only the matching SDK or MCP configuration files. Inherits global flags.
+Validate only the matching SDK or MCP configuration files without an Engine
+request. This remains useful for offline checks; `plan` already performs this
+validation first. Inherits global flags.
 
 ## `sdk list` / `mcp list`
 List generated SDKs or deployed MCP servers. The kind is fixed by the command.
@@ -746,11 +764,11 @@ activate only these additions through Engine's scoped service boundary.
 Find and add a service to workspace configuration. The command first checks the
 access-filtered workspace service list. If there is no exact name or slug match,
 it uses the Registry's set-based reference resolver with the same lexical
-ranking and provider-identity rules as `service search`. A unique or exact
-Registry match is added automatically. Pass `--interactive` to select among
-multiple matches and confirm the chosen Registry service before the file is
-written. In CI or with `--no-input`, omit `--interactive` and supply an exact
-slug, service ID, or a query with one unique result.
+ranking and provider-identity rules as `service search`. In a terminal, an
+ambiguous match opens service selection and every Registry fallback is confirmed
+before the file is written. In CI or with `--no-input`, a unique or exact match
+is added deterministically; ambiguous callers must supply an exact slug or
+service ID.
 
 Provider-qualified additions must use the complete `@provider/service-slug`
 form. A leading `@` with a missing, blank, whitespace-containing, or nested
@@ -780,7 +798,7 @@ commands when the services need different explicit versions.
 |----------|-------|-------------|---------|
 | `--version` | | Version to enable; omitted resolves latest during plan or scoped activation | `""` |
 | `--service-id` | | Registry service UUID to store in workspace config | `""` |
-| `--interactive` | `-i` | Select and confirm a Registry service when it is not already enabled | `false` |
+| `--interactive` | `-i` | Explicitly require service selection and Registry confirmation (the terminal default) | `false` |
 | `--apply` | | Activate only the services added by this command | `false` |
 
 ## `workspace service delete <service-slug>`

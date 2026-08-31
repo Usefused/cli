@@ -134,6 +134,34 @@ func TestSelectSecretAuthByTypeUsesExactNameWithinFamily(t *testing.T) {
 	}
 }
 
+// TestSelectSecretAuthPromptsByDefault verifies terminal use asks the operator
+// to review the supported method even when only one method is declared.
+func TestSelectSecretAuthPromptsByDefault(t *testing.T) {
+	previousInteractive, previousStdin, previousNoInput := secretSetInteractive, secretSetValueStdin, NoInput
+	previousType, previousSelect := secretSetType, selectSecretAuthInteractively
+	t.Cleanup(func() {
+		secretSetInteractive, secretSetValueStdin, NoInput = previousInteractive, previousStdin, previousNoInput
+		secretSetType, selectSecretAuthInteractively = previousType, previousSelect
+	})
+	t.Setenv("CI", "")
+	secretSetInteractive, secretSetValueStdin, NoInput = false, false, false
+	secretSetType = ""
+	prompted := false
+	// The fake proves selection reached the protected prompt rather than silently auto-selecting.
+	selectSecretAuthInteractively = func(info *api.ServiceInfo) (*api.AuthConfig, error) {
+		prompted = true
+		return &info.AuthConfigs[0], nil
+	}
+	info := &api.ServiceInfo{AuthConfigs: []api.AuthConfig{{Name: "gmailOAuth", Type: "oauth2"}}}
+	auth, err := selectSecretAuth(info, "gmail")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !prompted || auth.Name != "gmailOAuth" {
+		t.Fatalf("prompted=%t auth=%#v", prompted, auth)
+	}
+}
+
 func TestValidateSecretSetArgsRequiresTypeWithAuthName(t *testing.T) {
 	previousInteractive, previousStdin := secretSetInteractive, secretSetValueStdin
 	previousType, previousName := secretSetType, secretSetAuthName

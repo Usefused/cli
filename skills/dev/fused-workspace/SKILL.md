@@ -126,7 +126,7 @@ fused-cli workspace services list [--q "<provider or product>"]
 fused-cli workspace service versions <slug>
 fused-cli workspace service operations <slug>
 fused-cli workspace service webhooks <slug>   # read-only: lists this service's kind: webhook registrations, see fused-webhook
-fused-cli workspace service add <query-or-slug> [query-or-slug...] [--version <v>] [--interactive] [--apply]
+fused-cli workspace service add <query-or-slug> [query-or-slug...] [--version <v>] [--no-input] [--apply]
 fused-cli workspace service delete <slug> [--force]
 fused-cli workspace service deprecate <slug> --at <date> --reason "..."
 fused-cli workspace service version add <slug> <v|latest>
@@ -155,12 +155,11 @@ Use `workspace service add <query-or-slug> [query-or-slug...]` as the single dis
 action. It checks the access-filtered workspace first by exact name or slug
 (`service.read`) and reuses that result. Only when absent does it call the
 Registry's set-based reference resolver (`catalogue.read`), which shares the
-lexical ranking and provider-identity policy of `service search --q`. A unique
-or exact Registry result is added to the local YAML automatically;
-`--interactive` selects among ambiguous results and asks for confirmation
-before writing. In CI or `--no-input`, do not pass `--interactive`; ambiguous
-results must fail until the caller supplies an exact provider-qualified slug,
-service ID, or query with one unique result. A permission error is not a miss:
+lexical ranking and provider-identity policy of `service search --q`. In a
+terminal, ambiguous results open selection and every Registry fallback is
+confirmed before the selected Registry result is added. In CI or `--no-input`,
+unique or exact results are added deterministically; ambiguous results fail
+until the caller supplies an exact provider-qualified slug or service ID. A permission error is not a miss:
 stop instead of falling through, changing credentials, or guessing another
 service. Do not require a separate `service search` command first.
 

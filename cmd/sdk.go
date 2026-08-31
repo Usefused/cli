@@ -53,25 +53,37 @@ var sdkPlanCmd = &cobra.Command{
 	Short: "Plan SDK configuration",
 	Args:  cobra.NoArgs,
 	RunE: WithTelemetry("cli.sdk.plan", func(cmd *cobra.Command, _ []string) error {
+		// Validate an explicit compatibility request before deriving the default terminal behavior.
 		if err := validateSDKPlanInteraction(); err != nil {
 			return err
 		}
 		return runConfigPlan(planOptions{
 			filter: filterSDK, jsonOut: sdkPlanJSON, receiptOut: sdkPlanReceiptOut,
-			ownerTeamSlug: sdkPlanOwnerTeam, interactive: sdkPlanInteractive,
+			ownerTeamSlug: sdkPlanOwnerTeam, interactive: sdkPlanUsesInteractiveCredentialRemediation(),
 			output: cmd.OutOrStdout(), auditCtx: cmd.Context(), auditAction: cmd.CommandPath(),
 		})
 	}),
 }
 
+// validateSDKPlanInteraction rejects contradictory explicit flags while
+// leaving ordinary terminal plans free to prompt only when credentials are missing.
 func validateSDKPlanInteraction() error {
+	// The compatibility flag has no extra effect unless it conflicts with a
+	// structured or explicitly non-interactive invocation.
 	if !sdkPlanInteractive {
 		return nil
 	}
+	// JSON output must stay machine-readable and cannot contain terminal prompts.
 	if sdkPlanJSON {
 		return errors.New("--interactive cannot be combined with --json")
 	}
 	return requireInteractive("omit --interactive or unset --no-input/CI")
+}
+
+// sdkPlanUsesInteractiveCredentialRemediation enables one secure remediation
+// attempt for terminals while keeping JSON, CI, and --no-input plans read-only.
+func sdkPlanUsesInteractiveCredentialRemediation() bool {
+	return !sdkPlanJSON && !nonInteractive()
 }
 
 var sdkApplyCmd = &cobra.Command{
@@ -877,7 +889,7 @@ func init() {
 	sdkPlanCmd.Flags().BoolVar(&sdkPlanJSON, "json", false, "Print plan result JSON")
 	sdkPlanCmd.Flags().StringVar(&sdkPlanReceiptOut, "receipt-out", "", "Write the plan receipt to this path")
 	sdkPlanCmd.Flags().StringVar(&sdkPlanOwnerTeam, "owner-team", "", "Optional owning team slug; defaults to the authenticated person")
-	sdkPlanCmd.Flags().BoolVarP(&sdkPlanInteractive, "interactive", "i", false, "Securely configure missing credentials in the SDK's selected bucket and retry once")
+	sdkPlanCmd.Flags().BoolVarP(&sdkPlanInteractive, "interactive", "i", false, "Explicitly require credential prompting when needed (the terminal default)")
 	sdkApplyCmd.Flags().BoolVar(&sdkApplyDownload, "download", false, "Download generated SDKs after apply")
 	sdkApplyCmd.Flags().BoolVar(&sdkApplyJSON, "json", false, "Print structured apply, generation, and download outcomes as JSON")
 	sdkApplyCmd.Flags().StringVar(&sdkApplyPlanID, "plan-id", "", "Apply a specific remote plan ID")

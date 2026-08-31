@@ -32,13 +32,33 @@ var secretListBucketID string
 var secretRemoveBucketID string
 var secretListFlags listFlags
 
+// selectSecretAuthInteractively is replaceable in tests so secure method
+// selection can be verified without attaching a real terminal.
+var selectSecretAuthInteractively = promptSecretAuthSelect
+
+// validateSecretSetArgs preserves secure terminal prompting by default while
+// requiring explicit stdin input whenever prompting has been disabled.
 func validateSecretSetArgs(cmd *cobra.Command, args []string) error {
+	// Positional validation runs first so credential values can never be accepted in argv.
 	if err := cobra.ExactArgs(1)(cmd, args); err != nil {
 		return err
 	}
-	if secretSetInteractive == secretSetValueStdin {
-		return fmt.Errorf("choose exactly one credential input: --interactive or --value-stdin")
+	// The two explicit input modes are mutually exclusive even though terminal
+	// prompting no longer needs a flag.
+	if secretSetInteractive && secretSetValueStdin {
+		return fmt.Errorf("choose only one credential input: --interactive or --value-stdin")
 	}
+	// An explicit interaction request must fail rather than silently consuming stdin in automation.
+	if secretSetInteractive {
+		if err := requireInteractive("omit --interactive and use --value-stdin, or unset --no-input/CI"); err != nil {
+			return err
+		}
+	}
+	// Non-interactive execution needs the dedicated secret-safe stdin channel.
+	if !secretSetValueStdin && nonInteractive() {
+		return errors.New("credential input is required in non-interactive mode; use --value-stdin")
+	}
+	// Exact provider scheme selection cannot be interpreted without its public auth family.
 	if strings.TrimSpace(secretSetAuthName) != "" && strings.TrimSpace(secretSetType) == "" {
 		return fmt.Errorf("--auth-name requires --type")
 	}
@@ -58,13 +78,23 @@ var secretSetCmd = &cobra.Command{
 	}),
 }
 
+// readSecretValue defers collection to the provider-aware secure prompts for
+// terminal use and otherwise reads the dedicated stdin channel exactly once.
 func readSecretValue(cmd *cobra.Command) (string, error) {
-	if secretSetInteractive {
+	// Interactive collectors need an empty seed so they can request the fields
+	// appropriate to the selected authentication method.
+	if secretSetUsesInteractiveInput() {
 		return "", nil
 	}
 	// Secrets never belong in argv because shell history and process listings
 	// can retain them long after the command finishes.
 	return readSensitiveValue(cmd, "credential")
+}
+
+// secretSetUsesInteractiveInput makes prompting the normal terminal path while
+// allowing --value-stdin, --no-input, and CI to remain deterministic.
+func secretSetUsesInteractiveInput() bool {
+	return !secretSetValueStdin && !nonInteractive()
 }
 
 var secretListCmd = &cobra.Command{
@@ -165,8 +195,10 @@ func selectSecretAuth(info *api.ServiceInfo, serviceSlug string) (*api.AuthConfi
 	if secretSetType != "" {
 		return selectSecretAuthByType(info, serviceSlug)
 	}
-	// If only one method is available and we're not in interactive mode, auto-select it for better UX rather than forcing the user to specify it.
-	if !secretSetInteractive {
+	// Non-interactive stdin may safely auto-select a sole method, but ambiguous
+	// services still require an exact public family from the caller.
+	if !secretSetUsesInteractiveInput() {
+		// A sole declared method is deterministic and needs no synthetic choice.
 		if len(info.AuthConfigs) == 1 {
 			return &info.AuthConfigs[0], nil
 		}
@@ -174,12 +206,13 @@ func selectSecretAuth(info *api.ServiceInfo, serviceSlug string) (*api.AuthConfi
 		for _, a := range info.AuthConfigs {
 			validTypes = append(validTypes, a.Name)
 		}
-		return nil, fmt.Errorf("service %s has multiple authentication methods. Please use interactive mode (-i) or specify --type. Valid methods are: %s. Run 'fused-cli service %s show' for details", serviceSlug, strings.Join(validTypes, ", "), serviceSlug)
+		return nil, fmt.Errorf("service %s has multiple authentication methods; specify --type. Valid methods are: %s. Run 'fused-cli service %s show' for details", serviceSlug, strings.Join(validTypes, ", "), serviceSlug)
 	}
+	// Prompting remains gated at the point of use in case this function is called outside Cobra validation.
 	if err := requireInteractive("pass --type and provide the credential value explicitly"); err != nil {
 		return nil, err
 	}
-	return promptSecretAuthSelect(info)
+	return selectSecretAuthInteractively(info)
 }
 
 // selectSecretAuthByType uses --type for the public auth family and
@@ -651,7 +684,7 @@ func init() {
 	secretSetCmd.Flags().StringVar(&secretSetExpiresAt, "expires-at", "", "RFC3339 expiry timestamp; omit for no expiry")
 	secretSetCmd.Flags().StringVar(&secretSetType, "type", "", "Authentication family, such as bearer, api_key, oauth, or mtls")
 	secretSetCmd.Flags().StringVar(&secretSetAuthName, "auth-name", "", "Exact provider auth scheme name; required when --type matches multiple schemes")
-	secretSetCmd.Flags().BoolVarP(&secretSetInteractive, "interactive", "i", false, "Prompt for the supported authentication method and value")
+	secretSetCmd.Flags().BoolVarP(&secretSetInteractive, "interactive", "i", false, "Explicitly require authentication prompts (the terminal default)")
 	secretSetCmd.Flags().BoolVar(&secretSetValueStdin, "value-stdin", false, "Read the credential value from stdin")
 	secretListCmd.Flags().StringVar(&secretListBucketID, "bucket", "", "Bucket name or UUID (required)")
 	addListFlags(secretListCmd, &secretListFlags)

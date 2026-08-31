@@ -332,9 +332,10 @@ func TestSDKSkillsDocumentInteractivePlanCredentialBoundary(t *testing.T) {
 	}
 	// Installed guidance must preserve the same secret and bucket boundary as the interactive command.
 	for _, token := range []string{
-		"sdk plan --interactive",
+		"terminal, `sdk plan`",
 		"exact YAML-resolved bucket",
 		"retry once",
+		"--no-input",
 		"never creates a bucket",
 		"OAuth/OIDC application credential fields",
 		"Never collect an end-user provider token",

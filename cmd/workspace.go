@@ -295,14 +295,15 @@ func runWorkspaceServiceDeprecateWithRequiredDate(cmd *cobra.Command, serviceSlu
 // runWorkspaceServiceAdd composes batched resolution, one atomic config edit,
 // and optional scoped activations without invoking full workspace mirroring.
 func runWorkspaceServiceAdd(cmd *cobra.Command, serviceQueries []string) error {
-	// Interactive selection is intentionally unavailable to agents and CI so an
-	// ambiguous provider identity can never be guessed during automation.
+	// An explicit compatibility flag still fails closed when automation has
+	// disabled prompts, instead of silently changing the requested interaction.
 	if workspaceServiceAddInteractive {
-		if err := requireInteractive("omit --interactive to add a unique or exact service match automatically"); err != nil {
+		if err := requireInteractive("omit --interactive or unset --no-input/CI"); err != nil {
 			return err
 		}
 	}
-	targets, err := resolveWorkspaceServiceAddTargets(serviceQueries, workspaceServiceAddID, workspaceServiceAddInteractive)
+	interactive := workspaceServiceAddUsesInteractiveResolution()
+	targets, err := resolveWorkspaceServiceAddTargets(serviceQueries, workspaceServiceAddID, interactive)
 	if err != nil {
 		return err
 	}
@@ -324,6 +325,12 @@ func runWorkspaceServiceAdd(cmd *cobra.Command, serviceQueries []string) error {
 	// mutation path, even though the scoped endpoint cannot remove services.
 	warnIfProductionEnvironment(cmd)
 	return applyWorkspaceServiceAddTargets(cmd, targets, version)
+}
+
+// workspaceServiceAddUsesInteractiveResolution makes safe catalogue selection
+// the terminal default while preserving deterministic automation with --no-input.
+func workspaceServiceAddUsesInteractiveResolution() bool {
+	return !nonInteractive()
 }
 
 // workspaceServiceConfigAdditions projects resolution details into the narrow
@@ -1035,7 +1042,7 @@ func init() {
 
 	workspaceServiceAddCmd.Flags().StringVar(&workspaceServiceAddVersion, "version", "", "Version to enable; omitted resolves latest during plan or scoped activation")
 	workspaceServiceAddCmd.Flags().StringVar(&workspaceServiceAddID, "service-id", "", "Registry service UUID to store in workspace config")
-	workspaceServiceAddCmd.Flags().BoolVarP(&workspaceServiceAddInteractive, "interactive", "i", false, "Select and confirm a Registry service when it is not already enabled")
+	workspaceServiceAddCmd.Flags().BoolVarP(&workspaceServiceAddInteractive, "interactive", "i", false, "Explicitly require interactive service selection (the terminal default)")
 	workspaceServiceAddCmd.Flags().BoolVar(&workspaceServiceAddApply, "apply", false, "Activate only the added services after updating the config")
 
 	workspaceServiceConnectCmd.Flags().StringVar(&workspaceServiceConnectBucket, "bucket", "", "Workspace bucket name or UUID (required)")

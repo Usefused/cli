@@ -44,10 +44,10 @@ bucket revoke <bucket-name>` to remove only that global use binding.
 A bucket is selected by `bucket:` in each `kind: sdk` or `kind: mcp` file; it
 is not configured inside `workspace.yaml`. A service's OAuth/OIDC application
 credential pair is likewise never a workspace field. Use `fused-cli secret set
-<slug> --bucket <bucket> --type oauth|oidc` directly, or let an
-explicitly interactive SDK plan invoke that same atomic secure write after
-Engine reports the exact YAML-selected bucket is missing it. Ordinary
-plan/apply remains declarative and does not mutate credentials.
+<slug> --bucket <bucket> --type oauth|oidc` directly, or let a terminal SDK
+plan invoke that same atomic secure write after Engine reports the exact
+YAML-selected bucket is missing it. `--json`, `--no-input`, and CI planning
+remain read-only.
 
 Every command list below may be behind the CLI's actual flags/subcommands --
 run `fused-cli <command> --help` (e.g. `fused-cli bucket --help`, `fused-cli
@@ -173,7 +173,7 @@ printf '%s' 'username=x;password=y' | fused-cli secret set <service-slug> --valu
 # Basic schemes whose service metadata declares basic_password_mode=empty:
 printf '%s' 'username=api-key;password=' | fused-cli secret set <service-slug> --value-stdin [--bucket <bucket-name-or-id>] --type basic
 printf '%s' 'cert=...;key=...' | fused-cli secret set <service-slug> --value-stdin [--bucket <bucket-name-or-id>] --type mtls
-fused-cli secret set <service-slug> --interactive [--bucket <bucket-name-or-id>]
+fused-cli secret set <service-slug> [--bucket <bucket-name-or-id>]
 fused-cli secret delete <service-slug> <key-name> [--bucket <bucket-name-or-id>]
 fused-cli value set <bucket-name-or-id> <service-slug> <location> <key-name> <value>
 fused-cli value list <bucket-name-or-id>
@@ -212,8 +212,7 @@ blocks requests when a secret passes its expiry.
 `value` stores arbitrary bucket-scoped values, including literal binding
 values a connection profile references (see `fused-config`).
 
-An explicit `fused-cli sdk plan --interactive` may offer the same secret setup
-when Engine returns typed
+A terminal `fused-cli sdk plan` may offer the same secret setup when Engine returns typed
 `bucket_credentials_missing` details. The workflow must display and use the
 SDK YAML's resolved bucket, reuse the ordinary secure collector for each
 reported auth requirement, ask for confirmation before storage, and retry
@@ -232,7 +231,7 @@ Engine-owned storage keys; they are not connected-user tokens.
 
 ```shell
 printf '%s' 'client_id=...;client_secret=...' | fused-cli secret set <service-slug> --bucket <bucket-name-or-id> --type oauth --auth-name <scheme> --value-stdin
-fused-cli secret set <service-slug> --bucket <bucket-name-or-id> --type oidc --auth-name <scheme> --interactive
+fused-cli secret set <service-slug> --bucket <bucket-name-or-id> --type oidc --auth-name <scheme>
 ```
 
 The pair is an immediate, atomic admin mutation. The input must contain exactly

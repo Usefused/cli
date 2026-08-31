@@ -223,6 +223,8 @@ func TestSDKPlanInteractiveCancellationDoesNotMutateOrRetry(t *testing.T) {
 	}
 }
 
+// TestValidateSDKPlanInteractionRejectsJSONAndCI preserves explicit-flag errors
+// for structured and non-interactive invocations.
 func TestValidateSDKPlanInteractionRejectsJSONAndCI(t *testing.T) {
 	oldInteractive, oldJSON, oldNoInput := sdkPlanInteractive, sdkPlanJSON, NoInput
 	t.Cleanup(func() { sdkPlanInteractive, sdkPlanJSON, NoInput = oldInteractive, oldJSON, oldNoInput })
@@ -233,6 +235,28 @@ func TestValidateSDKPlanInteractionRejectsJSONAndCI(t *testing.T) {
 	sdkPlanJSON, NoInput = false, true
 	if err := validateSDKPlanInteraction(); err == nil || !strings.Contains(err.Error(), "disabled") {
 		t.Fatalf("non-interactive validation error = %v", err)
+	}
+}
+
+// TestSDKPlanCredentialRemediationDefaultsToInteractive verifies prompting is
+// derived from execution context rather than requiring the compatibility flag.
+func TestSDKPlanCredentialRemediationDefaultsToInteractive(t *testing.T) {
+	oldInteractive, oldJSON, oldNoInput := sdkPlanInteractive, sdkPlanJSON, NoInput
+	t.Cleanup(func() { sdkPlanInteractive, sdkPlanJSON, NoInput = oldInteractive, oldJSON, oldNoInput })
+	t.Setenv("CI", "")
+	sdkPlanInteractive, sdkPlanJSON, NoInput = false, false, false
+	if !sdkPlanUsesInteractiveCredentialRemediation() {
+		t.Fatal("terminal sdk plan should remediate missing credentials by default")
+	}
+	// JSON output is a machine-readable contract and must never contain prompts.
+	sdkPlanJSON = true
+	if sdkPlanUsesInteractiveCredentialRemediation() {
+		t.Fatal("JSON sdk plan must remain non-interactive")
+	}
+	// --no-input is the explicit automation opt-out requested by the caller.
+	sdkPlanJSON, NoInput = false, true
+	if sdkPlanUsesInteractiveCredentialRemediation() {
+		t.Fatal("--no-input sdk plan must remain non-interactive")
 	}
 }
 

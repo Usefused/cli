@@ -29,10 +29,20 @@ func resetWorkspaceServiceAddState(t *testing.T) {
 	})
 }
 
+// useNonInteractiveWorkspaceAdd keeps tests that exercise unrelated resolution
+// or persistence behavior independent from terminal prompts.
+func useNonInteractiveWorkspaceAdd(t *testing.T) {
+	t.Helper()
+	oldNoInput := NoInput
+	NoInput = true
+	t.Cleanup(func() { NoInput = oldNoInput })
+}
+
 // TestWorkspaceAddMultipleServicesAndApplyUsesOnlyScopedActivations verifies the
 // composite batches reads, writes config once, and never full-mirrors removals.
 func TestWorkspaceAddMultipleServicesAndApplyUsesOnlyScopedActivations(t *testing.T) {
 	resetWorkspaceServiceAddState(t)
+	useNonInteractiveWorkspaceAdd(t)
 	dir := t.TempDir()
 	path := writeSprintConfig(t, dir, "workspace.yaml", `apiVersion: fused/v1
 kind: workspace
@@ -177,6 +187,7 @@ func TestWorkspaceAddRejectsResolvedIdentityConflictBeforeWriteOrApply(t *testin
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			resetWorkspaceServiceAddState(t)
+			useNonInteractiveWorkspaceAdd(t)
 			dir := t.TempDir()
 			path := writeSprintConfig(t, dir, "workspace.yaml", `apiVersion: fused/v1
 kind: workspace
@@ -210,6 +221,7 @@ services:
 // failed scoped suffix remains safely recoverable after an earlier commit.
 func TestWorkspaceAddApplyReportsPartialOutcomeAndExactRecovery(t *testing.T) {
 	resetWorkspaceServiceAddState(t)
+	useNonInteractiveWorkspaceAdd(t)
 	dir := t.TempDir()
 	path := writeSprintConfig(t, dir, "workspace.yaml", "apiVersion: fused/v1\nkind: workspace\nservices: {}\n")
 	server, activationCalls := newPartialWorkspaceServiceApplyServer(t)
@@ -447,7 +459,9 @@ func writeWorkspaceServiceRegistryFixture(t *testing.T, w http.ResponseWriter, q
 	http.Error(w, "unexpected Registry query", http.StatusBadRequest)
 }
 
-func TestWorkspaceAddServiceFallsBackToRegistryAndAutoAddsUniqueMatch(t *testing.T) {
+// TestWorkspaceAddServiceDefaultsToRegistryConfirmation verifies an unenabled
+// unique service is still reviewed before its declarative config is changed.
+func TestWorkspaceAddServiceDefaultsToRegistryConfirmation(t *testing.T) {
 	resetWorkspaceServiceAddState(t)
 	dir := t.TempDir()
 	path := writeSprintConfig(t, dir, "workspace.yaml", "apiVersion: fused/v1\nkind: workspace\nservices: {}\n")
@@ -455,8 +469,22 @@ func TestWorkspaceAddServiceFallsBackToRegistryAndAutoAddsUniqueMatch(t *testing
 		{"id":"00000000-0000-4000-8000-000000000002","name":"Acme Billing","slug":"billing","provider":{"handle":"acme"},"is_owner":false,"is_public":true}
 	]`)
 	defer server.Close()
+	confirmed := false
+	oldConfirm := confirmWorkspaceRegistryService
+	confirmWorkspaceRegistryService = func(service serviceSearchResult) (bool, error) {
+		confirmed = true
+		// The confirmation must use the canonical provider-qualified identity.
+		if service.Slug != "@acme/billing" {
+			t.Fatalf("confirmed service = %#v", service)
+		}
+		return true, nil
+	}
+	t.Cleanup(func() { confirmWorkspaceRegistryService = oldConfirm })
 
 	out := runCommandInDirOutput(t, dir, server.URL, []string{"workspace", "service", "add", "billing", "-f", path})
+	if !confirmed {
+		t.Fatal("default workspace add did not request Registry confirmation")
+	}
 	if *registryCalls != 1 {
 		t.Fatalf("Registry search calls = %d, want 1", *registryCalls)
 	}
@@ -470,7 +498,9 @@ func TestWorkspaceAddServiceFallsBackToRegistryAndAutoAddsUniqueMatch(t *testing
 	}
 }
 
-func TestWorkspaceAddServiceInteractiveConfirmsRegistryMatch(t *testing.T) {
+// TestWorkspaceAddServiceCompatibilityFlagConfirmsRegistryMatch verifies the
+// retained --interactive flag follows the same default confirmation path.
+func TestWorkspaceAddServiceCompatibilityFlagConfirmsRegistryMatch(t *testing.T) {
 	resetWorkspaceServiceAddState(t)
 	dir := t.TempDir()
 	path := writeSprintConfig(t, dir, "workspace.yaml", "apiVersion: fused/v1\nkind: workspace\nservices: {}\n")
@@ -492,7 +522,9 @@ func TestWorkspaceAddServiceInteractiveConfirmsRegistryMatch(t *testing.T) {
 	assertWorkspaceConfigContains(t, path, "@google/drive:", false)
 }
 
-func TestWorkspaceAddServiceInteractiveCancellationDoesNotWrite(t *testing.T) {
+// TestWorkspaceAddServiceDefaultCancellationDoesNotWrite verifies a declined
+// default confirmation preserves the workspace file byte-for-byte.
+func TestWorkspaceAddServiceDefaultCancellationDoesNotWrite(t *testing.T) {
 	resetWorkspaceServiceAddState(t)
 	dir := t.TempDir()
 	path := writeSprintConfig(t, dir, "workspace.yaml", "apiVersion: fused/v1\nkind: workspace\nservices: {}\n")
@@ -508,7 +540,7 @@ func TestWorkspaceAddServiceInteractiveCancellationDoesNotWrite(t *testing.T) {
 	oldConfirm := confirmWorkspaceRegistryService
 	confirmWorkspaceRegistryService = func(service serviceSearchResult) (bool, error) { return false, nil }
 	t.Cleanup(func() { confirmWorkspaceRegistryService = oldConfirm })
-	errText := runCommandInDirExpectError(t, dir, server.URL, []string{"workspace", "service", "add", "drive", "--interactive", "-f", path})
+	errText := runCommandInDirExpectError(t, dir, server.URL, []string{"workspace", "service", "add", "drive", "-f", path})
 	if !strings.Contains(errText, "service addition cancelled") {
 		t.Fatalf("expected cancellation error, got %q", errText)
 	}
@@ -521,8 +553,11 @@ func TestWorkspaceAddServiceInteractiveCancellationDoesNotWrite(t *testing.T) {
 	}
 }
 
+// TestWorkspaceAddServiceNonInteractiveRejectsAmbiguousRegistryQuery ensures
+// --no-input never guesses between provider-scoped Registry identities.
 func TestWorkspaceAddServiceNonInteractiveRejectsAmbiguousRegistryQuery(t *testing.T) {
 	resetWorkspaceServiceAddState(t)
+	useNonInteractiveWorkspaceAdd(t)
 	dir := t.TempDir()
 	path := writeSprintConfig(t, dir, "workspace.yaml", "apiVersion: fused/v1\nkind: workspace\nservices: {}\n")
 	server, _ := newWorkspaceServiceDiscoveryServer(t, `[]`, `[
@@ -532,13 +567,16 @@ func TestWorkspaceAddServiceNonInteractiveRejectsAmbiguousRegistryQuery(t *testi
 	defer server.Close()
 
 	errText := runCommandInDirExpectError(t, dir, server.URL, []string{"workspace", "service", "add", "bill", "-f", path})
-	if !strings.Contains(errText, "matched 2 Registry services") || !strings.Contains(errText, "--interactive") {
+	if !strings.Contains(errText, "matched 2 Registry services") || !strings.Contains(errText, "--no-input") {
 		t.Fatalf("expected actionable ambiguity error, got %q", errText)
 	}
 }
 
+// TestWorkspaceAddServiceStopsOnAmbiguousWorkspaceMatch keeps automation from
+// falling through to Registry after an enabled-service identity collision.
 func TestWorkspaceAddServiceStopsOnAmbiguousWorkspaceMatch(t *testing.T) {
 	resetWorkspaceServiceAddState(t)
+	useNonInteractiveWorkspaceAdd(t)
 	dir := t.TempDir()
 	path := writeSprintConfig(t, dir, "workspace.yaml", "apiVersion: fused/v1\nkind: workspace\nservices: {}\n")
 	server, registryCalls := newWorkspaceServiceDiscoveryServer(t, `[
@@ -557,8 +595,11 @@ func TestWorkspaceAddServiceStopsOnAmbiguousWorkspaceMatch(t *testing.T) {
 	assertWorkspaceConfigContainsNoServices(t, path)
 }
 
+// TestWorkspaceAddServiceQualifiedQueryIgnoresDifferentWorkspaceProvider
+// isolates provider-aware lookup behavior from the default prompt path.
 func TestWorkspaceAddServiceQualifiedQueryIgnoresDifferentWorkspaceProvider(t *testing.T) {
 	resetWorkspaceServiceAddState(t)
+	useNonInteractiveWorkspaceAdd(t)
 	dir := t.TempDir()
 	path := writeSprintConfig(t, dir, "workspace.yaml", "apiVersion: fused/v1\nkind: workspace\nservices: {}\n")
 	server, registryCalls := newWorkspaceServiceDiscoveryServer(t, `[
@@ -575,7 +616,9 @@ func TestWorkspaceAddServiceQualifiedQueryIgnoresDifferentWorkspaceProvider(t *t
 	assertWorkspaceConfigContains(t, path, "@other/billing:", false)
 }
 
-func TestWorkspaceAddServiceInteractiveSelectsAmbiguousWorkspaceMatch(t *testing.T) {
+// TestWorkspaceAddServiceDefaultsToSelectingAmbiguousWorkspaceMatch verifies
+// provider choice is available without the compatibility flag.
+func TestWorkspaceAddServiceDefaultsToSelectingAmbiguousWorkspaceMatch(t *testing.T) {
 	resetWorkspaceServiceAddState(t)
 	dir := t.TempDir()
 	path := writeSprintConfig(t, dir, "workspace.yaml", "apiVersion: fused/v1\nkind: workspace\nservices: {}\n")
@@ -590,7 +633,7 @@ func TestWorkspaceAddServiceInteractiveSelectsAmbiguousWorkspaceMatch(t *testing
 		return services[1], nil
 	}
 	t.Cleanup(func() { selectExistingWorkspaceService = oldSelect })
-	out := runCommandInDirOutput(t, dir, server.URL, []string{"workspace", "service", "add", "billing", "--interactive", "-f", path})
+	out := runCommandInDirOutput(t, dir, server.URL, []string{"workspace", "service", "add", "billing", "-f", path})
 	if *registryCalls != 0 {
 		t.Fatalf("selected workspace match must not search Registry, got %d calls", *registryCalls)
 	}
@@ -698,11 +741,11 @@ func TestWorkspaceAddServiceStopsOnWorkspacePermissionFailure(t *testing.T) {
 	assertWorkspaceConfigContainsNoServices(t, path)
 }
 
+// TestWorkspaceAddServiceNoInputAutoAddsUniqueRegistryMatch verifies exact
+// deterministic automation still authors config without a terminal.
 func TestWorkspaceAddServiceNoInputAutoAddsUniqueRegistryMatch(t *testing.T) {
 	resetWorkspaceServiceAddState(t)
-	oldNoInput := NoInput
-	NoInput = true
-	t.Cleanup(func() { NoInput = oldNoInput })
+	useNonInteractiveWorkspaceAdd(t)
 	dir := t.TempDir()
 	path := writeSprintConfig(t, dir, "workspace.yaml", "apiVersion: fused/v1\nkind: workspace\nservices: {}\n")
 	server, _ := newWorkspaceServiceDiscoveryServer(t, `[]`, `[

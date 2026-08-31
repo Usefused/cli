@@ -18,6 +18,13 @@ type workspaceServiceAddTarget struct {
 	configServiceID  string
 	resolutionSource string
 	requestedRefs    []string
+	version          string
+	enabledVersions  []string
+}
+
+type workspaceServiceResolutionOptions struct {
+	interactive     bool
+	confirmRegistry bool
 }
 
 const (
@@ -262,6 +269,14 @@ var selectExistingWorkspaceService = promptExistingWorkspaceService
 // resolveWorkspaceServiceAddTargets preserves workspace-first resolution while
 // batching the Engine and Registry reads needed by a multi-service composite.
 func resolveWorkspaceServiceAddTargets(queries []string, explicitServiceID string, interactive bool) ([]workspaceServiceAddTarget, error) {
+	return resolveWorkspaceServiceAddTargetsWithOptions(queries, explicitServiceID, workspaceServiceResolutionOptions{
+		interactive: interactive, confirmRegistry: interactive,
+	})
+}
+
+// resolveWorkspaceServiceAddTargetsWithOptions lets composite commands fold
+// Registry confirmation into a broader review without weakening selection.
+func resolveWorkspaceServiceAddTargetsWithOptions(queries []string, explicitServiceID string, opts workspaceServiceResolutionOptions) ([]workspaceServiceAddTarget, error) {
 	// A singular explicit ID cannot safely describe more than one positional
 	// service reference, so multi-add requires each UUID as its own argument.
 	if strings.TrimSpace(explicitServiceID) != "" && len(queries) != 1 {
@@ -278,12 +293,12 @@ func resolveWorkspaceServiceAddTargets(queries []string, explicitServiceID strin
 		target, _, err := explicitWorkspaceServiceTarget(strings.TrimSpace(queries[0]), explicitServiceID)
 		return []workspaceServiceAddTarget{target}, err
 	}
-	return resolveBatchWorkspaceServiceAddTargets(queries, interactive)
+	return resolveBatchWorkspaceServiceAddTargets(queries, opts)
 }
 
 // resolveBatchWorkspaceServiceAddTargets coordinates the bounded Engine and
 // Registry batch reads after singular flags and escape hatches are handled.
-func resolveBatchWorkspaceServiceAddTargets(queries []string, interactive bool) ([]workspaceServiceAddTarget, error) {
+func resolveBatchWorkspaceServiceAddTargets(queries []string, opts workspaceServiceResolutionOptions) ([]workspaceServiceAddTarget, error) {
 	client, err := getAPIClient()
 	if err != nil {
 		return nil, err
@@ -302,7 +317,7 @@ func resolveBatchWorkspaceServiceAddTargets(queries []string, interactive bool) 
 	if err != nil {
 		return nil, err
 	}
-	unresolved, err := resolveWorkspaceAddTargetsFromEngine(targets, pending, normalizedQueries, workspaceServices, interactive)
+	unresolved, err := resolveWorkspaceAddTargetsFromEngine(targets, pending, normalizedQueries, workspaceServices, opts.interactive)
 	if err != nil {
 		return nil, err
 	}
@@ -316,7 +331,7 @@ func resolveBatchWorkspaceServiceAddTargets(queries []string, interactive bool) 
 	if err != nil {
 		return nil, err
 	}
-	if err := resolveWorkspaceAddTargetsFromRegistry(targets, unresolved, normalizedQueries, registryResults, interactive); err != nil {
+	if err := resolveWorkspaceAddTargetsFromRegistry(targets, unresolved, normalizedQueries, registryResults, opts); err != nil {
 		return nil, err
 	}
 	return deduplicateWorkspaceServiceTargets(targets), nil
@@ -381,10 +396,10 @@ func resolveWorkspaceAddTargetsFromEngine(targets []workspaceServiceAddTarget, p
 
 // resolveWorkspaceAddTargetsFromRegistry finishes only Engine misses using the
 // existing ambiguity, exact-match, provider-qualified, and confirmation rules.
-func resolveWorkspaceAddTargetsFromRegistry(targets []workspaceServiceAddTarget, unresolved []int, queries []string, results map[string][]api.Service, interactive bool) error {
+func resolveWorkspaceAddTargetsFromRegistry(targets []workspaceServiceAddTarget, unresolved []int, queries []string, results map[string][]api.Service, opts workspaceServiceResolutionOptions) error {
 	for _, index := range unresolved {
 		query := queries[index]
-		target, err := registryServiceTargetFromResults(query, serviceSearchResultsFromAPI(results[query]), interactive)
+		target, err := registryServiceTargetFromResultsWithOptions(query, serviceSearchResultsFromAPI(results[query]), opts)
 		if err != nil {
 			return err
 		}
@@ -475,8 +490,10 @@ func workspaceServiceTargetFromResults(query string, services []api.WorkspaceSer
 	// Multiple provider-scoped identities require an explicit choice because a
 	// bare product slug is not globally unique.
 	if len(services) > 1 {
+		// Automation must supply an exact identity because it cannot review a
+		// provider-scoped choice on the operator's behalf.
 		if !interactive {
-			return workspaceServiceAddTarget{}, false, fmt.Errorf("service reference %q matches multiple workspace services; pass --service-id or use --interactive", query)
+			return workspaceServiceAddTarget{}, false, fmt.Errorf("service reference %q matches multiple workspace services; pass --service-id or allow interactive input by omitting --no-input and unsetting CI", query)
 		}
 		selected, err := selectExistingWorkspaceService(services)
 		if err != nil {
@@ -492,8 +509,14 @@ func workspaceServiceTargetFromResults(query string, services []api.WorkspaceSer
 	if slug == "" {
 		slug = query
 	}
+	enabledVersions := workspaceServiceVersionNames(service)
+	// Older Engine projections may expose the active version separately from enabled_versions.
+	if strings.TrimSpace(service.Version) != "" && !containsString(enabledVersions, service.Version) {
+		enabledVersions = append(enabledVersions, service.Version)
+	}
 	return workspaceServiceAddTarget{
 		slug: slug, serviceID: service.ServiceID, resolutionSource: "workspace", requestedRefs: []string{query},
+		version: latestWorkspaceServiceVersion(service), enabledVersions: enabledVersions,
 	}, true, nil
 }
 
@@ -533,7 +556,15 @@ func exactWorkspaceServiceMatches(query string, services []api.WorkspaceService)
 // registryServiceTargetFromResults converts the shared Registry search result
 // into the one canonical config/activation identity selected by existing rules.
 func registryServiceTargetFromResults(query string, results []serviceSearchResult, interactive bool) (workspaceServiceAddTarget, error) {
-	selected, err := chooseRegistryService(query, results, interactive)
+	return registryServiceTargetFromResultsWithOptions(query, results, workspaceServiceResolutionOptions{
+		interactive: interactive, confirmRegistry: interactive,
+	})
+}
+
+// registryServiceTargetFromResultsWithOptions separates identity selection
+// from confirmation so a composite can present one combined authorization.
+func registryServiceTargetFromResultsWithOptions(query string, results []serviceSearchResult, opts workspaceServiceResolutionOptions) (workspaceServiceAddTarget, error) {
+	selected, err := chooseRegistryService(query, results, opts.interactive)
 	if err != nil {
 		return workspaceServiceAddTarget{}, err
 	}
@@ -544,7 +575,7 @@ func registryServiceTargetFromResults(query string, results []serviceSearchResul
 	}
 	// Interactive Registry fallback retains its explicit confirmation step even
 	// when several service references are composed in one command.
-	if interactive {
+	if opts.confirmRegistry {
 		confirmed, err := confirmWorkspaceRegistryService(selected)
 		if err != nil {
 			return workspaceServiceAddTarget{}, err
@@ -569,8 +600,10 @@ func chooseRegistryService(query string, results []serviceSearchResult, interact
 	if len(results) == 0 {
 		return serviceSearchResult{}, fmt.Errorf("service %q was not found in the workspace or Registry", query)
 	}
+	// Non-interactive callers must pin identity rather than guessing among
+	// multiple Registry candidates with the same lexical match.
 	if !interactive {
-		return serviceSearchResult{}, fmt.Errorf("service query %q matched %d Registry services; pass an exact slug, service ID, or use --interactive", query, len(results))
+		return serviceSearchResult{}, fmt.Errorf("service query %q matched %d Registry services; pass an exact slug or service ID, or allow interactive input by omitting --no-input and unsetting CI", query, len(results))
 	}
 	return selectWorkspaceRegistryService(results)
 }

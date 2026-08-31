@@ -75,9 +75,15 @@ type scaffoldRequirementsResolver func([]api.AppScaffoldSelection) ([]api.AppSca
 
 type scaffoldBucketResolver func() (string, error)
 
+type scaffoldWorkflow func(*cobra.Command, scaffoldRequest, scaffoldRequirementsResolver, scaffoldBucketResolver) error
+
 // newScaffoldCommand wires production app scaffolds to Engine requirement and visible-bucket discovery.
 func newScaffoldCommand(kind configfile.ConfigKind) *cobra.Command {
-	return newScaffoldCommandWithDependencies(kind, resolveScaffoldRequirements, resolveScaffoldBucket)
+	// SDK init is the only scaffold that composes workspace activation and app lifecycle commits.
+	if kind == configfile.KindSDK {
+		return newScaffoldCommandWithWorkflow(kind, resolveScaffoldRequirements, resolveScaffoldBucket, runSDKInitWorkflow)
+	}
+	return newScaffoldCommandWithWorkflow(kind, resolveScaffoldRequirements, resolveScaffoldBucket, nil)
 }
 
 // newScaffoldCommandWithResolver preserves focused requirement tests with a deterministic existing-bucket candidate.
@@ -87,16 +93,24 @@ func newScaffoldCommandWithResolver(kind configfile.ConfigKind, resolver scaffol
 
 // newScaffoldCommandWithDependencies keeps Engine-owned discovery replaceable without coupling local merge tests to remote state.
 func newScaffoldCommandWithDependencies(kind configfile.ConfigKind, resolver scaffoldRequirementsResolver, bucketResolver scaffoldBucketResolver) *cobra.Command {
+	return newScaffoldCommandWithWorkflow(kind, resolver, bucketResolver, nil)
+}
+
+// newScaffoldCommandWithWorkflow preserves the local scaffold seam while allowing production SDK init to orchestrate existing lifecycle functions.
+func newScaffoldCommandWithWorkflow(kind configfile.ConfigKind, resolver scaffoldRequirementsResolver, bucketResolver scaffoldBucketResolver, workflow scaffoldWorkflow) *cobra.Command {
 	opts := &scaffoldOptions{version: defaultScaffoldVersion, language: defaultScaffoldLanguage}
 	use := "init [name]"
 	args := cobra.RangeArgs(0, 1)
 	selectionDescription := "services and operation selections"
-	serviceFlagDescription := "Service key and version as <key>=<version>; repeatable"
+	serviceFlagDescription := "Service key with an optional version as <key>[=<version>]; repeatable"
+	// MCP keeps exact version selection because only SDK init owns version-default orchestration.
+	if kind == configfile.KindMCP {
+		serviceFlagDescription = "Service key and version as <key>=<version>; repeatable"
+	}
 	if kind == configfile.KindWorkspace {
 		use = "init"
 		args = cobra.NoArgs
 		selectionDescription = "services"
-		serviceFlagDescription = "Service key with an optional version as <key>[=<version>]; repeatable"
 	}
 	command := &cobra.Command{
 		Use:   use,
@@ -111,6 +125,10 @@ merge %s into an existing config instead.`, kind, selectionDescription),
 			// Invalid local arguments must fail before either Engine discovery dependency is invoked.
 			if err != nil {
 				return err
+			}
+			// Production SDK init coordinates the same lifecycle helpers after local argument validation.
+			if workflow != nil {
+				return workflow(cmd, request, resolver, bucketResolver)
 			}
 			result, err := writeScaffold(request, resolver, bucketResolver)
 			if err != nil {
@@ -199,7 +217,8 @@ func buildScaffoldRequest(cmd *cobra.Command, kind configfile.ConfigKind, args [
 	if err := validateScaffoldArgs(kind, name, opts.extend); err != nil {
 		return scaffoldRequest{}, err
 	}
-	services, err := parseScaffoldServices(opts.services, kind != configfile.KindWorkspace)
+	// SDK init may resolve an omitted version; MCP still requires exact immutable input.
+	services, err := parseScaffoldServices(opts.services, kind == configfile.KindMCP)
 	if err != nil {
 		return scaffoldRequest{}, err
 	}

@@ -31,6 +31,14 @@ func addWorkspaceServices(path string, additions []workspaceServiceConfigAdditio
 	if err != nil {
 		return err
 	}
+	if err := mergeWorkspaceServiceAdditions(cfg, additions); err != nil {
+		return err
+	}
+	return writeWorkspaceConfig(path, cfg)
+}
+
+// mergeWorkspaceServiceAdditions applies the standalone command's identity checks and additive authoring rules to an in-memory draft.
+func mergeWorkspaceServiceAdditions(cfg *configfile.WorkspaceConfig, additions []workspaceServiceConfigAddition) error {
 	for _, addition := range additions {
 		// Every requested and canonical key must agree before the in-memory draft
 		// changes, preventing aliases from hiding a different persisted identity.
@@ -46,7 +54,7 @@ func addWorkspaceServices(path string, additions []workspaceServiceConfigAdditio
 		}
 		mergeWorkspaceServiceSelection(cfg, addition.serviceName, addition.version)
 	}
-	return writeWorkspaceConfig(path, cfg)
+	return nil
 }
 
 // validateWorkspaceServiceConfigIdentity ensures discovery cannot activate one
