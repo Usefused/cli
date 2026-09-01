@@ -167,6 +167,41 @@ Fused detects the supported source format. See
 GraphQL, AsyncAPI, Postman, WSDL, Google Discovery, overlays, strict mode, and
 diagnostics.
 
+## Create an SDK, API app, or MCP server
+
+Start from the service you want to use. The CLI defaults its version, lets you
+accept all operations with Enter or search a narrower set, enables the service
+when needed, and drives the existing plan/apply boundaries:
+
+```bash
+fused-cli init support-sdk --sdk --service linear
+fused-cli init support-api --api --service linear
+fused-cli init support-agent --mcp \
+  --description "Read and update support issues" \
+  --service linear
+```
+
+SDK mode downloads a typed package, API mode prints a central Engine REST
+request template without generating a package, and MCP mode reports the hosted
+server connection details. Omit the mode in a terminal to choose it. For
+automation, pass `--no-input`, one explicit mode, and `--operation` or
+`--select-all` for every service.
+
+To extend an existing app without creating another file, use `extend`. It reads
+the existing YAML to infer SDK, API, or MCP mode. A real change advances a
+stable SemVer version to its next minor, while an idempotent extension keeps the
+current version. Terminal confirmation shows the inferred successor, and
+`--no-input` uses the same deterministic result:
+
+```bash
+fused-cli extend support-sdk \
+  --service slack --select-all slack --no-input
+```
+
+The YAML path and stable app family stay the same; apply creates the new
+immutable version. Pass `--version` to override inference. Prerelease and
+non-SemVer versions require an explicit successor.
+
 ## Generate an SDK from a goal
 
 `sdk prompt` is the user-invoked Fused agent. Describe the business capability;
@@ -183,17 +218,16 @@ If the goal is already being handled by a coding agent, install and use the
 `fused-sdk` skill instead. The coding agent should perform the deterministic
 workflow directly rather than start a second agent through `sdk prompt`.
 
-## Deploy an MCP server
+## Control an existing app explicitly
 
-Describe the server's business capability in the config so an MCP client can
-understand when to use it before calling `search_docs`:
+Every initialized app remains ordinary config as code. Edit its YAML, then use
+the explicit lifecycle when you want separate reviews or structured output:
 
 ```yaml
 apiVersion: fused/v1
-kind: mcp
-name: support-agent
+kind: sdk
+name: support-sdk
 version: "1.0.0"
-description: Read and update support issues, then notify the owning team.
 bucket: default
 services:
   linear:
@@ -202,15 +236,12 @@ services:
 ```
 
 ```bash
-fused-cli mcp plan -f .fused/mcps/support-agent.yaml
-fused-cli mcp apply -f .fused/mcps/support-agent.yaml
-fused-cli mcp list
+fused-cli sdk plan --json -f .fused/sdks/support-sdk.yaml
+fused-cli sdk apply --json -f .fused/sdks/support-sdk.yaml
 ```
 
-An MCP name keeps one stable MCP ID and URL across versions. Applying a new
-version explicitly promotes that version for new sessions on the stable URL;
-existing sessions remain pinned to the version they initialized. The CLI also
-shows a version-pinned URL for clients that must stay on one immutable version.
+Standalone validation remains available for offline checks, but plan already
+validates before contacting the Engine.
 
 ## More documentation
 

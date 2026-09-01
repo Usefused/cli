@@ -54,7 +54,7 @@ using the business goal and selected services as evidence. Make the concrete
 capabilities obvious enough that an MCP host can choose this server before it
 lists tools. Do not include operation IDs, schema fields, `search_docs`,
 `execute`, setup instructions, credentials, or claims beyond the selected
-services. Pass the same prose to `mcp init --description` when scaffolding; it
+services. Pass the same prose to `fused-cli init <name> --mcp --description` when scaffolding; it
 is immutable version metadata and is returned as MCP `serverInfo.description`.
 Every runnable MCP version requires complete authored server metadata; never
 substitute generic compatibility prose when it is absent.
@@ -201,8 +201,8 @@ This list may be behind the CLI's actual flags/subcommands -- run
 `fused-cli` skill documents init's batched server-variable enrichment.
 
 ```shell
-fused-cli mcp init <name> --description '<LLM-authored capability summary>' [--service '<service>=<version>'] [--operation '<service>=<operationId>']
-fused-cli mcp init <name> --extend --service '<service>=<version>' --select-all '<service>'
+fused-cli init <name> --mcp --description '<LLM-authored capability summary>' --service '<service>[=<version>]' [--operation '<service>=<operationId>']
+fused-cli extend <name> [--version <new>] --service '<service>[=<version>]' --select-all '<service>'
 fused-cli mcp plan
 fused-cli mcp apply
 fused-cli mcp validate
@@ -218,10 +218,12 @@ fused-cli mcp token list <mcp-name-or-id>
 fused-cli mcp token revoke <mcp-name-or-id> <token-name>
 ```
 
+The hidden `fused-cli mcp init` compatibility command remains callable for old
+scaffold-only scripts. Prefer top-level init for new onboarding.
+
 Use `init` to create `.fused/mcps/<name>.yaml` without overwriting an existing
-file. Repeat it with `--extend` to add selections; the result is `extended` or
-idempotent `unchanged`, and conflicts stop before writing. An empty skeleton
-is intentionally incomplete until each service lists operations or uses
+file. Use top-level `extend` to infer MCP mode and add selections in that same file. A changed stable SemVer version advances to its next minor, including under `--no-input`; an idempotent extension keeps the current version. Explicit `--version` overrides inference and is required for prerelease or non-SemVer versions. Other conflicts stop before writing. An empty skeleton is intentionally incomplete
+until each service lists operations or uses
 `--select-all`. For a service-bearing config without `--bucket`, init lists
 read-visible buckets once, writes the visible bucket named `default` or the
 first visible candidate, and fails without writing when none is visible. An

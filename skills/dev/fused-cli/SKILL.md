@@ -248,35 +248,61 @@ one kind.
 
 ## Start or extend a config file
 
-Use each resource's `init` command for a deterministic local draft; do not hand-build the
-base fields or start `sdk prompt`:
+Use top-level `init` for a working SDK, central API app, or MCP server; do not
+hand-build the base fields or start `sdk prompt`:
 
 ```shell
-fused-cli workspace init
-fused-cli sdk init <name> --service '<service>=<version>' --operation '<service>=<operationId>'
-fused-cli mcp init <name> --service '<service>=<version>' --select-all '<service>'
+fused-cli init <name> --sdk --service '<service>[=<version>]' --operation '<service>=<operationId>'
+fused-cli init <name> --api --service '<service>[=<version>]' --select-all '<service>'
+fused-cli init <name> --mcp --description '<user-facing purpose>' --service '<service>[=<version>]' --select-all '<service>'
 ```
 
-Result: the file is created under `.fused/` and reports its path. With no
-service flags, the result is an editable empty skeleton. Use `-f <path>` for a
-different target.
+Result: missing workspace services are enabled, the app file is created under
+`.fused/`, and the app is planned and applied. SDK mode downloads the package;
+API mode prints a REST request template; MCP mode reports its hosted runtime.
+Use `-f <path>` for a different app config target.
 
-To add another selection, repeat the same shape with `--extend`. Result:
-existing identity and selections remain, new entries are merged once, and an
-already-present entry reports `unchanged`. A conflicting name, app version,
-language, bucket, or service version stops before writing. Creation also stops
-when the path already exists.
+Generated SDK init alone handles the typed
+`generation_contract_pin_unavailable` legacy condition. It resolves all
+selected active workspace versions before mutation, prints the exact
+`service@version` as it refreshes each immutable generation snapshot, and
+retries the unchanged app plan once. `--no-input` uses the same deterministic
+repair without prompting. Never fabricate a generation pin, substitute the
+runtime contract hash, float to another version, or repeat the repair. API,
+MCP, ordinary `sdk plan`, and unrelated errors remain read-only with respect to
+snapshot refresh.
 
-For SDK/MCP init or `--extend` with services, one batched Engine lookup adds
+In a terminal, omit the mode to choose one. Omit operation flags to accept all
+operations with Enter or open the shared searchable selector. With `--no-input`
+or `CI=true`, provide exactly one mode and explicit `--operation` or
+`--select-all` coverage for every service.
+
+To add another selection, use `fused-cli extend <name>`. It reads the existing
+YAML to infer SDK, API, or MCP mode. Existing identity and selections remain, new entries are merged once, and an
+already-present entry reports `unchanged`. A different explicit `--version`
+retargets the same file to a new immutable app version; other identity or
+routing conflicts stop before writing. A real change to a stable SemVer version infers
+the next minor successor and shows it in terminal confirmation; `--no-input` or
+`CI=true` uses the same deterministic inference. Idempotent repeats keep their
+version. Pass `--version` to override inference, and always pass it for a
+prerelease or non-SemVer current version. Creation still stops when the path already exists.
+
+For top-level init or extend with services, one batched Engine lookup adds
 only missing required bucket-backed `server_variable` injections. Preserve
 explicit injections and never duplicate workspace policy or native
-`x-fused-connect` routing. With `--json`, read `generated_binding_count`; read
-each service/variable/key from the written config and set its non-secret bucket
-value. Values never appear in output. Read
+`x-fused-connect` routing. Top-level init intentionally has human lifecycle
+output and no `--json`; use explicit plan/apply commands for structured
+automation. Read
 `fused-config`'s `reference/openapi-postman.md` for the canonical example.
 
 `--bucket` references an existing bucket only. Omitting it preserves Engine
 default-bucket selection; this command never creates a bucket.
+
+For explicit legacy maintenance, `fused-cli workspace services
+refresh-missing-contracts --limit <n>` refreshes a bounded batch of activated
+versions whose runtime snapshot is missing or unpinned. It never runs as an
+implicit workspace-wide fallback. Preserve its Registry-issued generation pin
+exactly and report partial failures instead of widening or replaying the batch.
 
 ## How plan/apply staleness is caught
 

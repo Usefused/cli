@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -9,6 +10,53 @@ import (
 
 	"github.com/Usefused/cli/internal/api"
 )
+
+// TestRefreshServiceContractUsesExactEngineRoute verifies stable UUIDs and the control credential select one snapshot.
+func TestRefreshServiceContractUsesExactEngineRoute(t *testing.T) {
+	const serviceID = "00000000-0000-4000-8000-000000000001"
+	const versionID = "00000000-0000-4000-8000-000000000002"
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		// The client must use the exact Engine route and never translate the UUIDs through Registry.
+		if request.Method != http.MethodPost || request.URL.Path != "/workspace/services/"+serviceID+"/versions/"+versionID+"/refresh" {
+			t.Fatalf("unexpected refresh request %s %s", request.Method, request.URL.Path)
+		}
+		// The same control credential used for planning authorizes the workspace snapshot refresh.
+		if request.Header.Get("x-api-key") != "test-key" {
+			t.Fatal("refresh omitted the Engine control credential")
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"status":"refreshed","service_id":"` + serviceID + `","service_version_id":"` + versionID + `","version":"v1","contract_hash":"sha256:contract"}`))
+	}))
+	defer server.Close()
+
+	result, err := api.NewClient(server.URL, "test-key").RefreshServiceContract(serviceID, versionID)
+	if err != nil {
+		t.Fatalf("RefreshServiceContract: %v", err)
+	}
+	// Successful decoding must retain the immutable version and contract proof returned by Engine.
+	if result.Version != "v1" || result.ContractHash != "sha256:contract" {
+		t.Fatalf("unexpected refresh result %#v", result)
+	}
+}
+
+// TestRefreshServiceContractPreservesTypedEngineError proves callers can branch safely on the reviewed Engine code.
+func TestRefreshServiceContractPreservesTypedEngineError(t *testing.T) {
+	const serviceID = "00000000-0000-4000-8000-000000000001"
+	const versionID = "00000000-0000-4000-8000-000000000002"
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		writer.WriteHeader(http.StatusBadGateway)
+		_, _ = writer.Write([]byte(`{"error":{"code":"runtime_contract_dependency_unavailable","message":"The Engine could not fetch the runtime contract.","category":"dependency","retryable":true}}`))
+	}))
+	defer server.Close()
+
+	_, err := api.NewClient(server.URL, "test-key").RefreshServiceContract(serviceID, versionID)
+	var apiErr *api.APIError
+	// Error wrapping must preserve the stable code instead of exposing or flattening remote response text.
+	if !errors.As(err, &apiErr) || apiErr.Code != "runtime_contract_dependency_unavailable" {
+		t.Fatalf("typed refresh error=%v APIError=%#v", err, apiErr)
+	}
+}
 
 func TestRefreshMissingServiceContractsUsesEngineGraphQL(t *testing.T) {
 	var sawPath string

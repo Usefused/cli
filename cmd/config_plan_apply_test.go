@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Usefused/cli/internal/api"
 	"github.com/Usefused/cli/internal/configfile"
 	"github.com/spf13/cobra"
 )
@@ -1014,8 +1015,13 @@ services:
 	defer server.Close()
 
 	oldInput := sdkInput
-	sdkInput = strings.NewReader("all\n")
+	sdkInput = strings.NewReader("")
 	t.Cleanup(func() { sdkInput = oldInput })
+	restoreSelector := stubSDKOperationSelectionRunner(t, func(_ io.Reader, _ io.Writer, _ string, _ string, endpoints []api.Integration) (sdkOperationSelection, error) {
+		// Operation add expands the visible All operations choice into today's concrete Registry IDs.
+		return sdkOperationSelection{operations: operationNames(endpoints), selectAll: true}, nil
+	})
+	t.Cleanup(restoreSelector)
 
 	runCommandInDir(t, dir, server.URL, []string{"sdk", "operation", "add", "", "--interactive", "-f", path})
 	if sawVersion != "2026-07-01" {
@@ -1061,8 +1067,13 @@ services:
 	defer server.Close()
 
 	oldInput := sdkInput
-	sdkInput = strings.NewReader("2\n1-2\n")
+	sdkInput = strings.NewReader("2\n")
 	t.Cleanup(func() { sdkInput = oldInput })
+	restoreSelector := stubSDKOperationSelectionRunner(t, func(_ io.Reader, _ io.Writer, _ string, _ string, endpoints []api.Integration) (sdkOperationSelection, error) {
+		// The explicit Choose operations path returns only the selected operation IDs.
+		return sdkOperationSelection{operations: operationNames(endpoints)}, nil
+	})
+	t.Cleanup(restoreSelector)
 
 	runCommandInDir(t, dir, server.URL, []string{"sdk", "operation", "add", "", "--interactive", "-f", path})
 	after, err := os.ReadFile(path)

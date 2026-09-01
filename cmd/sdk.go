@@ -625,13 +625,14 @@ func selectSDKOperationsInteractively(path, requestedService string) (string, []
 	return selectSDKOperations(path, requestedService)
 }
 
+// selectSDKOperations resolves a configured service and delegates the exact operation choice to the shared selector.
 func selectSDKOperations(path, requestedService string) (string, []string, error) {
 	cfg, err := loadSDKConfigForEdit(path)
 	if err != nil {
 		return "", nil, err
 	}
-	scanner := bufio.NewScanner(sdkInput)
-	serviceName, serviceVersion, err := chooseSDKService(cfg, requestedService, scanner)
+	input := bufio.NewReader(sdkInput)
+	serviceName, serviceVersion, err := chooseSDKService(cfg, requestedService, input)
 	if err != nil {
 		return "", nil, err
 	}
@@ -643,25 +644,32 @@ func selectSDKOperations(path, requestedService string) (string, []string, error
 	if err != nil {
 		return "", nil, err
 	}
-	endpoints, err := client.SearchEndpoints(serviceID, serviceVersion, "")
-	if err != nil {
-		return "", nil, err
-	}
-	if len(endpoints) == 0 {
-		return "", nil, fmt.Errorf("no operations found for service %s version %s", serviceName, serviceVersion)
-	}
-	for i, endpoint := range endpoints {
-		fmt.Printf("%d. %s %s %s\n", i+1, endpoint.Name, endpoint.Method, endpoint.Path)
-	}
-	fmt.Print("Select operations (for example 1,3-4 or all): ")
-	if !scanner.Scan() {
-		return "", nil, fmt.Errorf("no operation selected")
-	}
-	operations, err := operationsFromSelection(endpoints, scanner.Text())
+	operations, _, err := selectSDKOperationsForService(client, serviceID, serviceName, serviceVersion, input, os.Stdout)
+	// Registry lookup or terminal selection failures leave the authored SDK config unchanged.
 	if err != nil {
 		return "", nil, err
 	}
 	return serviceName, operations, nil
+}
+
+// selectSDKOperationsForService presents Registry operations and returns both the concrete IDs and whether the user chose the complete surface.
+func selectSDKOperationsForService(client *api.Client, serviceID, serviceName, serviceVersion string, input io.Reader, out io.Writer) ([]string, bool, error) {
+	endpoints, err := client.SearchEndpoints(serviceID, serviceVersion, "")
+	// Registry is authoritative for the operation surface of the pinned provider version.
+	if err != nil {
+		return nil, false, err
+	}
+	// An empty surface cannot satisfy the SDK invariant that each service selects executable operations.
+	if len(endpoints) == 0 {
+		return nil, false, fmt.Errorf("no operations found for service %s version %s", serviceName, serviceVersion)
+	}
+	selection, err := sdkOperationSelectionRunner(input, out, serviceName, serviceVersion, endpoints)
+	// Terminal cancellation or selection validation leaves both init and operation-add configs unchanged.
+	if err != nil {
+		return nil, false, err
+	}
+	// The shared structured result lets sdk init persist select_all while operation add retains its explicit-list behavior.
+	return selection.operations, selection.selectAll, nil
 }
 
 func selectSDKWebhooksInteractively(path, requestedService string) (string, []string, error) {
@@ -671,13 +679,14 @@ func selectSDKWebhooksInteractively(path, requestedService string) (string, []st
 	return selectSDKWebhooks(path, requestedService)
 }
 
+// selectSDKWebhooks resolves one configured service and reads a bounded webhook choice from the shared input stream.
 func selectSDKWebhooks(path, requestedService string) (string, []string, error) {
 	cfg, err := loadSDKConfigForEdit(path)
 	if err != nil {
 		return "", nil, err
 	}
-	scanner := bufio.NewScanner(sdkInput)
-	serviceName, serviceVersion, err := chooseSDKService(cfg, requestedService, scanner)
+	input := bufio.NewReader(sdkInput)
+	serviceName, serviceVersion, err := chooseSDKService(cfg, requestedService, input)
 	if err != nil {
 		return "", nil, err
 	}
@@ -700,17 +709,20 @@ func selectSDKWebhooks(path, requestedService string) (string, []string, error) 
 		fmt.Printf("%d. %s\n", i+1, webhook.Name)
 	}
 	fmt.Print("Select webhooks (for example 1,3-4 or all): ")
-	if !scanner.Scan() {
+	rawChoice, readErr := input.ReadString('\n')
+	// EOF without any bytes is cancellation; a final unterminated choice remains valid input.
+	if readErr != nil && len(rawChoice) == 0 {
 		return "", nil, fmt.Errorf("no webhook selected")
 	}
-	selectedNames, err := webhooksFromSelection(webhooks, scanner.Text())
+	selectedNames, err := webhooksFromSelection(webhooks, rawChoice)
 	if err != nil {
 		return "", nil, err
 	}
 	return serviceName, selectedNames, nil
 }
 
-func chooseSDKService(cfg *configfile.SDKConfig, requested string, scanner *bufio.Scanner) (string, string, error) {
+// chooseSDKService keeps an explicit service authoritative and otherwise reads one choice without consuming later prompts.
+func chooseSDKService(cfg *configfile.SDKConfig, requested string, input *bufio.Reader) (string, string, error) {
 	if requested != "" {
 		return configuredServiceVersion(cfg, requested)
 	}
@@ -727,10 +739,12 @@ func chooseSDKService(cfg *configfile.SDKConfig, requested string, scanner *bufi
 		fmt.Printf("%d. %s %s\n", i+1, name, cfg.Services[name].Version)
 	}
 	fmt.Print("Select service: ")
-	if !scanner.Scan() {
+	rawChoice, readErr := input.ReadString('\n')
+	// EOF without a submitted value is cancellation; a final unterminated number is still a deliberate choice.
+	if readErr != nil && len(rawChoice) == 0 {
 		return "", "", fmt.Errorf("no service selected")
 	}
-	choice, err := selectedIndex(scanner.Text(), len(names))
+	choice, err := selectedIndex(rawChoice, len(names))
 	if err != nil {
 		return "", "", fmt.Errorf("invalid service selection")
 	}

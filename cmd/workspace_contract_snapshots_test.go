@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// TestRunWorkspaceRefreshMissingContractsPrintsSummary verifies the maintenance summary names both repairable snapshot states.
 func TestRunWorkspaceRefreshMissingContractsPrintsSummary(t *testing.T) {
 	origEngineURL, origAPIKey, origLimit := EngineURL, APIKey, workspaceRefreshMissingContractsLimit
 	defer func() {
@@ -51,7 +52,21 @@ func TestRunWorkspaceRefreshMissingContractsPrintsSummary(t *testing.T) {
 	if sawAPIKey != "fsk_test" {
 		t.Fatalf("expected API key header, got %q", sawAPIKey)
 	}
-	if !strings.Contains(out.String(), "Refreshed 2 of 3 missing runtime contracts (1 failed).") {
+	// The Engine's historical `missing` count includes both absent snapshots and snapshots missing a generation pin.
+	if !strings.Contains(out.String(), "Refreshed 2 of 3 missing or unpinned runtime contract snapshots (1 failed).") {
 		t.Fatalf("unexpected output: %q", out.String())
+	}
+}
+
+// TestWorkspaceRefreshMissingContractsHelpNamesUnpinnedSnapshots keeps discovery and limit guidance aligned with Engine classification.
+func TestWorkspaceRefreshMissingContractsHelpNamesUnpinnedSnapshots(t *testing.T) {
+	// The compatibility command name remains stable while its summary describes the full repair scope.
+	if !strings.Contains(workspaceRefreshMissingContractsCmd.Short, "missing or unpinned runtime contract snapshots") {
+		t.Fatalf("unexpected command summary %q", workspaceRefreshMissingContractsCmd.Short)
+	}
+	limitFlag := workspaceRefreshMissingContractsCmd.Flags().Lookup("limit")
+	// A registered limit flag must describe the same bounded missing-or-unpinned batch.
+	if limitFlag == nil || !strings.Contains(limitFlag.Usage, "missing or unpinned activated service versions") {
+		t.Fatalf("unexpected limit flag %#v", limitFlag)
 	}
 }

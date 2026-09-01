@@ -130,13 +130,12 @@ tenant default. Postman URL variable arrays can mix host and path variables;
 only names referenced by the request path become operation parameters. The
 host `app_id` remains Engine routing metadata, while a path such as
 `/v3/users/{user_id}` exposes only `user_id` to generated SDK methods or MCP
-tools. A service-bearing `sdk init`/`mcp init`, including `--extend`,
-uses one batched Engine lookup to add only missing required `server_variable`
+tools. Top-level `fused-cli init` and `fused-cli extend` use one batched Engine
+lookup to add only missing required `server_variable`
 bucket-value bindings. It preserves explicit injections and skips variables
-already owned by workspace policy or native `x-fused-connect` routing. JSON
-reports only `generated_binding_count` for enrichment; read service, variable,
-and key from the written config, which never contains the value. Configure each
-key once:
+already owned by workspace policy or native `x-fused-connect` routing. Read the
+service, variable, and key from the written config, which never contains the
+value. Configure each key once:
 
 ```shell
 fused-cli value set sendbird-bucket sendbird env SENDBIRD_APP_ID your-app-id

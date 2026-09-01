@@ -96,7 +96,7 @@ func Execute() {
 func init() {
 	RootCmd.PersistentFlags().StringVar(&APIKey, "key", "", "Engine credential (overrides saved login, FUSED_API_KEY & FUSED_LICENSE_KEY)")
 	RootCmd.PersistentFlags().StringVar(&EngineURL, "engine-url", "", "Fused Engine URL (overrides config & FUSED_ENGINE_URL)")
-	RootCmd.PersistentFlags().StringVarP(&ConfigFile, "file", "f", "", "Path to a Fused config file, or init output target (disables .fused/ discovery)")
+	RootCmd.PersistentFlags().StringVarP(&ConfigFile, "file", "f", "", "Path to a Fused config file, or init/extend target (disables .fused/ discovery)")
 	RootCmd.PersistentFlags().BoolVar(&NoInput, "no-input", false, "Fail instead of prompting for input (also enabled by CI=true)")
 	// The root default remains responsive for routine calls; import commands
 	// choose their larger bounded default only when this flag was not supplied.

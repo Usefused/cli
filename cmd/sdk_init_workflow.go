@@ -3,6 +3,9 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"os"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/Usefused/cli/internal/api"
@@ -33,6 +36,8 @@ type sdkInitLifecycle struct {
 
 var confirmSDKInit = promptSDKInitConfirmation
 
+var stableAppVersionPattern = regexp.MustCompile(`^(v?)(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`)
+
 // runSDKInitWorkflow composes the existing workspace and SDK lifecycle helpers while retaining local-only empty scaffolds.
 func runSDKInitWorkflow(cmd *cobra.Command, request scaffoldRequest, resolver scaffoldRequirementsResolver, bucketResolver scaffoldBucketResolver) error {
 	// An empty SDK skeleton remains editable offline because it has no service lifecycle to coordinate.
@@ -48,7 +53,7 @@ func runSDKInitWorkflow(cmd *cobra.Command, request scaffoldRequest, resolver sc
 
 // runServiceSDKInit prepares one reviewed lifecycle and delegates its two ordered commit boundaries.
 func runServiceSDKInit(cmd *cobra.Command, request scaffoldRequest, resolver scaffoldRequirementsResolver, bucketResolver scaffoldBucketResolver) error {
-	lifecycle, err := prepareSDKInitLifecycle(cmd, request)
+	lifecycle, err := prepareSDKInitLifecycle(cmd, request, resolver, bucketResolver)
 	if err != nil {
 		return err
 	}
@@ -64,12 +69,22 @@ func runServiceSDKInit(cmd *cobra.Command, request scaffoldRequest, resolver sca
 }
 
 // prepareSDKInitLifecycle resolves immutable selections and plans any required workspace activation without mutating desired state.
-func prepareSDKInitLifecycle(cmd *cobra.Command, request scaffoldRequest) (sdkInitLifecycle, error) {
+func prepareSDKInitLifecycle(cmd *cobra.Command, request scaffoldRequest, resolver scaffoldRequirementsResolver, bucketResolver scaffoldBucketResolver) (sdkInitLifecycle, error) {
 	client, err := getAPIClient()
 	if err != nil {
 		return sdkInitLifecycle{}, err
 	}
 	resolvedRequest, resolvedServices, err := resolveSDKInitServices(request, client)
+	if err != nil {
+		return sdkInitLifecycle{}, err
+	}
+	resolvedRequest, err = completeSDKInitOperationSelections(cmd, client, resolvedRequest, resolvedServices)
+	// Operation discovery must finish before a workspace plan can imply that the full SDK intent is reviewable.
+	if err != nil {
+		return sdkInitLifecycle{}, err
+	}
+	resolvedRequest, err = completeSDKInitVersionExtension(client, resolvedRequest, resolver, bucketResolver)
+	// Applied immutable versions must receive an explicit new identity before workspace or app planning can begin.
 	if err != nil {
 		return sdkInitLifecycle{}, err
 	}
@@ -83,13 +98,111 @@ func prepareSDKInitLifecycle(cmd *cobra.Command, request scaffoldRequest) (sdkIn
 	return sdkInitLifecycle{client: client, request: resolvedRequest, services: resolvedServices, draft: draft}, nil
 }
 
+// completeSDKInitVersionExtension keeps one config file while assigning new immutable identity whenever its authored scope changes.
+func completeSDKInitVersionExtension(client *api.Client, request scaffoldRequest, resolver scaffoldRequirementsResolver, bucketResolver scaffoldBucketResolver) (scaffoldRequest, error) {
+	// New files and ordinary creation require no inferred lifecycle decision.
+	if !request.extend {
+		return request, nil
+	}
+	data, err := os.ReadFile(request.path)
+	// Extension must prove the current file before consulting remote app identity.
+	if err != nil {
+		return scaffoldRequest{}, err
+	}
+	current := &configfile.AppConfig{}
+	// The existing document supplies the stable app name and currently authored immutable version.
+	if err := decodeScaffoldDraft(data, request.path, request.kind, current); err != nil {
+		return scaffoldRequest{}, err
+	}
+	_, changed, _, err := extendAppScaffoldData(request, data, resolver, bucketResolver)
+	// Local conflicts and enrichment failures must stop before any version prompt or write.
+	if err != nil {
+		return scaffoldRequest{}, err
+	}
+	// An idempotent extension can safely plan the current version without manufacturing a successor.
+	if !changed {
+		return request, nil
+	}
+	// Repeating the file's immutable identity cannot authorize any real scope change.
+	if request.versionSet && request.version == current.Version {
+		return scaffoldRequest{}, fmt.Errorf("%s %s@%s already identifies the current config; use --version <new-version> for the successor", request.kind, current.Name, current.Version)
+	}
+	// An explicit different version overrides automatic successor inference after checking for a visible collision.
+	if request.versionSet {
+		exists, existsErr := sdkInitAppVersionExists(client, request.kind, current.Name, request.version)
+		if existsErr != nil {
+			return scaffoldRequest{}, existsErr
+		}
+		// A visible exact successor already owns immutable scope and must fail before the config write.
+		if exists {
+			return scaffoldRequest{}, fmt.Errorf("%s %s@%s already exists; choose another --version", request.kind, current.Name, request.version)
+		}
+		return request, nil
+	}
+	version, err := nextMinorAppVersion(current.Version)
+	// Every real implicit extension advances stable SemVer; prerelease, build, overflow, or non-SemVer identities require an exact override.
+	if err != nil {
+		return scaffoldRequest{}, fmt.Errorf("cannot infer successor for %s %s@%s: %w; pass --version <new-version>", request.kind, current.Name, current.Version, err)
+	}
+	request.version = version
+	request.versionSet = true
+	successorExists, successorErr := sdkInitAppVersionExists(client, request.kind, current.Name, version)
+	if successorErr != nil {
+		return scaffoldRequest{}, successorErr
+	}
+	// Automatic inference must not select a visible immutable version that already exists.
+	if successorExists {
+		return scaffoldRequest{}, fmt.Errorf("inferred successor %s@%s already exists; pass --version <new-version>", current.Name, version)
+	}
+	return request, nil
+}
+
+// sdkInitAppVersionExists reports visible exact versions while treating not-found as unknown for later pre-write plan proof.
+func sdkInitAppVersionExists(client *api.Client, kind configfile.ConfigKind, name, version string) (bool, error) {
+	var err error
+	// MCP and SDK/API app references use distinct Engine kind selectors despite sharing the extension workflow.
+	if kind == configfile.KindMCP {
+		_, err = client.ResolveMCPAppReference(name, version)
+	} else {
+		_, err = client.ResolveSDKAppReference(name, version)
+	}
+	// Engine deliberately conflates absence and inaccessibility, so false is not mutation authority and callers must preflight plan before writing.
+	if err != nil {
+		var apiErr *api.APIError
+		if errors.As(err, &apiErr) && apiErr.Code == "resource_not_found" {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
+// nextMinorAppVersion deterministically advances one stable SemVer while preserving an optional v prefix.
+func nextMinorAppVersion(current string) (string, error) {
+	matches := stableAppVersionPattern.FindStringSubmatch(strings.TrimSpace(current))
+	// Only stable three-part SemVer is safe to advance automatically.
+	if matches == nil {
+		return "", errors.New("current version is not a stable three-part SemVer")
+	}
+	minor, err := strconv.ParseUint(matches[3], 10, 64)
+	if err != nil || minor == ^uint64(0) {
+		return "", errors.New("current minor version cannot be incremented")
+	}
+	return matches[1] + matches[2] + "." + strconv.FormatUint(minor+1, 10) + ".0", nil
+}
+
 // commitSDKInitLifecycle applies workspace intent first and preserves that completed boundary if SDK creation later fails.
 func commitSDKInitLifecycle(cmd *cobra.Command, lifecycle sdkInitLifecycle, resolver scaffoldRequirementsResolver, bucketResolver scaffoldBucketResolver) error {
 	workspaceApplied, err := applySDKInitWorkspace(cmd, lifecycle.client, lifecycle.draft)
 	if err != nil {
 		return err
 	}
-	if err := createAndApplySDKInit(cmd, lifecycle.client, lifecycle.request, resolver, bucketResolver); err != nil {
+	if err := createAndApplySDKInit(cmd, lifecycle.client, lifecycle.request, workspaceApplied, resolver, bucketResolver); err != nil {
+		var precommitErr *unifiedInitPrecommitError
+		// Shared precommit failures already state the exact workspace receipt and local-file outcome.
+		if errors.As(err, &precommitErr) {
+			return err
+		}
 		// A completed workspace commit is intentionally preserved and reported instead of pretending a cross-boundary rollback occurred.
 		if workspaceApplied {
 			return fmt.Errorf("workspace activation was applied, but SDK initialization did not complete: %w", err)
@@ -143,6 +256,51 @@ func resolveSDKInitServices(request scaffoldRequest, client *api.Client) (scaffo
 	request.operations = rewriteSDKInitOperations(request.operations, aliases)
 	request.selectAll = rewriteSDKInitNames(request.selectAll, aliases)
 	return request, resolved, nil
+}
+
+// completeSDKInitOperationSelections prompts only for services whose operation scope was not supplied explicitly.
+func completeSDKInitOperationSelections(cmd *cobra.Command, client *api.Client, request scaffoldRequest, services []sdkInitResolvedService) (scaffoldRequest, error) {
+	input := sdkInput
+	for _, service := range services {
+		// Explicit --operation and --select-all selections remain authoritative and bypass discovery prompts.
+		if sdkInitServiceHasOperationSelection(request, service.target.slug) {
+			continue
+		}
+		// Automation must declare its capability boundary rather than silently accepting a Registry-wide operation set.
+		if nonInteractive() {
+			return scaffoldRequest{}, fmt.Errorf("--no-input requires --operation '%s=<operationId>' or --select-all '%s'", service.target.slug, service.target.slug)
+		}
+		operations, selectAll, err := selectSDKOperationsForService(client, service.target.serviceID, service.target.slug, service.version, input, cmd.OutOrStdout())
+		if err != nil {
+			return scaffoldRequest{}, err
+		}
+		// The complete-surface choice is preserved as intent instead of expanding it into a hand-authored allowlist.
+		if selectAll {
+			request.selectAll = append(request.selectAll, service.target.slug)
+			continue
+		}
+		for _, operation := range operations {
+			request.operations = append(request.operations, scaffoldOperation{service: service.target.slug, operation: operation})
+		}
+	}
+	return request, nil
+}
+
+// sdkInitServiceHasOperationSelection reports whether one resolved service already has an explicit capability boundary.
+func sdkInitServiceHasOperationSelection(request scaffoldRequest, serviceName string) bool {
+	for _, operation := range request.operations {
+		// Any explicit operation for this service satisfies the initial selection requirement.
+		if operation.service == serviceName {
+			return true
+		}
+	}
+	for _, selected := range request.selectAll {
+		// Explicit select-all is a complete alternative to enumerating operation IDs.
+		if selected == serviceName {
+			return true
+		}
+	}
+	return false
 }
 
 // resolveSDKInitServiceVersion keeps explicit versions authoritative and otherwise pins one concrete existing or Registry version.
@@ -292,20 +450,33 @@ func confirmSDKInitIfNeeded(request scaffoldRequest, services []sdkInitResolvedS
 
 // sdkInitConfirmationMessage summarizes the one common service/operation case without hiding broader selections.
 func sdkInitConfirmationMessage(request scaffoldRequest, services []sdkInitResolvedService, workspaceChange bool) string {
+	action := "Create"
+	actionInSentence := "create"
+	// Extension confirmation language makes the immutable successor visible as an additive app action.
+	if request.extend {
+		action = "Extend"
+		actionInSentence = "extend"
+	}
 	selection := "the selected operations"
 	// A single operation is more useful than a count in the common init path.
 	if len(request.operations) == 1 && len(request.selectAll) == 0 {
 		selection = request.operations[0].operation
 	} else if len(request.selectAll) > 0 {
-		selection = "the selected service operations"
+		// Preserve the user's explicit complete-surface choice in the final confirmation language.
+		selection = "all operations for the selected services"
+	}
+	appIdentity := request.name
+	// An explicit or prompted successor must remain visible in the same final authorization as its expanded scope.
+	if request.versionSet {
+		appIdentity = fmt.Sprintf("%s version %s", request.name, request.version)
 	}
 	// The common single-service activation receives the concise combined wording requested by terminal users.
 	if workspaceChange && len(services) == 1 {
 		service := services[0]
-		return fmt.Sprintf("%s %s isn't in your workspace yet — enable it and create %s with %s?", service.target.slug, service.version, request.name, selection)
+		return fmt.Sprintf("%s %s isn't in your workspace yet — enable it and %s %s with %s?", service.target.slug, service.version, actionInSentence, appIdentity, selection)
 	}
 	// Already-enabled and multi-service flows still receive one app-level confirmation.
-	return fmt.Sprintf("Create %s with %s?", request.name, selection)
+	return fmt.Sprintf("%s %s with %s?", action, appIdentity, selection)
 }
 
 // promptSDKInitConfirmation renders the composite review as one affirmative lifecycle decision.
@@ -343,44 +514,7 @@ func applySDKInitWorkspace(cmd *cobra.Command, client *api.Client, draft *sdkIni
 	return true, nil
 }
 
-// createAndApplySDKInit writes the SDK draft, plans with credential remediation, records its receipt, and applies it.
-func createAndApplySDKInit(cmd *cobra.Command, client *api.Client, request scaffoldRequest, resolver scaffoldRequirementsResolver, bucketResolver scaffoldBucketResolver) error {
-	result, err := writeScaffold(request, resolver, bucketResolver)
-	if err != nil {
-		return err
-	}
-	recordGeneratedBindingCount(cmd.Context(), result.GeneratedBindingCount)
-	recordAppliedChangeIf(cmd.Context(), cmd.CommandPath(), "config_file", result.Changed)
-	if err := printScaffoldResult(cmd, result); err != nil {
-		return err
-	}
-	parsed, err := configfile.ParseFile(request.path)
-	if err != nil {
-		return err
-	}
-	planOpts := planOptions{
-		interactive: !nonInteractive(), output: cmd.OutOrStdout(),
-		auditCtx: cmd.Context(), auditAction: cmd.CommandPath(),
-	}
-	plan, err := planConfigWithRemediation(client, parsed, client.BaseURL, planOpts)
-	if err != nil {
-		return err
-	}
-	if err := maybeWritePlanReceipt(parsed, plan.receipt, planOpts, 1); err != nil {
-		return err
-	}
-	fmt.Fprintf(cmd.OutOrStdout(), "SDK plan created for %s (Plan ID: %s)\n", parsed.ConfigKey, plan.receipt.PlanID)
-	if err := printPlanSummary(cmd.OutOrStdout(), plan.summary); err != nil {
-		return err
-	}
-	printRequiredPermissions(cmd.OutOrStdout(), plan.requiredPermissions)
-	prepared, err := prepareConfigApply(parsed, applyOptions{}, client.BaseURL)
-	if err != nil {
-		return err
-	}
-	if err := applyPreparedConfig(client, prepared, false); err != nil {
-		return err
-	}
-	recordAppliedChange(cmd.Context(), cmd.CommandPath(), "sdk")
-	return nil
+// createAndApplySDKInit keeps the hidden compatibility alias on the same plan-before-publish lifecycle as root init.
+func createAndApplySDKInit(cmd *cobra.Command, client *api.Client, request scaffoldRequest, workspaceApplied bool, resolver scaffoldRequirementsResolver, bucketResolver scaffoldBucketResolver) error {
+	return createPlanApplyUnifiedInit(cmd, client, unifiedInitModeSDK, request, workspaceApplied, false, resolver, bucketResolver)
 }

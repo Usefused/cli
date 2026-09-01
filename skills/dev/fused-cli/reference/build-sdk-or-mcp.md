@@ -196,30 +196,33 @@ connect scopes, or user connections are unresolved.
 
 ## 6. Author and apply the selected output
 
-For an SDK, use service-bearing `sdk init` (or `--extend` for an existing draft)
-so the shared enrichment runs. Set every generated bucket-value key before plan
-using `fused-config`'s canonical OpenAPI/Postman reference, then run:
+For an SDK, use top-level init so service activation, operation selection,
+credential remediation, plan/apply, and package download share one guided
+flow while retaining separate receipts:
 
 ```shell
-fused-cli sdk validate
-fused-cli sdk plan
-fused-cli sdk apply --download
-# Or download an already-generated version:
-fused-cli sdk download <sdk-name>@<version>
+fused-cli init <name> --sdk --service '<service>[=<version>]'
 ```
 
-For MCP, use the same enrichment through service-bearing `mcp init` or
-`--extend`. Before scaffolding, have the LLM write a concise one-to-three
+If this generated SDK plan returns the typed
+`generation_contract_pin_unavailable` condition, init visibly refreshes only
+the exact selected active `service@version` snapshots and retries the same plan
+once. The path is deterministic with `--no-input`. Do not replace the retained
+pin, change versions, broaden the refresh to the workspace, or retry again if
+the refresh or second plan fails. API and MCP init do not use this recovery.
+
+Use `--api` instead when the user wants the central execution REST API without
+a generated package. It creates the same `kind: sdk` app with `generate: false`
+and prints a request template; API is not a separate resource kind.
+
+For MCP, use the same top-level lifecycle. Before scaffolding, have the LLM write a concise one-to-three
 sentence summary of the user-facing work enabled by the selected services.
 Pass it with `--description`; do not enumerate operation IDs or describe the
 `search_docs`/`execute` mechanics because the prose is advertised as the MCP
 server's identity before tool discovery. Then run:
 
 ```shell
-fused-cli mcp init <name> --description '<LLM-authored capability summary>' [...selection flags]
-fused-cli mcp validate
-fused-cli mcp plan
-fused-cli mcp apply
+fused-cli init <name> --mcp --description '<LLM-authored capability summary>' --service '<service>[=<version>]' [...selection flags]
 fused-cli mcp list
 ```
 

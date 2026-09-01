@@ -120,62 +120,117 @@ without invoking `sdk prompt` and starting a second agent.
 ## `config`
 Manage your local CLI configuration (`set`, `get`, `list`, `reset`). Inherits global flags.
 
-## `workspace init` / `sdk init [name]` / `mcp init [name]`
+## `init <app-name>`
 
-Create a config-as-code skeleton, or add selections to an existing config with
-`--extend`. The default targets are
-`.fused/workspace.yaml`, `.fused/sdks/<name>.yaml`, and
-`.fused/mcps/<name>.yaml`; use the global `-f` flag to choose another file.
+Create and start a typed SDK, a direct Engine API app, or an Engine-hosted MCP
+server. Top-level init composes the existing workspace and app plan/apply
+functions; it does not introduce a new resource kind or receipt boundary.
 
 ```bash
-# Editable empty skeletons
-fused-cli workspace init
-fused-cli sdk init google-workspace
-fused-cli mcp init support-agent
-
-# Complete selections during creation
-fused-cli sdk init google-workspace \
+# Generate, apply, and download a typed SDK
+fused-cli init google-workspace --sdk \
   --service '@google/drive' \
   --operation '@google/drive=listFiles'
 
-# Add to the same file without replacing existing selections
-fused-cli sdk init google-workspace --extend \
-  --service 'gmail=v1' \
-  --operation 'gmail=listMessages'
+# Apply the same execution app without generating a package
+fused-cli init google-api --api \
+  --service '@google/drive' \
+  --select-all '@google/drive'
+
+# Deploy an Engine-hosted MCP server
+fused-cli init support-agent --mcp \
+  --description 'Help support teams manage issues' \
+  --service jira \
+  --select-all jira
 ```
 
 `--service <key>[=<version>]`, `--operation <service>=<operationId>`, and
-`--select-all <service>` are repeatable for SDK init. An omitted SDK service
-version resolves to the latest enabled workspace version, or the latest public
-Registry version when activation is needed. Workspace services may also omit
-the version; MCP services still require `<key>=<version>`. New SDK/MCP configs
-default to app version `1.0.0`; SDKs default to TypeScript. `--bucket` only
-references an existing bucket and is omitted by default—it never creates a
-bucket.
+`--select-all <service>` are repeatable. An omitted provider version resolves to
+the latest enabled workspace version, or the latest public Registry version
+when activation is needed. New SDK/MCP configs default to app version `1.0.0`;
+generated SDKs default to TypeScript. `--bucket` only references an existing
+bucket and is omitted by default—it never creates a bucket.
 
-Creation refuses to replace an existing path. Extension is additive and
-idempotent: it preserves existing selections, reports `unchanged` when the
-requested entries already exist, and rejects conflicting names, versions,
-languages, buckets, or service versions before writing. One file contains one
-typed YAML document.
+In a terminal, omit the mode flag to choose `--sdk`, `--api`, or `--mcp`. If a
+service has no operation flags, the highlighted default is **All operations**;
+choose the narrower path to search by operation ID, method, path, description,
+or tag. In automation, `--no-input` or `CI=true` requires one explicit mode and
+an explicit `--operation` or `--select-all` for every service. Non-interactive
+MCP creation also requires `--description`.
 
-When SDK init or `--extend` includes services, it composes the existing
-workspace resolution/config-edit/plan/apply and SDK scaffold/plan/apply
-functions. If an exact version is not enabled, a terminal presents one combined
-confirmation; governance remains split into a workspace plan receipt and an SDK
-plan receipt. SDK planning securely remediates only typed missing credentials
-in the exact selected bucket and retries once. `--no-input` and `CI=true` skip
-prompts and fail on ambiguity or missing credentials. Service-bearing SDK init
-rejects `--json` before remote or local mutation because the composed lifecycle
-currently has human apply output.
+Creation refuses to replace an existing path before the remote app plan. Extension is additive and
+idempotent through the top-level `extend` command described below. The retained
+`init --extend` flag is a compatibility alias for existing scripts.
 
-SDK and MCP scaffolding add only missing required bucket-backed
+If an exact version is not enabled, a terminal presents one combined
+confirmation; governance remains split into a workspace plan receipt and an app
+plan receipt. SDK/API planning securely remediates only typed missing
+credentials in the exact selected bucket and retries once. Top-level init has
+human apply output and does not expose `--json`; use the explicit plan/apply
+commands for structured automation.
+
+Init builds and validates the app candidate in memory, then plans it before
+atomically creating the YAML file. If that app plan fails, no app config or app
+receipt is created. A workspace activation completed earlier in the composed
+flow remains applied under its separate receipt.
+
+For generated SDK mode, `generation_contract_pin_unavailable` starts one
+bounded legacy-snapshot repair. The CLI resolves every selected active
+`service@version` before changing anything, visibly refreshes each exact Engine
+snapshot, and retries the unchanged app plan once. `--no-input` follows the
+same deterministic path without prompting. The CLI never substitutes a runtime
+hash, selects a newer version, or bypasses the Registry-retained generation pin.
+API mode, MCP mode, and unrelated failures do not trigger this repair.
+
+If exact resolution or refresh fails, init does not retry the plan. If the one
+retry fails, no app config or app receipt is created and the error reports any
+snapshot refreshes that already completed. A repeated missing-pin response
+directs you to the Engine and Registry logs or another enabled version.
+Changing credentials or operation selection does not repair a generation-pin
+failure.
+
+SDK mode writes `kind: sdk` with `generate: true`, applies it, and downloads the
+package. API mode writes the same resource with `generate: false`, applies it,
+and prints a central execution REST request template. MCP mode writes `kind:
+mcp`, applies it, and reports the deployed Engine URL and token.
+
+App scaffolding adds only missing required bucket-backed
 `server_variable` injections. Existing injections remain authoritative, and
-workspace policy or native `x-fused-connect` routing is not duplicated. Empty
-SDK scaffolds and MCP init retain JSON output with `generated_binding_count`;
-read the generated service/variable/key from the written config, never from a
-returned value. See the `fused-config` OpenAPI/Postman reference for the
-canonical Sendbird binding and bucket-value setup.
+workspace policy or native `x-fused-connect` routing is not duplicated. The
+older `sdk init` and `mcp init` scaffold commands remain callable but hidden for
+compatibility; `workspace init` remains available for an editable workspace
+skeleton. See the `fused-config` OpenAPI/Postman reference for the canonical
+Sendbird binding and bucket-value setup.
+
+## `extend <app-name>`
+
+Add services or operations to an existing SDK, direct API app, or MCP server:
+
+```bash
+fused-cli extend support-sdk \
+  --service slack \
+  --select-all slack
+```
+
+The command finds the existing `.fused/sdks/<name>.yaml` or
+`.fused/mcps/<name>.yaml` file and infers its mode from the validated document.
+An SDK config with `generate: false` remains a direct API app. If both SDK and
+MCP files use the same name, pass `-f <exact-file>` rather than letting the CLI
+guess.
+
+Extension updates that same YAML file. It preserves existing selections,
+reports `unchanged` for an idempotent merge, and rejects conflicting identity,
+routing, or service-version input before writing. A real change to a stable SemVer
+version infers its next minor successor; `1.0.0` becomes `1.1.0`. Terminal
+confirmation shows that identity, and `--no-input` or `CI=true` uses the same
+deterministic inference. An idempotent repeat keeps the current version. Pass
+`--version` to override inference; prerelease and non-SemVer versions require it.
+
+`--service <key>[=<version>]`, `--operation
+<service>=<operationId>`, and `--select-all <service>` retain the same meanings
+as init. Omit operation flags in a terminal to accept all operations or use the
+searchable selector. The command reuses the same activation, plan, apply, SDK
+download, API next-step, and MCP deployment functions as initial creation.
 
 ## `skill`
 
@@ -749,6 +804,22 @@ List workspace services along with their enabled versions.
 | `--q` | `-q` | Filter visible workspace services by name or slug | `""` |
 | `--interactive` | `-i` | Interactive service selection | `false` |
 | `--json` | | Print visible workspace services as JSON | `false` |
+
+## `workspace services refresh-missing-contracts`
+Explicitly refresh a bounded batch of activated service versions whose runtime
+contract snapshot is missing or does not retain a valid generation pin. Each
+refresh reacquires the exact immutable contract from Registry; it does not
+derive a pin locally or move a service to another version. The command reports
+the number found, refreshed, and failed.
+
+This is an advanced workspace-maintenance command. It runs only when invoked
+and processes at most `--limit` candidates per call. Generated `init --sdk`
+uses a narrower recovery path that refreshes only the versions selected by that
+SDK candidate.
+
+| Argument | Short | Description | Default |
+|----------|-------|-------------|---------|
+| `--limit` | | Maximum missing or unpinned activated service versions to refresh | `100` |
 
 ## `workspace has`
 Check if a specific service is available in the workspace and output its enabled versions.

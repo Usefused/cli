@@ -1,15 +1,20 @@
 package cmd
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/Usefused/cli/internal/api"
 	"github.com/Usefused/cli/internal/configfile"
+	"github.com/spf13/cobra"
 )
 
 // TestSDKInitComposesWorkspaceAndAppReceipts exercises the production command through both existing plan/apply boundaries.
@@ -76,6 +81,249 @@ func TestSDKInitPromptsOnceForCombinedIntent(t *testing.T) {
 	if prompts != 1 {
 		t.Fatalf("combined prompt count = %d; want 1", prompts)
 	}
+}
+
+// TestSDKInitSelectsMissingOperationsInteractively proves the concise service-only command discovers scope before its combined review.
+func TestSDKInitSelectsMissingOperationsInteractively(t *testing.T) {
+	server, _ := newSDKInitLifecycleServer(t)
+	defer server.Close()
+	oldNoInput, oldInput := NoInput, sdkInput
+	NoInput = false
+	t.Setenv("CI", "")
+	sdkInput = strings.NewReader("1\n")
+	t.Cleanup(func() {
+		NoInput, sdkInput = oldNoInput, oldInput
+	})
+	restoreSelector := stubSDKOperationSelectionRunner(t, func(_ io.Reader, _ io.Writer, serviceName, serviceVersion string, endpoints []api.Integration) (sdkOperationSelection, error) {
+		if serviceName != "linear" || serviceVersion != "v1" || len(endpoints) != 1 {
+			t.Fatalf("selector input = %s %s %#v", serviceName, serviceVersion, endpoints)
+		}
+		// Choosing the narrower path preserves exact Registry operation IDs in the SDK config.
+		return sdkOperationSelection{operations: []string{endpoints[0].Name}}, nil
+	})
+	t.Cleanup(restoreSelector)
+
+	var output bytes.Buffer
+	command := &cobra.Command{}
+	command.SetOut(&output)
+	request, err := completeSDKInitOperationSelections(command, api.NewClient(server.URL, "test-key"), scaffoldRequest{name: "support-sdk"}, []sdkInitResolvedService{{
+		target: workspaceServiceAddTarget{slug: "linear", serviceID: "00000000-0000-4000-8000-000000000001"}, version: "v1",
+	}})
+	if err != nil {
+		t.Fatalf("select missing SDK operations: %v", err)
+	}
+	if len(request.operations) != 1 || request.operations[0].operation != "issueUpdate" {
+		t.Fatalf("selected operations = %#v; want issueUpdate", request.operations)
+	}
+	// The combined review must name the operation selected through the shared prompt.
+	message := sdkInitConfirmationMessage(request, []sdkInitResolvedService{{target: workspaceServiceAddTarget{slug: "linear"}, version: "v1"}}, true)
+	if !strings.Contains(message, "create support-sdk with issueUpdate?") {
+		t.Fatalf("combined prompt = %q", message)
+	}
+}
+
+// TestSDKInitDefaultsAnEmptyInteractiveSelectionToAllOperations keeps the fastest path free of operation-ID knowledge.
+func TestSDKInitDefaultsAnEmptyInteractiveSelectionToAllOperations(t *testing.T) {
+	server, _ := newSDKInitLifecycleServer(t)
+	defer server.Close()
+	oldNoInput, oldInput := NoInput, sdkInput
+	NoInput = false
+	t.Setenv("CI", "")
+	sdkInput = strings.NewReader("\n")
+	t.Cleanup(func() {
+		NoInput, sdkInput = oldNoInput, oldInput
+	})
+	restoreSelector := stubSDKOperationSelectionRunner(t, func(_ io.Reader, _ io.Writer, _ string, _ string, endpoints []api.Integration) (sdkOperationSelection, error) {
+		// Enter on the visible default returns select_all while retaining fetched IDs for operation-add compatibility.
+		return sdkOperationSelection{operations: operationNames(endpoints), selectAll: true}, nil
+	})
+	t.Cleanup(restoreSelector)
+
+	command := &cobra.Command{}
+	request, err := completeSDKInitOperationSelections(command, api.NewClient(server.URL, "test-key"), scaffoldRequest{name: "support-sdk"}, []sdkInitResolvedService{{
+		target: workspaceServiceAddTarget{slug: "linear", serviceID: "00000000-0000-4000-8000-000000000001"}, version: "v1",
+	}})
+	if err != nil {
+		t.Fatalf("default missing SDK operations: %v", err)
+	}
+	if len(request.selectAll) != 1 || request.selectAll[0] != "linear" || len(request.operations) != 0 {
+		t.Fatalf("service selection = %#v / %#v; want select_all without an explicit list", request.selectAll, request.operations)
+	}
+	// The review describes the complete selected surface without requiring an operation ID.
+	message := sdkInitConfirmationMessage(request, []sdkInitResolvedService{{target: workspaceServiceAddTarget{slug: "linear"}, version: "v1"}}, true)
+	if !strings.Contains(message, "create support-sdk with all operations for the selected services?") {
+		t.Fatalf("combined prompt = %q", message)
+	}
+}
+
+// TestSDKInitNoInputRequiresOperationScope keeps unattended capability grants explicit and fails before either config is written.
+func TestSDKInitNoInputRequiresOperationScope(t *testing.T) {
+	oldNoInput := NoInput
+	NoInput = true
+	t.Cleanup(func() { NoInput = oldNoInput })
+
+	_, err := completeSDKInitOperationSelections(&cobra.Command{}, nil, scaffoldRequest{name: "support-sdk"}, []sdkInitResolvedService{{
+		target: workspaceServiceAddTarget{slug: "linear"}, version: "v1",
+	}})
+	if err == nil || !strings.Contains(err.Error(), "--no-input requires --operation 'linear=<operationId>' or --select-all 'linear'") {
+		t.Fatalf("missing explicit operation remediation: %v", err)
+	}
+}
+
+// TestSDKInitInteractiveExtensionInfersMinorSuccessor keeps one file while assigning a deterministic successor before planning.
+func TestSDKInitInteractiveExtensionInfersMinorSuccessor(t *testing.T) {
+	path := writeSDKInitExtensionFixture(t)
+	server := newSDKInitAppReferenceServer(t, "1.1.0", false)
+	defer server.Close()
+	oldNoInput := NoInput
+	NoInput = false
+	t.Setenv("CI", "")
+	t.Cleanup(func() { NoInput = oldNoInput })
+	request := sdkInitExtensionRequest(path)
+	resolved, err := completeSDKInitVersionExtension(api.NewClient(server.URL, "test-key"), request, noOpScaffoldRequirements, defaultTestScaffoldBucket)
+	if err != nil {
+		t.Fatalf("infer interactive version extension: %v", err)
+	}
+	// Inference changes only the pending request; the original file remains untouched until the reviewed commit boundary.
+	data, readErr := os.ReadFile(path)
+	if readErr != nil || resolved.version != "1.1.0" || !resolved.versionSet || !strings.Contains(string(data), "version: 1.0.0") {
+		t.Fatalf("resolved=%#v file=%q readErr=%v", resolved, data, readErr)
+	}
+	message := sdkInitConfirmationMessage(resolved, []sdkInitResolvedService{{target: workspaceServiceAddTarget{slug: "linear"}, version: "v1"}}, false)
+	// The final lifecycle confirmation must present successor identity and expanded operation together.
+	if !strings.Contains(message, "Extend support-sdk version 1.1.0 with issueUpdate") {
+		t.Fatalf("successor confirmation=%q", message)
+	}
+}
+
+// TestSDKInitNoInputExtensionInfersMinorSuccessor proves automation uses the same deterministic successor as terminals.
+func TestSDKInitNoInputExtensionInfersMinorSuccessor(t *testing.T) {
+	path := writeSDKInitExtensionFixture(t)
+	server := newSDKInitAppReferenceServer(t, "1.1.0", false)
+	defer server.Close()
+	oldNoInput := NoInput
+	NoInput = true
+	t.Cleanup(func() { NoInput = oldNoInput })
+	resolved, err := completeSDKInitVersionExtension(api.NewClient(server.URL, "test-key"), sdkInitExtensionRequest(path), noOpScaffoldRequirements, defaultTestScaffoldBucket)
+	// Non-interactive behavior cannot depend on terminal state or a prompt implementation.
+	if err != nil || resolved.version != "1.1.0" || !resolved.versionSet {
+		t.Fatalf("resolved=%#v err=%v", resolved, err)
+	}
+}
+
+// TestSDKInitExplicitCurrentVersionRejectsChangedAppliedScope proves a repeated immutable identity fails before the config write.
+func TestSDKInitExplicitCurrentVersionRejectsChangedAppliedScope(t *testing.T) {
+	path := writeSDKInitExtensionFixture(t)
+	request := sdkInitExtensionRequest(path)
+	request.version, request.versionSet = "1.0.0", true
+	_, err := completeSDKInitVersionExtension(nil, request, noOpScaffoldRequirements, defaultTestScaffoldBucket)
+	// The error must name the applied identity and exact successor flag without rewriting the source file.
+	data, readErr := os.ReadFile(path)
+	if err == nil || !strings.Contains(err.Error(), "support-sdk@1.0.0 already identifies the current config") || !strings.Contains(err.Error(), "--version <new-version>") || readErr != nil || !strings.Contains(string(data), "operations: [issueGet]") {
+		t.Fatalf("error=%v file=%q readErr=%v", err, data, readErr)
+	}
+}
+
+// TestSDKInitExplicitSuccessorCollisionFailsBeforeWrite proves a visible immutable target is rejected locally.
+func TestSDKInitExplicitSuccessorCollisionFailsBeforeWrite(t *testing.T) {
+	path := writeSDKInitExtensionFixture(t)
+	server := newSDKInitAppReferenceServer(t, "1.1.0", true)
+	defer server.Close()
+	request := sdkInitExtensionRequest(path)
+	request.version, request.versionSet = "1.1.0", true
+	_, err := completeSDKInitVersionExtension(api.NewClient(server.URL, "test-key"), request, noOpScaffoldRequirements, defaultTestScaffoldBucket)
+	data, readErr := os.ReadFile(path)
+	// Collision checks must run before any candidate replaces the authored current version.
+	if err == nil || !strings.Contains(err.Error(), "support-sdk@1.1.0 already exists") || readErr != nil || !strings.Contains(string(data), "version: 1.0.0") {
+		t.Fatalf("error=%v file=%q readErr=%v", err, data, readErr)
+	}
+}
+
+// TestSDKInitIdempotentExtensionKeepsAppliedVersion avoids prompting when the requested additions are already present.
+func TestSDKInitIdempotentExtensionKeepsAppliedVersion(t *testing.T) {
+	path := writeSDKInitExtensionFixture(t)
+	request := sdkInitExtensionRequest(path)
+	request.operations = []scaffoldOperation{{service: "linear", operation: "issueGet"}}
+	resolved, err := completeSDKInitVersionExtension(nil, request, noOpScaffoldRequirements, defaultTestScaffoldBucket)
+	if err != nil {
+		t.Fatalf("complete idempotent extension: %v", err)
+	}
+	// A nil client proves the no-change path never performs an unnecessary remote app lookup.
+	if resolved.versionSet || resolved.version != "" {
+		t.Fatalf("idempotent extension changed version intent: %#v", resolved)
+	}
+}
+
+// TestSDKInitUnpublishedDraftExtensionAlsoInfersSuccessor avoids treating visibility-ambiguous not-found as mutation authority.
+func TestSDKInitUnpublishedDraftExtensionAlsoInfersSuccessor(t *testing.T) {
+	path := writeSDKInitExtensionFixture(t)
+	server := newSDKInitAppReferenceServer(t, "1.1.0", false)
+	defer server.Close()
+	oldNoInput := NoInput
+	NoInput = true
+	t.Cleanup(func() { NoInput = oldNoInput })
+	resolved, err := completeSDKInitVersionExtension(api.NewClient(server.URL, "test-key"), sdkInitExtensionRequest(path), noOpScaffoldRequirements, defaultTestScaffoldBucket)
+	if err != nil {
+		t.Fatalf("complete unpublished draft extension: %v", err)
+	}
+	// Absence and inaccessibility share one response, so every real change advances the authored version uniformly.
+	if !resolved.versionSet || resolved.version != "1.1.0" {
+		t.Fatalf("draft extension did not infer successor: %#v", resolved)
+	}
+}
+
+// writeSDKInitExtensionFixture creates one valid private SDK config for in-place lifecycle tests.
+func writeSDKInitExtensionFixture(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "support-sdk.yaml")
+	data := `apiVersion: fused/v1
+kind: sdk
+name: support-sdk
+version: 1.0.0
+language: typescript
+bucket: default
+services:
+  linear:
+    version: v1
+    operations: [issueGet]
+`
+	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// sdkInitExtensionRequest returns one changed selection without preselecting a successor version.
+func sdkInitExtensionRequest(path string) scaffoldRequest {
+	return scaffoldRequest{
+		kind: configfile.KindSDK, name: "support-sdk", path: path, extend: true,
+		services:   []scaffoldService{{name: "linear", version: "v1"}},
+		operations: []scaffoldOperation{{service: "linear", operation: "issueUpdate"}},
+	}
+}
+
+// newSDKInitAppReferenceServer returns an exact Engine app-reference result for extension lifecycle tests.
+func newSDKInitAppReferenceServer(t *testing.T, expectedVersion string, exists bool) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		var body struct {
+			Query     string         `json:"query"`
+			Variables map[string]any `json:"variables"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			t.Fatalf("decode app reference request: %v", err)
+		}
+		// Collision detection must resolve the exact proposed name, version, and SDK kind before writing.
+		if !strings.Contains(body.Query, "ResolveAppReference") || body.Variables["reference"] != "support-sdk" || body.Variables["version"] != expectedVersion || body.Variables["kind"] != "sdk" {
+			t.Fatalf("app reference request=%#v", body)
+		}
+		// Tests can distinguish an existing immutable version from a still-local draft without changing the client contract.
+		if !exists {
+			_, _ = writer.Write([]byte(`{"errors":[{"message":"not found","extensions":{"code":"FUSED_RESOURCE_NOT_FOUND"}}]}`))
+			return
+		}
+		_, _ = writer.Write([]byte(`{"data":{"appReference":{"id":"app-version-1","kind":"sdk"}}}`))
+	}))
 }
 
 // newSDKInitLifecycleServer returns exact fixtures for Registry resolution, scaffold discovery, and both existing lifecycle commits.
@@ -159,6 +407,9 @@ func writeSDKInitRegistryGraphQL(t *testing.T, writer http.ResponseWriter, query
 		_, _ = writer.Write([]byte(`{"data":{"serviceCandidatesByRefs":[{"ref":"linear","candidates":[{"id":"00000000-0000-4000-8000-000000000001","name":"Linear","slug":"linear","is_owner":true,"is_public":true}]}]}}`))
 	case strings.Contains(query, "GetServiceLatestVersion"):
 		_, _ = writer.Write([]byte(`{"data":{"service":{"service_versions":[{"name":"v1"}]}}}`))
+	// The shared selector consumes the same Registry operation projection in operation-add and init workflows.
+	case strings.Contains(query, "SearchEndpoints"):
+		_, _ = writer.Write([]byte(`{"data":{"searchEndpoints":[{"id":"endpoint-1","name":"issueUpdate","method":"PATCH","path":"/issues/{id}","description":"","service_id":"00000000-0000-4000-8000-000000000001"}]}}`))
 	default:
 		t.Fatalf("unexpected Registry GraphQL query: %s", query)
 	}

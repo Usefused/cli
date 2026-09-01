@@ -47,10 +47,12 @@ type scaffoldRequest struct {
 	description    string
 	language       string
 	bucket         string
+	generate       bool
 	versionSet     bool
 	descriptionSet bool
 	languageSet    bool
 	bucketSet      bool
+	generateSet    bool
 }
 
 type scaffoldService struct {
@@ -103,6 +105,13 @@ func newScaffoldCommandWithWorkflow(kind configfile.ConfigKind, resolver scaffol
 	args := cobra.RangeArgs(0, 1)
 	selectionDescription := "services and operation selections"
 	serviceFlagDescription := "Service key with an optional version as <key>[=<version>]; repeatable"
+	operationFlagDescription := "Selected operation as <service>=<operationId>; repeatable"
+	selectAllFlagDescription := "Service key whose operations should all be selected; repeatable"
+	// SDK init can discover operation scope after service resolution, while other scaffold kinds retain explicit flag guidance.
+	if kind == configfile.KindSDK {
+		operationFlagDescription = "Selected operation as <service>=<operationId>; repeatable; omit to choose interactively"
+		selectAllFlagDescription = "Service key whose operations should all be selected; repeatable; omit to choose interactively"
+	}
 	// MCP keeps exact version selection because only SDK init owns version-default orchestration.
 	if kind == configfile.KindMCP {
 		serviceFlagDescription = "Service key and version as <key>=<version>; repeatable"
@@ -118,7 +127,8 @@ func newScaffoldCommandWithWorkflow(kind configfile.ConfigKind, resolver scaffol
 		Long: fmt.Sprintf(`Create a %s config skeleton.
 
 By default the command refuses to replace an existing file. Pass --extend to
-merge %s into an existing config instead.`, kind, selectionDescription),
+merge %s into that file; an explicit --version retargets an app file to its
+immutable successor.`, kind, selectionDescription),
 		Args: args,
 		RunE: WithTelemetry(fmt.Sprintf("cli.%s.init", kind), func(cmd *cobra.Command, args []string) error {
 			request, err := buildScaffoldRequest(cmd, kind, args, opts)
@@ -140,12 +150,12 @@ merge %s into an existing config instead.`, kind, selectionDescription),
 		}),
 	}
 
-	command.Flags().BoolVar(&opts.extend, "extend", false, "Merge into an existing config instead of creating a new file")
+	command.Flags().BoolVar(&opts.extend, "extend", false, "Merge into an existing config; use --version for an applied successor")
 	command.Flags().StringSliceVar(&opts.services, "service", nil, serviceFlagDescription)
 	if kind != configfile.KindWorkspace {
-		command.Flags().StringSliceVar(&opts.operations, "operation", nil, "Selected operation as <service>=<operationId>; repeatable")
-		command.Flags().StringSliceVar(&opts.selectAll, "select-all", nil, "Service key whose operations should all be selected; repeatable")
-		command.Flags().StringVar(&opts.version, "version", defaultScaffoldVersion, "Config version")
+		command.Flags().StringSliceVar(&opts.operations, "operation", nil, operationFlagDescription)
+		command.Flags().StringSliceVar(&opts.selectAll, "select-all", nil, selectAllFlagDescription)
+		command.Flags().StringVar(&opts.version, "version", defaultScaffoldVersion, "Config version, or exact successor when extending an applied app")
 		command.Flags().StringVar(&opts.bucket, "bucket", "", "Existing bucket to bind to this config")
 	}
 	if kind == configfile.KindSDK {
@@ -156,6 +166,11 @@ merge %s into an existing config instead.`, kind, selectionDescription),
 		command.Flags().StringVar(&opts.description, "description", "", "Human-readable summary of what this MCP server can do")
 	}
 	addJSONOutputFlag(command)
+	// Resource-scoped app init remains invokable for scripts, but unified init is the only creation path advertised in help.
+	if kind == configfile.KindSDK || kind == configfile.KindMCP {
+		command.Hidden = true
+		command.Long += fmt.Sprintf("\n\nFor new workflows, use 'fused-cli init <app-name> --%s'.", kind)
+	}
 	return command
 }
 
@@ -327,7 +342,7 @@ func writeScaffold(request scaffoldRequest, resolver scaffoldRequirementsResolve
 	if err != nil {
 		return scaffoldResult{}, err
 	}
-	if err := atomicCreateFile(request.path, data, 0o644, scaffoldValidator(request.path, request.kind)); err != nil {
+	if err := atomicCreateFile(request.path, data, 0o644, scaffoldValidator(request)); err != nil {
 		return scaffoldResult{}, err
 	}
 	return scaffoldResult{Action: "created", Kind: request.kind, Path: request.path, Changed: true, GeneratedBindingCount: generated}, nil
@@ -350,7 +365,7 @@ func extendScaffold(request scaffoldRequest, resolver scaffoldRequirementsResolv
 	if !changed {
 		return result, nil
 	}
-	if err := atomicWriteFile(request.path, updated, 0o644, scaffoldValidator(request.path, request.kind)); err != nil {
+	if err := atomicWriteFile(request.path, updated, 0o644, scaffoldValidator(request)); err != nil {
 		return scaffoldResult{}, err
 	}
 	result.Action = "extended"
@@ -381,6 +396,11 @@ func newScaffoldData(request scaffoldRequest, resolver scaffoldRequirementsResol
 	}
 	if request.kind == configfile.KindSDK {
 		config.Language = request.language
+		// Direct API mode declares no-codegen before serialization so config creation remains one validated atomic write.
+		if request.generateSet {
+			generate := request.generate
+			config.Generate = &generate
+		}
 	}
 	// An explicit flag remains authoritative and is verified later by plan's exact bucket.use check.
 	if request.bucketSet {
@@ -489,8 +509,8 @@ func mergeAppIdentity(config *configfile.AppConfig, request scaffoldRequest) (bo
 	if err != nil {
 		return false, err
 	}
-	versionChanged, err := mergeScaffoldField(&config.Version, request.version, request.versionSet, "version")
-	// Immutable version conflicts must preserve the complete existing document.
+	versionChanged, err := mergeAppVersion(config, request)
+	// Version transitions are allowed only as an explicit in-place extension, preserving accidental-retarget protection.
 	if err != nil {
 		return false, err
 	}
@@ -505,8 +525,61 @@ func mergeAppIdentity(config *configfile.AppConfig, request scaffoldRequest) (bo
 	if err != nil {
 		return false, err
 	}
+	generateChanged, err := mergeSDKGenerate(config, request)
+	// Package-generation intent is immutable within one app version, so extension must reject a conflicting mode.
+	if err != nil {
+		return false, err
+	}
 	bucketChanged, err := mergeScaffoldField(&config.Bucket, request.bucket, request.bucketSet, "bucket")
-	return changed || languageChanged || descriptionChanged || bucketChanged, err
+	return changed || languageChanged || descriptionChanged || generateChanged || bucketChanged, err
+}
+
+// mergeAppVersion treats an explicit version on --extend as a deliberate new immutable app version in the same file.
+func mergeAppVersion(config *configfile.AppConfig, request scaffoldRequest) (bool, error) {
+	// Omitted version flags preserve the file's authored version instead of applying the command default.
+	if !request.versionSet {
+		return false, nil
+	}
+	// Repeating the current version is idempotent and does not rewrite the document.
+	if config.Version == request.version {
+		return false, nil
+	}
+	// Empty skeleton identity may be completed without being considered a version transition.
+	if strings.TrimSpace(config.Version) == "" {
+		config.Version = request.version
+		return true, nil
+	}
+	// Only additive extension explicitly authorizes retargeting the same file to a new immutable version.
+	if !request.extend {
+		return false, fmt.Errorf("cannot extend config: existing version %q conflicts with %q", config.Version, request.version)
+	}
+	config.Version = request.version
+	return true, nil
+}
+
+// mergeSDKGenerate adds an explicit package-generation policy without treating an omitted historical default as false.
+func mergeSDKGenerate(config *configfile.AppConfig, request scaffoldRequest) (bool, error) {
+	// MCP has no package generator and must never receive the shared SDK-only field.
+	if request.kind != configfile.KindSDK {
+		return false, nil
+	}
+	// Ordinary SDK scaffolds preserve the absent-means-generate compatibility contract.
+	if !request.generateSet {
+		return false, nil
+	}
+	// An omitted field historically means package generation, so changing it to false would mutate immutable version behavior.
+	if config.Generate == nil {
+		// Explicit SDK mode agrees with the historical true default and needs no document rewrite.
+		if request.generate {
+			return false, nil
+		}
+		return false, errors.New("generate conflicts with existing config")
+	}
+	// Repeating the same explicit policy is idempotent.
+	if *config.Generate == request.generate {
+		return false, nil
+	}
+	return false, errors.New("generate conflicts with existing config")
 }
 
 // mergeAppLanguage keeps package-language handling out of hosted MCP identity merging.
@@ -780,12 +853,18 @@ func mergeAppSelectAll(config *configfile.AppConfig, services []string) (bool, e
 	return changed, nil
 }
 
-func scaffoldValidator(path string, kind configfile.ConfigKind) contentValidator {
+// scaffoldValidator applies full semantic validation to unified app outcomes and every existing app extension.
+func scaffoldValidator(request scaffoldRequest) contentValidator {
 	return func(data []byte) error {
-		if kind == configfile.KindWorkspace {
-			return decodeScaffoldDraft(data, path, kind, &configfile.WorkspaceConfig{})
+		// Compatibility scaffolds retain structural validation, while unified modes signal their complete outcome through immutable mode fields.
+		if request.kind == configfile.KindWorkspace || (!request.extend && !request.generateSet && !request.descriptionSet) {
+			if request.kind == configfile.KindWorkspace {
+				return decodeScaffoldDraft(data, request.path, request.kind, &configfile.WorkspaceConfig{})
+			}
+			return decodeScaffoldDraft(data, request.path, request.kind, &configfile.AppConfig{})
 		}
-		return decodeScaffoldDraft(data, path, kind, &configfile.AppConfig{})
+		_, err := configfile.Parse(data, request.path)
+		return err
 	}
 }
 

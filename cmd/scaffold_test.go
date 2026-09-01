@@ -102,17 +102,27 @@ func TestEnsureScaffoldBucketPreservesExistingSelection(t *testing.T) {
 	}
 }
 
-func TestInitCommandsLiveUnderResourceKindsOnly(t *testing.T) {
+// TestInitCommandsExposeOneRootCreationSurface proves compatibility scaffolds remain addressable but hidden behind unified init.
+func TestInitCommandsExposeOneRootCreationSurface(t *testing.T) {
 	for _, parent := range []*cobra.Command{workspaceCmd, sdkCmd, mcpCmd} {
 		command, _, err := parent.Find([]string{"init"})
+		// Workspace init remains public configuration authoring, while app-specific creators are compatibility-only.
 		if err != nil || command.Name() != "init" {
 			t.Fatalf("%s init is not registered: %v", parent.Name(), err)
 		}
 	}
+	foundUnified := false
 	for _, command := range RootCmd.Commands() {
-		if command.Name() == "init" || command.HasAlias("scaffold") {
-			t.Fatalf("legacy top-level config initializer remains registered as %s", command.Name())
+		// Exactly one root init is now the advertised app creation path; the removed scaffold alias must not return.
+		if command.Name() == "init" {
+			foundUnified = true
 		}
+		if command.HasAlias("scaffold") {
+			t.Fatalf("legacy top-level scaffold alias remains registered as %s", command.Name())
+		}
+	}
+	if !foundUnified {
+		t.Fatal("unified top-level init is not registered")
 	}
 }
 
@@ -202,6 +212,103 @@ services:
 	}
 	if info.Mode().Perm() != 0600 {
 		t.Fatalf("mode = %o, want 600", info.Mode().Perm())
+	}
+}
+
+// TestExtendAppScaffoldExplicitVersionBumpRetargetsTheSameFile proves a deliberate successor version preserves and expands one config document.
+func TestExtendAppScaffoldExplicitVersionBumpRetargetsTheSameFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sdk.yaml")
+	original := `apiVersion: fused/v1
+kind: sdk
+name: existing-sdk
+version: 1.0.0
+language: typescript
+bucket: default
+services:
+  linear:
+    version: v1
+    operations: [issueGet]
+`
+	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	request := scaffoldRequest{
+		kind: configfile.KindSDK, name: "existing-sdk", path: path, extend: true,
+		services:   []scaffoldService{{name: "linear", version: "v1"}},
+		operations: []scaffoldOperation{{service: "linear", operation: "issueUpdate"}},
+		version:    "1.1.0", versionSet: true,
+	}
+	result, err := writeScaffold(request, noOpScaffoldRequirements, defaultTestScaffoldBucket)
+	if err != nil {
+		t.Fatalf("extend app version in place: %v", err)
+	}
+	parsed, err := configfile.ParseFile(path)
+	if err != nil {
+		t.Fatalf("parse bumped config: %v", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The same private file now describes the successor while retaining the previous operation as its starting scope.
+	if result.Action != "extended" || parsed.SDK.Version != "1.1.0" || len(parsed.SDK.Services["linear"].Operations) != 2 || info.Mode().Perm() != 0o600 {
+		t.Fatalf("result=%#v version=%q operations=%#v mode=%o", result, parsed.SDK.Version, parsed.SDK.Services["linear"].Operations, info.Mode().Perm())
+	}
+}
+
+// TestExtendAppScaffoldSemanticFailuresPreserveOriginalBytes proves validation precedes every atomic replacement.
+func TestExtendAppScaffoldSemanticFailuresPreserveOriginalBytes(t *testing.T) {
+	tests := []struct {
+		name    string
+		request func(string) scaffoldRequest
+	}{
+		{
+			name: "invalid successor version",
+			request: func(path string) scaffoldRequest {
+				return scaffoldRequest{
+					kind: configfile.KindSDK, name: "existing-sdk", path: path, extend: true,
+					services:   []scaffoldService{{name: "linear", version: "v1"}},
+					operations: []scaffoldOperation{{service: "linear", operation: "issueUpdate"}},
+					version:    "next", versionSet: true,
+				}
+			},
+		},
+		{
+			name: "service without operation scope",
+			request: func(path string) scaffoldRequest {
+				return scaffoldRequest{
+					kind: configfile.KindSDK, name: "existing-sdk", path: path, extend: true,
+					services: []scaffoldService{{name: "github", version: "v1"}},
+					version:  "1.1.0", versionSet: true,
+				}
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "sdk.yaml")
+			original := []byte(`apiVersion: fused/v1
+kind: sdk
+name: existing-sdk
+version: 1.0.0
+language: typescript
+bucket: default
+services:
+  linear:
+    version: v1
+    operations: [issueGet]
+`)
+			if err := os.WriteFile(path, original, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			_, err := writeScaffold(test.request(path), noOpScaffoldRequirements, defaultTestScaffoldBucket)
+			data, readErr := os.ReadFile(path)
+			info, statErr := os.Stat(path)
+			// Semantic rejection must leave both content and private mode byte-for-byte unchanged.
+			if err == nil || readErr != nil || statErr != nil || !bytes.Equal(data, original) || info.Mode().Perm() != 0o600 {
+				t.Fatalf("error=%v readErr=%v statErr=%v mode=%o file=%q", err, readErr, statErr, info.Mode().Perm(), data)
+			}
+		})
 	}
 }
 

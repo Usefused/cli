@@ -5,42 +5,57 @@ registrations through YAML stored under `.fused/`.
 
 ## Create or extend a config
 
-Use one deterministic command for workspace, SDK, and MCP files:
+Use `init` for the working app path and `workspace init` when you only want an
+editable workspace skeleton:
 
 ```bash
 fused-cli workspace init
-fused-cli sdk init my-sdk \
+fused-cli init my-sdk --sdk \
   --service okta \
   --operation okta=listLogEvents
-fused-cli mcp init support-agent \
-  --service jira=1001.0.0 \
+fused-cli init support-agent --mcp \
+  --description "Help support teams manage issues" \
+  --service jira \
   --select-all jira
 ```
 
 The default output follows `.fused/` discovery; `-f <path>` overrides it. An
-existing file is never replaced implicitly. Repeat the command with
-`--extend` to merge another service or operation while preserving existing
-selections:
+existing file is never replaced implicitly. Use top-level `extend` to merge
+another service or operation while preserving existing selections. It reads the
+existing YAML to infer SDK, API, or MCP mode:
 
 ```bash
-fused-cli sdk init my-sdk --extend \
-  --service stripe=2026-08-01 \
+fused-cli extend my-sdk \
+  --service stripe \
   --operation stripe=createPayment
 ```
 
-Running `init` without service flags creates an editable empty skeleton. A
-service-bearing SDK init resolves an omitted provider version to one concrete
-version, validates locally, and uses the existing workspace and SDK plan/apply
-paths. If the version is not enabled, a terminal asks once to enable it and
-create the SDK; the workspace and SDK still receive separate plan receipts.
-`--no-input` and `CI=true` skip prompts but never guess an ambiguous service or
-collect credentials. Composite SDK init does not support `--json`.
+The same YAML path is updated; Fused keeps the stable app family and creates a
+new immutable version when apply runs. If the merge changes a stable SemVer version,
+Fused infers the next minor version and includes it in terminal confirmation;
+`--no-input` and `CI=true` use the same deterministic inference. Idempotent
+repeats keep the current version. Pass `--version` to override inference, and
+always pass it when the current version is a prerelease or not SemVer.
+
+Top-level init requires at least one service and resolves an omitted provider
+version to one concrete enabled or latest public version. In a terminal, omit
+`--sdk`, `--api`, or `--mcp` to choose the outcome, and omit operation flags to
+choose all operations or search a narrower set. If a version is not enabled,
+the CLI asks once to enable it and create the app; workspace and app changes
+still receive separate plan receipts. `--no-input` and `CI=true` skip prompts,
+require one explicit mode, and require `--operation` or `--select-all` for each
+service. Top-level init does not support `--json`.
+
+`fused-cli init <name> --api` uses the same `kind: sdk` execution resource with
+`generate: false`, then prints a central Engine REST request template instead of
+downloading a package. The hidden `sdk init` and `mcp init` compatibility
+commands remain callable for scripts that only need the older scaffold flow.
 
 SDK and MCP validation becomes actionable after each declared service also has
 an operation list or `--select-all`. Init does not create buckets; pass
 `--bucket` only after choosing an existing bucket the caller may use.
 
-A service-bearing SDK/MCP init or `--extend` adds only missing required
+A service-bearing top-level init or extend adds only missing required
 server-variable bindings; explicit injections, workspace policy, and native
 `x-fused-connect` routing are preserved. Empty SDK scaffolds and MCP init retain
 JSON scaffold output with `generated_binding_count`; use each key written into

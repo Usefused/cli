@@ -108,7 +108,7 @@ services:
 
 Do not create a `kind: webhook` config for connected-auth lifecycle events.
 When an SDK's selected auth path uses connected OAuth/OIDC, Engine implicitly
-adds family- and service-scoped Fused subjects and generated event types to the
+adds SDK- and service-scoped Fused subjects and generated event types to the
 same SDK webhook receiver. No callback URL, signing secret,
 `webhook_attachment`, `services.<slug>.webhooks`, or separate listener is
 needed. Their reserved suffixes are `fused.auth.connection.completed`,
@@ -121,7 +121,7 @@ The application still starts the generated receiver and registers handlers at
 runtime. Provider events and Fused-owned events share its durable ack/nack and
 reconnect behavior; retained deliveries are at least once. Auth lifecycle
 publication after the database commit is best-effort until Fused has a
-transactional outbox. Read `fused-sdk` for SDK-family routing and runtime
+transactional outbox. Read `fused-sdk` for SDK-scoped routing and runtime
 consumption.
 
 ## Commands

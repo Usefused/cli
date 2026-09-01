@@ -17,16 +17,21 @@ Maintain one compact working-facts record: CLI/Engine context, config paths, SDK
 
 For a business goal without a complete config, follow the `fused-cli` skill's `reference/build-sdk-or-mcp.md` SDK path, then return here after Engine setup, service activation, and credential requirements are known. Apply or download only when requested and no authority or production decision remains open.
 Use `service operations --json` for bounded discovery and inspect body contracts only with `service operation show` opt-in flags. `sdk plan` runs local validation before its Engine request; use standalone `sdk validate --json` only when an offline-only check is useful.
-Except for service-bearing `sdk init`, use `--json` on every SDK command whose confirmed help exposes it. Never parse SDK/Version IDs or the one-time token from human apply text: use `sdk plan --json`, `sdk apply --json`, `sdk token generate --json`, `sdk download --json`, `sdk invoke --json`, and `sdk activity --json`.
+Except for top-level `init`, use `--json` on every SDK command whose confirmed help exposes it. Never parse SDK/Version IDs or the one-time token from human apply text: use `sdk plan --json`, `sdk apply --json`, `sdk token generate --json`, `sdk download --json`, `sdk invoke --json`, and `sdk activity --json`.
 
 `kind: sdk`, managed by `fused-cli sdk ...`, declares a typed SDK package from a bucket's already-configured services.
-For service-bearing config, `sdk init` selects a `bucket.read`-visible bucket without creating one; plan/apply proves exact `bucket.use` (see `fused-bucket`). It pins an omitted provider version to an enabled or latest public version and composes existing workspace and SDK lifecycle functions. When activation is needed, a terminal asks once while retaining separate workspace and SDK receipts; typed credential remediation runs during SDK plan. `--no-input`/`CI=true` fail on ambiguity or missing credentials, and service-bearing init rejects `--json` before mutation. Each service key is the activated Registry slug; Registry visibility alone grants neither activation nor `service.consume`.
+For a new app, use `fused-cli init <name> --sdk --service <service>`. It selects an existing visible bucket, defaults the provider version, and composes the existing workspace and SDK lifecycles. A terminal asks once when activation is needed while retaining separate receipts; SDK plan owns typed credential remediation. Without operation flags, Enter accepts all operations or opens the searchable selector. `--no-input`/`CI=true` require a mode plus `--operation` or `--select-all` for every service and fail on ambiguity or missing credentials. Top-level init has no `--json`. Each service key is the activated Registry slug; visibility alone grants neither activation nor `service.consume`.
+
+Only generated SDK init, including the hidden compatibility alias, repairs the typed `generation_contract_pin_unavailable` legacy condition. Before refreshing anything, it resolves every selected config entry to one exact active workspace service version. It prints `Refreshing immutable SDK generation snapshot for <service>@<version>...` and the corresponding completion for each exact snapshot, then retries the unchanged app plan once. `--no-input` performs the same deterministic repair without a prompt. If resolution or refresh fails, there is no retry. If the retry fails, no app or config is created and completed refreshes remain explicit in the error. Never fabricate or substitute a pin, select a different provider version, broaden this into a workspace refresh, or retry a second time. API/MCP init and ordinary `sdk plan` do not mutate snapshots.
+
+Use `--api` for the central Engine API without a package. It remains `kind: sdk` with `generate: false`; init applies it and prints a REST request template.
 ```yaml
 apiVersion: fused/v1
 kind: sdk
 name: my-sdk
 version: "1.0.0"
 language: typescript
+generate: true
 bucket: default
 webhook_attachment: my-webhooks             # optional -- names a kind: webhook config, see fused-webhook
 services:
@@ -53,35 +58,17 @@ registers *which events* this SDK receives, not the webhook registration
 itself (that's `fused-webhook`). Setting either without `webhook_attachment`
 is rejected at plan time.
 
-Those fields select provider-originated events only. When the selected auth
-path for an SDK service uses connected OAuth/OIDC, Engine implicitly registers
-that service's Fused auth-lifecycle subjects for the SDK family and the
-generated package includes the same webhook receiver and event types even when
-there is no `webhook_attachment`. A service merely declaring an unused OAuth
-alternative does not qualify. Do not add a `kind: webhook`, provider callback
-URL, signing secret, or SDK YAML event selection for these Fused-owned events.
-They use the existing receiver under the reserved suffixes
-`fused.auth.connection.completed`, `fused.auth.token.refreshed`,
-`fused.auth.token.refresh_failed`, and
-`fused.auth.connection.reconnect_required`. The generated service webhook enum
-is the caller surface; its values retain the existing
-`<service-id>.<event-name>` wire shape, for example
-`JiraWebhook.FUSED_AUTH_CONNECTION_COMPLETED`. Do not invent a separate
-auth-event RPC or client.
-
-Listening remains explicit application behavior: construct
-`FusedWebhooks.listen`/`registerReceiver`, register the desired namespaced event
-handlers, and close the receiver at shutdown. Once a lifecycle event reaches
-the durable receiver, delivery is at least once, so nack failed work and make
-handlers idempotent by event ID. The post-commit lifecycle publication is
-best-effort; without a transactional outbox, a broker outage at that boundary
-can prevent emission even though the auth state committed.
-The credential-free auth payload includes that ID and lifecycle state but omits
-internal app provenance, provider payloads, scopes, URLs, and token material.
-Implicit subjects are scoped to the SDK family and service. A newer version in
-the same family can continue consuming its connection lifecycle, while another
-SDK sharing the bucket cannot; a standalone CLI-created connection has no SDK
-provenance and is not routed into an SDK receiver.
+Those fields select provider events. Connected OAuth/OIDC selections also add
+credential-free Fused auth-lifecycle events to the existing SDK webhook
+receiver without a `kind: webhook`, provider callback, signing secret, or YAML
+event selection. The generated enum exposes the reserved connection/token
+suffixes; do not invent another auth-event client. Register handlers through
+`FusedWebhooks.listen`/`registerReceiver`, close the receiver, and make handlers
+idempotent because durable delivery is at least once. Post-commit publication
+is best-effort without a transactional outbox. Routing is scoped to the SDK
+identity and service across SDK versions, never to another SDK sharing the
+bucket or to a standalone CLI-created connection. Read `fused-webhook` for the
+full lifecycle-event contract.
 
 `auth.type` selects a Registry-declared scheme (`basic`, `bearer`,
 `api_key`, `oauth`, `oidc`, `mtls` -- the same list `fused-config` documents
@@ -125,15 +112,11 @@ wire request still carries the original operation ID. Use the generated member
 shown by the package or service-detail example; do not rewrite the configured
 operation ID to match it.
 
-`select_all: true` is the alternative to listing `operations` explicitly --
-exactly one of the two is required, never both/neither. Be aware `sdk sync`
-(below) always freezes whatever's currently selected into an explicit,
-sorted operation list; a service configured with `select_all: true` does
-not come back as `select_all: true` after a sync, even if nothing else
-about it changed.
+`select_all: true` is the alternative to listing `operations`; exactly one is
+required. `sdk sync` freezes the current selection into a sorted explicit list,
+so it does not preserve `select_all: true` textually.
 
 ## Unified Operations
-
 TypeScript and Python SDK configs and `kind: mcp` configs may declare top-level
 `unified_operations` over operations in the same immutable app version; Go SDKs cannot.
 Read `fused-unified-operations` for graph, mapping, selector, and output rules.
@@ -150,9 +133,8 @@ derive identity by splitting a composite config key.
 Applying the same canonical content to the same version is a no-op: it does not
 regenerate the package or rotate tokens. Changing services, operations, auth,
 injections, language, or other scope under an existing version returns
-`app_version_immutable`; publish a new version. Do not edit a generated package
-to impersonate another version: Engine authorizes the embedded opaque `app_id`,
-not a client-reported semantic version.
+`app_version_immutable`; publish a new version. `fused-cli extend <name>` infers SDK or API mode from the existing YAML and updates that same file. A real change infers the next minor stable SemVer successor, including under `--no-input`, while an idempotent extension keeps the current version. An explicit `--version` overrides inference and is required for prerelease or non-SemVer versions. Do not edit a generated package to impersonate another
+version: Engine authorizes the embedded opaque `app_id`, not a client-reported semantic version.
 
 SDK execution tokens belong to the SDK, not one version. A token therefore
 works with every active or deprecated version of that SDK, while each version
@@ -175,13 +157,12 @@ state. The current CLI has no SDK deprecate/deactivate command; do not invent
 one. Those lifecycle actions are available through Engine's App UI/API.
 
 ## Commands
-
-This list may be behind the CLI's actual flags/subcommands -- run
-`fused-cli sdk <subcommand> --help` to confirm before relying on one. The
-`fused-cli` skill documents init's batched server-variable enrichment.
+Confirm current flags with `fused-cli sdk <subcommand> --help`; the `fused-cli` skill documents init's batched enrichment.
 
 ```shell
-fused-cli sdk init <name> [--extend] [--service '<service>[=<version>]'] [--operation '<service>=<operationId>'] [--no-input]
+fused-cli init <name> --sdk --service '<service>[=<version>]' [--operation '<service>=<operationId>' | --select-all '<service>'] [--no-input]
+fused-cli init <name> --api --service '<service>[=<version>]' [--operation '<service>=<operationId>' | --select-all '<service>'] [--no-input]
+fused-cli extend <name> [--version <new>] --service '<service>[=<version>]' [--operation '<service>=<operationId>' | --select-all '<service>'] [--no-input]
 fused-cli sdk plan [--no-input]
 fused-cli sdk apply
 fused-cli sdk validate
@@ -308,10 +289,8 @@ keeps management authority, while `fused-cli workspace access app grant
 replacing or revealing its runtime token. Likewise, a platform-owned bucket shared with `workspace access bucket grant <bucket-name>` can be selected by any eligible
 owning team without granting those teams secret management.
 
-`sdk sync` full-mirrors the exact Engine app version declared by the local
-SDK config back into that file. Anything the Engine app no longer selects is removed locally, not just flagged, and Engine values win on any conflict.
-There is no implicit latest lookup or sync-time version upgrade; change the
-config's `version`, then plan and apply that exact version deliberately.
+`sdk sync` full-mirrors the exact Engine app version declared by the local SDK config back into that file. Anything the Engine app no longer selects is removed locally, not just flagged, and Engine values win on any conflict.
+There is no implicit latest lookup or sync-time version upgrade; change the config's `version`, then plan and apply that exact version deliberately.
 
 Every persisted selection returned by Engine must carry exactly
 `schema_version: 3`; this is Engine response metadata, not an `sdk.yaml` field.
@@ -337,6 +316,4 @@ Structured webhook verification, post-auth discovery, media-upload workflows, ca
 
 ## Runtime behavior
 
-For generated-client timeouts, SSE lifetime controls, the shared gRPC channel,
-and Engine endpoint precedence, read `reference/runtime.md` only when configuring
-or diagnosing SDK runtime behavior.
+For generated-client timeouts, SSE lifetime controls, the shared gRPC channel, and Engine endpoint precedence, read `reference/runtime.md` only when configuring or diagnosing SDK runtime behavior.
