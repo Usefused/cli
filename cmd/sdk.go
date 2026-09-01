@@ -48,6 +48,46 @@ var sdkListCmd = &cobra.Command{
 	}),
 }
 
+var sdkDeactivateCmd = &cobra.Command{
+	Use:   "deactivate <sdk-name@version-or-version-id>",
+	Short: "Permanently deactivate one exact SDK version",
+	Args: func(cmd *cobra.Command, args []string) error {
+		// Hard deletion must never accept a family-wide or implicit-latest reference.
+		if err := cobra.ExactArgs(1)(cmd, args); err != nil {
+			return err
+		}
+		return validateExactAppReference(args[0], cmd.CommandPath())
+	},
+	RunE: WithTelemetry("cli.sdk.deactivate", func(cmd *cobra.Command, args []string) error {
+		return runSDKDeactivate(cmd, args[0])
+	}),
+}
+
+// runSDKDeactivate resolves one exact SDK version before using the shared
+// Engine hard-deactivation route already used by the App UI and MCP CLI.
+func runSDKDeactivate(cmd *cobra.Command, target string) error {
+	// Revalidation keeps direct helper callers on the same exact-version boundary as Cobra.
+	if err := validateExactAppReference(target, "sdk deactivate"); err != nil {
+		return err
+	}
+	client, err := getAPIClient()
+	if err != nil {
+		return err
+	}
+	sdkName, sdkVersion := parseSDKDownloadName(strings.TrimSpace(target))
+	appID, err := client.ResolveSDKAppReference(sdkName, sdkVersion)
+	// Kind-scoped resolution prevents an MCP UUID from crossing the SDK lifecycle boundary.
+	if err != nil {
+		return fmt.Errorf("resolve SDK %q: %w", target, err)
+	}
+	if err := client.DeactivateApp(appID); err != nil {
+		return fmt.Errorf("deactivate SDK: %w", err)
+	}
+	recordAppliedChange(cmd.Context(), "sdk.deactivate", "sdk")
+	fmt.Fprintf(cmd.OutOrStdout(), "Deactivated SDK version %s.\n", target)
+	return nil
+}
+
 var sdkPlanCmd = &cobra.Command{
 	Use:   "plan",
 	Short: "Plan SDK configuration",
@@ -897,7 +937,7 @@ func selectedIndex(rawChoice string, size int) (int, error) {
 
 func init() {
 	RootCmd.AddCommand(sdkCmd)
-	sdkCmd.AddCommand(sdkListCmd, sdkPlanCmd, sdkApplyCmd, sdkValidateCmd, sdkDownloadCmd, sdkShowCmd, sdkServicesCmd, sdkBucketsCmd)
+	sdkCmd.AddCommand(sdkListCmd, sdkPlanCmd, sdkApplyCmd, sdkValidateCmd, sdkDownloadCmd, sdkShowCmd, sdkServicesCmd, sdkBucketsCmd, sdkDeactivateCmd)
 	addJSONOutputFlag(sdkListCmd, sdkValidateCmd, sdkShowCmd, sdkServicesCmd, sdkBucketsCmd)
 	addListFlags(sdkListCmd, &sdkListFlags)
 	sdkPlanCmd.Flags().BoolVar(&sdkPlanJSON, "json", false, "Print plan result JSON")

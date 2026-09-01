@@ -20,7 +20,7 @@ Use `service operations --json` for bounded discovery and inspect body contracts
 Except for top-level `init`, use `--json` on every SDK command whose confirmed help exposes it. Never parse SDK/Version IDs or the one-time token from human apply text: use `sdk plan --json`, `sdk apply --json`, `sdk token generate --json`, `sdk download --json`, `sdk invoke --json`, and `sdk activity --json`.
 
 `kind: sdk`, managed by `fused-cli sdk ...`, declares a typed SDK package from a bucket's already-configured services.
-For a new app, use `fused-cli init <name> --sdk --service <service>`. It selects an existing visible bucket, defaults the provider version, and composes the existing workspace and SDK lifecycles. A terminal asks once when activation is needed while retaining separate receipts; SDK plan owns typed credential remediation. Without operation flags, Enter accepts all operations or opens the searchable selector. `--no-input`/`CI=true` require a mode plus `--operation` or `--select-all` for every service and fail on ambiguity or missing credentials. Top-level init has no `--json`. Each service key is the activated Registry slug; visibility alone grants neither activation nor `service.consume`.
+For a new app, use `fused-cli init <name> --sdk --service <service>`. It selects an existing visible bucket, defaults the provider version, and composes the existing workspace and SDK lifecycles. A terminal asks once when activation is needed while retaining separate receipts; SDK plan reports credential readiness without making mutable provider values publication authority. Without operation flags, Enter accepts all operations or opens the searchable selector. `--no-input`/`CI=true` require a mode plus `--operation` or `--select-all` for every service and fail on ambiguity, while missing credentials remain a readiness warning. Top-level init has no `--json`. Each service key is the activated Registry slug; visibility alone grants neither activation nor `service.consume`.
 
 Only generated SDK init, including the hidden compatibility alias, repairs the typed `generation_contract_pin_unavailable` legacy condition. Before refreshing anything, it resolves every selected config entry to one exact active workspace service version. It prints `Refreshing immutable SDK generation snapshot for <service>@<version>...` and the corresponding completion for each exact snapshot, then retries the unchanged app plan once. `--no-input` performs the same deterministic repair without a prompt. If resolution or refresh fails, there is no retry. If the retry fails, no app or config is created and completed refreshes remain explicit in the error. Never fabricate or substitute a pin, select a different provider version, broaden this into a workspace refresh, or retry a second time. API/MCP init and ordinary `sdk plan` do not mutate snapshots.
 
@@ -85,10 +85,10 @@ supplies an explicit per-call auth selector; that selector may choose another
 declared OR branch at runtime. `connect.scopes` narrows OAuth/OIDC consent
 -- an application can request fewer scopes per user but never more than
 declared here. Credential material itself never lives in this file -- it's
-resolved from `bucket` at generation/dispatch time (see `fused-bucket`).
+resolved from `bucket` when a connection starts or an operation dispatches (see `fused-bucket`).
 For OAuth/OIDC, use target `auth.type`/`auth.name`, optional `auth.ref`, and sibling `connect.scopes`.
 The source need not be selected by the SDK, but must be enabled with that named pair in its bucket; one Engine resolver owns readiness, consent, callback, execution, and refresh.
-In a terminal, `sdk plan` may respond only to typed `bucket_credentials_missing`: show the exact YAML-resolved bucket, securely prompt for the reported static secret or OAuth/OIDC application credential fields, confirm the write, and retry once. Never collect an end-user provider token, create/substitute a bucket, or prompt with `--json`, `--no-input`, or `CI=true`; those modes remain read-only, and denied credential writes stop without fallback or self-grant (see `fused-bucket`).
+In a terminal, `sdk plan` may return `credential_readiness`: show the exact YAML-resolved bucket, offer to securely store the reported static secret or OAuth/OIDC application credential fields, and retry once after a confirmed write. Declining, `--json`, `--no-input`, and `CI=true` leave credentials unchanged while the valid plan remains usable. Never collect an end-user provider token, create/substitute a bucket, or self-grant access (see `fused-bucket`).
 
 The selected operation's imported `security_requirements` is authoritative:
 alternatives are OR, schemes within one alternative are AND, and an empty
@@ -153,8 +153,7 @@ Pass the one-time SDK execution token to the generated client and store it in a
 local secret manager. The first successful `sdk apply` prints that token once;
 capture it immediately because an idempotent apply or later lookup will not
 return it. Never log it or persist it in the SDK config, plan receipt, or CLI
-state. The current CLI has no SDK deprecate/deactivate command; do not invent
-one. Those lifecycle actions are available through Engine's App UI/API.
+state. `sdk deactivate <sdk-name@version-or-version-id>` permanently removes one exact immutable version through the same Engine lifecycle as the App UI; it requires `app.manage`, never accepts a bare SDK name or infers latest, and leaves sibling versions and SDK-wide tokens intact. There is no SDK deprecate command; use the App UI/API for advisory deprecation and restoration.
 
 ## Commands
 Confirm current flags with `fused-cli sdk <subcommand> --help`; the `fused-cli` skill documents init's batched enrichment.
@@ -172,6 +171,7 @@ fused-cli sdk sync <sdk-name>
 fused-cli sdk show <sdk-name@version-or-version-id>
 fused-cli sdk services <sdk-name@version-or-version-id>
 fused-cli sdk buckets <sdk-name-or-id>
+fused-cli sdk deactivate <sdk-name@version-or-version-id>
 fused-cli sdk invoke <sdk-name@version-or-version-id> <operation>
 fused-cli sdk activity <sdk-name@version-or-version-id>
 fused-cli sdk token generate <sdk-name-or-id> <token-name> [--expires-in 4h]

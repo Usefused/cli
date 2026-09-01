@@ -2,8 +2,8 @@ package cmd
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -24,57 +24,64 @@ func (fn sdkPlanRoundTripFunc) RoundTrip(request *http.Request) (*http.Response,
 	return fn(request)
 }
 
-// TestSDKPlanInteractiveStoresBearerInTypedBucketAndRetriesOnce covers the shared single-secret remediation path.
-func TestSDKPlanInteractiveStoresBearerInTypedBucketAndRetriesOnce(t *testing.T) {
+// TestSDKPlanSuccessfulReadinessWarningOptionallyStoresAndRetries proves the
+// non-blocking Engine contract retains the terminal setup convenience.
+func TestSDKPlanSuccessfulReadinessWarningOptionallyStoresAndRetries(t *testing.T) {
 	const secret = "provider-token-never-print"
 	planCalls, secretCalls := 0, 0
 	client := sdkPlanTestClient(t, func(request *http.Request) (int, string) {
-		return sdkPlanBearerResponse(t, request, secret, &planCalls, &secretCalls)
+		// The successful first plan carries readiness; only the confirmed terminal path mutates and replans.
+		switch request.URL.Path {
+		case "/sdk-config/plan":
+			planCalls++
+			if planCalls == 1 {
+				return http.StatusOK, sdkPlanReadinessResponse("plan-warning", "bearer", "jiraBearer", "token", "jiraBearer")
+			}
+			return http.StatusOK, `{"plan_id":"plan-ready","summary":{}}`
+		case "/workspace/secrets":
+			secretCalls++
+			assertSDKPlanBearerSecretRequest(t, request, secret)
+			return http.StatusOK, `{}`
+		default:
+			t.Fatalf("unexpected request path %s", request.URL.Path)
+			return http.StatusNotFound, `{}`
+		}
 	})
-
 	withSDKPlanPromptFakes(t,
 		func(*api.AuthConfig, string) (secretCredentialInput, error) {
 			return secretCredentialInput{token: secret}, nil
 		},
-		confirmSDKPlanBearerMutation(t),
+		func(string) (bool, error) { return true, nil },
 	)
-
-	var output bytes.Buffer
-	result, err := planConfigWithRemediation(client, sdkPlanTestConfig(), "http://engine.test", planOptions{
-		interactive: true, output: &output, auditCtx: context.Background(), auditAction: "fused-cli sdk plan",
-	})
-	if err != nil {
-		t.Fatalf("interactive plan: %v", err)
-	}
-	if result.receipt.PlanID != "plan-ok" || planCalls != 2 || secretCalls != 1 {
-		t.Fatalf("result=%#v plan_calls=%d secret_calls=%d", result, planCalls, secretCalls)
-	}
-	if strings.Contains(output.String(), secret) || !strings.Contains(output.String(), "Jira") {
-		t.Fatalf("unsafe or incomplete output %q", output.String())
+	result, err := planConfigWithRemediation(client, sdkPlanTestConfig(), "http://engine.test", planOptions{interactive: true, output: io.Discard})
+	if err != nil || result.receipt.PlanID != "plan-ready" || planCalls != 2 || secretCalls != 1 {
+		t.Fatalf("successful readiness remediation = %#v / %v calls=%d/%d", result, err, planCalls, secretCalls)
 	}
 }
 
-// sdkPlanBearerResponse serves the two plan attempts and one exact secret mutation.
-func sdkPlanBearerResponse(t *testing.T, request *http.Request, secret string, planCalls, secretCalls *int) (int, string) {
-	t.Helper()
-	// Route ownership distinguishes planning from the one authorized credential mutation.
-	switch request.URL.Path {
-	case "/sdk-config/plan":
-		*planCalls++
-		// The first attempt reports the typed remediation target; the retry succeeds.
-		if *planCalls == 1 {
-			return http.StatusBadRequest, sdkPlanMissingCredentialError("bearer", "jiraBearer", "token", "jiraBearer")
+// TestSDKPlanReadinessWarningDoesNotBlockNonInteractivePublication locks the
+// credential-free --no-input/CI behavior requested for automation.
+func TestSDKPlanReadinessWarningDoesNotBlockNonInteractivePublication(t *testing.T) {
+	planCalls, secretCalls := 0, 0
+	client := sdkPlanTestClient(t, func(request *http.Request) (int, string) {
+		// A non-plan request would prove automation unexpectedly crossed the credential mutation boundary.
+		if request.URL.Path != "/sdk-config/plan" {
+			secretCalls++
+			return http.StatusInternalServerError, `{}`
 		}
-		return http.StatusOK, `{"plan_id":"plan-ok","summary":{}}`
-	case "/workspace/secrets":
-		*secretCalls++
-		assertSDKPlanBearerSecretRequest(t, request, secret)
-		return http.StatusOK, `{}`
-	default:
-		// Any additional route would indicate remediation escaped the shared secret path.
-		t.Fatalf("unexpected request path %s", request.URL.Path)
-		return http.StatusNotFound, `{}`
+		planCalls++
+		return http.StatusOK, sdkPlanReadinessResponse("plan-warning", "bearer", "jiraBearer", "token", "jiraBearer")
+	})
+	result, err := planConfigWithRemediation(client, sdkPlanTestConfig(), "http://engine.test", planOptions{interactive: false, output: io.Discard})
+	if err != nil || result.receipt.PlanID != "plan-warning" || result.credentialReadiness == nil || planCalls != 1 || secretCalls != 0 {
+		t.Fatalf("non-interactive readiness plan = %#v / %v calls=%d/%d", result, err, planCalls, secretCalls)
 	}
+}
+
+// sdkPlanReadinessResponse builds one successful plan with credential-free readiness metadata.
+func sdkPlanReadinessResponse(planID, authType, authName, fieldName, secretKey string) string {
+	return fmt.Sprintf(`{"plan_id":%q,"summary":{},"credential_readiness":{"bucket":{"id":%q,"name":"production"},"missing_credentials":[{"service_id":%q,"service":"Jira","auth_type":%q,"auth_name":%q,"required_fields":[{"name":%q,"secret_key":%q}]}]}}`,
+		planID, sdkPlanTestBucketID, sdkPlanTestServiceID, authType, authName, fieldName, secretKey)
 }
 
 // assertSDKPlanBearerSecretRequest validates identity and value without echoing the token on success.
@@ -92,18 +99,6 @@ func assertSDKPlanBearerSecretRequest(t *testing.T, request *http.Request, secre
 	}
 }
 
-// confirmSDKPlanBearerMutation verifies the prompt names the authoritative remediation target.
-func confirmSDKPlanBearerMutation(t *testing.T) func(string) (bool, error) {
-	t.Helper()
-	return func(message string) (bool, error) {
-		// The operator must see both the exact bucket and service before approving storage.
-		if !strings.Contains(message, `bucket "production"`) || !strings.Contains(message, "Jira") {
-			t.Fatalf("confirmation = %q", message)
-		}
-		return true, nil
-	}
-}
-
 // TestSDKPlanInteractiveRegistersOAuthAppWithoutProviderToken stores only the application pair through secret set.
 func TestSDKPlanInteractiveRegistersOAuthAppWithoutProviderToken(t *testing.T) {
 	const clientSecret = "oauth-client-secret-never-print"
@@ -114,7 +109,7 @@ func TestSDKPlanInteractiveRegistersOAuthAppWithoutProviderToken(t *testing.T) {
 			planCalls++
 			// The first response mirrors Engine's deterministic OAuth readiness fields.
 			if planCalls == 1 {
-				return http.StatusBadRequest, sdkPlanOAuthMissingCredentialError("oauth", "googleOAuth")
+				return http.StatusOK, sdkPlanOAuthReadinessResponse("plan-oauth-warning", "oauth", "googleOAuth")
 			}
 			return http.StatusOK, `{"plan_id":"plan-oauth","summary":{}}`
 		case request.URL.Path == "/workspace/secrets/bulk":
@@ -150,56 +145,65 @@ func TestSDKPlanInteractiveRegistersOAuthAppWithoutProviderToken(t *testing.T) {
 	}
 }
 
-// TestSDKPlanInteractiveDoesNotHandleOtherErrorsOrLoop bounds remediation to one typed retry.
-func TestSDKPlanInteractiveDoesNotHandleOtherErrorsOrLoop(t *testing.T) {
-	tests := []struct {
-		name          string
-		firstResponse string
-		wantPlans     int
-		wantSecrets   int
-	}{
-		{name: "unrelated error", firstResponse: `{"error":{"code":"request_rejected","message":"invalid SDK","category":"validation"}}`, wantPlans: 1},
-		{name: "second readiness failure", firstResponse: sdkPlanMissingCredentialError("bearer", "jiraBearer", "token", "jiraBearer"), wantPlans: 2, wantSecrets: 1},
+// TestSDKPlanInteractiveDoesNotReinterpretPlanErrors proves only successful readiness can authorize credential setup.
+func TestSDKPlanInteractiveDoesNotReinterpretPlanErrors(t *testing.T) {
+	planCalls, mutationCalls, prompts := 0, 0, 0
+	client := sdkPlanTestClient(t, func(request *http.Request) (int, string) {
+		// Any route after the failed plan would revive the removed compatibility path.
+		if request.URL.Path != "/sdk-config/plan" {
+			mutationCalls++
+			return http.StatusInternalServerError, `{}`
+		}
+		planCalls++
+		return http.StatusBadRequest, `{"error":{"code":"bucket_credentials_missing","message":"obsolete blocking response","category":"validation"}}`
+	})
+	withSDKPlanPromptFakes(t, func(*api.AuthConfig, string) (secretCredentialInput, error) {
+		prompts++
+		return secretCredentialInput{token: "never-stored"}, nil
+	}, func(string) (bool, error) { return true, nil })
+	if _, err := planConfigWithRemediation(client, sdkPlanTestConfig(), "http://engine.test", planOptions{interactive: true}); err == nil {
+		t.Fatal("obsolete blocking plan response was accepted")
 	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			planCalls, secretCalls, prompts := 0, 0, 0
-			client := sdkPlanTestClient(t, func(request *http.Request) (int, string) {
-				switch request.URL.Path {
-				case "/sdk-config/plan":
-					planCalls++
-					return http.StatusBadRequest, test.firstResponse
-				case "/workspace/secrets":
-					secretCalls++
-					return http.StatusOK, `{}`
-				default:
-					t.Fatalf("unexpected path %s", request.URL.Path)
-					return http.StatusNotFound, `{}`
-				}
-			})
-			withSDKPlanPromptFakes(t, func(*api.AuthConfig, string) (secretCredentialInput, error) {
-				prompts++
-				return secretCredentialInput{token: "value"}, nil
-			}, func(string) (bool, error) { return true, nil })
-
-			if _, err := planConfigWithRemediation(client, sdkPlanTestConfig(), "http://engine.test", planOptions{interactive: true}); err == nil {
-				t.Fatal("expected plan error")
-			}
-			if planCalls != test.wantPlans || secretCalls != test.wantSecrets || prompts != test.wantSecrets {
-				t.Fatalf("plans=%d secrets=%d prompts=%d", planCalls, secretCalls, prompts)
-			}
-		})
+	if planCalls != 1 || mutationCalls != 0 || prompts != 0 {
+		t.Fatalf("plan_calls=%d mutation_calls=%d prompts=%d", planCalls, mutationCalls, prompts)
 	}
 }
 
-// TestSDKPlanInteractiveCancellationDoesNotMutateOrRetry preserves explicit operator cancellation.
-func TestSDKPlanInteractiveCancellationDoesNotMutateOrRetry(t *testing.T) {
+// TestSDKPlanInteractiveRetriesReadinessOnlyOnce proves a repeated warning cannot create a prompt loop.
+func TestSDKPlanInteractiveRetriesReadinessOnlyOnce(t *testing.T) {
+	planCalls, secretCalls, prompts := 0, 0, 0
+	client := sdkPlanTestClient(t, func(request *http.Request) (int, string) {
+		// Only two successful plans and one secret mutation belong to the bounded workflow.
+		switch request.URL.Path {
+		case "/sdk-config/plan":
+			planCalls++
+			return http.StatusOK, sdkPlanReadinessResponse("plan-warning", "bearer", "jiraBearer", "token", "jiraBearer")
+		case "/workspace/secrets":
+			secretCalls++
+			return http.StatusOK, `{}`
+		default:
+			t.Fatalf("unexpected path %s", request.URL.Path)
+			return http.StatusNotFound, `{}`
+		}
+	})
+	withSDKPlanPromptFakes(t, func(*api.AuthConfig, string) (secretCredentialInput, error) {
+		prompts++
+		return secretCredentialInput{token: "value"}, nil
+	}, func(string) (bool, error) { return true, nil })
+	result, err := planConfigWithRemediation(client, sdkPlanTestConfig(), "http://engine.test", planOptions{interactive: true})
+	if err != nil || result.credentialReadiness == nil || planCalls != 2 || secretCalls != 1 || prompts != 1 {
+		t.Fatalf("result=%#v error=%v plans=%d secrets=%d prompts=%d", result, err, planCalls, secretCalls, prompts)
+	}
+}
+
+// TestSDKPlanInteractiveCancellationKeepsValidPlan preserves explicit operator cancellation without mutation.
+func TestSDKPlanInteractiveCancellationKeepsValidPlan(t *testing.T) {
 	planCalls, mutationCalls := 0, 0
 	client := sdkPlanTestClient(t, func(request *http.Request) (int, string) {
 		switch request.URL.Path {
 		case "/sdk-config/plan":
 			planCalls++
-			return http.StatusBadRequest, sdkPlanMissingCredentialError("bearer", "jiraBearer", "token", "jiraBearer")
+			return http.StatusOK, sdkPlanReadinessResponse("plan-warning", "bearer", "jiraBearer", "token", "jiraBearer")
 		case "/workspace/secrets":
 			mutationCalls++
 			return http.StatusOK, `{}`
@@ -215,8 +219,9 @@ func TestSDKPlanInteractiveCancellationDoesNotMutateOrRetry(t *testing.T) {
 		func(string) (bool, error) { return false, nil },
 	)
 
-	if _, err := planConfigWithRemediation(client, sdkPlanTestConfig(), "http://engine.test", planOptions{interactive: true}); err == nil || !strings.Contains(err.Error(), "cancelled") {
-		t.Fatalf("cancellation error = %v", err)
+	result, err := planConfigWithRemediation(client, sdkPlanTestConfig(), "http://engine.test", planOptions{interactive: true, output: io.Discard})
+	if err != nil || result.receipt.PlanID != "plan-warning" {
+		t.Fatalf("cancelled setup did not preserve plan: %#v / %v", result, err)
 	}
 	if planCalls != 1 || mutationCalls != 0 {
 		t.Fatalf("plan_calls=%d mutation_calls=%d", planCalls, mutationCalls)
@@ -260,12 +265,13 @@ func TestSDKPlanCredentialRemediationDefaultsToInteractive(t *testing.T) {
 	}
 }
 
+// TestValidateSDKPlanCredentialTargetAcceptsEngineDefaultWhenYAMLOmitsBucket preserves default resolution for warning-based prompts.
 func TestValidateSDKPlanCredentialTargetAcceptsEngineDefaultWhenYAMLOmitsBucket(t *testing.T) {
 	cfg := sdkPlanTestConfig()
 	cfg.SDK.Bucket = ""
-	apiErr := &api.APIError{}
-	apiErr.Details.Bucket = &api.MissingCredentialBucket{ID: sdkPlanTestBucketID, Name: "default"}
-	bucket, err := validateSDKPlanCredentialTarget(cfg, apiErr)
+	// Successful readiness owns the bucket target now that API errors cannot trigger remediation.
+	readinessBucket := &api.MissingCredentialBucket{ID: sdkPlanTestBucketID, Name: "default"}
+	bucket, err := validateSDKPlanCredentialTarget(cfg, readinessBucket)
 	if err != nil || bucket.ID != sdkPlanTestBucketID || bucket.Name != "default" {
 		t.Fatalf("default bucket = %#v, %v", bucket, err)
 	}
@@ -305,29 +311,9 @@ func sdkPlanTestConfig() *configfile.ParsedConfig {
 	}
 }
 
-func sdkPlanMissingCredentialError(authType, authName, fieldName, secretKey string) string {
-	field := map[string]string{"name": fieldName}
-	if secretKey != "" {
-		field["secret_key"] = secretKey
-	}
-	details := map[string]any{
-		"bucket": map[string]string{"id": sdkPlanTestBucketID, "name": "production"},
-		"missing_credentials": []any{map[string]any{
-			"service_id": sdkPlanTestServiceID, "service": "Jira", "auth_type": authType,
-			"auth_name": authName, "required_fields": []any{field},
-		}},
-	}
-	payload := map[string]any{"error": map[string]any{
-		"code": "bucket_credentials_missing", "message": "credentials missing", "category": "validation", "details": details,
-	}}
-	encoded, _ := json.Marshal(payload)
-	return string(encoded)
-}
-
-// sdkPlanOAuthMissingCredentialError mirrors the two-field readiness contract
-// emitted by Engine for one atomic OAuth/OIDC application pair.
-func sdkPlanOAuthMissingCredentialError(authType, authName string) string {
-	details := map[string]any{
+// sdkPlanOAuthReadinessResponse mirrors the two-field successful readiness contract for one atomic application pair.
+func sdkPlanOAuthReadinessResponse(planID, authType, authName string) string {
+	readiness := map[string]any{
 		"bucket": map[string]string{"id": sdkPlanTestBucketID, "name": "production"},
 		"missing_credentials": []any{map[string]any{
 			"service_id": sdkPlanTestServiceID, "service": "Jira", "auth_type": authType,
@@ -337,9 +323,7 @@ func sdkPlanOAuthMissingCredentialError(authType, authName string) string {
 			},
 		}},
 	}
-	payload := map[string]any{"error": map[string]any{
-		"code": "bucket_credentials_missing", "message": "missing", "category": "validation", "details": details,
-	}}
+	payload := map[string]any{"plan_id": planID, "summary": map[string]any{}, "credential_readiness": readiness}
 	encoded, _ := json.Marshal(payload)
 	return string(encoded)
 }

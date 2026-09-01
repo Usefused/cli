@@ -191,13 +191,15 @@ fused-cli team access service grant <team> <service> use
 fused-cli team access bucket grant <team> <bucket> use
 ```
 
-Do not claim the integration is ready while required bucket values, secrets,
-connect scopes, or user connections are unresolved.
+An app may be published while credential readiness remains unresolved. Describe
+it as ready for integration development, but make clear that an affected
+provider call will stop before dispatch until its bucket value, secret, client
+registration, connect scope, or user connection is configured.
 
 ## 6. Author and apply the selected output
 
 For an SDK, use top-level init so service activation, operation selection,
-credential remediation, plan/apply, and package download share one guided
+optional credential setup, plan/apply, and package download share one guided
 flow while retaining separate receipts:
 
 ```shell

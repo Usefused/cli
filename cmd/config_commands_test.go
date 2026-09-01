@@ -42,6 +42,7 @@ func TestConfigCommandSurface(t *testing.T) {
 		{"sdk", "show", "security@1.0.0"},
 		{"sdk", "services", "security@1.0.0"},
 		{"sdk", "buckets", "security"},
+		{"sdk", "deactivate", "security@1.0.0"},
 		{"sdk", "token", "generate", "security", "external-test", "--expires-in", "4h"},
 		{"sdk", "token", "list", "security"},
 		{"sdk", "token", "revoke", "security", "local-dev"},

@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 )
 
@@ -374,6 +375,23 @@ func TestDecodeSDKInvokeHTTPErrorPreservesProviderStatus(t *testing.T) {
 	// Both the Engine boundary and provider status remain distinguishable to callers.
 	if invokeErr.details["provider_http_status"] != json.Number("429") || invokeErr.details["http_status"] != http.StatusBadGateway {
 		t.Fatalf("decoded details = %#v", invokeErr.details)
+	}
+}
+
+// TestDecodeSDKInvokeMissingCredentialBuildsSafeCommand proves human invocation
+// errors expose the exact setup action only from validated structured fields.
+func TestDecodeSDKInvokeMissingCredentialBuildsSafeCommand(t *testing.T) {
+	bucketID, serviceID := uuid.NewString(), uuid.NewString()
+	body := fmt.Sprintf(`{"error":{"code":"bucket_credentials_missing","message":"provider credentials are not configured","details":{"bucket_id":%q,"service_id":%q,"auth_type":"api_key","auth_name":"providerKey","command":"ignored-server-command"}}}`, bucketID, serviceID)
+	err := decodeSDKInvokeHTTPError(http.StatusConflict, []byte(body))
+	want := "fused-cli secret set " + serviceID + " --bucket " + bucketID + " --type 'api_key' --auth-name 'providerKey' --interactive"
+	if !strings.Contains(err.Error(), want) || strings.Contains(err.Error(), "ignored-server-command") {
+		t.Fatalf("credential invocation error = %q", err.Error())
+	}
+	// Malformed identity metadata must fall back to the safe message with no command.
+	malformed := decodeSDKInvokeHTTPError(http.StatusConflict, []byte(`{"error":{"code":"bucket_credentials_missing","message":"provider credentials are not configured","details":{"bucket_id":"bad;id","service_id":"bad","auth_type":"api_key","auth_name":"x"}}}`))
+	if strings.Contains(malformed.Error(), "fused-cli") {
+		t.Fatalf("malformed metadata produced command: %q", malformed.Error())
 	}
 }
 

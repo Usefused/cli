@@ -7,6 +7,8 @@ import (
 	"github.com/charmbracelet/huh"
 )
 
+var errCredentialStorageDeclined = errors.New("credential storage cancelled; SDK plan was not retried")
+
 type credentialMutationOptions struct {
 	confirmation string
 	auditCtx     context.Context
@@ -27,8 +29,10 @@ func authorizeCredentialMutation(opts credentialMutationOptions) error {
 	if err != nil {
 		return err
 	}
+	// A typed sentinel lets successful non-blocking plans preserve their receipt
+	// while legacy blocking plans still surface the cancelled remediation.
 	if !confirmed {
-		return errors.New("credential storage cancelled; SDK plan was not retried")
+		return errCredentialStorageDeclined
 	}
 	return nil
 }

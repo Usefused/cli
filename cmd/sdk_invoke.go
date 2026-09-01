@@ -112,8 +112,62 @@ type sdkInvokeErrorResponse struct {
 	Details map[string]any `json:"details,omitempty"`
 }
 
-// Error returns the bounded Engine or transport message for an SDK invocation.
-func (err *sdkInvokeError) Error() string { return err.message }
+// Error returns the bounded Engine or transport message and reconstructs only
+// a validated value-free credential command from structured routing details.
+func (err *sdkInvokeError) Error() string {
+	command := sdkInvokeCredentialCommand(err.code, err.details)
+	// Other failures retain their existing compact message without trusting arbitrary detail as terminal text.
+	if command == "" {
+		return err.message
+	}
+	return err.message + "\nRun: " + command
+}
+
+// sdkInvokeCredentialCommand validates UUID and auth metadata before producing
+// the copyable CLI remediation instead of trusting a server-supplied shell string.
+func sdkInvokeCredentialCommand(code string, details map[string]any) string {
+	// Only the dedicated runtime code authorizes this command surface.
+	if code != "bucket_credentials_missing" {
+		return ""
+	}
+	serviceID, serviceOK := details["service_id"].(string)
+	bucketID, bucketOK := details["bucket_id"].(string)
+	authType, typeOK := details["auth_type"].(string)
+	authName, nameOK := details["auth_name"].(string)
+	_, serviceErr := uuid.Parse(serviceID)
+	_, bucketErr := uuid.Parse(bucketID)
+	// Closed identity and auth-family checks prevent malformed response metadata from becoming shell guidance.
+	if !serviceOK || !bucketOK || !typeOK || !nameOK || serviceErr != nil || bucketErr != nil || !sdkInvokeStaticAuthType(authType) || invalidSDKInvokeAuthName(authName) {
+		return ""
+	}
+	return fmt.Sprintf("fused-cli secret set %s --bucket %s --type %s --auth-name %s --interactive",
+		serviceID, bucketID, shellQuoteSDKInvokeArgument(authType), shellQuoteSDKInvokeArgument(authName))
+}
+
+// sdkInvokeStaticAuthType admits only app-configurable static families whose
+// values can be collected by the shared secret set command.
+func sdkInvokeStaticAuthType(value string) bool {
+	switch value {
+	case "api_key", "bearer", "basic", "mtls":
+		return true
+	default:
+		return false
+	}
+}
+
+// invalidSDKInvokeAuthName rejects control text and excessive metadata before
+// the remaining value is safely quoted as one shell word.
+func invalidSDKInvokeAuthName(value string) bool {
+	trimmed := strings.TrimSpace(value)
+	// Empty, changed-by-trimming, or control-bearing names cannot identify the exact imported family safely.
+	return trimmed == "" || trimmed != value || len(value) > 256 || strings.ContainsAny(value, "\r\n\x00")
+}
+
+// shellQuoteSDKInvokeArgument produces one POSIX shell word without permitting
+// substitutions, separators, or additional flags from imported metadata.
+func shellQuoteSDKInvokeArgument(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+}
 
 // Unwrap exposes the underlying HTTP or context failure when one exists.
 func (err *sdkInvokeError) Unwrap() error { return err.cause }

@@ -332,18 +332,16 @@ type APIError struct {
 	Category  string `json:"category"`
 	Retryable bool   `json:"retryable"`
 	Details   struct {
-		Bucket               *MissingCredentialBucket       `json:"bucket,omitempty"`
-		MissingCredentials   []MissingCredentialRequirement `json:"missing_credentials,omitempty"`
-		RequiredPermissions  []string                       `json:"required_permissions,omitempty"`
-		MissingPermissions   []PermissionRequirement        `json:"missing,omitempty"`
-		ServerDetail         string                         `json:"server_detail,omitempty"`
-		ApplyLeaseExpiresAt  string                         `json:"apply_lease_expires_at,omitempty"`
-		RetryAfterSeconds    int                            `json:"retry_after_seconds,omitempty"`
-		Stage                string                         `json:"stage,omitempty"`
-		DependencyHTTPStatus int                            `json:"http_status,omitempty"`
-		ServiceID            string                         `json:"service_id,omitempty"`
-		ServiceVersionID     string                         `json:"service_version_id,omitempty"`
-		WorkspaceOutcome     string                         `json:"workspace_outcome,omitempty"`
+		RequiredPermissions  []string                `json:"required_permissions,omitempty"`
+		MissingPermissions   []PermissionRequirement `json:"missing,omitempty"`
+		ServerDetail         string                  `json:"server_detail,omitempty"`
+		ApplyLeaseExpiresAt  string                  `json:"apply_lease_expires_at,omitempty"`
+		RetryAfterSeconds    int                     `json:"retry_after_seconds,omitempty"`
+		Stage                string                  `json:"stage,omitempty"`
+		DependencyHTTPStatus int                     `json:"http_status,omitempty"`
+		ServiceID            string                  `json:"service_id,omitempty"`
+		ServiceVersionID     string                  `json:"service_version_id,omitempty"`
+		WorkspaceOutcome     string                  `json:"workspace_outcome,omitempty"`
 	} `json:"details,omitempty"`
 	Remediation string `json:"remediation,omitempty"`
 	Phase       string `json:"phase,omitempty"`
@@ -370,9 +368,8 @@ type MissingCredentialBucket struct {
 	Name string `json:"name"`
 }
 
-// MissingCredentialRequirement describes absent auth material without ever
-// carrying a credential value. Static fields include their exact Engine secret
-// key; OAuth/OIDC use the connection field and omit SecretKey.
+// MissingCredentialRequirement describes value-free readiness metadata with
+// exact Engine secret destinations for every supported authentication field.
 type MissingCredentialRequirement struct {
 	ServiceID         string                   `json:"service_id"`
 	Service           string                   `json:"service,omitempty"`
@@ -422,7 +419,7 @@ func (e *APIError) Error() string {
 	if e.TraceID != "" {
 		message += " Trace: " + e.TraceID
 	}
-	return message + formatMissingCredentialDetails(e.Details.Bucket, e.Details.MissingCredentials)
+	return message
 }
 
 // formatAPIErrorContext appends the slim operation proof only when the Engine supplied each field.
@@ -1942,7 +1939,15 @@ type SDKConfigPlanResponse struct {
 	SourceHash          string                  `json:"source_hash"`
 	Summary             map[string]any          `json:"summary"`
 	Notifications       NotificationInbox       `json:"notifications"`
+	CredentialReadiness *CredentialReadiness    `json:"credential_readiness,omitempty"`
 	RequiredPermissions []PermissionRequirement `json:"required_permissions"`
+}
+
+// CredentialReadiness describes mutable provider material that is absent but
+// no longer blocks publication of an otherwise valid app plan.
+type CredentialReadiness struct {
+	Bucket             *MissingCredentialBucket       `json:"bucket"`
+	MissingCredentials []MissingCredentialRequirement `json:"missing_credentials"`
 }
 
 type NotificationInbox struct {

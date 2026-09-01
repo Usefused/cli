@@ -236,9 +236,11 @@ fused-cli sdk apply -f .fused/sdks/my-sdk.yaml --json
 
 For terminal setup, `fused-cli sdk plan -f .fused/sdks/my-sdk.yaml` securely
 fills only credentials Engine reports missing from that file's resolved
-`bucket`, confirms the immediate bucket write, and retries once. It never
-creates or falls back to another bucket. Automation should pass `--no-input`
-or `--json` and handle the structured `bucket_credentials_missing` result.
+`bucket`, confirms the immediate bucket write, and retries once. Declining
+keeps the valid plan, and the app can still be published. It never creates or
+falls back to another bucket. Automation should pass `--no-input` or `--json`
+and inspect non-blocking `credential_readiness`; an affected runtime call later
+returns `bucket_credentials_missing` with the exact safe setup command.
 
 Plan output contains the complete Engine change summary. A saved receipt is
 bound to the exact config content and normalized Engine URL. Apply validates

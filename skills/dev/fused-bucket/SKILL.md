@@ -45,9 +45,9 @@ A bucket is selected by `bucket:` in each `kind: sdk` or `kind: mcp` file; it
 is not configured inside `workspace.yaml`. A service's OAuth/OIDC application
 credential pair is likewise never a workspace field. Use `fused-cli secret set
 <slug> --bucket <bucket> --type oauth|oidc` directly, or let a terminal SDK
-plan invoke that same atomic secure write after Engine reports the exact
-YAML-selected bucket is missing it. `--json`, `--no-input`, and CI planning
-remain read-only.
+plan invoke that same atomic secure write from the successful plan's exact
+YAML-selected `credential_readiness`. `--json`, `--no-input`, and CI planning
+remain read-only and still receive the valid plan.
 
 Every command list below may be behind the CLI's actual flags/subcommands --
 run `fused-cli <command> --help` (e.g. `fused-cli bucket --help`, `fused-cli
@@ -212,13 +212,11 @@ blocks requests when a secret passes its expiry.
 `value` stores arbitrary bucket-scoped values, including literal binding
 values a connection profile references (see `fused-config`).
 
-A terminal `fused-cli sdk plan` may offer the same secret setup when Engine returns typed
-`bucket_credentials_missing` details. The workflow must display and use the
+A terminal `fused-cli sdk plan` may offer the same secret setup when a successful plan returns typed `credential_readiness`. The workflow must display and use the
 SDK YAML's resolved bucket, reuse the ordinary secure collector for each
 reported auth requirement, ask for confirmation before storage, and retry
-planning once. It never creates a bucket or selects a different one. JSON, CI, and
-`--no-input` runs remain non-interactive and return the structured error for
-automation instead.
+planning once. It never creates a bucket or selects a different one. Declining, JSON,
+CI, and `--no-input` runs preserve the valid plan without mutating secrets.
 
 Prefer bucket secrets/values over local `_env`/`$VAR` handoffs for anything
 committed to source control -- a bucket secret is resolved server-side by

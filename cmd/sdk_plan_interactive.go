@@ -10,21 +10,18 @@ import (
 	"github.com/google/uuid"
 )
 
-func isBucketCredentialsMissing(err error) bool {
-	var apiErr *api.APIError
-	return errors.As(err, &apiErr) && apiErr.Code == "bucket_credentials_missing"
-}
-
-func remediateSDKPlanCredentials(client *api.Client, cfg *configfile.ParsedConfig, planErr error, opts planOptions) error {
-	apiErr, err := sdkPlanCredentialError(planErr)
+// remediateSDKPlanReadiness optionally applies the successful plan's typed
+// warning through the same secure secret mutation path used by secret set.
+func remediateSDKPlanReadiness(client *api.Client, cfg *configfile.ParsedConfig, readiness *api.CredentialReadiness, opts planOptions) error {
+	// A successful plan must still supply a complete typed target before prompting can mutate credentials.
+	if readiness == nil || readiness.Bucket == nil || len(readiness.MissingCredentials) == 0 {
+		return errors.New("Engine returned incomplete credential readiness metadata")
+	}
+	bucket, err := validateSDKPlanCredentialTarget(cfg, readiness.Bucket)
 	if err != nil {
 		return err
 	}
-	bucket, err := validateSDKPlanCredentialTarget(cfg, apiErr)
-	if err != nil {
-		return err
-	}
-	requirements, err := validateMissingCredentialRequirements(apiErr.Details.MissingCredentials)
+	requirements, err := validateMissingCredentialRequirements(readiness.MissingCredentials)
 	if err != nil {
 		return err
 	}
@@ -36,19 +33,8 @@ func remediateSDKPlanCredentials(client *api.Client, cfg *configfile.ParsedConfi
 	return nil
 }
 
-func sdkPlanCredentialError(err error) (*api.APIError, error) {
-	var apiErr *api.APIError
-	if !errors.As(err, &apiErr) || apiErr.Code != "bucket_credentials_missing" {
-		return nil, err
-	}
-	if apiErr.Details.Bucket == nil || len(apiErr.Details.MissingCredentials) == 0 {
-		return nil, fmt.Errorf("Engine returned bucket_credentials_missing without typed remediation details: %w", err)
-	}
-	return apiErr, nil
-}
-
-func validateSDKPlanCredentialTarget(cfg *configfile.ParsedConfig, apiErr *api.APIError) (*api.MissingCredentialBucket, error) {
-	bucket := apiErr.Details.Bucket
+// validateSDKPlanCredentialTarget proves readiness authorizes writes only to the YAML-selected Engine bucket.
+func validateSDKPlanCredentialTarget(cfg *configfile.ParsedConfig, bucket *api.MissingCredentialBucket) (*api.MissingCredentialBucket, error) {
 	if _, err := uuid.Parse(strings.TrimSpace(bucket.ID)); err != nil {
 		return nil, errors.New("Engine returned an invalid credential bucket ID")
 	}

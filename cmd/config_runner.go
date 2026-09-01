@@ -33,6 +33,7 @@ type plannedConfig struct {
 	receipt             planReceipt
 	summary             map[string]interface{}
 	notifications       api.NotificationInbox
+	credentialReadiness *api.CredentialReadiness
 	requiredPermissions []api.PermissionRequirement
 }
 
@@ -40,6 +41,7 @@ type planResultOutput struct {
 	planReceipt
 	Summary             map[string]interface{}      `json:"summary"`
 	Notifications       api.NotificationInbox       `json:"notifications,omitempty"`
+	CredentialReadiness *api.CredentialReadiness    `json:"credential_readiness,omitempty"`
 	RequiredPermissions []api.PermissionRequirement `json:"required_permissions"`
 }
 
@@ -171,29 +173,33 @@ func runConfigPlan(opts planOptions) error {
 	return printPlanResult(planned, opts.jsonOut)
 }
 
-// planConfigWithRemediation retries only the terminal SDK credential workflow.
-// Every other planner error retains the read-only, single-request behavior
-// expected by JSON output, CI, and --no-input automation.
+// planConfigWithRemediation optionally fills successful SDK readiness warnings and replans once.
 func planConfigWithRemediation(client *api.Client, cfg *configfile.ParsedConfig, engineURL string, opts planOptions) (plannedConfig, error) {
 	result, err := planOneConfig(client, cfg, engineURL, opts.ownerTeamSlug)
-	// Successful plans, non-interactive callers, and other config kinds never
-	// cross the credential-mutation boundary.
-	if err == nil || !opts.interactive || cfg.Kind != configfile.KindSDK {
-		return result, err
-	}
-	// Only the Engine's typed missing-credential contract authorizes remediation.
-	if !isBucketCredentialsMissing(err) {
+	// A failed plan is authoritative and cannot be reinterpreted as mutable credential absence.
+	if err != nil {
 		return plannedConfig{}, err
 	}
-	// A declined or failed secure write ends the plan without fallback behavior.
-	if err := remediateSDKPlanCredentials(client, cfg, err, opts); err != nil {
-		return plannedConfig{}, err
+	// Non-interactive and non-SDK planning publish without credential mutation.
+	if !opts.interactive || cfg.Kind != configfile.KindSDK || result.credentialReadiness == nil {
+		return result, nil
 	}
-	// One bounded retry proves the newly stored material satisfies readiness
-	// without allowing a malformed Engine response to create a prompt loop.
+	remediationErr := remediateSDKPlanReadiness(client, cfg, result.credentialReadiness, opts)
+	// Declining an optional convenience keeps the already-created valid plan.
+	if errors.Is(remediationErr, errCredentialStorageDeclined) {
+		fmt.Fprintln(opts.output, "Credential setup skipped; affected calls will return an actionable setup command until credentials are configured.")
+		return result, nil
+	}
+	// Collection or mutation failures are real operator-visible failures rather than silent skips.
+	if remediationErr != nil {
+		return plannedConfig{}, remediationErr
+	}
+	// One bounded retry refreshes readiness after the optional write without creating a prompt loop.
 	return planOneConfig(client, cfg, engineURL, opts.ownerTeamSlug)
 }
 
+// planOneConfig preserves each kind's Engine response, including app
+// credential readiness, without performing any mutation itself.
 func planOneConfig(client *api.Client, cfg *configfile.ParsedConfig, engineURL, ownerTeamSlug string) (plannedConfig, error) {
 	switch cfg.Kind {
 	case configfile.KindWorkspace:
@@ -218,6 +224,7 @@ func planOneConfig(client *api.Client, cfg *configfile.ParsedConfig, engineURL, 
 			receipt:             newPlanReceipt(resp.PlanID, cfg.ConfigKey, cfg.SourceHash, engineURL),
 			summary:             resp.Summary,
 			notifications:       resp.Notifications,
+			credentialReadiness: resp.CredentialReadiness,
 			requiredPermissions: resp.RequiredPermissions,
 		}, nil
 	case configfile.KindMCP:
@@ -230,6 +237,7 @@ func planOneConfig(client *api.Client, cfg *configfile.ParsedConfig, engineURL, 
 			receipt:             newPlanReceipt(resp.PlanID, cfg.ConfigKey, cfg.SourceHash, engineURL),
 			summary:             resp.Summary,
 			notifications:       resp.Notifications,
+			credentialReadiness: resp.CredentialReadiness,
 			requiredPermissions: resp.RequiredPermissions,
 		}, nil
 	case configfile.KindWebhook:
@@ -290,6 +298,8 @@ func printPlanResult(planned []plannedConfig, jsonOut bool) error {
 	return nil
 }
 
+// planResultOutputs keeps structured readiness beside the exact plan receipt
+// so automation can configure credentials later without blocking publication.
 func planResultOutputs(planned []plannedConfig) []planResultOutput {
 	results := make([]planResultOutput, 0, len(planned))
 	for _, result := range planned {
@@ -297,6 +307,7 @@ func planResultOutputs(planned []plannedConfig) []planResultOutput {
 			planReceipt:         result.receipt,
 			Summary:             result.summary,
 			Notifications:       result.notifications,
+			CredentialReadiness: result.credentialReadiness,
 			RequiredPermissions: result.requiredPermissions,
 		})
 	}

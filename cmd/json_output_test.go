@@ -113,14 +113,9 @@ func TestWriteCommandErrorPreservesStructuredEngineFields(t *testing.T) {
 		t.Fatal(err)
 	}
 	apiError := &cliapi.APIError{
-		Code: "bucket_credentials_missing", Message: "Required authentication material is missing.",
-		Category: "validation", Remediation: "Add credentials and plan again.", TraceID: "trace-1", RequestID: "request-1", HTTPStatus: http.StatusBadRequest,
+		Code: "runtime_contract_rejected", Message: "The runtime contract was rejected.",
+		Category: "validation", Remediation: "Refresh the service contract and retry.", TraceID: "trace-1", RequestID: "request-1", HTTPStatus: http.StatusBadRequest,
 	}
-	apiError.Details.Bucket = &cliapi.MissingCredentialBucket{ID: "bucket-1", Name: "production"}
-	apiError.Details.MissingCredentials = []cliapi.MissingCredentialRequirement{{
-		ServiceID: "service-1", Service: "Jira", AuthType: "basic", AuthName: "basicAuth",
-		RequiredFields: []cliapi.MissingCredentialField{{Name: "username", SecretKey: "basicAuth_username"}},
-	}}
 	apiError.Details.ServerDetail = `unknown field "items_path"`
 	apiError.Details.ServiceID = "service-1"
 	apiError.Details.ServiceVersionID = "version-1"
@@ -137,13 +132,6 @@ func TestWriteCommandErrorPreservesStructuredEngineFields(t *testing.T) {
 	if envelope.OK || envelope.Error.Code != apiError.Code || envelope.Error.Message != apiError.Message ||
 		envelope.Error.TraceID != "trace-1" || envelope.Error.RequestID != "request-1" || envelope.Error.HTTPStatus != http.StatusBadRequest {
 		t.Fatalf("error envelope = %#v", envelope)
-	}
-	missing, ok := envelope.Error.Details["missing_credentials"].([]any)
-	if !ok || len(missing) != 1 {
-		t.Fatalf("missing credential details = %#v", envelope.Error.Details)
-	}
-	if bucket, ok := envelope.Error.Details["bucket"].(map[string]any); !ok || bucket["name"] != "production" {
-		t.Fatalf("bucket details = %#v", envelope.Error.Details)
 	}
 	if envelope.Error.Details["server_detail"] != apiError.Details.ServerDetail {
 		t.Fatalf("server detail = %#v", envelope.Error.Details)

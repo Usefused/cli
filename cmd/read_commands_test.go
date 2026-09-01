@@ -318,6 +318,45 @@ func TestMCPDeactivateResolvesOnlyMCPNames(t *testing.T) {
 	}
 }
 
+// TestSDKDeactivateResolvesOnlySDKNames proves CLI hard deletion resolves one
+// immutable SDK version before invoking the shared Engine lifecycle route.
+func TestSDKDeactivateResolvesOnlySDKNames(t *testing.T) {
+	var sawResolution, sawDeactivate bool
+	server := httptest.NewServer(sdkDeactivateTestHandler(t, &sawResolution, &sawDeactivate))
+	defer server.Close()
+
+	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"sdk", "deactivate", "support@1.0.0"})
+	if !sawResolution || !sawDeactivate || !strings.Contains(out, "Deactivated SDK version") {
+		t.Fatalf("SDK deactivate = resolution:%t deactivate:%t output:%q", sawResolution, sawDeactivate, out)
+	}
+}
+
+// sdkDeactivateTestHandler verifies the SDK kind fence and exact DELETE route.
+func sdkDeactivateTestHandler(t *testing.T, sawResolution, sawDeactivate *bool) http.Handler {
+	t.Helper()
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Resolution and deletion are the only calls admitted by this lifecycle command.
+		switch r.URL.Path {
+		case "/engine/graphql":
+			body := decodeGraphQLTestRequest(t, r)
+			if body.Variables["reference"] != "support" || body.Variables["version"] != "1.0.0" || body.Variables["kind"] != "sdk" {
+				t.Fatalf("unexpected SDK reference variables: %#v", body.Variables)
+			}
+			*sawResolution = true
+			_, _ = w.Write([]byte(`{"data":{"appReference":{"id":"sdk-1","kind":"app"}}}`))
+		case "/apps/sdk-1/":
+			// The lifecycle route is destructive only through its exact DELETE method.
+			if r.Method != http.MethodDelete {
+				t.Fatalf("unexpected SDK deactivate method: %s", r.Method)
+			}
+			*sawDeactivate = true
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Fatalf("unexpected SDK deactivate request: %s %s", r.Method, r.URL.Path)
+		}
+	})
+}
+
 func mcpDeactivateTestHandler(t *testing.T, sawResolution, sawDeactivate *bool) http.Handler {
 	t.Helper()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

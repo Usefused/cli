@@ -50,14 +50,18 @@ output and stderr receives one JSON object before the CLI exits non-zero:
   "ok": false,
   "error": {
     "code": "bucket_credentials_missing",
-    "message": "Required authentication material is missing.",
+    "message": "Provider credentials are not configured.",
     "category": "validation",
     "retryable": false,
-    "remediation": "Add the required credentials and create the plan again.",
-    "details": {"missing": ["basicAuth_username"]},
+    "remediation": "Run the supplied credential command before repeating this call.",
+    "details": {
+      "bucket_id": "11111111-1111-4111-8111-111111111111",
+      "service_id": "22222222-2222-4222-8222-222222222222",
+      "command": "fused-cli secret set 22222222-2222-4222-8222-222222222222 --bucket 11111111-1111-4111-8111-111111111111 --type api_key --auth-name providerKey"
+    },
     "trace_id": "...",
-    "http_status": 400,
-    "command": "fused-cli sdk plan"
+    "http_status": 409,
+    "command": "fused-cli sdk invoke support-sdk@1.0.0 listIssues"
   }
 }
 ```
@@ -550,12 +554,12 @@ deploys an MCP server. Plan runs the same local/offline validation as
 | `--receipt-out` | | Write the plan receipt to a specific path | `""` |
 | `--owner-team` | | Optional owning team slug; defaults to the authenticated person | `""` |
 
-Terminal SDK planning responds only to typed `bucket_credentials_missing`,
-confirms one secure write to the exact YAML-resolved bucket, and retries once.
-It never creates or substitutes a bucket. Static auth is stored through the
-ordinary secret path; OAuth/OIDC prompts for the bucket's
-client registration rather than an end-user provider token. MCP planning has
-no interactive credential-remediation flag.
+Terminal SDK planning may receive successful `credential_readiness` metadata,
+offer one secure write to the exact YAML-resolved bucket, and retry once.
+Declining preserves the valid plan. It never creates or substitutes a bucket.
+Static auth is stored through the ordinary secret path; OAuth/OIDC prompts for
+the bucket's client registration rather than an end-user provider token. MCP
+planning reports the same non-blocking readiness but does not prompt.
 
 ## `sdk apply` / `mcp apply`
 Apply an SDK generation plan or deploy an MCP server plan.

@@ -386,7 +386,7 @@ func TestDevAppSkillsDocumentVersionedLifecycle(t *testing.T) {
 	}{
 		{name: "fused-sdk", required: []string{
 			"SDK ID", "Version ID", "immutable", "app_version_immutable",
-			"FUSED_SDK_TOKEN", "cache miss", "database reset", "no SDK deprecate/deactivate command",
+			"FUSED_SDK_TOKEN", "cache miss", "database reset", "sdk deactivate <sdk-name@version-or-version-id>",
 		}},
 		{name: "fused-mcp", required: []string{
 			"MCP ID", "Version ID", "immutable", "app_version_immutable",
