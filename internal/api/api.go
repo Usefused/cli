@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"regexp"
 	"strings"
@@ -1830,83 +1831,6 @@ func (c *Client) ParseSDKIntent(q string) (*IntentPayload, error) {
 	return &resp.ParseSDKIntent, nil
 }
 
-type SDKEvent struct {
-	Type          string `json:"type"`
-	Message       string `json:"message"`
-	IntegrationID string `json:"integration_id,omitempty"`
-}
-
-// StreamSDKGenerationEvents consumes one SDK generation stream and reports a
-// bounded structured error when stream setup is rejected.
-func (c *Client) StreamSDKGenerationEvents(jobID string, eventChan chan<- SDKEvent, errChan chan<- error) {
-	defer close(eventChan)
-	defer close(errChan)
-	req, err := http.NewRequest("GET", c.BaseURL+"/sdks/job/"+jobID+"/stream", nil)
-	if err != nil {
-		errChan <- err
-		return
-	}
-	if c.APIKey != "" {
-		req.Header.Set("x-api-key", c.APIKey)
-	}
-	req.Header.Set("Accept", "text/event-stream")
-
-	resp, err := c.doRequest(req)
-	if err != nil {
-		errChan <- err
-		return
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		respBody := readBoundedHTTPErrorBody(resp.Body)
-		errChan <- fmt.Errorf("stream failed (HTTP %d): %w", resp.StatusCode, newHTTPError(resp.StatusCode, respBody))
-		return
-	}
-
-	if err := streamSDKEvents(resp.Body, eventChan); err != nil {
-		errChan <- err
-	}
-}
-
-func streamSDKEvents(reader io.Reader, eventChan chan<- SDKEvent) error {
-	buf := make([]byte, 4096)
-	var line []byte
-	for {
-		n, err := reader.Read(buf)
-		line = processSDKEventBytes(buf[:n], line, eventChan)
-		if err == io.EOF {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-	}
-}
-
-func processSDKEventBytes(chunk []byte, line []byte, eventChan chan<- SDKEvent) []byte {
-	for _, b := range chunk {
-		if b == '\n' {
-			emitSDKEvent(line, eventChan)
-			line = line[:0]
-			continue
-		}
-		line = append(line, b)
-	}
-	return line
-}
-
-func emitSDKEvent(line []byte, eventChan chan<- SDKEvent) {
-	if !bytes.HasPrefix(line, []byte("data: ")) {
-		return
-	}
-	data := bytes.TrimPrefix(line, []byte("data: "))
-	var event SDKEvent
-	if err := json.Unmarshal(data, &event); err == nil {
-		eventChan <- event
-	}
-}
-
 // DownloadSDK leaves successful package bytes uncapped while bounding only an
 // Engine error response before parsing it.
 func (c *Client) DownloadSDK(appID string) ([]byte, error) {
@@ -2119,12 +2043,56 @@ func (c *Client) PlanWorkspaceConfig(sourceHash, configKey string, config json.R
 }
 
 type SDKConfigApplyResponse struct {
-	Status         string `json:"status"`
-	PlanID         string `json:"plan_id"`
-	AppFamilyID    string `json:"app_family_id"`
-	AppID          string `json:"app_id"`
-	JobID          string `json:"job_id"`
-	ExecutionToken string `json:"execution_token"`
+	Status           string `json:"status"`
+	GenerationStatus string `json:"generation_status"`
+	PlanID           string `json:"plan_id"`
+	AppFamilyID      string `json:"app_family_id"`
+	AppID            string `json:"app_id"`
+	JobID            string `json:"job_id"`
+	ExecutionToken   string `json:"execution_token"`
+}
+
+// SDKGenerationStatusResponse reports Engine-owned progress for one immutable SDK version.
+type SDKGenerationStatusResponse struct {
+	Status      string `json:"status"`
+	AppID       string `json:"app_id"`
+	AppFamilyID string `json:"app_family_id"`
+	JobID       string `json:"job_id"`
+}
+
+// GetSDKGenerationStatus reads generation progress from Engine so callers never depend on a Registry job stream.
+func (c *Client) GetSDKGenerationStatus(appID string) (*SDKGenerationStatusResponse, error) {
+	appID = strings.TrimSpace(appID)
+	// A missing immutable version identity cannot address an Engine-owned generation.
+	if appID == "" {
+		return nil, errors.New("SDK version ID is required")
+	}
+	req, err := http.NewRequest(http.MethodGet, c.BaseURL+"/sdk-config/generation/"+url.PathEscape(appID), nil)
+	// Request construction failures happen before any status read reaches Engine.
+	if err != nil {
+		return nil, err
+	}
+	// Generation status is protected by the same control credential as SDK apply.
+	if c.APIKey != "" {
+		req.Header.Set("x-api-key", c.APIKey)
+	}
+	resp, err := c.doRequest(req)
+	// Transport failures remain distinguishable from a terminal generation failure.
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	// Engine's bounded error envelope remains authoritative for status-read failures.
+	if resp.StatusCode >= 400 {
+		respBody := readBoundedHTTPErrorBody(resp.Body)
+		return nil, fmt.Errorf("get SDK generation status failed (HTTP %d): %w", resp.StatusCode, newHTTPError(resp.StatusCode, respBody))
+	}
+	var out SDKGenerationStatusResponse
+	// A malformed success cannot prove package readiness and must fail closed.
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, fmt.Errorf("decode SDK generation status: %w", err)
+	}
+	return &out, nil
 }
 
 type MCPConfigApplyResponse struct {
@@ -2190,8 +2158,13 @@ func (c *Client) ApplySDKConfig(planID, sourceHash string) (*SDKConfigApplyRespo
 	}
 
 	var out SDKConfigApplyResponse
+	// A malformed success body arrives after Engine accepted the mutation request, so decoding failure cannot prove non-commit.
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, err
+		return nil, &APIError{
+			Code: "sdk_apply_response_invalid", Message: "Engine returned an invalid SDK apply response",
+			Category: "indeterminate", Retryable: false, Phase: "apply",
+			OperationID: safeErrorMetadataToken(planID), CommitState: "unknown", cause: err,
+		}
 	}
 	return &out, nil
 }

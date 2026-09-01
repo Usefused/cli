@@ -68,12 +68,6 @@ func WithTelemetry(spanName string, runE func(cmd *cobra.Command, args []string)
 func recordTelemetryError(span trace.Span, err error) {
 	code := "command_failed"
 	retryable := false
-	var unknownApply *importApplyOutcomeUnknownError
-	if errors.As(err, &unknownApply) {
-		// Why: a lost response after a one-shot mutation is not safe for agents
-		// to retry, even though ordinary request timeouts remain retryable.
-		code = "import_apply_outcome_unknown"
-	}
 	var strictError *cliapi.SpecImportStrictError
 	if errors.As(err, &strictError) {
 		code = strictError.Code
@@ -81,6 +75,16 @@ func recordTelemetryError(span trace.Span, err error) {
 	var apiError *cliapi.APIError
 	if errors.As(err, &apiError) {
 		code, retryable = apiError.Code, apiError.Retryable
+	}
+	var unknownImportApply *importApplyOutcomeUnknownError
+	// A lost import response owns the top-level non-replay contract even when it wraps a retryable transport API error.
+	if errors.As(err, &unknownImportApply) {
+		code, retryable = "import_apply_outcome_unknown", false
+	}
+	var unknownSDKApply *sdkApplyOutcomeUnknownError
+	// SDK ambiguity likewise overrides the wrapped timeout or 5xx classifier so automation never infers safe replay from telemetry.
+	if errors.As(err, &unknownSDKApply) {
+		code, retryable = "sdk_apply_outcome_unknown", false
 	}
 	var workspaceApply *workspaceServiceApplyOutcomeError
 	// Composite activation owns the top-level failure classification because an

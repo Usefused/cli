@@ -564,6 +564,12 @@ planning reports the same non-blocking readiness but does not prompt.
 ## `sdk apply` / `mcp apply`
 Apply an SDK generation plan or deploy an MCP server plan.
 
+Generated-SDK apply returns after Engine durably queues the non-runnable build;
+package generation continues in Engine's background finalizer. Use `sdk show
+<name@version-or-version-id>` to inspect `generation_status`. `--download`
+waits through Engine-local Version ID status reads before downloading, without
+replaying apply or depending on a Registry event stream.
+
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
 | `--download` | | Download generated SDKs after `sdk apply`; unavailable for MCP | `false` |

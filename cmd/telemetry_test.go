@@ -150,6 +150,33 @@ func TestRecordTelemetryErrorMarksUnknownImportApplyNonRetryable(t *testing.T) {
 	}
 }
 
+// TestRecordTelemetryErrorMarksUnknownSDKApplyNonRetryable proves the top-level ambiguity contract overrides its retryable transport cause.
+func TestRecordTelemetryErrorMarksUnknownSDKApplyNonRetryable(t *testing.T) {
+	exporter := tracetest.NewInMemoryExporter()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
+	_, span := provider.Tracer("test").Start(context.Background(), "sdk-apply")
+	retryableCause := &cliapi.APIError{Code: "request_timed_out", Message: "Engine request timed out", Retryable: true}
+	recordTelemetryError(span, &sdkApplyOutcomeUnknownError{
+		cause: retryableCause, planID: "plan-1", configKey: "sdk:security:1.2.0", sdkName: "security", version: "1.2.0",
+	})
+	span.End()
+
+	spans := exporter.GetSpans()
+	// Span status must describe the mutation ambiguity rather than the wrapped timeout.
+	if len(spans) != 1 || spans[0].Status.Description != "sdk_apply_outcome_unknown" {
+		t.Fatalf("unknown SDK apply span = %#v", spans)
+	}
+	attributes := map[string]interface{}{}
+	// Attribute collection exposes the complete emitted dimension set to the secret-safety assertion.
+	for _, value := range spans[0].Attributes {
+		attributes[string(value.Key)] = value.Value.AsInterface()
+	}
+	// Only the stable non-retryable classifier is exported; local identity and remote prose stay out of telemetry.
+	if attributes["error.code"] != "sdk_apply_outcome_unknown" || attributes["error.retryable"] != false || strings.Contains(fmt.Sprint(attributes), "security") {
+		t.Fatalf("unknown SDK apply attributes = %#v", attributes)
+	}
+}
+
 // TestRecordTelemetryErrorMarksCompositeWorkspaceApplyNonRetryable verifies the
 // stable partial code is emitted without service refs or remote failure text.
 func TestRecordTelemetryErrorMarksCompositeWorkspaceApplyNonRetryable(t *testing.T) {

@@ -196,19 +196,28 @@ func assertSDKReferenceVariables(t *testing.T, variables map[string]any) {
 	}
 }
 
+// TestSDKShowUsesPublicIDLabels verifies public app identity and local generation diagnostics share one human view.
 func TestSDKShowUsesPublicIDLabels(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Generation status is an exact Engine-owned read after GraphQL resolves the version.
+		if r.Method == http.MethodGet && r.URL.Path == "/sdk-config/generation/version-1" {
+			_, _ = w.Write([]byte(`{"status":"failed","app_id":"version-1","app_family_id":"sdk-1","job_id":"job-1"}`))
+			return
+		}
 		var body struct {
 			Query     string         `json:"query"`
 			Variables map[string]any `json:"variables"`
 		}
+		// Every remaining request is one of the two expected GraphQL reads.
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatalf("decode graphql body: %v", err)
 		}
+		// The first GraphQL read resolves the human name and version.
 		if strings.Contains(body.Query, "appReference") {
 			_, _ = w.Write([]byte(`{"data":{"appReference":{"id":"version-1","kind":"app"}}}`))
 			return
 		}
+		// The detail read must remain bound to the resolved immutable ID.
 		if body.Variables["appId"] != "version-1" {
 			t.Fatalf("unexpected SDK version lookup: %#v", body.Variables)
 		}
@@ -217,11 +226,13 @@ func TestSDKShowUsesPublicIDLabels(t *testing.T) {
 	defer server.Close()
 
 	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"sdk", "show", "security@1.0.0"})
-	for _, expected := range []string{"sdk_id:\tsdk-1", "version_id:\tversion-1"} {
+	for _, expected := range []string{"sdk_id:\tsdk-1", "version_id:\tversion-1", "generation_status:\tfailed", "generation_job_id:\tjob-1"} {
+		// Public identity and generation diagnostics must all be visible without internal family terminology.
 		if !strings.Contains(out, expected) {
 			t.Fatalf("SDK show output %q is missing %q", out, expected)
 		}
 	}
+	// Internal family terminology must not leak through the human command surface.
 	if strings.Contains(out, "family_id") {
 		t.Fatalf("SDK show exposes internal family terminology: %q", out)
 	}

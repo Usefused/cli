@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"path"
@@ -99,12 +100,86 @@ type sdkApplyDownloadOutput struct {
 }
 
 type sdkApplyStageError struct {
-	Stage     string
-	SDKName   string
-	SDKID     string
-	VersionID string
-	JobID     string
-	Err       error
+	Stage          string
+	SDKName        string
+	SDKID          string
+	VersionID      string
+	JobID          string
+	ExecutionToken string
+	Err            error
+}
+
+const (
+	// Polling uses short Engine-owned reads while leaving ample time for durable background generation.
+	sdkGenerationPollInterval = time.Second
+	sdkGenerationWaitTimeout  = 10 * time.Minute
+)
+
+// sdkApplyOutcomeUnknownError prevents a lost SDK apply response from being presented as a safely retryable dependency failure.
+type sdkApplyOutcomeUnknownError struct {
+	cause     error
+	planID    string
+	configKey string
+	sdkName   string
+	version   string
+}
+
+// Error explains the ambiguous mutation boundary and directs the operator to an exact read-only target.
+func (err *sdkApplyOutcomeUnknownError) Error() string {
+	return fmt.Sprintf(
+		"SDK apply outcome is unknown for plan %s and target %s; the response did not prove whether the version committed. Do not retry this apply until inspecting state with `%s`.",
+		safeWorkspaceOutcomeToken(err.planID, "unavailable"), safeSDKApplyRecoveryTarget(err.sdkName, err.version), err.recoveryCommand(),
+	)
+}
+
+// Unwrap retains the transport or HTTP cause for logs without changing the non-retryable command contract.
+func (err *sdkApplyOutcomeUnknownError) Unwrap() error {
+	return err.cause
+}
+
+// recoveryCommand builds one inert SDK state-inspection command for the immutable candidate version.
+func (err *sdkApplyOutcomeUnknownError) recoveryCommand() string {
+	return "fused-cli sdk show " + shellQuoteWorkspaceServiceArg(safeSDKApplyRecoveryTarget(err.sdkName, err.version))
+}
+
+// jsonDetails preserves the reviewed plan and local config identity needed to correlate an ambiguous apply.
+func (err *sdkApplyOutcomeUnknownError) jsonDetails() map[string]any {
+	return map[string]any{
+		"plan_id": err.planID, "config_key": err.configKey,
+		"sdk": err.sdkName, "version": err.version,
+	}
+}
+
+var safeSDKApplyRecoveryPartPattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+
+// safeSDKApplyRecoveryTarget admits only app identity characters that cannot alter a copied shell command or target split.
+func safeSDKApplyRecoveryTarget(name, version string) string {
+	// Both identity parts must remain exact and unambiguous before they are included in recovery output.
+	if !safeSDKApplyRecoveryPartPattern.MatchString(name) || !safeSDKApplyRecoveryPartPattern.MatchString(version) {
+		return "<sdk-name>@<version>"
+	}
+	return name + "@" + version
+}
+
+// classifySDKApplyFailure upgrades only unproven write-boundary failures while preserving authoritative commit evidence.
+func classifySDKApplyFailure(cause error, cfg *configfile.ParsedConfig, receipt planReceipt) error {
+	var apiErr *api.APIError
+	// Non-API preparation failures happen before this classifier's known write boundary and retain their original local semantics.
+	if !errors.As(cause, &apiErr) {
+		return cause
+	}
+	// Only positive or negative commit proof is authoritative; an explicit unknown state still requires safe read-only recovery.
+	if apiErr.CommitState == "committed" || apiErr.CommitState == "not_committed" {
+		return cause
+	}
+	// A deadline, connection loss, or generic 5xx crossed the apply boundary without proving whether the immutable version exists.
+	if apiErr.CommitState != "unknown" && apiErr.Code != "request_timed_out" && apiErr.Code != "request_cancelled" && apiErr.Code != "engine_unavailable" && apiErr.Code != "sdk_apply_response_invalid" && apiErr.HTTPStatus < 500 {
+		return cause
+	}
+	return &sdkApplyOutcomeUnknownError{
+		cause: cause, planID: receipt.PlanID, configKey: cfg.ConfigKey,
+		sdkName: cfg.SDK.Name, version: cfg.SDK.Version,
+	}
 }
 
 // Error reports the failed SDK lifecycle stage without discarding the Engine error.
@@ -118,6 +193,11 @@ func (err *sdkApplyStageError) Unwrap() error { return err.Err }
 // jsonDetails returns stable stage context for the CLI JSON error envelope.
 func (err *sdkApplyStageError) jsonDetails() map[string]any {
 	details := map[string]any{"stage": err.Stage, "sdk": err.SDKName}
+	// A post-commit JSON failure is the caller's only opportunity to recover the Engine's one-time plaintext token.
+	if err.ExecutionToken != "" {
+		details["execution_token"] = err.ExecutionToken
+	}
+	// Stable app identities let automation continue recovery without repeating the committed apply.
 	if err.SDKID != "" {
 		details["sdk_id"] = err.SDKID
 	}
@@ -282,6 +362,7 @@ func maybeWritePlanReceipt(cfg *configfile.ParsedConfig, receipt planReceipt, op
 	return writePlanReceiptFile(defaultReceiptPath(cfg.ConfigKey), receipt)
 }
 
+// printPlanResult renders complete human plan guidance or the equivalent stable structured receipt array.
 func printPlanResult(planned []plannedConfig, jsonOut bool) error {
 	if jsonOut {
 		return json.NewEncoder(os.Stdout).Encode(planResultOutputs(planned))
@@ -293,7 +374,8 @@ func printPlanResult(planned []plannedConfig, jsonOut bool) error {
 			return err
 		}
 		printRequiredPermissions(os.Stdout, result.requiredPermissions)
-		printNotificationInbox(receipt.ConfigKey, result.notifications)
+		printCredentialReadiness(os.Stdout, receipt.ConfigKey, result.credentialReadiness)
+		printNotificationInbox(os.Stdout, receipt.ConfigKey, result.notifications)
 	}
 	return nil
 }
@@ -324,37 +406,78 @@ func printRequiredPermissions(out io.Writer, requirements []api.PermissionRequir
 	}
 }
 
+// printPlanSummary renders Engine-owned change data and treats output failure as a pre-apply stop condition.
 func printPlanSummary(out io.Writer, summary map[string]interface{}) error {
+	// An empty Engine summary remains an explicit no-change statement, and writer failure must stop apply before mutation.
 	if len(summary) == 0 {
-		fmt.Fprintln(out, "Plan summary: no changes reported.")
+		if _, err := fmt.Fprintln(out, "Plan summary: no changes reported."); err != nil {
+			return fmt.Errorf("failed to render plan summary: %w", err)
+		}
 		return nil
 	}
 	data, err := json.MarshalIndent(summary, "  ", "  ")
+	// Unsupported local values must fail before a misleading partial summary can authorize apply.
 	if err != nil {
 		return fmt.Errorf("failed to render plan summary: %w", err)
 	}
 	// Why: the Engine owns kind-specific summary fields. Rendering its full
 	// JSON prevents new action details from being silently hidden while the
 	// CLI evolves richer kind-specific presentation independently.
-	fmt.Fprintf(out, "Plan summary:\n  %s\n", data)
+	if _, err := fmt.Fprintf(out, "Plan summary:\n  %s\n", data); err != nil {
+		return fmt.Errorf("failed to render plan summary: %w", err)
+	}
 	return nil
 }
 
-func printNotificationInbox(configKey string, inbox api.NotificationInbox) {
+// printCredentialReadiness makes successful-but-not-callable app plans visible without blocking publication.
+func printCredentialReadiness(out io.Writer, configKey string, readiness *api.CredentialReadiness) {
+	// Absence and an empty requirement list both mean there is no actionable credential warning to render.
+	if readiness == nil || len(readiness.MissingCredentials) == 0 {
+		return
+	}
+	bucket := "the selected bucket"
+	// A named Engine-resolved bucket is useful display context; %q keeps terminal controls escaped.
+	if readiness.Bucket != nil && strings.TrimSpace(readiness.Bucket.Name) != "" {
+		bucket = fmt.Sprintf("bucket %q", strings.TrimSpace(readiness.Bucket.Name))
+	}
+	fmt.Fprintf(out, "Credential readiness for %s: %d authentication requirement(s) are missing from %s.\n", configKey, len(readiness.MissingCredentials), bucket)
+	// Exact value-free IDs let non-interactive users enter the secure prompt later without another discovery request.
+	if readiness.Bucket != nil {
+		bucketID := safeWorkspaceServiceID(readiness.Bucket.ID)
+		// Each missing auth family gets its own secure prompt because secret set resolves and validates that family independently.
+		for _, requirement := range readiness.MissingCredentials {
+			serviceID := safeWorkspaceServiceID(requirement.ServiceID)
+			// Malformed remote identity cannot be promoted into a copy-ready mutation command.
+			if serviceID == workspaceServiceSafeID || bucketID == workspaceServiceSafeID {
+				continue
+			}
+			fmt.Fprintf(out, "- %q (%q): `fused-cli secret set %s --bucket %s --interactive`\n",
+				strings.TrimSpace(requirement.Service), strings.TrimSpace(requirement.AuthType),
+				shellQuoteWorkspaceServiceArg(serviceID), shellQuoteWorkspaceServiceArg(bucketID),
+			)
+		}
+	}
+	fmt.Fprintln(out, "Publication can continue, but affected calls will fail until credentials are set.")
+}
+
+// printNotificationInbox renders the Engine-filtered workspace notification set to the caller's selected output stream.
+func printNotificationInbox(out io.Writer, configKey string, inbox api.NotificationInbox) {
+	// An empty inbox should not add a heading to otherwise concise plan output.
 	if len(inbox.Items) == 0 && len(inbox.Warnings) == 0 {
 		return
 	}
-	fmt.Printf("Workspace notifications for %s\n", configKey)
+	fmt.Fprintf(out, "Workspace notifications for %s\n", configKey)
 	for _, item := range inbox.Items {
 		target := notificationTarget(item)
+		// Targeted notifications identify the exact affected config or service version instead of a generic event type.
 		if target != "" {
-			fmt.Printf("- %s %s %s: %s\n", item.Severity, item.Source, target, item.Message)
+			fmt.Fprintf(out, "- %s %s %s: %s\n", item.Severity, item.Source, target, item.Message)
 			continue
 		}
-		fmt.Printf("- %s %s %s: %s\n", item.Severity, item.Source, item.Type, item.Message)
+		fmt.Fprintf(out, "- %s %s %s: %s\n", item.Severity, item.Source, item.Type, item.Message)
 	}
 	for _, warning := range inbox.Warnings {
-		fmt.Printf("- warning: %s\n", warning)
+		fmt.Fprintf(out, "- warning: %s\n", warning)
 	}
 }
 
@@ -474,15 +597,21 @@ func applySDKConfigsJSON(client *api.Client, prepared []preparedConfigApply, opt
 // applyPreparedSDKJSON preserves apply identity and one-time token data across later stages.
 func applyPreparedSDKJSON(client *api.Client, cfg *configfile.ParsedConfig, receipt planReceipt, download bool) (sdkApplyOutput, error) {
 	resp, err := client.ApplySDKConfig(receipt.PlanID, receipt.SourceHash)
+	// SDK apply is a one-shot mutation boundary, so ambiguous failures need read-only recovery rather than generic retry guidance.
 	if err != nil {
-		return sdkApplyOutput{}, &sdkApplyStageError{Stage: "apply", SDKName: cfg.SDK.Name, Err: err}
+		classified := classifySDKApplyFailure(err, cfg, receipt)
+		var unknown *sdkApplyOutcomeUnknownError
+		// Returning the outcome-specific error directly keeps its plan and commit metadata at the top-level JSON boundary.
+		if errors.As(classified, &unknown) {
+			return sdkApplyOutput{}, classified
+		}
+		return sdkApplyOutput{}, &sdkApplyStageError{Stage: "apply", SDKName: cfg.SDK.Name, Err: classified}
 	}
 	result := sdkApplyOutput{
 		ConfigKey: cfg.ConfigKey, PlanID: resp.PlanID, Status: resp.Status,
 		SDKID: resp.AppFamilyID, VersionID: resp.AppID, ExecutionToken: resp.ExecutionToken,
-		// Apply only enqueues generation; nothing has waited on the job yet, so
-		// the stage stays "queued" until the download path confirms it finished.
-		Generation: sdkApplyStageOutput{Status: "queued", JobID: resp.JobID},
+		// Engine distinguishes a durable queue from an immediate cache-hit completion.
+		Generation: sdkApplyStageOutput{Status: sdkApplyGenerationStageStatus(resp, sdkGeneratesPackage(cfg.SDK)), JobID: resp.JobID},
 		Download:   sdkApplyDownloadOutput{Status: "not_requested"},
 	}
 	// generate: false publishes the version without building a package, so
@@ -495,17 +624,25 @@ func applyPreparedSDKJSON(client *api.Client, cfg *configfile.ParsedConfig, rece
 	if !download {
 		return result, nil
 	}
-	if err := waitForSDKGeneration(client, resp.JobID); err != nil {
+	generation, err := waitForSDKGeneration(client, resp.AppID)
+	// Preserve the latest Engine job identity even when generation fails after apply committed.
+	if generation != nil && strings.TrimSpace(generation.JobID) != "" {
+		result.Generation.JobID = generation.JobID
+	}
+	// Generation is a separate post-commit stage, so its failure retains the successful app identity and one-time token response semantics.
+	if err != nil {
 		return sdkApplyOutput{}, &sdkApplyStageError{
 			Stage: "generation", SDKName: cfg.SDK.Name, SDKID: resp.AppFamilyID,
-			VersionID: resp.AppID, JobID: resp.JobID, Err: err,
+			VersionID: resp.AppID, JobID: result.Generation.JobID,
+			ExecutionToken: resp.ExecutionToken, Err: err,
 		}
 	}
 	result.Generation.Status = "completed"
 	if err := downloadSDKByIDQuiet(client, resp.AppID, cfg.SDK.Name, "."); err != nil {
 		return sdkApplyOutput{}, &sdkApplyStageError{
 			Stage: "download", SDKName: cfg.SDK.Name, SDKID: resp.AppFamilyID,
-			VersionID: resp.AppID, JobID: resp.JobID, Err: err,
+			VersionID: resp.AppID, JobID: resp.JobID,
+			ExecutionToken: resp.ExecutionToken, Err: err,
 		}
 	}
 	result.Download = sdkApplyDownloadOutput{Status: "completed", Path: filepath.Join("fused-sdks", cfg.SDK.Name)}
@@ -697,10 +834,12 @@ func applyPreparedConfig(client *api.Client, item preparedConfigApply, download 
 	return nil
 }
 
+// applyPreparedSDK publishes one immutable SDK version and prevents ambiguous write outcomes from inheriting generic retry advice.
 func applyPreparedSDK(client *api.Client, cfg *configfile.ParsedConfig, receipt planReceipt, download bool) error {
 	resp, err := client.ApplySDKConfig(receipt.PlanID, receipt.SourceHash)
+	// Human apply output shares the same ambiguity classifier as structured automation.
 	if err != nil {
-		return fmt.Errorf("failed to apply SDK %s: %w", cfg.SDK.Name, err)
+		return fmt.Errorf("failed to apply SDK %s: %w", cfg.SDK.Name, classifySDKApplyFailure(err, cfg, receipt))
 	}
 	fmt.Printf("Successfully applied SDK %s\n", cfg.SDK.Name)
 	fmt.Printf("  SDK ID: %s\n  Version ID: %s\n", resp.AppFamilyID, resp.AppID)
@@ -713,13 +852,39 @@ func applyPreparedSDK(client *api.Client, cfg *configfile.ParsedConfig, receipt 
 		fmt.Printf("  Package: not built (generate: false) -- call it over REST, or describe it with 'fused-cli sdk openapi %s@%s'\n", cfg.SDK.Name, cfg.SDK.Version)
 		return nil
 	}
+	// A normal apply returns after durable publication and reports whether generation queued or completed immediately.
 	if !download {
+		fmt.Printf("  Package generation: %s\n", sdkApplyGenerationStageStatus(resp, true))
 		return nil
 	}
-	if err := waitForSDKGeneration(client, resp.JobID); err != nil {
+	_, err = waitForSDKGeneration(client, resp.AppID)
+	// Package transfer starts only after Engine reports the immutable version ready.
+	if err != nil {
 		return fmt.Errorf("failed to generate SDK %s: %w", cfg.SDK.Name, err)
 	}
 	return downloadSDKByID(client, resp.AppID, cfg.SDK.Name, ".")
+}
+
+// sdkApplyGenerationStageStatus maps Engine lifecycle state into stable CLI stage vocabulary while preserving older Engine compatibility.
+func sdkApplyGenerationStageStatus(resp *api.SDKConfigApplyResponse, generatesPackage bool) string {
+	// A package-free SDK has no asynchronous work regardless of response version.
+	if !generatesPackage {
+		return "skipped"
+	}
+	// Current Engines explicitly report the Registry-owned terminal or pending state.
+	switch strings.TrimSpace(resp.GenerationStatus) {
+	case "complete":
+		return "completed"
+	case "skipped":
+		return "skipped"
+	case "pending":
+		return "queued"
+	}
+	// Older Engines used top-level pending for queued work and applied only after generation completed.
+	if strings.TrimSpace(resp.Status) == "pending" {
+		return "queued"
+	}
+	return "completed"
 }
 
 // applyPreparedMCP publishes one immutable version and surfaces its stable and pinned connection routes.
@@ -816,54 +981,89 @@ func appliedWebhookURL(baseURL string, w api.AppliedWebhookConfig) string {
 	return strings.TrimRight(baseURL, "/") + "/webhook/" + w.Slug + "-" + w.ServiceKey
 }
 
-func waitForSDKGeneration(client *api.Client, jobID string) error {
-	if jobID == "" {
-		return nil
+// waitForSDKGeneration follows Engine-owned generation state for one immutable SDK version.
+func waitForSDKGeneration(client *api.Client, appID string) (*api.SDKGenerationStatusResponse, error) {
+	return waitForSDKGenerationWithTiming(client, appID, sdkGenerationPollInterval, sdkGenerationWaitTimeout)
+}
+
+// waitForSDKGenerationWithTiming keeps polling deterministic and independently testable without exposing timing flags to users.
+func waitForSDKGenerationWithTiming(client *api.Client, appID string, pollInterval, timeout time.Duration) (*api.SDKGenerationStatusResponse, error) {
+	appID = strings.TrimSpace(appID)
+	// Apply must return an immutable version identity before CLI can safely observe its background work.
+	if appID == "" {
+		return nil, errors.New("SDK apply response omitted the Version ID required to follow generation")
 	}
-	eventChan := make(chan api.SDKEvent)
-	errChan := make(chan error)
-	go client.StreamSDKGenerationEvents(jobID, eventChan, errChan)
-	timeout := time.After(2 * time.Minute)
-	for eventChan != nil || errChan != nil {
-		select {
-		case event, ok := <-eventChan:
-			nextEventChan, done, err := handleSDKGenerationEvent(eventChan, event, ok)
-			eventChan = nextEventChan
-			if done || err != nil {
-				return err
+	// Non-positive test or caller timing would otherwise create a tight polling loop.
+	if pollInterval <= 0 {
+		return nil, errors.New("SDK generation poll interval must be positive")
+	}
+	// A bounded wait keeps --download interruptible even if a background worker is unavailable.
+	if timeout <= 0 {
+		return nil, errors.New("SDK generation wait timeout must be positive")
+	}
+	return pollSDKGeneration(client, appID, pollInterval, timeout)
+}
+
+// pollSDKGeneration performs immediate and interval reads until Engine proves one terminal version state.
+func pollSDKGeneration(client *api.Client, appID string, pollInterval, timeout time.Duration) (*api.SDKGenerationStatusResponse, error) {
+	pollTimer := time.NewTicker(pollInterval)
+	defer pollTimer.Stop()
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+	for {
+		status, err := client.GetSDKGenerationStatus(appID)
+		// Transient status-read failures do not prove generation failure, so retry them without replaying apply.
+		if err != nil {
+			// Authoritative client and authorization errors cannot improve by polling the same target.
+			if !retryableSDKGenerationStatusRead(err) {
+				return nil, err
 			}
-		case err, ok := <-errChan:
-			nextErrChan, err := handleSDKGenerationStreamError(errChan, err, ok)
-			errChan = nextErrChan
-			if err != nil {
-				return err
+			select {
+			// A later local read may observe progress after a proxy or restart interruption.
+			case <-pollTimer.C:
+				continue
+			// The bounded timeout reports the last read failure without changing committed app state.
+			case <-deadline.C:
+				return nil, fmt.Errorf("timed out reading SDK generation status: %w", err)
 			}
-		case <-timeout:
-			return errors.New("timed out waiting for SDK generation")
+		}
+		// Engine must echo the exact immutable identity to prevent readiness from crossing versions.
+		if strings.TrimSpace(status.AppID) != appID {
+			return status, fmt.Errorf("Engine returned SDK generation status for unexpected Version ID %q", status.AppID)
+		}
+		switch status.Status {
+		// Pending work remains durable in Engine; wait before the next bounded read.
+		case "pending":
+			select {
+			// The next read occurs only after the configured interval to avoid busy-polling Engine.
+			case <-pollTimer.C:
+				continue
+			// Timing out never replays apply because its commit already succeeded.
+			case <-deadline.C:
+				return status, fmt.Errorf("timed out waiting for SDK generation; inspect `%s`", "fused-cli sdk show "+appID)
+			}
+		// Complete and skipped are the only terminal states safe for the download stage to consume.
+		case "complete", "skipped":
+			return status, nil
+		// Failed is terminal but Engine deliberately exposes no upstream error prose at this boundary.
+		case "failed":
+			return status, fmt.Errorf("Engine reported SDK generation failed; inspect `%s` before retrying package download", "fused-cli sdk show "+appID)
+		// Unknown states fail closed so CLI never downloads a package whose readiness it cannot prove.
+		default:
+			return status, fmt.Errorf("Engine returned invalid SDK generation status %q", status.Status)
 		}
 	}
-	return nil
 }
 
-func handleSDKGenerationEvent(ch chan api.SDKEvent, event api.SDKEvent, ok bool) (chan api.SDKEvent, bool, error) {
-	if !ok {
-		return nil, false, nil
+// retryableSDKGenerationStatusRead distinguishes transient Engine availability from authoritative request rejection.
+func retryableSDKGenerationStatusRead(err error) bool {
+	var apiErr *api.APIError
+	// Network and malformed-success errors have no authoritative 4xx proof and may recover on the next local read.
+	if !errors.As(err, &apiErr) {
+		return true
 	}
-	switch event.Type {
-	case "complete", "auth_key_generated":
-		return ch, true, nil
-	case "error":
-		return ch, false, errors.New(event.Message)
-	default:
-		return ch, false, nil
-	}
-}
-
-func handleSDKGenerationStreamError(ch chan error, err error, ok bool) (chan error, error) {
-	if !ok {
-		return nil, nil
-	}
-	return ch, err
+	// Explicit retryability and server failures are safe to poll because apply is never replayed.
+	return apiErr.Retryable || apiErr.HTTPStatus == 0 || apiErr.HTTPStatus >= http.StatusInternalServerError
 }
 
 func downloadSDKByID(client *api.Client, appID, sdkName, outDir string) error {
@@ -1067,12 +1267,23 @@ func defaultReceiptPath(configKey string) string {
 	return filepath.Join(".fused", ".state", name+".plan.json")
 }
 
+// writePlanReceiptFile atomically publishes the canonical bytes shared by normal plan and unified-init rollback tracking.
 func writePlanReceiptFile(path string, receipt planReceipt) error {
-	data, err := json.MarshalIndent(receipt, "", "  ")
+	data, err := marshalPlanReceipt(receipt)
 	if err != nil {
 		return err
 	}
-	return atomicWriteFile(path, append(data, '\n'), 0644, validateJSONContent)
+	return atomicWriteFile(path, data, 0644, validateJSONContent)
+}
+
+// marshalPlanReceipt produces one deterministic representation so rollback can prove ownership of the receipt it is about to replace.
+func marshalPlanReceipt(receipt planReceipt) ([]byte, error) {
+	data, err := json.MarshalIndent(receipt, "", "  ")
+	// Serialization failure must occur before any receipt path is changed.
+	if err != nil {
+		return nil, err
+	}
+	return append(data, '\n'), nil
 }
 
 func readPlanReceiptFile(path string) (planReceipt, error) {

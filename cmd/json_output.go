@@ -111,6 +111,11 @@ func classifyCommandError(cmd *cobra.Command, err error) jsonErrorResult {
 	if errors.As(err, &applyError) {
 		result.Details = applyError.jsonDetails()
 	}
+	var unknownSDKApply *sdkApplyOutcomeUnknownError
+	// SDK mutation ambiguity takes precedence over the wrapped generic API error's unsafe retry advice.
+	if errors.As(err, &unknownSDKApply) {
+		return classifyUnknownSDKApply(result, unknownSDKApply)
+	}
 	var unknownApply *importApplyOutcomeUnknownError
 	if errors.As(err, &unknownApply) {
 		return classifyUnknownImportApply(result, unknownApply)
@@ -161,6 +166,19 @@ func classifyCommandError(cmd *cobra.Command, err error) jsonErrorResult {
 		return result
 	}
 	return classifyGenericCommandError(result, err)
+}
+
+// classifyUnknownSDKApply publishes the exact read-only recovery contract for an unproven immutable SDK mutation.
+func classifyUnknownSDKApply(result jsonErrorResult, unknownApply *sdkApplyOutcomeUnknownError) jsonErrorResult {
+	result.Code, result.Category, result.Retryable = "sdk_apply_outcome_unknown", "indeterminate", false
+	result.Message = "The SDK apply response did not prove whether the reviewed plan committed."
+	result.Remediation = "Inspect the exact SDK version before creating a new plan; do not replay this apply receipt blindly."
+	result.Phase = "apply"
+	result.OperationID = safeWorkspaceOutcomeToken(unknownApply.planID, "unavailable")
+	result.CommitState = "unknown"
+	result.Recovery = unknownApply.recoveryCommand()
+	result.Details = mergeJSONDetails(result.Details, unknownApply.jsonDetails())
+	return result
 }
 
 // classifyGenericCommandError handles local usage and context outcomes after

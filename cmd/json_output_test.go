@@ -153,13 +153,20 @@ func TestSDKApplyJSONErrorPreservesEngineContractAndFailedStage(t *testing.T) {
 		Category: "dependency", Retryable: true, HTTPStatus: http.StatusBadGateway,
 	}
 	apiError.Details.Stage = "registry_generation"
-	err := &sdkApplyStageError{Stage: "apply", SDKName: "payments", Err: apiError}
+	err := &sdkApplyStageError{
+		Stage: "generation", SDKName: "payments", SDKID: "sdk-1", VersionID: "version-1",
+		JobID: "job-1", ExecutionToken: "shown-once", Err: apiError,
+	}
 	result := classifyCommandError(command, err)
 	if result.Code != apiError.Code || !result.Retryable || result.HTTPStatus != http.StatusBadGateway {
 		t.Fatalf("result = %#v", result)
 	}
 	if result.Details["stage"] != "registry_generation" || result.Details["sdk"] != "payments" {
 		t.Fatalf("details = %#v", result.Details)
+	}
+	// Post-commit failures must retain the only plaintext copy of the family token and exact recovery identities.
+	if result.Details["execution_token"] != "shown-once" || result.Details["sdk_id"] != "sdk-1" || result.Details["version_id"] != "version-1" || result.Details["job_id"] != "job-1" {
+		t.Fatalf("post-commit details = %#v", result.Details)
 	}
 }
 

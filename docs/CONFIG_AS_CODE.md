@@ -234,6 +234,12 @@ fused-cli sdk plan -f .fused/sdks/my-sdk.yaml
 fused-cli sdk apply -f .fused/sdks/my-sdk.yaml --json
 ```
 
+Generated-SDK apply returns once Engine has atomically stored the app, token,
+and queued package job. The app remains non-runnable while
+`generation_status` is `pending`; Engine activates it only after background
+generation completes. Add `--download` when the same command should wait by
+exact Version ID and fetch the package.
+
 For terminal setup, `fused-cli sdk plan -f .fused/sdks/my-sdk.yaml` securely
 fills only credentials Engine reports missing from that file's resolved
 `bucket`, confirms the immediate bucket write, and retries once. Declining

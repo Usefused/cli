@@ -1,10 +1,12 @@
 package cmd
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -40,6 +42,32 @@ type unifiedInitRunner func(*cobra.Command, unifiedInitMode, scaffoldRequest) er
 
 type unifiedInitPrecommitError struct {
 	cause error
+}
+
+// unifiedInitConfigPublication records the exact local transition that can be undone only with negative commit proof.
+type unifiedInitConfigPublication struct {
+	path         string
+	candidate    []byte
+	previous     []byte
+	previousMode os.FileMode
+	changed      bool
+	extended     bool
+}
+
+// unifiedInitReceiptPublication records the exact receipt transition paired with one published app candidate.
+type unifiedInitReceiptPublication struct {
+	path           string
+	candidate      []byte
+	previous       []byte
+	previousMode   os.FileMode
+	previousExists bool
+}
+
+// unifiedInitLocalApplyState groups the byte-owned local publications with the prepared remote apply request.
+type unifiedInitLocalApplyState struct {
+	configPublication  unifiedInitConfigPublication
+	receiptPublication unifiedInitReceiptPublication
+	prepared           preparedConfigApply
 }
 
 var selectUnifiedInitMode = promptUnifiedInitMode
@@ -305,59 +333,19 @@ func createPlanApplyUnifiedInit(cmd *cobra.Command, client *api.Client, mode uni
 		interactive: !nonInteractive(), output: cmd.OutOrStdout(),
 		auditCtx: cmd.Context(), auditAction: cmd.CommandPath(),
 	}
-	plan, err := planConfigWithRemediation(client, parsed, client.BaseURL, planOpts)
-	// Generated SDK onboarding may deterministically repair only the typed missing-pin condition, then replay the identical plan once.
-	if err != nil && unifiedInitCanRefreshGenerationSnapshot(mode, parsed, err) {
-		refreshed, refreshErr := refreshUnifiedInitGenerationSnapshots(cmd, client, parsed)
-		// Refresh failure stops before config publication and reports any exact snapshots already completed.
-		if refreshErr != nil {
-			return contextualizeUnifiedInitPrecommitFailureAfterRefresh("generation snapshot refresh", mode, request, workspaceApplied, refreshed, refreshErr)
-		}
-		plan, err = planConfigWithRemediation(client, parsed, client.BaseURL, planOpts)
-		// The one retry is authoritative; a second failure cannot trigger another refresh or publish the candidate.
-		if err != nil {
-			return contextualizeUnifiedInitPrecommitFailureAfterRefresh("app plan retry", mode, request, workspaceApplied, refreshed, err)
-		}
-	}
-	// A failed app plan preserves either absence for creation or the exact existing extension target.
-	if err != nil {
-		return contextualizeUnifiedInitPrecommitFailure("app plan", mode, request, workspaceApplied, err)
-	}
-	// A successful plan proves exact successor availability and permissions before any local candidate is published.
-	if result.Changed {
-		// Extensions replace one accepted file atomically, while new apps retain create-only collision protection.
-		if request.extend {
-			if err := atomicWriteFile(request.path, pendingWrite, 0o644, scaffoldValidator(request)); err != nil {
-				return err
-			}
-		} else {
-			if err := atomicCreateFile(request.path, pendingWrite, 0o644, scaffoldValidator(request)); err != nil {
-				return err
-			}
-		}
-	}
-	recordGeneratedBindingCount(cmd.Context(), result.GeneratedBindingCount)
-	recordAppliedChangeIf(cmd.Context(), cmd.CommandPath(), "config_file", result.Changed)
-	if err := printScaffoldResult(cmd, result); err != nil {
-		return err
-	}
-	// Apply is authorized only after the exact app receipt is durable.
-	if err := maybeWritePlanReceipt(parsed, plan.receipt, planOpts, 1); err != nil {
-		return err
-	}
-	fmt.Fprintf(cmd.OutOrStdout(), "%s plan created for %s (Plan ID: %s)\n", strings.ToUpper(string(mode)), parsed.ConfigKey, plan.receipt.PlanID)
-	// Human review output must remain complete before the app mutation starts.
-	if err := printPlanSummary(cmd.OutOrStdout(), plan.summary); err != nil {
-		return err
-	}
-	printRequiredPermissions(cmd.OutOrStdout(), plan.requiredPermissions)
-	prepared, err := prepareConfigApply(parsed, applyOptions{}, client.BaseURL)
-	// Receipt and Engine-target preflight must complete before calling the apply endpoint.
+	plan, err := planUnifiedInitCandidate(cmd, client, mode, request, workspaceApplied, parsed, planOpts)
+	// Planning and its one bounded repair complete before either local artifact is published.
 	if err != nil {
 		return err
 	}
-	// Unified SDK creation requests package completion, while compatibility callers can preserve their historical apply-only outcome.
-	if err := applyPreparedConfig(client, prepared, downloadPackage); err != nil {
+	localState, err := stageUnifiedInitLocalApply(cmd, client, mode, request, result, parsed, pendingWrite, plan)
+	// Local staging owns rollback for every failure before the apply request begins.
+	if err != nil {
+		return err
+	}
+	applyErr := applyPreparedConfig(client, localState.prepared, downloadPackage)
+	// Finalization either records retained desired state or restores both artifacts from negative commit proof.
+	if err := finalizeUnifiedInitApply(cmd, request, result, localState, applyErr); err != nil {
 		return err
 	}
 	// Direct API onboarding ends with an immediately usable Engine execution request rather than package instructions.
@@ -366,6 +354,308 @@ func createPlanApplyUnifiedInit(cmd *cobra.Command, client *api.Client, mode uni
 	}
 	recordAppliedChange(cmd.Context(), cmd.CommandPath(), string(parsed.Kind))
 	return nil
+}
+
+// planUnifiedInitCandidate creates one app plan and performs only the bounded exact-snapshot repair authorized for generated SDKs.
+func planUnifiedInitCandidate(cmd *cobra.Command, client *api.Client, mode unifiedInitMode, request scaffoldRequest, workspaceApplied bool, parsed *configfile.ParsedConfig, opts planOptions) (plannedConfig, error) {
+	plan, err := planConfigWithRemediation(client, parsed, client.BaseURL, opts)
+	// Ordinary plan success needs no repair or contextual error wrapping.
+	if err == nil {
+		return plan, nil
+	}
+	// Unrelated plan failures preserve either candidate absence or the exact accepted extension file.
+	if !unifiedInitCanRefreshGenerationSnapshot(mode, parsed, err) {
+		return plannedConfig{}, contextualizeUnifiedInitPrecommitFailure("app plan", mode, request, workspaceApplied, err)
+	}
+	refreshed, refreshErr := refreshUnifiedInitGenerationSnapshots(cmd, client, parsed)
+	// Refresh failure stops before config publication and reports any exact snapshots already completed.
+	if refreshErr != nil {
+		return plannedConfig{}, contextualizeUnifiedInitPrecommitFailureAfterRefresh("generation snapshot refresh", mode, request, workspaceApplied, refreshed, refreshErr)
+	}
+	plan, err = planConfigWithRemediation(client, parsed, client.BaseURL, opts)
+	// The one retry is authoritative; a second failure cannot trigger another refresh or publish the candidate.
+	if err != nil {
+		return plannedConfig{}, contextualizeUnifiedInitPrecommitFailureAfterRefresh("app plan retry", mode, request, workspaceApplied, refreshed, err)
+	}
+	return plan, nil
+}
+
+// stageUnifiedInitLocalApply publishes the reviewed config and receipt, renders review output, and prepares apply with rollback on every local failure.
+func stageUnifiedInitLocalApply(cmd *cobra.Command, client *api.Client, mode unifiedInitMode, request scaffoldRequest, result scaffoldResult, parsed *configfile.ParsedConfig, candidate []byte, plan plannedConfig) (unifiedInitLocalApplyState, error) {
+	state := unifiedInitLocalApplyState{}
+	publication, err := publishUnifiedInitConfig(request, result, candidate)
+	// A successful plan is the first boundary allowed to publish the exact local candidate.
+	if err != nil {
+		return state, err
+	}
+	state.configPublication = publication
+	recordGeneratedBindingCount(cmd.Context(), result.GeneratedBindingCount)
+	// Output failure occurs before receipt publication or remote apply, so the speculative config can be safely restored.
+	if err := printScaffoldResult(cmd, result); err != nil {
+		return state, rollbackUnifiedInitConfigFailure(err, publication)
+	}
+	receiptPublication, err := publishUnifiedInitReceipt(parsed, plan.receipt)
+	// Receipt publication precedes apply but remains part of the local transaction until Engine supplies commit proof.
+	if err != nil {
+		return state, rollbackUnifiedInitConfigFailure(err, publication)
+	}
+	state.receiptPublication = receiptPublication
+	fmt.Fprintf(cmd.OutOrStdout(), "%s plan created for %s (Plan ID: %s)\n", strings.ToUpper(string(mode)), parsed.ConfigKey, plan.receipt.PlanID)
+	// Human review output must remain complete before the app mutation starts.
+	if err := printPlanSummary(cmd.OutOrStdout(), plan.summary); err != nil {
+		return state, rollbackUnifiedInitLocalFailure(err, publication, receiptPublication)
+	}
+	printRequiredPermissions(cmd.OutOrStdout(), plan.requiredPermissions)
+	printCredentialReadiness(cmd.OutOrStdout(), parsed.ConfigKey, plan.credentialReadiness)
+	printNotificationInbox(cmd.OutOrStdout(), parsed.ConfigKey, plan.notifications)
+	prepared, err := prepareConfigApply(parsed, applyOptions{}, client.BaseURL)
+	// Receipt and Engine-target preflight must complete before calling the apply endpoint.
+	if err != nil {
+		return state, rollbackUnifiedInitLocalFailure(err, publication, receiptPublication)
+	}
+	state.prepared = prepared
+	return state, nil
+}
+
+// rollbackUnifiedInitConfigFailure restores the byte-owned candidate after a local failure before receipt publication.
+func rollbackUnifiedInitConfigFailure(cause error, publication unifiedInitConfigPublication) error {
+	// Ownership verification prevents cleanup from replacing a concurrent edit made during local staging.
+	if rollbackErr := rollbackUnifiedInitConfig(publication); rollbackErr != nil {
+		return fmt.Errorf("%w (local config rollback failed: %v)", cause, rollbackErr)
+	}
+	return cause
+}
+
+// rollbackUnifiedInitLocalFailure restores both byte-owned publications after a local failure proves apply never began.
+func rollbackUnifiedInitLocalFailure(cause error, configPublication unifiedInitConfigPublication, receiptPublication unifiedInitReceiptPublication) error {
+	// Coordinated verification prevents one artifact from being restored across a concurrent change to the other.
+	if rollbackErr := rollbackUnifiedInitPublications(configPublication, receiptPublication); rollbackErr != nil {
+		return fmt.Errorf("%w (local config and receipt rollback failed: %v)", cause, rollbackErr)
+	}
+	return cause
+}
+
+// finalizeUnifiedInitApply preserves ambiguous/committed desired state and rolls back only from authoritative negative commit proof.
+func finalizeUnifiedInitApply(cmd *cobra.Command, request scaffoldRequest, result scaffoldResult, state unifiedInitLocalApplyState, applyErr error) error {
+	// Successful apply retains the candidate config as accepted desired state.
+	if applyErr == nil {
+		recordAppliedChangeIf(cmd.Context(), cmd.CommandPath(), "config_file", result.Changed)
+		return nil
+	}
+	// Ambiguous or committed failures retain both candidate and receipt for exact state inspection.
+	if !appApplyProvenNotCommitted(applyErr) {
+		recordAppliedChangeIf(cmd.Context(), cmd.CommandPath(), "config_file", result.Changed)
+		return applyErr
+	}
+	// Negative commit proof authorizes restoring the complete byte-owned local transaction.
+	if rollbackErr := rollbackUnifiedInitPublications(state.configPublication, state.receiptPublication); rollbackErr != nil {
+		return fmt.Errorf("%w (local config and receipt rollback failed: %v)", applyErr, rollbackErr)
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "Reverted local config %s and plan receipt because Engine proved the app apply did not commit.\n", request.path)
+	return applyErr
+}
+
+// publishUnifiedInitReceipt snapshots and atomically replaces the default receipt while retaining exact rollback material.
+func publishUnifiedInitReceipt(parsed *configfile.ParsedConfig, receipt planReceipt) (unifiedInitReceiptPublication, error) {
+	publication := unifiedInitReceiptPublication{path: defaultReceiptPath(parsed.ConfigKey)}
+	candidate, err := marshalPlanReceipt(receipt)
+	// Serialization must complete before inspecting or replacing any existing receipt.
+	if err != nil {
+		return publication, err
+	}
+	publication.candidate = append([]byte(nil), candidate...)
+	previous, err := os.ReadFile(publication.path)
+	// Definite absence is a valid prior state that rollback will later restore by removal.
+	if errors.Is(err, os.ErrNotExist) {
+		err = nil
+	} else if err == nil {
+		publication.previous = previous
+		publication.previousExists = true
+		info, statErr := os.Stat(publication.path)
+		// Existing receipt permissions are part of the exact extension rollback state.
+		if statErr != nil {
+			return publication, statErr
+		}
+		publication.previousMode = info.Mode().Perm()
+	}
+	// Any read failure other than definite absence makes prior receipt ownership unknowable.
+	if err != nil {
+		return publication, err
+	}
+	// The shared atomic writer preserves an existing mode and uses the established 0644 default for value-free receipt metadata.
+	if err := atomicWriteFile(publication.path, candidate, 0o644, validateJSONContent); err != nil {
+		return publication, err
+	}
+	return publication, nil
+}
+
+// rollbackUnifiedInitPublications verifies ownership of both local artifacts before restoring either one.
+func rollbackUnifiedInitPublications(configPublication unifiedInitConfigPublication, receiptPublication unifiedInitReceiptPublication) error {
+	// Config verification first prevents a concurrent app-file edit from triggering receipt restoration in isolation.
+	if err := verifyUnifiedInitConfigPublication(configPublication); err != nil {
+		return err
+	}
+	// Receipt verification prevents a concurrent plan from being overwritten or removed by this failed apply.
+	if err := verifyUnifiedInitReceiptPublication(receiptPublication); err != nil {
+		return err
+	}
+	// Receipt restoration runs first because config rollback re-establishes the source-hash boundary consumed by normal apply.
+	if err := rollbackUnifiedInitReceipt(receiptPublication); err != nil {
+		return err
+	}
+	return rollbackUnifiedInitConfig(configPublication)
+}
+
+// verifyUnifiedInitConfigPublication proves the app file is still absent or byte-identical to this invocation's candidate.
+func verifyUnifiedInitConfigPublication(publication unifiedInitConfigPublication) error {
+	// An unchanged extension has no config publication whose ownership needs proof.
+	if !publication.changed {
+		return nil
+	}
+	current, err := os.ReadFile(publication.path)
+	// Independent removal of a newly created candidate already matches its rollback target.
+	if err != nil && !publication.extended && errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	// Every other read failure makes destructive rollback unsafe.
+	if err != nil {
+		return fmt.Errorf("read published config %s: %w", publication.path, err)
+	}
+	// Byte mismatch is positive evidence that another actor now owns the path.
+	if !bytes.Equal(current, publication.candidate) {
+		return fmt.Errorf("config %s changed after publication; preserving the newer bytes", publication.path)
+	}
+	return nil
+}
+
+// verifyUnifiedInitReceiptPublication proves the receipt still contains exactly the plan bytes this invocation wrote.
+func verifyUnifiedInitReceiptPublication(publication unifiedInitReceiptPublication) error {
+	current, err := os.ReadFile(publication.path)
+	// Missing receipt is already the rollback target only when this invocation created it from absence.
+	if errors.Is(err, os.ErrNotExist) && !publication.previousExists {
+		return nil
+	}
+	// Any other read failure or removal of a replaced receipt prevents a safe restoration.
+	if err != nil {
+		return fmt.Errorf("read published plan receipt %s: %w", publication.path, err)
+	}
+	// A different receipt may represent a concurrent plan and must never be overwritten by rollback.
+	if !bytes.Equal(current, publication.candidate) {
+		return fmt.Errorf("plan receipt %s changed after publication; preserving the newer bytes", publication.path)
+	}
+	return nil
+}
+
+// rollbackUnifiedInitReceipt restores the exact prior receipt bytes/mode or removes the byte-identical receipt created by this invocation.
+func rollbackUnifiedInitReceipt(publication unifiedInitReceiptPublication) error {
+	// Rechecking immediately before mutation narrows the verification-to-write window and protects a newly published concurrent plan.
+	if err := verifyUnifiedInitReceiptPublication(publication); err != nil {
+		return err
+	}
+	// An independently removed newly-created receipt already matches definite prior absence.
+	if _, err := os.Stat(publication.path); errors.Is(err, os.ErrNotExist) && !publication.previousExists {
+		return nil
+	} else if err != nil {
+		// Other stat failures make the final mutation unsafe despite the earlier ownership check.
+		return fmt.Errorf("inspect published plan receipt %s: %w", publication.path, err)
+	}
+	// Replacement rollback restores both exact prior content and its private mode.
+	if publication.previousExists {
+		if err := atomicWriteFile(publication.path, publication.previous, publication.previousMode, nil); err != nil {
+			return err
+		}
+		// Explicit mode restoration prevents a later filesystem default from widening an older private receipt.
+		if err := os.Chmod(publication.path, publication.previousMode); err != nil {
+			return fmt.Errorf("restore plan receipt mode %s: %w", publication.path, err)
+		}
+		return nil
+	}
+	// Creation rollback removes only a receipt already verified as this invocation's exact bytes.
+	if err := os.Remove(publication.path); err != nil {
+		return fmt.Errorf("remove rejected plan receipt %s: %w", publication.path, err)
+	}
+	syncDirectory(filepath.Dir(publication.path))
+	return nil
+}
+
+// publishUnifiedInitConfig atomically publishes one planned candidate while retaining only the bytes needed for a proven-noncommit rollback.
+func publishUnifiedInitConfig(request scaffoldRequest, result scaffoldResult, candidate []byte) (unifiedInitConfigPublication, error) {
+	publication := unifiedInitConfigPublication{path: request.path, candidate: append([]byte(nil), candidate...), changed: result.Changed, extended: request.extend}
+	// An unchanged extension has no local mutation to publish or later undo.
+	if !result.Changed {
+		return publication, nil
+	}
+	// Extensions retain the exact accepted bytes and permissions so a rejected remote apply cannot leave speculative desired state behind.
+	if request.extend {
+		previous, err := os.ReadFile(request.path)
+		// Failure to capture the currently accepted bytes prevents a safe speculative replacement.
+		if err != nil {
+			return publication, err
+		}
+		info, err := os.Stat(request.path)
+		// Original permissions are part of the rollback invariant, not disposable metadata.
+		if err != nil {
+			return publication, err
+		}
+		publication.previous = previous
+		publication.previousMode = info.Mode().Perm()
+		// Atomic replacement ensures observers see either the accepted file or the complete planned candidate.
+		if err := atomicWriteFile(request.path, candidate, 0o644, scaffoldValidator(request)); err != nil {
+			return publication, err
+		}
+		return publication, nil
+	}
+	// New app initialization keeps create-only collision protection at the final publication boundary.
+	if err := atomicCreateFile(request.path, candidate, 0o644, scaffoldValidator(request)); err != nil {
+		return publication, err
+	}
+	return publication, nil
+}
+
+// rollbackUnifiedInitConfig restores the exact pre-apply file state without overwriting concurrent edits made after publication.
+func rollbackUnifiedInitConfig(publication unifiedInitConfigPublication) error {
+	// Shared verification keeps direct pre-apply cleanup and two-file apply rollback under the same ownership rule.
+	if err := verifyUnifiedInitConfigPublication(publication); err != nil {
+		return err
+	}
+	// No changed candidate means the desired-state filesystem already matches its pre-apply state.
+	if !publication.changed {
+		return nil
+	}
+	// Independent removal of a newly-created candidate already completed the required rollback.
+	if !publication.extended {
+		if _, err := os.Stat(publication.path); errors.Is(err, os.ErrNotExist) {
+			return nil
+		} else if err != nil {
+			// Non-absence stat failures make a subsequent removal unsafe.
+			return fmt.Errorf("inspect published config %s: %w", publication.path, err)
+		}
+	}
+	// Extension rollback atomically restores both the prior content and its original private mode.
+	if publication.extended {
+		// Restoring content first keeps the rollback atomic for readers.
+		if err := atomicWriteFile(publication.path, publication.previous, publication.previousMode, nil); err != nil {
+			return err
+		}
+		// Explicit chmod reasserts the captured mode even if filesystem metadata changed while apply was in flight.
+		if err := os.Chmod(publication.path, publication.previousMode); err != nil {
+			return fmt.Errorf("restore config mode %s: %w", publication.path, err)
+		}
+		return nil
+	}
+	// Creation rollback removes only the byte-identical file this invocation published.
+	if err := os.Remove(publication.path); err != nil {
+		return fmt.Errorf("remove rejected config %s: %w", publication.path, err)
+	}
+	syncDirectory(filepath.Dir(publication.path))
+	return nil
+}
+
+// appApplyProvenNotCommitted trusts rollback authority only when Engine supplied the stable negative commit proof.
+func appApplyProvenNotCommitted(err error) bool {
+	var apiErr *api.APIError
+	// Missing or ambiguous metadata can never authorize deleting or replacing the local candidate.
+	return errors.As(err, &apiErr) && apiErr.CommitState == "not_committed"
 }
 
 // prepareUnifiedInitPlanInput returns a fully validated candidate without publishing either creation or extension bytes.

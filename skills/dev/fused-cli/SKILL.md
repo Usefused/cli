@@ -331,7 +331,11 @@ preserve an existing file's permission mode.
 outcomes, including the one-time execution token when one was created. If a
 stage fails, stderr remains the standard structured error envelope and
 `error.details.stage` identifies `apply`, `generation`, or `download`; a
-successful apply's SDK and Version IDs are included when a later stage failed.
+successful apply's SDK and Version IDs and one-time token are included when a
+later stage failed. Without `--download`, generated-SDK apply returns after
+Engine durably queues a non-runnable build; use `sdk show <name@version-or-version-id>`
+for `generation_status`. With `--download`, CLI polls that exact Version ID on
+Engine and never consumes a Registry stream or replays apply.
 `sdk download` is a distinct visible command, so prefer separate `sdk apply
 --json` and `sdk download <name@version> --json` steps when automation needs
 independent retry boundaries.

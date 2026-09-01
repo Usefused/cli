@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -251,6 +252,378 @@ services:
 	if err == nil || readErr != nil || statErr != nil || !bytes.Equal(data, original) || info.Mode().Perm() != 0o600 {
 		t.Fatalf("error=%v readErr=%v statErr=%v mode=%o file=%q", err, readErr, statErr, info.Mode().Perm(), data)
 	}
+}
+
+// TestUnifiedInitPrintsPlanReadinessAndNotifications proves the combined lifecycle retains the plan's non-blocking human guidance.
+func TestUnifiedInitPrintsPlanReadinessAndNotifications(t *testing.T) {
+	directory := t.TempDir()
+	withUnifiedInitGenerationRepairWorkingDirectory(t, directory)
+	originalNoInput := NoInput
+	NoInput = true
+	t.Cleanup(func() { NoInput = originalNoInput })
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		// Plan returns both guidance surfaces; apply then completes normally.
+		switch request.URL.Path {
+		case "/sdk-config/plan":
+			var payload map[string]any
+			// Echoing the candidate identity keeps the receipt bound to the exact file init will publish.
+			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode plan: %v", err)
+			}
+			_, _ = fmt.Fprintf(writer, `{"plan_id":"plan-sdk","config_key":%q,"source_hash":%q,"summary":{},"credential_readiness":{"bucket":{"id":"11111111-1111-4111-8111-111111111111","name":"default"},"missing_credentials":[{"service_id":"22222222-2222-4222-8222-222222222222","service":"Linear","auth_type":"api_key","auth_name":"linearKey","required_fields":[{"name":"api_key","secret_key":"linearKey"}]}]},"notifications":{"warnings":["registry_notifications_unavailable"]}}`, payload["config_key"], payload["source_hash"])
+		case "/sdk-config/apply":
+			_, _ = writer.Write([]byte(`{"status":"applied","plan_id":"plan-sdk","app_family_id":"family-1","app_id":"app-1"}`))
+		default:
+			t.Fatalf("unexpected path %q", request.URL.Path)
+		}
+	}))
+	defer server.Close()
+	var output bytes.Buffer
+	command := &cobra.Command{}
+	command.SetOut(&output)
+	err := createPlanApplyUnifiedInit(command, api.NewClient(server.URL, "test-key"), unifiedInitModeSDK, unifiedInitFailureTestRequest(filepath.Join(directory, "support-sdk.yaml")), false, false, noOpScaffoldRequirements, defaultTestScaffoldBucket)
+	// Combined init must not hide readiness or notifications that ordinary plan users receive.
+	if err != nil || !strings.Contains(output.String(), "Credential readiness for sdk:support-sdk:1.0.0") || !strings.Contains(output.String(), "fused-cli secret set '22222222-2222-4222-8222-222222222222' --bucket '11111111-1111-4111-8111-111111111111' --interactive") || !strings.Contains(output.String(), "registry_notifications_unavailable") {
+		t.Fatalf("error=%v output=%q", err, output.String())
+	}
+}
+
+// TestUnifiedInitCreateNonCommitRemovesLocalState proves a rejected creation restores definite config and receipt absence.
+func TestUnifiedInitCreateNonCommitRemovesLocalState(t *testing.T) {
+	directory := t.TempDir()
+	withUnifiedInitGenerationRepairWorkingDirectory(t, directory)
+	configPath := filepath.Join(directory, "support-sdk.yaml")
+	err, output := runUnifiedInitNotCommitted(t, unifiedInitFailureTestRequest(configPath))
+	assertUnifiedInitNotCommitted(t, err, output)
+	// Creation rollback returns the config target to definite absence.
+	if _, statErr := os.Stat(configPath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("created candidate survived rollback: %v", statErr)
+	}
+	receiptPath := filepath.Join(directory, defaultReceiptPath("sdk:support-sdk:1.0.0"))
+	// Creation rollback restores definite receipt absence alongside config absence.
+	if _, statErr := os.Stat(receiptPath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("created receipt survived rollback: %v", statErr)
+	}
+}
+
+// TestUnifiedInitExtendNonCommitRestoresLocalState proves a rejected successor restores exact prior bytes and permissions.
+func TestUnifiedInitExtendNonCommitRestoresLocalState(t *testing.T) {
+	directory := t.TempDir()
+	withUnifiedInitGenerationRepairWorkingDirectory(t, directory)
+	configPath := filepath.Join(directory, "support-sdk.yaml")
+	originalConfig := []byte("apiVersion: fused/v1\nkind: sdk\nname: support-sdk\nversion: 1.0.0\nlanguage: typescript\nbucket: default\nservices:\n  linear:\n    version: v1\n    operations: [issueGet]\n")
+	// Private mode makes permission restoration observable alongside byte restoration.
+	if err := os.WriteFile(configPath, originalConfig, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	receiptPath := filepath.Join(directory, defaultReceiptPath("sdk:support-sdk:1.1.0"))
+	originalReceipt := []byte("prior extension receipt\n")
+	// A pre-existing successor receipt proves rollback restores replaced bytes rather than merely deleting it.
+	if err := os.MkdirAll(filepath.Dir(receiptPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(receiptPath, originalReceipt, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	request := unifiedInitFailureTestRequest(configPath)
+	request.extend, request.version, request.versionSet = true, "1.1.0", true
+	request.operations = []scaffoldOperation{{service: "linear", operation: "issueUpdate"}}
+	err, output := runUnifiedInitNotCommitted(t, request)
+	assertUnifiedInitNotCommitted(t, err, output)
+	assertUnifiedInitRestoredFile(t, configPath, originalConfig, "config")
+	assertUnifiedInitRestoredFile(t, receiptPath, originalReceipt, "receipt")
+}
+
+// runUnifiedInitNotCommitted executes one plan-success/apply-rejection lifecycle and captures its human output.
+func runUnifiedInitNotCommitted(t *testing.T, request scaffoldRequest) (error, string) {
+	t.Helper()
+	server := newUnifiedInitApplyFailureServer(t, http.StatusForbidden, `{"error":{"code":"sdk_family_limit_exceeded","message":"SDK family limit exceeded","category":"quota","retryable":false,"phase":"apply_admission","commit_state":"not_committed"}}`)
+	defer server.Close()
+	var output bytes.Buffer
+	command := &cobra.Command{}
+	command.SetOut(&output)
+	err := createPlanApplyUnifiedInit(command, api.NewClient(server.URL, "test-key"), unifiedInitModeSDK, request, false, false, noOpScaffoldRequirements, defaultTestScaffoldBucket)
+	return err, output.String()
+}
+
+// assertUnifiedInitNotCommitted verifies the Engine proof and local rollback are both visible to the caller.
+func assertUnifiedInitNotCommitted(t *testing.T, err error, output string) {
+	t.Helper()
+	var apiErr *api.APIError
+	// Proven quota rejection must retain its typed cause and report local restoration.
+	if !errors.As(err, &apiErr) || apiErr.CommitState != "not_committed" || !strings.Contains(output, "Reverted local config") {
+		t.Fatalf("error=%v API=%#v output=%q", err, apiErr, output)
+	}
+}
+
+// assertUnifiedInitRestoredFile verifies exact prior bytes and private mode after rollback.
+func assertUnifiedInitRestoredFile(t *testing.T, path string, expected []byte, label string) {
+	t.Helper()
+	data, readErr := os.ReadFile(path)
+	info, statErr := os.Stat(path)
+	// Both filesystem reads must succeed before comparing the complete restoration invariant.
+	if readErr != nil || statErr != nil || !bytes.Equal(data, expected) || info.Mode().Perm() != 0o600 {
+		t.Fatalf("%s readErr=%v statErr=%v mode=%o data=%q", label, readErr, statErr, info.Mode().Perm(), data)
+	}
+}
+
+// TestUnifiedInitAmbiguousOrCommittedApplyPreservesCandidate keeps inspectable desired state whenever rollback would be unsafe.
+func TestUnifiedInitAmbiguousOrCommittedApplyPreservesCandidate(t *testing.T) {
+	tests := []struct {
+		name   string
+		status int
+		body   string
+	}{
+		{name: "unknown proxy outcome", status: http.StatusBadGateway, body: `bad gateway`},
+		{name: "committed follow-up failure", status: http.StatusFailedDependency, body: `{"error":{"code":"sdk_followup_failed","message":"post-commit follow-up failed","category":"partial","retryable":false,"phase":"generation","commit_state":"committed"}}`},
+	}
+	// Both non-negative outcomes must leave local desired state inspectable.
+	for _, test := range tests {
+		// Unknown and positive commit outcomes both forbid destructive local rollback.
+		t.Run(test.name, func(t *testing.T) {
+			directory := t.TempDir()
+			withUnifiedInitGenerationRepairWorkingDirectory(t, directory)
+			path := filepath.Join(directory, "support-sdk.yaml")
+			server := newUnifiedInitApplyFailureServer(t, test.status, test.body)
+			defer server.Close()
+			command := &cobra.Command{}
+			command.SetOut(&bytes.Buffer{})
+			err := createPlanApplyUnifiedInit(command, api.NewClient(server.URL, "test-key"), unifiedInitModeSDK, unifiedInitFailureTestRequest(path), false, false, noOpScaffoldRequirements, defaultTestScaffoldBucket)
+			// A failed command still leaves the planned candidate available for exact state comparison and recovery.
+			if err == nil {
+				t.Fatal("expected apply failure")
+			}
+			// Candidate presence is the recovery evidence needed to compare with remote immutable state.
+			if _, statErr := os.Stat(path); statErr != nil {
+				t.Fatalf("candidate was removed: %v", statErr)
+			}
+			receiptPath := filepath.Join(directory, defaultReceiptPath("sdk:support-sdk:1.0.0"))
+			receipt, receiptErr := readPlanReceiptFile(receiptPath)
+			// Unsafe rollback outcomes retain the new receipt paired with the inspectable candidate config.
+			if receiptErr != nil || receipt.PlanID != "plan-sdk" || receipt.ConfigKey != "sdk:support-sdk:1.0.0" {
+				t.Fatalf("receipt=%#v error=%v", receipt, receiptErr)
+			}
+		})
+	}
+}
+
+// TestUnifiedInitNonCommitPreservesConcurrentReceiptAndCandidate proves rollback never overwrites a newer plan receipt.
+func TestUnifiedInitNonCommitPreservesConcurrentReceiptAndCandidate(t *testing.T) {
+	directory := t.TempDir()
+	withUnifiedInitGenerationRepairWorkingDirectory(t, directory)
+	configPath := filepath.Join(directory, "support-sdk.yaml")
+	receiptPath := filepath.Join(directory, defaultReceiptPath("sdk:support-sdk:1.0.0"))
+	concurrentReceipt := []byte("concurrent plan receipt\n")
+	server := newUnifiedInitConcurrentReceiptServer(t, receiptPath, concurrentReceipt)
+	defer server.Close()
+	command := &cobra.Command{}
+	command.SetOut(&bytes.Buffer{})
+	err := createPlanApplyUnifiedInit(command, api.NewClient(server.URL, "test-key"), unifiedInitModeSDK, unifiedInitFailureTestRequest(configPath), false, false, noOpScaffoldRequirements, defaultTestScaffoldBucket)
+	var apiErr *api.APIError
+	// The typed non-commit proof survives, but concurrent receipt ownership blocks both local rollback mutations.
+	if !errors.As(err, &apiErr) || apiErr.CommitState != "not_committed" || !strings.Contains(err.Error(), "plan receipt") || !strings.Contains(err.Error(), "changed after publication") {
+		t.Fatalf("error=%v API=%#v", err, apiErr)
+	}
+	data, readErr := os.ReadFile(receiptPath)
+	// The concurrent receipt and paired candidate config must both remain untouched for operator reconciliation.
+	if readErr != nil || !bytes.Equal(data, concurrentReceipt) {
+		t.Fatalf("receipt readErr=%v data=%q", readErr, data)
+	}
+	if _, statErr := os.Stat(configPath); statErr != nil {
+		t.Fatalf("candidate config was rolled back despite concurrent receipt: %v", statErr)
+	}
+}
+
+// newUnifiedInitConcurrentReceiptServer replaces the receipt at apply time before returning authoritative negative commit proof.
+func newUnifiedInitConcurrentReceiptServer(t *testing.T, receiptPath string, concurrentReceipt []byte) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		// Only plan and apply belong to this byte-ownership race fixture.
+		switch request.URL.Path {
+		case "/sdk-config/plan":
+			payload, err := io.ReadAll(request.Body)
+			// Complete plan bytes are required to echo the exact source identity.
+			if err != nil {
+				t.Fatalf("read plan: %v", err)
+			}
+			writeUnifiedInitGenerationRepairPlan(t, writer, payload)
+		case "/sdk-config/apply":
+			// The concurrent receipt takes ownership before Engine's negative proof reaches rollback.
+			if err := os.WriteFile(receiptPath, concurrentReceipt, 0o600); err != nil {
+				t.Fatalf("write concurrent receipt: %v", err)
+			}
+			writer.WriteHeader(http.StatusForbidden)
+			_, _ = writer.Write([]byte(`{"error":{"code":"sdk_family_limit_exceeded","message":"SDK family limit exceeded","category":"quota","retryable":false,"phase":"apply_admission","commit_state":"not_committed"}}`))
+		default:
+			t.Fatalf("unexpected path %q", request.URL.Path)
+		}
+	}))
+}
+
+// TestUnifiedInitScaffoldOutputFailureRollsBackConfig proves a local presentation error cannot leave an unpublished candidate behind.
+func TestUnifiedInitScaffoldOutputFailureRollsBackConfig(t *testing.T) {
+	directory := t.TempDir()
+	withUnifiedInitGenerationRepairWorkingDirectory(t, directory)
+	applyCalls := 0
+	server := newUnifiedInitPreApplyTestServer(t, &applyCalls)
+	defer server.Close()
+	configPath := filepath.Join(directory, "support-sdk.yaml")
+	command := &cobra.Command{}
+	command.Flags().Bool(jsonOutputFlag, false, "")
+	// JSON makes scaffold output propagate the injected writer failure instead of using best-effort human formatting.
+	if err := command.Flags().Set(jsonOutputFlag, "true"); err != nil {
+		t.Fatal(err)
+	}
+	command.SetOut(alwaysFailInitWriter{})
+	err := createPlanApplyUnifiedInit(command, api.NewClient(server.URL, "test-key"), unifiedInitModeSDK, unifiedInitFailureTestRequest(configPath), false, false, noOpScaffoldRequirements, defaultTestScaffoldBucket)
+	// Failure occurs before receipt publication and apply, restoring both paths to absence.
+	if err == nil || applyCalls != 0 {
+		t.Fatalf("error=%v applyCalls=%d", err, applyCalls)
+	}
+	assertUnifiedInitLocalPathsAbsent(t, configPath, filepath.Join(directory, defaultReceiptPath("sdk:support-sdk:1.0.0")))
+}
+
+// TestUnifiedInitPlanSummaryFailureRollsBackConfigAndReceipt proves review rendering remains inside the pre-apply local transaction.
+func TestUnifiedInitPlanSummaryFailureRollsBackConfigAndReceipt(t *testing.T) {
+	directory := t.TempDir()
+	withUnifiedInitGenerationRepairWorkingDirectory(t, directory)
+	applyCalls := 0
+	server := newUnifiedInitPreApplyTestServer(t, &applyCalls)
+	defer server.Close()
+	configPath := filepath.Join(directory, "support-sdk.yaml")
+	command := &cobra.Command{}
+	// Scaffold and plan-heading writes succeed; the third write fails exactly at the empty plan summary.
+	command.SetOut(&failAfterInitWrites{successfulWrites: 2})
+	err := createPlanApplyUnifiedInit(command, api.NewClient(server.URL, "test-key"), unifiedInitModeSDK, unifiedInitFailureTestRequest(configPath), false, false, noOpScaffoldRequirements, defaultTestScaffoldBucket)
+	// Summary failure happens after receipt publication but before apply, so both local artifacts must be removed.
+	if err == nil || !strings.Contains(err.Error(), "failed to render plan summary") || applyCalls != 0 {
+		t.Fatalf("error=%v applyCalls=%d", err, applyCalls)
+	}
+	assertUnifiedInitLocalPathsAbsent(t, configPath, filepath.Join(directory, defaultReceiptPath("sdk:support-sdk:1.0.0")))
+}
+
+// TestUnifiedInitApplyPreparationFailureRollsBackConfigAndReceipt proves Engine-target validation cannot strand pre-apply local state.
+func TestUnifiedInitApplyPreparationFailureRollsBackConfigAndReceipt(t *testing.T) {
+	directory := t.TempDir()
+	withUnifiedInitGenerationRepairWorkingDirectory(t, directory)
+	applyCalls := 0
+	server := newUnifiedInitPreApplyTestServer(t, &applyCalls)
+	defer server.Close()
+	configPath := filepath.Join(directory, "support-sdk.yaml")
+	client := api.NewClient(server.URL, "test-key")
+	command := &cobra.Command{}
+	command.SetOut(&callbackInitWriter{callback: func(write int) {
+		// The second write occurs after receipt publication and changes only the active target used by prepareConfigApply.
+		if write == 2 {
+			client.BaseURL = "https://different-engine.example.com"
+		}
+	}})
+	err := createPlanApplyUnifiedInit(command, client, unifiedInitModeSDK, unifiedInitFailureTestRequest(configPath), false, false, noOpScaffoldRequirements, defaultTestScaffoldBucket)
+	// Target mismatch is local proof that apply was never called and both publications are safe to undo.
+	if err == nil || !strings.Contains(err.Error(), "receipt target invalid") || applyCalls != 0 {
+		t.Fatalf("error=%v applyCalls=%d", err, applyCalls)
+	}
+	assertUnifiedInitLocalPathsAbsent(t, configPath, filepath.Join(directory, defaultReceiptPath("sdk:support-sdk:1.0.0")))
+}
+
+// alwaysFailInitWriter injects a deterministic first-write failure into structured scaffold output.
+type alwaysFailInitWriter struct{}
+
+// Write rejects every byte so tests can observe rollback before receipt publication.
+func (alwaysFailInitWriter) Write([]byte) (int, error) {
+	return 0, errors.New("injected output failure")
+}
+
+// failAfterInitWrites lets early lifecycle output succeed before failing one exact later review write.
+type failAfterInitWrites struct {
+	writes           int
+	successfulWrites int
+}
+
+// Write succeeds for the configured prefix and then returns a deterministic presentation failure.
+func (writer *failAfterInitWrites) Write(payload []byte) (int, error) {
+	writer.writes++
+	// Crossing the successful prefix selects the exact downstream output boundary under test.
+	if writer.writes > writer.successfulWrites {
+		return 0, errors.New("injected output failure")
+	}
+	return len(payload), nil
+}
+
+// callbackInitWriter observes successful writes so a test can change local preflight context between lifecycle stages.
+type callbackInitWriter struct {
+	writes   int
+	callback func(int)
+}
+
+// Write invokes the test callback without altering the output contract.
+func (writer *callbackInitWriter) Write(payload []byte) (int, error) {
+	writer.writes++
+	// Nil callback remains a valid pass-through writer for focused tests.
+	if writer.callback != nil {
+		writer.callback(writer.writes)
+	}
+	return len(payload), nil
+}
+
+// newUnifiedInitPreApplyTestServer returns a successful plan fixture that counts any forbidden apply request.
+func newUnifiedInitPreApplyTestServer(t *testing.T, applyCalls *int) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		// Plan succeeds while an apply call remains observable as a test failure condition.
+		switch request.URL.Path {
+		case "/sdk-config/plan":
+			payload, err := io.ReadAll(request.Body)
+			// Exact plan echo requires the complete request body before local publication proceeds.
+			if err != nil {
+				t.Fatalf("read plan: %v", err)
+			}
+			writeUnifiedInitGenerationRepairPlan(t, writer, payload)
+		case "/sdk-config/apply":
+			(*applyCalls)++
+			_, _ = writer.Write([]byte(`{"status":"applied","plan_id":"plan-sdk","app_family_id":"family-1","app_id":"app-1"}`))
+		default:
+			t.Fatalf("unexpected path %q", request.URL.Path)
+		}
+	}))
+}
+
+// assertUnifiedInitLocalPathsAbsent verifies config and receipt rollback together for pre-apply failure tests.
+func assertUnifiedInitLocalPathsAbsent(t *testing.T, configPath, receiptPath string) {
+	t.Helper()
+	// Both paths must return to definite absence because neither existed before the test lifecycle.
+	if _, err := os.Stat(configPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("config rollback state: %v", err)
+	}
+	if _, err := os.Stat(receiptPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("receipt rollback state: %v", err)
+	}
+}
+
+// newUnifiedInitApplyFailureServer returns a bounded plan-success/apply-failure fixture for local publication tests.
+func newUnifiedInitApplyFailureServer(t *testing.T, status int, body string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		// Only the expected plan and apply boundaries are admitted by this fixture.
+		switch request.URL.Path {
+		case "/sdk-config/plan":
+			payload, err := io.ReadAll(request.Body)
+			// A complete plan body is required to echo its config key and source hash faithfully.
+			if err != nil {
+				t.Fatalf("read plan: %v", err)
+			}
+			writeUnifiedInitGenerationRepairPlan(t, writer, payload)
+		case "/sdk-config/apply":
+			writer.WriteHeader(status)
+			_, _ = writer.Write([]byte(body))
+		default:
+			t.Fatalf("unexpected path %q", request.URL.Path)
+		}
+	}))
 }
 
 // TestUnifiedInitPinRepairResolutionFailureLeavesNoConfig proves an unresolvable exact snapshot cannot publish the candidate.

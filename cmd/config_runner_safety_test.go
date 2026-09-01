@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,8 +12,10 @@ import (
 
 	"github.com/Usefused/cli/internal/api"
 	"github.com/Usefused/cli/internal/configfile"
+	"github.com/spf13/cobra"
 )
 
+// TestPrintPlanResultIncludesEngineSummary verifies human plan output retains change, permission, and credential-readiness guidance.
 func TestPrintPlanResultIncludesEngineSummary(t *testing.T) {
 	planned := []plannedConfig{{
 		receipt: planReceipt{ConfigKey: "workspace", PlanID: "plan-1", SourceHash: "sha256:abc"},
@@ -29,6 +32,12 @@ func TestPrintPlanResultIncludesEngineSummary(t *testing.T) {
 			Permission: "bucket.use", ResourceType: "bucket",
 			ResourceID: "22222222-2222-2222-2222-222222222222",
 		}},
+		credentialReadiness: &api.CredentialReadiness{
+			Bucket: &api.MissingCredentialBucket{ID: "22222222-2222-4222-8222-222222222222", Name: "production"},
+			MissingCredentials: []api.MissingCredentialRequirement{{
+				ServiceID: "33333333-3333-4333-8333-333333333333", Service: "Okta", AuthType: "api_key",
+			}},
+		},
 	}}
 
 	out := captureStdout(t, func() {
@@ -41,6 +50,8 @@ func TestPrintPlanResultIncludesEngineSummary(t *testing.T) {
 		"Plan summary:", `"type": "add_service"`, `"service_id": "service-1"`,
 		"Required permissions:", `Ability to manage service "GitHub"`,
 		"Ability to use the selected bucket",
+		`Credential readiness for workspace: 1 authentication requirement(s) are missing from bucket "production".`,
+		"fused-cli secret set '33333333-3333-4333-8333-333333333333' --bucket '22222222-2222-4222-8222-222222222222' --interactive",
 	} {
 		if !strings.Contains(out, expected) {
 			t.Fatalf("expected %q in plan output:\n%s", expected, out)
@@ -48,6 +59,104 @@ func TestPrintPlanResultIncludesEngineSummary(t *testing.T) {
 	}
 	if strings.Contains(out, "service.manage") || strings.Contains(out, "11111111-1111-1111-1111-111111111111") {
 		t.Fatalf("normal plan output leaked advanced permission diagnostics:\n%s", out)
+	}
+}
+
+// TestSDKApplyAmbiguousFailuresUseReadOnlyRecovery pins timeout, proxy, malformed-success, and explicit-unknown classification.
+func TestSDKApplyAmbiguousFailuresUseReadOnlyRecovery(t *testing.T) {
+	tests := []struct {
+		name   string
+		status int
+		body   string
+	}{
+		{name: "proxy 502", status: http.StatusBadGateway, body: `bad gateway`},
+		{name: "explicit unknown", status: http.StatusConflict, body: `{"error":{"code":"sdk_apply_interrupted","message":"outcome unavailable","category":"indeterminate","retryable":false,"phase":"apply","commit_state":"unknown"}}`},
+		{name: "malformed success", status: http.StatusOK, body: `{"status":"applied"`},
+	}
+	// Each response variant must converge on the same non-replay recovery contract.
+	for _, test := range tests {
+		// Each response crosses the SDK apply write boundary without positive or negative commit proof.
+		t.Run(test.name, func(t *testing.T) {
+			assertSDKApplyAmbiguousResponse(t, test.status, test.body)
+		})
+	}
+}
+
+// TestSDKApplyTimeoutUsesReadOnlyRecovery proves a transport deadline suppresses the nested retryable API classification.
+func TestSDKApplyTimeoutUsesReadOnlyRecovery(t *testing.T) {
+	cfg, receipt := sdkApplyAmbiguityFixture()
+	timeout := &api.APIError{Code: "request_timed_out", Message: "Engine request timed out", Category: "timeout", Retryable: true}
+	var unknown *sdkApplyOutcomeUnknownError
+	// A transport deadline receives the same unknown/non-replay contract even without an HTTP status.
+	timeoutErr := classifySDKApplyFailure(timeout, cfg, receipt)
+	if !errors.As(timeoutErr, &unknown) {
+		t.Fatalf("timeout classification = %T %v", timeoutErr, timeoutErr)
+	}
+	timeoutResult := classifyCommandError(&cobra.Command{Use: "apply"}, timeoutErr)
+	// Structured timeout output must explicitly suppress the wrapped API error's retryable flag.
+	if timeoutResult.Code != "sdk_apply_outcome_unknown" || timeoutResult.Retryable || timeoutResult.CommitState != "unknown" {
+		t.Fatalf("timeout result = %#v", timeoutResult)
+	}
+}
+
+// assertSDKApplyAmbiguousResponse verifies one HTTP outcome against the stable non-replay command contract.
+func assertSDKApplyAmbiguousResponse(t *testing.T, status int, body string) {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The fixture accepts only the one mutation request under test.
+		if r.URL.Path != "/sdk-config/apply" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(body))
+	}))
+	defer server.Close()
+	cfg, receipt := sdkApplyAmbiguityFixture()
+	_, err := applyPreparedSDKJSON(api.NewClient(server.URL, "fsk_test"), cfg, receipt, false)
+	var unknown *sdkApplyOutcomeUnknownError
+	// Ambiguous responses are non-retryable and carry the exact immutable inspection target plus plan identity.
+	if !errors.As(err, &unknown) {
+		t.Fatalf("apply error = %T %v", err, err)
+	}
+	result := classifyCommandError(&cobra.Command{Use: "apply"}, err)
+	// JSON exposes the plan, immutable target, and read-only command without inheriting retryability.
+	if result.Code != "sdk_apply_outcome_unknown" || result.Retryable || result.CommitState != "unknown" || result.OperationID != "plan-1" || result.Recovery != "fused-cli sdk show 'security@1.2.0'" || result.Details["config_key"] != cfg.ConfigKey {
+		t.Fatalf("classification = %#v", result)
+	}
+}
+
+// sdkApplyAmbiguityFixture returns one immutable config and receipt shared by response-loss tests.
+func sdkApplyAmbiguityFixture() (*configfile.ParsedConfig, planReceipt) {
+	cfg := &configfile.ParsedConfig{
+		Kind: configfile.KindSDK, ConfigKey: "sdk:security:1.2.0",
+		SDK: &configfile.SDKConfig{Name: "security", Version: "1.2.0"},
+	}
+	return cfg, planReceipt{PlanID: "plan-1", SourceHash: "hash"}
+}
+
+// TestSDKApplyNotCommittedFailurePreservesEngineProof keeps quota rejection safe to correct and retry through a new plan.
+func TestSDKApplyNotCommittedFailurePreservesEngineProof(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The quota fixture rejects before commit and supplies the authoritative negative proof.
+		if r.URL.Path != "/sdk-config/apply" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"error":{"code":"sdk_family_limit_exceeded","message":"SDK family limit exceeded","category":"quota","retryable":false,"phase":"apply_admission","commit_state":"not_committed"}}`))
+	}))
+	defer server.Close()
+	cfg := &configfile.ParsedConfig{
+		Kind: configfile.KindSDK, ConfigKey: "sdk:security:1.2.0",
+		SDK: &configfile.SDKConfig{Name: "security", Version: "1.2.0"},
+	}
+	_, err := applyPreparedSDKJSON(api.NewClient(server.URL, "fsk_test"), cfg, planReceipt{PlanID: "plan-1", SourceHash: "hash"}, false)
+	var unknown *sdkApplyOutcomeUnknownError
+	var apiErr *api.APIError
+	// Proven non-commit remains the Engine quota code instead of being rewritten as indeterminate.
+	if errors.As(err, &unknown) || !errors.As(err, &apiErr) || apiErr.Code != "sdk_family_limit_exceeded" || apiErr.CommitState != "not_committed" {
+		t.Fatalf("quota apply error = %T %v API=%#v", err, err, apiErr)
 	}
 }
 
@@ -96,7 +205,7 @@ func TestApplyPreparedSDKJSONPreservesIDsTokenAndStageOutcomes(t *testing.T) {
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"status":"applied","plan_id":"plan-1","app_family_id":"sdk-1","app_id":"version-1","job_id":"job-1","execution_token":"shown-once"}`))
+		_, _ = w.Write([]byte(`{"status":"pending","generation_status":"pending","plan_id":"plan-1","app_family_id":"sdk-1","app_id":"version-1","job_id":"job-1","execution_token":"shown-once"}`))
 	}))
 	defer server.Close()
 
@@ -110,6 +219,31 @@ func TestApplyPreparedSDKJSONPreservesIDsTokenAndStageOutcomes(t *testing.T) {
 	}
 	if result.Generation.Status != "queued" || result.Generation.JobID != "job-1" || result.Download.Status != "not_requested" {
 		t.Fatalf("stage output = %#v", result)
+	}
+}
+
+// TestSDKApplyGenerationStageStatusDistinguishesQueueAndCacheHit verifies low-latency apply does not mislabel immediate completion.
+func TestSDKApplyGenerationStageStatusDistinguishesQueueAndCacheHit(t *testing.T) {
+	tests := []struct {
+		name             string
+		response         api.SDKConfigApplyResponse
+		generatesPackage bool
+		want             string
+	}{
+		{name: "queued", response: api.SDKConfigApplyResponse{Status: "pending", GenerationStatus: "pending"}, generatesPackage: true, want: "queued"},
+		{name: "cache hit", response: api.SDKConfigApplyResponse{Status: "applied", GenerationStatus: "complete"}, generatesPackage: true, want: "completed"},
+		{name: "legacy complete", response: api.SDKConfigApplyResponse{Status: "applied"}, generatesPackage: true, want: "completed"},
+		{name: "package skipped", response: api.SDKConfigApplyResponse{Status: "applied"}, want: "skipped"},
+	}
+	// Response compatibility must remain deterministic across current and pre-generation-status Engines.
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := sdkApplyGenerationStageStatus(&test.response, test.generatesPackage)
+			// Incorrect stage output would tell automation to wait for work that is already terminal or skip pending work.
+			if got != test.want {
+				t.Fatalf("generation stage = %q, want %q", got, test.want)
+			}
+		})
 	}
 }
 

@@ -397,6 +397,11 @@ func validateAppService(name string, svc SDKService, kind ConfigKind) error {
 	if len(svc.Operations) == 0 && !svc.SelectAll {
 		return fmt.Errorf("%s service %q requires at least one operation", kind, name)
 	}
+	// Explicit operation IDs and select-all are competing authorities, so accepting
+	// both would make the generated surface depend on downstream precedence.
+	if len(svc.Operations) > 0 && svc.SelectAll {
+		return fmt.Errorf("%s service %q must select exactly one of operations or select_all: true", kind, name)
+	}
 	return validateAppAuth(name, svc.Auth, kind)
 }
 

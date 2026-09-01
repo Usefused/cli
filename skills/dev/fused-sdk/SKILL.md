@@ -192,7 +192,13 @@ or SDK ID affects the token set shared by every version of that SDK.
 Use `--expires-in <duration>` for temporary testing access and omit it for a non-expiring service credential; it limits time, not SDK operations. Do not invent or suggest SDK `--allow` or fixed-binding flags.
 For automation, run `sdk apply --json`; it returns an array of explicit apply,
 generation, and download outcomes and includes `execution_token` only on the
-one response where Engine created it. `--download` remains a convenience, but
+one response where Engine created it. A normal generated-SDK apply returns as
+soon as Engine has atomically stored the non-runnable build and durable Registry
+job; `generation.status: queued` means the Engine finalizer is continuing in the
+background. `sdk show <name@version-or-version-id>` reports `generation_status`
+as `pending`, `complete`, or `failed`. `--download` waits by exact Version ID
+through Engine-local status reads and then downloads. It never follows a
+Registry stream or replays apply. `--download` remains a convenience, but
 `sdk download` is a visible independent command. Prefer a separate apply and
 download when a pipeline needs to retry package transfer without replaying an
 apply. Structured failures identify the failed stage and retain SDK/Version IDs

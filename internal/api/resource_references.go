@@ -51,6 +51,8 @@ type AppSummary struct {
 	CreatedAt             string            `json:"created_at"`
 	TargetLanguage        string            `json:"target_language"`
 	GeneratorVersion      string            `json:"generator_version"`
+	GenerationStatus      string            `json:"generation_status,omitempty"`
+	GenerationJobID       string            `json:"generation_job_id,omitempty"`
 	Readme                string            `json:"readme"`
 	Selections            []AppSelection    `json:"selections"`
 	PlannedDeactivationAt string            `json:"planned_deactivation_at"`

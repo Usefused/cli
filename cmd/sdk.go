@@ -305,26 +305,44 @@ func newSDKVersionReadCommand(use, short, spanName string, run func(*cobra.Comma
 	}
 }
 
+// runSDKShow combines catalogue identity with best-effort local package-generation diagnostics for one immutable SDK version.
 func runSDKShow(cmd *cobra.Command, target sdkDownloadTarget) error {
+	// Show accepts only an immutable version target so generation state cannot cross versions.
 	if err := validateExactAppTarget(target, "sdk show"); err != nil {
 		return err
 	}
 	client, err := getAPIClient()
+	// Client construction must succeed before resolving any user-supplied reference.
 	if err != nil {
 		return err
 	}
 	appID, err := client.ResolveSDKAppReference(target.Name, target.Version)
+	// Reference resolution remains authoritative for name/version and direct version-ID forms.
 	if err != nil {
 		return err
 	}
 	sdk, err := client.GetApp(appID)
+	// Catalogue identity is required even if the auxiliary generation projection is temporarily unavailable.
 	if err != nil {
 		return err
 	}
+	generation, generationErr := client.GetSDKGenerationStatus(appID)
+	// Best-effort lifecycle detail keeps show useful during an Engine restart while making unavailable status explicit.
+	if generationErr != nil {
+		sdk.GenerationStatus = "unavailable"
+	} else {
+		sdk.GenerationStatus = generation.Status
+		sdk.GenerationJobID = generation.JobID
+	}
+	// Structured output receives the same augmented generation fields as the human view.
 	if wantsJSON(cmd) {
 		return writeJSON(cmd, sdk)
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "name:\t%s\nversion:\t%s\nstatus:\t%s\nsdk_id:\t%s\nversion_id:\t%s\n", sdk.Name, sdk.Version, sdk.Status, sdk.AppFamilyID, sdk.AppID)
+	fmt.Fprintf(cmd.OutOrStdout(), "name:\t%s\nversion:\t%s\nstatus:\t%s\ngeneration_status:\t%s\nsdk_id:\t%s\nversion_id:\t%s\n", sdk.Name, sdk.Version, sdk.Status, sdk.GenerationStatus, sdk.AppFamilyID, sdk.AppID)
+	// Job identity is useful only when Engine has a durable package attempt to inspect.
+	if sdk.GenerationJobID != "" {
+		fmt.Fprintf(cmd.OutOrStdout(), "generation_job_id:\t%s\n", sdk.GenerationJobID)
+	}
 	return nil
 }
 

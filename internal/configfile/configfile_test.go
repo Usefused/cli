@@ -155,6 +155,36 @@ services:
 	}
 }
 
+// TestAppServiceSelectionRejectsCompetingAuthorities proves SDK and MCP files share one exactly-one selection invariant.
+func TestAppServiceSelectionRejectsCompetingAuthorities(t *testing.T) {
+	// SDK and MCP documents must reject the same ambiguous physical-operation authority.
+	for _, kind := range []string{"sdk", "mcp"} {
+		// Both app kinds reach the same local validation boundary before any Engine plan request.
+		t.Run(kind, func(t *testing.T) {
+			kindFields := "language: typescript\n"
+			// MCP identity uses a server description instead of a generated package language.
+			if kind == "mcp" {
+				kindFields = "description: Coordinate customer support work.\n"
+			}
+			document := fmt.Sprintf(`apiVersion: fused/v1
+kind: %s
+name: support
+version: 1.0.0
+%sservices:
+  linear:
+    version: v1
+    operations: [issueGet]
+    select_all: true
+`, kind, kindFields)
+			_, err := configfile.Parse([]byte(document), kind+".yaml")
+			// The diagnostic names both competing fields so authors can remove either one deliberately.
+			if err == nil || !strings.Contains(err.Error(), "exactly one of operations or select_all: true") {
+				t.Fatalf("Parse() error = %v", err)
+			}
+		})
+	}
+}
+
 func TestWorkspacePaginationV2IsRejected(t *testing.T) {
 	_, err := configfile.ParseFile("testdata/workspace_pagination_v2.yaml")
 	if err == nil || !strings.Contains(err.Error(), "field type not found") {
