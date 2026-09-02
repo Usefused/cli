@@ -177,20 +177,11 @@ func TestUnifiedInitAPIExtendIsAtomicAndPreservesMode(t *testing.T) {
 	}
 }
 
-// TestUnifiedInitAPINextStepPrintsResolvedRESTCall proves API onboarding ends with a copy-ready central execution request.
-func TestUnifiedInitAPINextStepPrintsResolvedRESTCall(t *testing.T) {
+// TestUnifiedInitAPINextStepPrintsAppliedRESTCall proves API onboarding uses apply identity without an eventually consistent lookup.
+func TestUnifiedInitAPINextStepPrintsAppliedRESTCall(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		var body struct {
-			Variables map[string]any `json:"variables"`
-		}
-		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
-			t.Fatalf("decode app resolution: %v", err)
-		}
-		// The next step must resolve the exact immutable version created by init.
-		if body.Variables["reference"] != "direct-api" || body.Variables["version"] != defaultScaffoldVersion {
-			t.Fatalf("resolution variables=%#v", body.Variables)
-		}
-		_, _ = writer.Write([]byte(`{"data":{"appReference":{"id":"app-version-1","kind":"app"}}}`))
+		// Any request proves the next-step renderer regressed to a name lookup after a committed apply.
+		t.Fatalf("unexpected API next-step network request: %s %s", request.Method, request.URL.Path)
 	}))
 	defer server.Close()
 	client := api.NewClient(server.URL, "test-key")
@@ -201,11 +192,45 @@ func TestUnifiedInitAPINextStepPrintsResolvedRESTCall(t *testing.T) {
 		Name: "direct-api", Version: defaultScaffoldVersion,
 		Services: map[string]configfile.AppService{"linear": {Operations: []string{"issueUpdate"}}},
 	}}
-	printUnifiedInitAPINextStep(command, client, parsed)
+	printUnifiedInitAPINextStep(command, client, parsed, "app-version-1")
 	text := output.String()
 	// The result names the immutable app route, token environment variable, and one selected operation.
 	if !strings.Contains(text, server.URL+"/v1/apps/app-version-1/executions") || !strings.Contains(text, "FUSED_SDK_TOKEN") || !strings.Contains(text, "REST request template") || !strings.Contains(text, `"operation":"issueUpdate"`) || !strings.Contains(text, `"input":{}`) || strings.Contains(text, `"params"`) {
 		t.Fatalf("API next step=%q", text)
+	}
+}
+
+// TestUnifiedAPIInitCarriesApplyVersionIDToNextStep proves the composed workflow performs no post-commit name lookup.
+func TestUnifiedAPIInitCarriesApplyVersionIDToNextStep(t *testing.T) {
+	directory := t.TempDir()
+	withUnifiedInitGenerationRepairWorkingDirectory(t, directory)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		// Plan and apply are the complete API-init network lifecycle; GraphQL resolution would be an unexpected third call.
+		switch request.URL.Path {
+		case "/sdk-config/plan":
+			payload, err := io.ReadAll(request.Body)
+			if err != nil {
+				t.Fatalf("read plan: %v", err)
+			}
+			writeUnifiedInitGenerationRepairPlan(t, writer, payload)
+		case "/sdk-config/apply":
+			_, _ = writer.Write([]byte(`{"status":"applied","plan_id":"plan-sdk","app_family_id":"api-family","app_id":"api-version-from-apply","generation_status":"skipped"}`))
+		default:
+			t.Fatalf("unexpected API init path %q", request.URL.Path)
+		}
+	}))
+	defer server.Close()
+	request := unifiedInitFailureTestRequest(filepath.Join(directory, "support-api.yaml"))
+	request.generate = false
+	request.generateSet = true
+	var output bytes.Buffer
+	command := &cobra.Command{}
+	command.SetOut(&output)
+	err := createPlanApplyUnifiedInit(command, api.NewClient(server.URL, "test-key"), unifiedInitModeAPI, request, false, false, noOpScaffoldRequirements, defaultTestScaffoldBucket)
+	// The concrete route must use the apply-returned immutable ID even while name-based authorization caches could still be converging.
+	if err != nil || !strings.Contains(output.String(), server.URL+"/v1/apps/api-version-from-apply/executions") {
+		t.Fatalf("error=%v output=%q", err, output.String())
 	}
 }
 

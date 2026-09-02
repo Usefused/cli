@@ -52,23 +52,10 @@ services:
 
 `injections[].value` tags always resolve against *this SDK's own* `bucket:` -- there's no way to name a different bucket here, unlike `kind: webhook`'s `${bucket.<name>.secret.<key>}` (see `fused-webhook`). A value can also merge a tag with surrounding text (e.g. `"Bearer ${bucket.secrets.API_KEY}"`), which a webhook's secret field cannot. Writing a webhook-style named-bucket reference here (e.g. `${bucket.prod.secrets.API_KEY}`) is rejected at dispatch time with an explicit error naming the unsupported reference, rather than one of the three ambient forms above.
 
-`webhooks`/`webhooks_select_all` only make sense once a `kind: webhook`
-config exists and is named via top-level `webhook_attachment` -- this
-registers *which events* this SDK receives, not the webhook registration
-itself (that's `fused-webhook`). Setting either without `webhook_attachment`
-is rejected at plan time.
+`webhooks`/`webhooks_select_all` require a `kind: webhook` config named by top-level `webhook_attachment`; they select which events this SDK receives, not the webhook registration itself (see `fused-webhook`). Plan rejects either field without the attachment.
 
-Those fields select provider events. Connected OAuth/OIDC selections also add
-credential-free Fused auth-lifecycle events to the existing SDK webhook
-receiver without a `kind: webhook`, provider callback, signing secret, or YAML
-event selection. The generated enum exposes the reserved connection/token
-suffixes; do not invent another auth-event client. Register handlers through
-`FusedWebhooks.listen`/`registerReceiver`, close the receiver, and make handlers
-idempotent because durable delivery is at least once. Post-commit publication
-is best-effort without a transactional outbox. Routing is scoped to the SDK
-identity and service across SDK versions, never to another SDK sharing the
-bucket or to a standalone CLI-created connection. Read `fused-webhook` for the
-full lifecycle-event contract.
+Those fields select provider events. Connected OAuth/OIDC selections also add credential-free Fused auth-lifecycle events to the existing SDK webhook receiver without a `kind: webhook`, provider callback, signing secret, or YAML event selection. The generated enum exposes the reserved connection/token suffixes; do not invent another auth-event client.
+Register handlers through `FusedWebhooks.listen`/`registerReceiver`, close the receiver, and make handlers idempotent because durable delivery is at least once. Post-commit publication is best-effort without a transactional outbox. Routing is scoped to the SDK identity and service across SDK versions, never to another SDK sharing the bucket or to a standalone CLI-created connection. Read `fused-webhook` for the full lifecycle-event contract.
 
 `auth.type` selects a Registry-declared scheme (`basic`, `bearer`,
 `api_key`, `oauth`, `oidc`, `mtls` -- the same list `fused-config` documents

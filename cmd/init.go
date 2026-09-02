@@ -343,14 +343,21 @@ func createPlanApplyUnifiedInit(cmd *cobra.Command, client *api.Client, mode uni
 	if err != nil {
 		return err
 	}
-	applyErr := applyPreparedConfig(client, localState.prepared, downloadPackage)
+	var applyResult sdkApplyOutput
+	var applyErr error
+	// API init retains the exact apply-returned Version ID so onboarding never depends on an immediately consistent name lookup.
+	if mode == unifiedInitModeAPI {
+		applyResult, applyErr = applyPreparedSDKWithResult(client, localState.prepared.config, localState.prepared.receipt, downloadPackage)
+	} else {
+		applyErr = applyPreparedConfig(client, localState.prepared, downloadPackage)
+	}
 	// Finalization either records retained desired state or restores both artifacts from negative commit proof.
 	if err := finalizeUnifiedInitApply(cmd, request, result, localState, applyErr); err != nil {
 		return err
 	}
 	// Direct API onboarding ends with an immediately usable Engine execution request rather than package instructions.
 	if mode == unifiedInitModeAPI {
-		printUnifiedInitAPINextStep(cmd, client, parsed)
+		printUnifiedInitAPINextStep(cmd, client, parsed, applyResult.VersionID)
 	}
 	recordAppliedChange(cmd.Context(), cmd.CommandPath(), string(parsed.Kind))
 	return nil
@@ -857,10 +864,9 @@ func validateUnifiedInitModeRequest(mode unifiedInitMode, request scaffoldReques
 }
 
 // printUnifiedInitAPINextStep renders one concrete REST call with the resolved immutable app ID and configured Engine URL.
-func printUnifiedInitAPINextStep(cmd *cobra.Command, client *api.Client, parsed *configfile.ParsedConfig) {
-	appID, err := client.ResolveSDKAppReference(parsed.SDK.Name, parsed.SDK.Version)
-	// Apply already succeeded, so a follow-up lookup failure must not recast the committed app as a failed mutation.
-	if err != nil || strings.TrimSpace(appID) == "" {
+func printUnifiedInitAPINextStep(cmd *cobra.Command, client *api.Client, parsed *configfile.ParsedConfig, appID string) {
+	// Older or synthetic apply responses may omit identity, so preserve an actionable exact-name fallback without another network read.
+	if strings.TrimSpace(appID) == "" {
 		fmt.Fprintf(cmd.OutOrStdout(), "Direct API ready. Export its REST contract with:\n  fused-cli sdk openapi %s@%s\n", parsed.SDK.Name, parsed.SDK.Version)
 		return
 	}

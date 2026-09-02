@@ -62,6 +62,33 @@ func TestPrintPlanResultIncludesEngineSummary(t *testing.T) {
 	}
 }
 
+// TestApplyPreparedAPIUsesAPILabelAndReturnsIdentity proves shared SDK plumbing stays invisible in direct-API onboarding.
+func TestApplyPreparedAPIUsesAPILabelAndReturnsIdentity(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The API mode intentionally reuses the SDK config apply endpoint.
+		if r.URL.Path != "/sdk-config/apply" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"status":"applied","plan_id":"plan-1","app_family_id":"api-1","app_id":"version-1","generation_status":"skipped","execution_token":"shown-once"}`))
+	}))
+	defer server.Close()
+
+	generate := false
+	cfg := &configfile.ParsedConfig{ConfigKey: "sdk:ledger:1.0.0", SDK: &configfile.SDKConfig{Name: "ledger", Version: "1.0.0", Generate: &generate}}
+	var result sdkApplyOutput
+	out := captureStdout(t, func() {
+		var err error
+		result, err = applyPreparedSDKWithResult(api.NewClient(server.URL, "fsk_test"), cfg, planReceipt{PlanID: "plan-1", SourceHash: "hash"}, false)
+		if err != nil {
+			t.Fatalf("applyPreparedSDKWithResult: %v", err)
+		}
+	})
+	// User-facing output and composed identity both describe the API outcome, not its shared internal config kind.
+	if result.VersionID != "version-1" || !strings.Contains(out, "Successfully applied API ledger") || !strings.Contains(out, "API ID: api-1") || !strings.Contains(out, "API token (shown once): shown-once") || strings.Contains(out, "Successfully applied SDK") {
+		t.Fatalf("result=%#v output=%q", result, out)
+	}
+}
+
 // TestSDKApplyAmbiguousFailuresUseReadOnlyRecovery pins timeout, proxy, malformed-success, and explicit-unknown classification.
 func TestSDKApplyAmbiguousFailuresUseReadOnlyRecovery(t *testing.T) {
 	tests := []struct {
@@ -482,7 +509,7 @@ func TestValidateDownloadableConfigsRejectsDownloadWhenNoPackageIsBuilt(t *testi
 func TestApplyPreparedSDKJSONReportsSkippedGenerationWhenNoPackageIsBuilt(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"status":"applied","plan_id":"plan-1","app_family_id":"sdk-1","app_id":"version-1","job_id":"job-1"}`))
+		_, _ = w.Write([]byte(`{"status":"applied","plan_id":"plan-1","app_family_id":"sdk-1","app_id":"version-1","job_id":"legacy-plan-sentinel"}`))
 	}))
 	defer server.Close()
 
@@ -495,7 +522,7 @@ func TestApplyPreparedSDKJSONReportsSkippedGenerationWhenNoPackageIsBuilt(t *tes
 	if err != nil {
 		t.Fatalf("applyPreparedSDKJSON: %v", err)
 	}
-	if result.Generation.Status != "skipped" || result.Generation.JobID != "job-1" {
+	if result.Generation.Status != "skipped" || result.Generation.JobID != "" {
 		t.Fatalf("generation stage = %#v", result.Generation)
 	}
 	if result.Download.Status != "not_requested" {

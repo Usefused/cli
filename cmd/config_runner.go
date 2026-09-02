@@ -619,6 +619,7 @@ func applyPreparedSDKJSON(client *api.Client, cfg *configfile.ParsedConfig, rece
 	// rejected for this config before apply runs.
 	if !sdkGeneratesPackage(cfg.SDK) {
 		result.Generation.Status = "skipped"
+		result.Generation.JobID = ""
 		return result, nil
 	}
 	if !download {
@@ -834,35 +835,69 @@ func applyPreparedConfig(client *api.Client, item preparedConfigApply, download 
 	return nil
 }
 
-// applyPreparedSDK publishes one immutable SDK version and prevents ambiguous write outcomes from inheriting generic retry advice.
+// applyPreparedSDK publishes one immutable SDK/API version through the shared lifecycle and preserves the existing error-only caller contract.
 func applyPreparedSDK(client *api.Client, cfg *configfile.ParsedConfig, receipt planReceipt, download bool) error {
+	_, err := applyPreparedSDKWithResult(client, cfg, receipt, download)
+	return err
+}
+
+// applyPreparedSDKWithResult publishes one immutable SDK/API version while retaining apply-returned identity for composed workflows.
+func applyPreparedSDKWithResult(client *api.Client, cfg *configfile.ParsedConfig, receipt planReceipt, download bool) (sdkApplyOutput, error) {
 	resp, err := client.ApplySDKConfig(receipt.PlanID, receipt.SourceHash)
 	// Human apply output shares the same ambiguity classifier as structured automation.
 	if err != nil {
-		return fmt.Errorf("failed to apply SDK %s: %w", cfg.SDK.Name, classifySDKApplyFailure(err, cfg, receipt))
+		return sdkApplyOutput{}, fmt.Errorf("failed to apply %s %s: %w", sdkApplyResourceLabel(cfg.SDK), cfg.SDK.Name, classifySDKApplyFailure(err, cfg, receipt))
 	}
-	fmt.Printf("Successfully applied SDK %s\n", cfg.SDK.Name)
-	fmt.Printf("  SDK ID: %s\n  Version ID: %s\n", resp.AppFamilyID, resp.AppID)
+	result := sdkApplyOutput{
+		ConfigKey: cfg.ConfigKey, PlanID: resp.PlanID, Status: resp.Status,
+		SDKID: resp.AppFamilyID, VersionID: resp.AppID, ExecutionToken: resp.ExecutionToken,
+		Generation: sdkApplyStageOutput{Status: sdkApplyGenerationStageStatus(resp, sdkGeneratesPackage(cfg.SDK)), JobID: resp.JobID},
+		Download:   sdkApplyDownloadOutput{Status: "not_requested"},
+	}
+	label := sdkApplyResourceLabel(cfg.SDK)
+	fmt.Printf("Successfully applied %s %s\n", label, cfg.SDK.Name)
+	fmt.Printf("  %s ID: %s\n  Version ID: %s\n", label, resp.AppFamilyID, resp.AppID)
 	// Engine cannot recover the plaintext token later, so surface it on the
 	// successful response path without copying it into CLI state or logs.
 	if resp.ExecutionToken != "" {
-		fmt.Printf("  SDK token (shown once): %s\n", resp.ExecutionToken)
+		fmt.Printf("  %s token (shown once): %s\n", label, resp.ExecutionToken)
 	}
+	// A direct API has no package job or download stage, but its exact identity remains useful to unified init.
 	if !sdkGeneratesPackage(cfg.SDK) {
+		result.Generation.JobID = ""
 		fmt.Printf("  Package: not built (generate: false) -- call it over REST, or describe it with 'fused-cli sdk openapi %s@%s'\n", cfg.SDK.Name, cfg.SDK.Version)
-		return nil
+		return result, nil
 	}
 	// A normal apply returns after durable publication and reports whether generation queued or completed immediately.
 	if !download {
 		fmt.Printf("  Package generation: %s\n", sdkApplyGenerationStageStatus(resp, true))
-		return nil
+		return result, nil
 	}
-	_, err = waitForSDKGeneration(client, resp.AppID)
+	generation, err := waitForSDKGeneration(client, resp.AppID)
+	// Polling may return a more precise durable job identity than the initial apply response.
+	if generation != nil && strings.TrimSpace(generation.JobID) != "" {
+		result.Generation.JobID = generation.JobID
+	}
 	// Package transfer starts only after Engine reports the immutable version ready.
 	if err != nil {
-		return fmt.Errorf("failed to generate SDK %s: %w", cfg.SDK.Name, err)
+		return sdkApplyOutput{}, fmt.Errorf("failed to generate SDK %s: %w", cfg.SDK.Name, err)
 	}
-	return downloadSDKByID(client, resp.AppID, cfg.SDK.Name, ".")
+	result.Generation.Status = "completed"
+	// A completed generation is not a completed apply workflow until the requested package transfer also succeeds.
+	if err := downloadSDKByID(client, resp.AppID, cfg.SDK.Name, "."); err != nil {
+		return sdkApplyOutput{}, err
+	}
+	result.Download = sdkApplyDownloadOutput{Status: "completed", Path: filepath.Join("fused-sdks", cfg.SDK.Name)}
+	return result, nil
+}
+
+// sdkApplyResourceLabel presents package-free SDK configs as APIs without creating a competing lifecycle kind.
+func sdkApplyResourceLabel(cfg *configfile.SDKConfig) string {
+	// The generate flag is the single authored distinction between a direct API and a downloadable SDK.
+	if !sdkGeneratesPackage(cfg) {
+		return "API"
+	}
+	return "SDK"
 }
 
 // sdkApplyGenerationStageStatus maps Engine lifecycle state into stable CLI stage vocabulary while preserving older Engine compatibility.
