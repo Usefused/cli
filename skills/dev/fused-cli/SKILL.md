@@ -262,6 +262,14 @@ Result: missing workspace services are enabled, the app file is created under
 API mode prints a REST request template; MCP mode reports its hosted runtime.
 Use `-f <path>` for a different app config target.
 
+Pass `--no-apply` to resolve, validate, and plan the same desired state without
+applying it. The app config and required workspace service additions
+are written locally, and every plan whose dependencies are active gets a local
+receipt. When service activation is pending, the workspace receipt is saved and
+app planning waits until workspace apply. No SDK job or download starts. The
+CLI prints the exact remaining commands; for SDKs, completion ends with
+`sdk apply --download`. Re-plan before apply when a saved receipt is stale.
+
 Generated SDK init alone handles the typed
 `generation_contract_pin_unavailable` legacy condition. It resolves all
 selected active workspace versions before mutation, prints the exact

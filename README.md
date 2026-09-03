@@ -187,6 +187,14 @@ server connection details. Omit the mode in a terminal to choose it. For
 automation, pass `--no-input`, one explicit mode, and `--operation` or
 `--select-all` for every service.
 
+Pass `--no-apply` to plan without applying. Fused writes the app config and any
+required workspace service additions, saves every plan receipt whose
+dependencies are already active, applies no desired-state changes, and starts no
+generation or download job. When a service still needs activation, its
+workspace receipt is saved and app planning waits until that receipt is
+applied. The output prints the exact remaining commands; SDK completion
+includes `sdk apply --download`.
+
 To extend an existing app without creating another file, use `extend`. It reads
 the existing YAML to infer SDK, API, or MCP mode. A real change advances a
 stable SemVer version to its next minor, while an idempotent extension keeps the

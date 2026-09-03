@@ -36,6 +36,7 @@ type unifiedInitOptions struct {
 	description string
 	language    string
 	bucket      string
+	noApply     bool
 }
 
 type unifiedInitRunner func(*cobra.Command, unifiedInitMode, scaffoldRequest) error
@@ -89,7 +90,8 @@ func newUnifiedInitCommandWithRunner(runner unifiedInitRunner) *cobra.Command {
 Choose --sdk, --api, or --mcp. In a terminal, omitting the mode opens a short
 selector. The command resolves services and operations, enables missing
 workspace services, writes the durable config, plans, applies, and returns the
-runtime outcome.`,
+runtime outcome. Pass --no-apply to write validated local desired state and
+retain available plan receipts without applying Engine state.`,
 		Args: cobra.ExactArgs(1),
 		RunE: WithTelemetry("cli.init", func(cmd *cobra.Command, args []string) error {
 			mode, err := resolveUnifiedInitMode(opts)
@@ -123,6 +125,7 @@ runtime outcome.`,
 	command.Flags().StringVar(&opts.language, "language", defaultScaffoldLanguage, "Generated SDK target language")
 	command.Flags().StringVar(&opts.bucket, "bucket", "", "Existing bucket to bind to this app")
 	command.Flags().StringVar(&opts.description, "description", "", "User-facing MCP server description")
+	command.Flags().BoolVar(&opts.noApply, "no-apply", false, "Plan initialization without applying, generating, or downloading")
 	return command
 }
 
@@ -273,16 +276,26 @@ func buildUnifiedInitRequest(cmd *cobra.Command, mode unifiedInitMode, name stri
 		versionSet: cmd.Flags().Changed("version"), languageSet: cmd.Flags().Changed("language"),
 		descriptionSet: mode == unifiedInitModeMCP && strings.TrimSpace(opts.description) != "", bucketSet: cmd.Flags().Changed("bucket"),
 		generate: mode == unifiedInitModeSDK, generateSet: mode == unifiedInitModeSDK || mode == unifiedInitModeAPI,
+		noApply: opts.noApply,
 	}, nil
 }
 
-// runUnifiedInitLifecycle keeps the workspace and app receipt boundaries ordered behind one user confirmation.
+// runUnifiedInitLifecycle either publishes validated local desired state or keeps both remote receipt boundaries behind one confirmation.
 func runUnifiedInitLifecycle(cmd *cobra.Command, mode unifiedInitMode, request scaffoldRequest) error {
 	// Create-only collisions must fail before the composed workspace lifecycle can plan or apply a missing service.
 	if !request.extend {
 		if err := ensureUnifiedInitTargetAbsent(request.path); err != nil {
 			return err
 		}
+	}
+	// Deferred initialization preserves plan receipts but must stop before either apply boundary.
+	if request.noApply {
+		lifecycle, err := prepareSDKInitLifecycle(cmd, request, resolveScaffoldBucket)
+		// Failed resolution or workspace planning cannot publish deferred app intent.
+		if err != nil {
+			return err
+		}
+		return createUnifiedInitWithoutApply(cmd, mode, lifecycle, resolveScaffoldRequirements, resolveScaffoldBucket)
 	}
 	lifecycle, err := prepareSDKInitLifecycle(cmd, request, resolveScaffoldBucket)
 	// Resolution and read-only workspace planning must succeed before the combined review.
@@ -316,6 +329,89 @@ func runUnifiedInitLifecycle(cmd *cobra.Command, mode unifiedInitMode, request s
 		return err
 	}
 	return nil
+}
+
+// createUnifiedInitWithoutApply publishes every currently valid plan receipt and stops before any Engine apply side effect.
+func createUnifiedInitWithoutApply(cmd *cobra.Command, mode unifiedInitMode, lifecycle sdkInitLifecycle, resolver scaffoldRequirementsResolver, bucketResolver scaffoldBucketResolver) error {
+	appResolver := resolver
+	// Engine cannot resolve app runtime snapshots until a missing workspace version is applied, so retain structurally valid app intent for the later app plan.
+	if lifecycle.draft != nil {
+		appResolver = deferScaffoldRequirements
+	}
+	result, parsed, candidate, err := prepareUnifiedInitPlanInput(mode, lifecycle.request, appResolver, bucketResolver)
+	// App resolution and semantic validation remain a prerequisite even though apply is deferred.
+	if err != nil {
+		return fmt.Errorf("prepare local %s config: %w", mode, err)
+	}
+	// Already-enabled dependencies allow the complete app plan and receipt to be created immediately.
+	if lifecycle.draft == nil {
+		planOpts := planOptions{
+			interactive: !nonInteractive(), output: cmd.OutOrStdout(),
+			auditCtx: cmd.Context(), auditAction: cmd.CommandPath(),
+		}
+		plan, err := planUnifiedInitCandidate(cmd, lifecycle.client, mode, lifecycle.request, false, parsed, planOpts)
+		// A failed app plan must leave both the candidate config and receipt absent.
+		if err != nil {
+			return err
+		}
+		// Staging publishes the validated config and its receipt but deliberately leaves the prepared apply unused.
+		if _, err := stageUnifiedInitLocalApply(cmd, lifecycle.client, mode, lifecycle.request, result, parsed, candidate, plan); err != nil {
+			return err
+		}
+		recordGeneratedBindingCount(cmd.Context(), result.GeneratedBindingCount)
+		recordAppliedChangeIf(cmd.Context(), cmd.CommandPath(), "config_file", result.Changed)
+		printUnifiedInitDeferredNextSteps(cmd, mode, lifecycle.request.path, nil, true)
+		return nil
+	}
+	publication, err := publishUnifiedInitConfig(lifecycle.request, result, candidate)
+	// Publication reuses the apply path's collision-safe writer while no remote commit is possible.
+	if err != nil {
+		return err
+	}
+	// Missing workspace services retain their already-created plan receipt without activating them in Engine.
+	if err := publishSDKInitWorkspacePlan(lifecycle.draft); err != nil {
+		// The app publication is safe to undo because no remote apply has started.
+		if rollbackErr := rollbackUnifiedInitConfig(publication); rollbackErr != nil {
+			return fmt.Errorf("write deferred workspace plan: %w (app config rollback failed: %v)", err, rollbackErr)
+		}
+		return fmt.Errorf("write deferred workspace plan: %w", err)
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "Saved workspace plan receipt for %s without applying it.\n", lifecycle.draft.path)
+	recordGeneratedBindingCount(cmd.Context(), result.GeneratedBindingCount)
+	recordAppliedChangeIf(cmd.Context(), cmd.CommandPath(), "config_file", result.Changed)
+	// Rendering failure remains local and cannot be mistaken for a successful Engine apply.
+	if err := printScaffoldResult(cmd, unifiedInitDisplayScaffoldResult(mode, result)); err != nil {
+		return err
+	}
+	printUnifiedInitDeferredNextSteps(cmd, mode, lifecycle.request.path, lifecycle.draft, false)
+	return nil
+}
+
+// printUnifiedInitDeferredNextSteps shows the receipt-aware commands that complete a planned initialization later.
+func printUnifiedInitDeferredNextSteps(cmd *cobra.Command, mode unifiedInitMode, appPath string, workspaceDraft *sdkInitWorkspaceDraft, appPlanned bool) {
+	fmt.Fprintln(cmd.OutOrStdout(), "Initialization planned. No Engine changes were applied.")
+	fmt.Fprintln(cmd.OutOrStdout(), "When ready, run:")
+	// A missing service version must consume its existing receipt before the app can acquire a runtime-backed plan.
+	if workspaceDraft != nil {
+		fmt.Fprintln(cmd.OutOrStdout(), "  # App planning waits for the selected workspace service version to become active.")
+		fmt.Fprintf(cmd.OutOrStdout(), "  fused-cli workspace apply -f %s\n", shellQuoteWorkspaceServiceArg(workspaceDraft.path))
+	}
+	resource := string(mode)
+	// Direct API apps use the existing SDK plan/apply resource with generation disabled.
+	if mode == unifiedInitModeAPI {
+		resource = "sdk"
+	}
+	// App planning is deferred only when its selected workspace snapshot does not exist yet.
+	if !appPlanned {
+		fmt.Fprintf(cmd.OutOrStdout(), "  fused-cli %s plan -f %s\n", resource, shellQuoteWorkspaceServiceArg(appPath))
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "  fused-cli %s apply -f %s", resource, shellQuoteWorkspaceServiceArg(appPath))
+	// A deferred generated SDK still needs an explicit package download after its later apply.
+	if mode == unifiedInitModeSDK {
+		fmt.Fprint(cmd.OutOrStdout(), " --download")
+	}
+	fmt.Fprintln(cmd.OutOrStdout())
+	fmt.Fprintln(cmd.OutOrStdout(), "If a saved plan is stale, rerun its plan command before apply.")
 }
 
 // Error exposes the human precommit context while retaining the typed Engine cause through Unwrap.

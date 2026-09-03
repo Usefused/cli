@@ -640,10 +640,8 @@ func applySDKInitWorkspace(cmd *cobra.Command, client *api.Client, draft *sdkIni
 	if draft == nil {
 		return false, nil
 	}
-	if err := maybeWritePlanReceipt(draft.parsed, draft.plan.receipt, planOptions{}, 1); err != nil {
-		return false, err
-	}
-	if err := writeWorkspaceConfig(draft.path, draft.config); err != nil {
+	// Apply may consume only a successfully published workspace config and receipt.
+	if err := publishSDKInitWorkspacePlan(draft); err != nil {
 		return false, err
 	}
 	parsed, err := configfile.ParseFile(draft.path)
@@ -660,6 +658,19 @@ func applySDKInitWorkspace(cmd *cobra.Command, client *api.Client, draft *sdkIni
 	}
 	recordAppliedChange(cmd.Context(), cmd.CommandPath(), "workspace")
 	return true, nil
+}
+
+// publishSDKInitWorkspacePlan stores the exact reviewed workspace bytes and their receipt without crossing the apply boundary.
+func publishSDKInitWorkspacePlan(draft *sdkInitWorkspaceDraft) error {
+	// Receipt publication preserves the existing source-hash binding used by ordinary workspace apply.
+	if err := maybeWritePlanReceipt(draft.parsed, draft.plan.receipt, planOptions{}, 1); err != nil {
+		return err
+	}
+	// Desired state must match the source hash bound into the receipt before a later apply can consume it.
+	if err := writeWorkspaceConfig(draft.path, draft.config); err != nil {
+		return err
+	}
+	return nil
 }
 
 // createAndApplySDKInit keeps the hidden compatibility alias on the same plan-before-publish lifecycle as root init.

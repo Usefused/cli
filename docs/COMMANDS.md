@@ -155,6 +155,14 @@ when activation is needed. New SDK/MCP configs default to app version `1.0.0`;
 generated SDKs default to TypeScript. `--bucket` only references an existing
 bucket and is omitted by default—it never creates a bucket.
 
+`--no-apply` writes and validates the same desired state, saves every plan
+receipt whose dependencies are active, and stops before apply, generation, or
+download. If a service is not active yet, the workspace plan receipt is saved
+and app planning is deferred until workspace apply; otherwise the app plan
+receipt is saved immediately. The command prints the exact remaining commands,
+including `sdk apply --download` for generated SDKs, and tells users to re-plan
+if a retained receipt becomes stale.
+
 In a terminal, omit the mode flag to choose `--sdk`, `--api`, or `--mcp`. If a
 service has no operation flags, the highlighted default is **All operations**;
 choose the narrower path to search by operation ID, method, path, description,
@@ -162,7 +170,7 @@ or tag. In automation, `--no-input` or `CI=true` requires one explicit mode and
 an explicit `--operation` or `--select-all` for every service. Non-interactive
 MCP creation also requires `--description`.
 
-Creation refuses to replace an existing path before the remote app plan. Extension is additive and
+Creation refuses to replace an existing path before any remote plan. Extension is additive and
 idempotent through the top-level `extend` command described below. The retained
 `init --extend` flag is a compatibility alias for existing scripts.
 
@@ -173,7 +181,7 @@ credentials in the exact selected bucket and retries once. Top-level init has
 human apply output and does not expose `--json`; use the explicit plan/apply
 commands for structured automation.
 
-Init builds and validates the app candidate in memory, then plans it before
+Without `--no-apply`, init builds and validates the app candidate in memory, then plans it before
 atomically creating the YAML file. If that app plan fails, no app config or app
 receipt is created. A workspace activation completed earlier in the composed
 flow remains applied under its separate receipt.

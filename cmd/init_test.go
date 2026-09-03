@@ -50,6 +50,154 @@ func TestUnifiedInitRoutesExplicitModes(t *testing.T) {
 	}
 }
 
+// TestUnifiedInitNoApplyFlagReachesLifecycleRequest proves deferred initialization is an explicit root-command intent.
+func TestUnifiedInitNoApplyFlagReachesLifecycleRequest(t *testing.T) {
+	var got scaffoldRequest
+	executeUnifiedInitForTest(t, func(_ *cobra.Command, _ unifiedInitMode, request scaffoldRequest) error {
+		got = request
+		return nil
+	}, "support", "--sdk", "--service", "linear", "--select-all", "linear", "--no-apply")
+	// The lifecycle runner, rather than Cobra presentation code, owns the no-mutation boundary.
+	if !got.noApply {
+		t.Fatal("--no-apply was not preserved in the lifecycle request")
+	}
+}
+
+// TestUnifiedInitNoApplyPlansWorkspaceWithoutApplying proves missing services retain a workspace receipt while app planning waits for activation.
+func TestUnifiedInitNoApplyPlansWorkspaceWithoutApplying(t *testing.T) {
+	directory := t.TempDir()
+	server, lifecycleCalls := newSDKInitLifecycleServer(t)
+	defer server.Close()
+	oldWorkingDirectory, err := os.Getwd()
+	// The test must restore the caller's directory after inspecting default .fused paths.
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Running from an isolated directory makes every deferred artifact observable.
+	if err := os.Chdir(directory); err != nil {
+		t.Fatal(err)
+	}
+	oldEngineURL, oldAPIKey, oldConfigFile, oldNoInput := EngineURL, APIKey, ConfigFile, NoInput
+	t.Cleanup(func() {
+		_ = os.Chdir(oldWorkingDirectory)
+		EngineURL, APIKey, ConfigFile, NoInput = oldEngineURL, oldAPIKey, oldConfigFile, oldNoInput
+	})
+	EngineURL, APIKey, ConfigFile, NoInput = server.URL, "fsk_test", "", true
+	var output bytes.Buffer
+	command := newUnifiedInitCommand()
+	command.SetOut(&output)
+	command.SetErr(&bytes.Buffer{})
+	command.SetArgs([]string{"deferred-sdk", "--sdk", "--service", "linear", "--operation", "linear=issueUpdate", "--no-apply"})
+	// The public command must complete without a lifecycle mutation endpoint.
+	if err := command.Execute(); err != nil {
+		t.Fatalf("execute deferred init: %v", err)
+	}
+	workspacePath := filepath.Join(directory, ".fused", "workspace.yaml")
+	appPath := filepath.Join(directory, ".fused", "sdks", "deferred-sdk.yaml")
+	workspace, workspaceErr := configfile.ParseFile(workspacePath)
+	app, appErr := configfile.ParseFile(appPath)
+	// Both validated files must retain the one exact resolved Registry version for later review.
+	if workspaceErr != nil || appErr != nil || !configWorkspaceServiceHasVersion(workspace.Workspace.Services["linear"], "v1") || app.SDK.Services["linear"].Version != "v1" {
+		t.Fatalf("workspaceErr=%v appErr=%v workspace=%#v app=%#v", workspaceErr, appErr, workspace, app)
+	}
+	// Workspace planning is the only lifecycle call possible before the missing service version is active.
+	if strings.Join(*lifecycleCalls, ",") != "workspace-plan" {
+		t.Fatalf("lifecycle calls=%#v, want workspace plan only", *lifecycleCalls)
+	}
+	workspaceReceipt := readReceipt(t, filepath.Join(directory, ".fused", ".state", "workspace.plan.json"))
+	// The saved receipt must be the exact plan returned by the workspace boundary.
+	if workspaceReceipt.PlanID != "plan-workspace" {
+		t.Fatalf("workspace receipt=%#v", workspaceReceipt)
+	}
+	for _, path := range []string{
+		filepath.Join(directory, ".fused", ".state", "sdk.deferred-sdk.1.0.0.plan.json"),
+		filepath.Join(directory, "fused-sdks", "deferred-sdk"),
+	} {
+		// The app cannot be planned before activation, and no package may imply an apply occurred.
+		if _, statErr := os.Stat(path); !errors.Is(statErr, os.ErrNotExist) {
+			t.Fatalf("deferred artifact %s exists: %v", path, statErr)
+		}
+	}
+	text := output.String()
+	// Completion output consumes the workspace receipt before creating the app receipt and later downloading the SDK.
+	if !strings.Contains(text, "Initialization planned. No Engine changes were applied.") ||
+		!strings.Contains(text, "fused-cli workspace apply -f '.fused/workspace.yaml'") ||
+		!strings.Contains(text, "fused-cli sdk plan -f '.fused/sdks/deferred-sdk.yaml'") ||
+		!strings.Contains(text, "fused-cli sdk apply -f '.fused/sdks/deferred-sdk.yaml' --download") ||
+		!strings.Contains(text, "If a saved plan is stale") {
+		t.Fatalf("deferred init output=%q", text)
+	}
+}
+
+// TestUnifiedInitNoApplyPlansAppWhenServicesAreEnabled proves a ready workspace produces the app receipt while still skipping apply and download.
+func TestUnifiedInitNoApplyPlansAppWhenServicesAreEnabled(t *testing.T) {
+	directory := t.TempDir()
+	withUnifiedInitGenerationRepairWorkingDirectory(t, directory)
+	planCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		// App plan is the only admitted network lifecycle boundary for an already-enabled selection.
+		if request.URL.Path != "/sdk-config/plan" {
+			t.Fatalf("deferred app init reached %s", request.URL.Path)
+		}
+		planCalls++
+		writeSDKInitPlanResponse(t, writer, request, "plan-sdk")
+	}))
+	defer server.Close()
+	request := unifiedInitFailureTestRequest(filepath.Join(directory, "ready-sdk.yaml"))
+	lifecycle := sdkInitLifecycle{
+		client:  api.NewClient(server.URL, "test-key"),
+		request: request,
+		services: []sdkInitResolvedService{{
+			target: workspaceServiceAddTarget{slug: "linear", enabledVersions: []string{"v1"}}, version: "v1",
+		}},
+	}
+	var output bytes.Buffer
+	command := &cobra.Command{}
+	command.SetOut(&output)
+	// Planning should finish locally after receiving one app plan and before any apply call.
+	if err := createUnifiedInitWithoutApply(command, unifiedInitModeSDK, lifecycle, noOpScaffoldRequirements, defaultTestScaffoldBucket); err != nil {
+		t.Fatalf("plan deferred app init: %v", err)
+	}
+	receipt := readReceipt(t, filepath.Join(directory, defaultReceiptPath("sdk:support-sdk:1.0.0")))
+	// One app plan and its exact receipt prove the flow stopped after planning instead of silently applying.
+	if planCalls != 1 || receipt.PlanID != "plan-sdk" {
+		t.Fatalf("planCalls=%d receipt=%#v", planCalls, receipt)
+	}
+	text := output.String()
+	// A ready app needs only apply later; reprinting plan would obscure that its receipt was already saved.
+	if !strings.Contains(text, "fused-cli sdk apply") || strings.Contains(text, "fused-cli sdk plan -f") || !strings.Contains(text, "--download") {
+		t.Fatalf("deferred ready-app output=%q", text)
+	}
+}
+
+// TestUnifiedInitNoApplyReturnsModeSpecificApplyCommands proves deferred output maps each public outcome to its real apply surface.
+func TestUnifiedInitNoApplyReturnsModeSpecificApplyCommands(t *testing.T) {
+	tests := []struct {
+		name      string
+		mode      unifiedInitMode
+		want      string
+		forbidden string
+	}{
+		{name: "SDK downloads", mode: unifiedInitModeSDK, want: "fused-cli sdk apply -f 'app.yaml' --download"},
+		{name: "API uses SDK resource", mode: unifiedInitModeAPI, want: "fused-cli sdk apply -f 'app.yaml'", forbidden: "--download"},
+		{name: "MCP uses hosted resource", mode: unifiedInitModeMCP, want: "fused-cli mcp apply -f 'app.yaml'", forbidden: "--download"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var output bytes.Buffer
+			command := &cobra.Command{}
+			command.SetOut(&output)
+			printUnifiedInitDeferredNextSteps(command, test.mode, "app.yaml", nil, true)
+			text := output.String()
+			// Each user-facing mode must return a copy-ready command without leaking another mode's package behavior.
+			if !strings.Contains(text, test.want) || (test.forbidden != "" && strings.Contains(text, test.forbidden)) {
+				t.Fatalf("output=%q want=%q forbidden=%q", text, test.want, test.forbidden)
+			}
+		})
+	}
+}
+
 // TestUnifiedInitModeValidationRejectsAmbiguousAutomation proves scripts cannot depend on a prompt or select competing outcomes.
 func TestUnifiedInitModeValidationRejectsAmbiguousAutomation(t *testing.T) {
 	tests := []struct {

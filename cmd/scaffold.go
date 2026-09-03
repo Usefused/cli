@@ -48,6 +48,7 @@ type scaffoldRequest struct {
 	language       string
 	bucket         string
 	generate       bool
+	noApply        bool
 	versionSet     bool
 	descriptionSet bool
 	languageSet    bool

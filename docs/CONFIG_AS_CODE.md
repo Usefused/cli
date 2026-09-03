@@ -46,6 +46,17 @@ still receive separate plan receipts. `--no-input` and `CI=true` skip prompts,
 require one explicit mode, and require `--operation` or `--select-all` for each
 service. Top-level init does not support `--json`.
 
+Use `--no-apply` when initialization is only preparing files for later review.
+The CLI still resolves concrete service versions, operation selections,
+buckets, and required local workspace additions, then writes semantically
+validated config and saves available plan receipts. It does not apply Engine
+state, generate an SDK, or download a package. If a missing workspace service
+prevents the app plan, the workspace plan is saved first and app planning is
+listed after workspace apply. Otherwise the app receipt is ready for apply.
+The command prints the exact remaining commands; generated SDKs finish with
+`sdk apply --download`. A stale receipt is handled by rerunning its plan
+command before apply.
+
 `fused-cli init <name> --api` uses the same `kind: sdk` execution resource with
 `generate: false`, then prints a central Engine REST request template instead of
 downloading a package. The hidden `sdk init` and `mcp init` compatibility
