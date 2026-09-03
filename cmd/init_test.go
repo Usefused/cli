@@ -234,6 +234,62 @@ func TestUnifiedAPIInitCarriesApplyVersionIDToNextStep(t *testing.T) {
 	}
 }
 
+// TestUnifiedAPIInitUsesAPIUserFacingLabels proves composed onboarding hides
+// its shared SDK adapter from scaffold, plan, readiness, and notification prose.
+func TestUnifiedAPIInitUsesAPIUserFacingLabels(t *testing.T) {
+	directory := t.TempDir()
+	withUnifiedInitGenerationRepairWorkingDirectory(t, directory)
+	var plannedConfigKey string
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		// API mode deliberately retains the SDK plan/apply transport routes.
+		switch request.URL.Path {
+		case "/sdk-config/plan":
+			var payload map[string]any
+			// Echoing the canonical identity lets the test prove only presentation was aliased.
+			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode API plan: %v", err)
+			}
+			plannedConfigKey, _ = payload["config_key"].(string)
+			_, _ = fmt.Fprintf(writer, `{"plan_id":"plan-api","config_key":%q,"source_hash":%q,"summary":{},"notifications":{"warnings":["registry_notifications_unavailable"]}}`, payload["config_key"], payload["source_hash"])
+		case "/sdk-config/apply":
+			_, _ = writer.Write([]byte(`{"status":"applied","plan_id":"plan-api","app_family_id":"api-family","app_id":"api-version","generation_status":"skipped"}`))
+		default:
+			t.Fatalf("unexpected API init path %q", request.URL.Path)
+		}
+	}))
+	defer server.Close()
+	path := filepath.Join(directory, "support-api.yaml")
+	request := unifiedInitFailureTestRequest(path)
+	request.name, request.generate, request.generateSet = "support-api", false, true
+	var commandOutput bytes.Buffer
+	command := &cobra.Command{}
+	command.SetOut(&commandOutput)
+	var initErr error
+	stdout := captureStdout(t, func() {
+		initErr = createPlanApplyUnifiedInit(command, api.NewClient(server.URL, "test-key"), unifiedInitModeAPI, request, false, false, noOpScaffoldRequirements, defaultTestScaffoldBucket)
+	})
+	output := commandOutput.String() + stdout
+	// Every human lifecycle label must describe the selected API outcome while preserving the sdk-prefixed Engine key.
+	if initErr != nil || plannedConfigKey != "sdk:support-api:1.0.0" || !strings.Contains(output, "Created api config skeleton") || !strings.Contains(output, "API plan created for api:support-api:1.0.0") || !strings.Contains(output, "Workspace notifications for api:support-api:1.0.0") || strings.Contains(output, "Created sdk config skeleton") || strings.Contains(output, "Workspace notifications for sdk:support-api:1.0.0") {
+		t.Fatalf("error=%v plannedKey=%q output=%q", initErr, plannedConfigKey, output)
+	}
+	parsed, err := configfile.ParseFile(path)
+	// Parsing must succeed before the persisted API-mode invariants can be inspected.
+	if err != nil {
+		t.Fatalf("parse API config: %v", err)
+	}
+	// The public alias must not create a new config kind or enable package generation on disk.
+	if parsed.Kind != configfile.KindSDK || parsed.SDK.Generate == nil || *parsed.SDK.Generate {
+		t.Fatalf("kind=%q generate=%v", parsed.Kind, parsed.SDK.Generate)
+	}
+	receipt, err := readPlanReceiptFile(defaultReceiptPath("sdk:support-api:1.0.0"))
+	// Receipt identity remains canonical so normal sdk apply can consume it unchanged.
+	if err != nil || receipt.ConfigKey != "sdk:support-api:1.0.0" {
+		t.Fatalf("receipt=%#v error=%v", receipt, err)
+	}
+}
+
 // TestUnifiedExtendPlanFailurePreservesOriginalBytes proves remote preflight cannot publish an unaccepted successor locally.
 func TestUnifiedExtendPlanFailurePreservesOriginalBytes(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "support-sdk.yaml")
@@ -760,6 +816,30 @@ func unifiedInitFailureTestRequest(path string) scaffoldRequest {
 		operations: []scaffoldOperation{{service: "linear", operation: "issueGet"}},
 		version:    "1.0.0", versionSet: true, language: "typescript", languageSet: true,
 		bucket: "default", bucketSet: true, generate: true, generateSet: true,
+	}
+}
+
+// TestUnifiedInitCreateCollisionStopsBeforeWorkspaceLifecycle proves init cannot enable services before telling the user to use extend.
+func TestUnifiedInitCreateCollisionStopsBeforeWorkspaceLifecycle(t *testing.T) {
+	directory := t.TempDir()
+	withUnifiedInitGenerationRepairWorkingDirectory(t, directory)
+	path := filepath.Join(directory, "support-sdk.yaml")
+	if err := os.WriteFile(path, []byte("existing"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	remoteCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		remoteCalls++
+		t.Fatalf("create collision reached remote path %s", request.URL.Path)
+	}))
+	defer server.Close()
+	oldEngineURL, oldAPIKey := EngineURL, APIKey
+	EngineURL, APIKey = server.URL, "test-key"
+	t.Cleanup(func() { EngineURL, APIKey = oldEngineURL, oldAPIKey })
+	err := runUnifiedInitLifecycle(&cobra.Command{}, unifiedInitModeSDK, unifiedInitFailureTestRequest(path))
+	// Existing local ownership is decisive before client construction, workspace planning, confirmation, or apply.
+	if err == nil || remoteCalls != 0 || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("error=%v remoteCalls=%d", err, remoteCalls)
 	}
 }
 

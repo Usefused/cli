@@ -75,6 +75,11 @@ type scaffoldResult struct {
 
 type scaffoldRequirementsResolver func([]api.AppScaffoldSelection) ([]api.AppScaffoldRequirement, error)
 
+// deferScaffoldRequirements leaves runtime-derived bindings untouched during structural preflight before workspace activation.
+func deferScaffoldRequirements([]api.AppScaffoldSelection) ([]api.AppScaffoldRequirement, error) {
+	return []api.AppScaffoldRequirement{}, nil
+}
+
 type scaffoldBucketResolver func() (string, error)
 
 type scaffoldWorkflow func(*cobra.Command, scaffoldRequest, scaffoldRequirementsResolver, scaffoldBucketResolver) error
@@ -838,17 +843,21 @@ func mergeAppSelectAll(config *configfile.AppConfig, services []string) (bool, e
 	changed := false
 	for _, serviceName := range services {
 		service, exists := config.Services[serviceName]
+		// A complete-surface selection still requires an explicitly declared service and immutable version.
 		if !exists {
 			return false, fmt.Errorf("select-all service %q is not declared; add --service %s=<version>", serviceName, serviceName)
 		}
+		// Promoting a narrow list to select_all is an additive scope expansion; the two equivalent encodings cannot coexist.
 		if len(service.Operations) > 0 {
-			return false, fmt.Errorf("service %q lists operations and cannot use select_all", serviceName)
-		}
-		if !service.SelectAll {
-			service.SelectAll = true
-			config.Services[serviceName] = service
+			service.Operations = nil
 			changed = true
 		}
+		// An already complete surface is idempotent and should not manufacture a new app version.
+		if !service.SelectAll {
+			service.SelectAll = true
+			changed = true
+		}
+		config.Services[serviceName] = service
 	}
 	return changed, nil
 }

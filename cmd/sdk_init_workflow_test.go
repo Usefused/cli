@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -51,6 +52,138 @@ func TestSDKInitComposesWorkspaceAndAppReceipts(t *testing.T) {
 	}
 	if !strings.Contains(output, "Successfully applied workspace config") || !strings.Contains(output, "Successfully applied SDK support-sdk") {
 		t.Fatalf("missing composed apply output: %q", output)
+	}
+}
+
+// TestSDKInitWorkspaceDraftSeedsRemoteStateWithoutLocalFile proves additive onboarding cannot deactivate an existing Engine service.
+func TestSDKInitWorkspaceDraftSeedsRemoteStateWithoutLocalFile(t *testing.T) {
+	directory := t.TempDir()
+	withUnifiedInitGenerationRepairWorkingDirectory(t, directory)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		// Only the in-memory remote snapshot and final workspace plan are expected before confirmation.
+		if request.URL.Path == "/workspace/config/plan" {
+			var body struct {
+				Config map[string]any `json:"config"`
+			}
+			if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+				t.Fatalf("decode additive workspace plan: %v", err)
+			}
+			services, _ := body.Config["services"].(map[string]any)
+			// Both entries in the planned desired state prove the new service cannot imply removal of the existing one.
+			if _, exists := services["@provider/gmail"]; !exists {
+				t.Fatalf("workspace plan dropped existing remote service: %#v", body.Config)
+			}
+			if _, exists := services["linear"]; !exists {
+				t.Fatalf("workspace plan omitted requested service: %#v", body.Config)
+			}
+			_, _ = writer.Write([]byte(`{"plan_id":"plan-workspace","config_key":"workspace","source_hash":"source","summary":{}}`))
+			return
+		}
+		var body struct {
+			Query string `json:"query"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			t.Fatalf("decode additive workspace GraphQL: %v", err)
+		}
+		// Engine inventory and Registry visibility are the minimum authority needed to reconstruct safe additive intent.
+		switch {
+		case request.URL.Path == "/engine/graphql" && strings.Contains(body.Query, "WorkspaceServices"):
+			_, _ = writer.Write([]byte(`{"data":{"workspaceServices":[{"service_id":"service-gmail","service_slug":"@provider/gmail","service_name":"Gmail","enabled_versions":[{"service_version_id":"gmail-v1","version":"v1","status":"public"}]}]}}`))
+		case request.URL.Path == "/engine/graphql" && strings.Contains(body.Query, "WorkspaceConnectionProfiles"):
+			_, _ = writer.Write([]byte(`{"data":{"workspaceConnectionProfiles":[]}}`))
+		case request.URL.Path == "/graphql" && strings.Contains(body.Query, "ServiceVisibilities"):
+			_, _ = writer.Write([]byte(`{"data":{"servicesByIds":[{"id":"service-gmail","slug":"gmail","provider":{"handle":"provider"},"is_owner":false,"is_public":true}]}}`))
+		default:
+			t.Fatalf("unexpected additive workspace request: %s %s", request.URL.Path, body.Query)
+		}
+	}))
+	defer server.Close()
+	services := []sdkInitResolvedService{{
+		target: workspaceServiceAddTarget{slug: "linear", serviceID: "service-linear", requestedRefs: []string{"linear"}}, version: "v1",
+	}}
+	draft, err := planSDKInitWorkspace(api.NewClient(server.URL, "test-key"), services)
+	if err != nil {
+		t.Fatalf("plan additive workspace: %v", err)
+	}
+	// The draft remains in memory; combined confirmation still precedes both the file write and remote apply.
+	if draft == nil || len(draft.config.Services) != 2 {
+		t.Fatalf("additive workspace draft = %#v", draft)
+	}
+	if _, err := os.Stat(filepath.Join(directory, ".fused", "workspace.yaml")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("workspace draft published before confirmation: %v", err)
+	}
+}
+
+// TestSDKInitWorkspaceDraftPreservesRemoteStateMissingFromStaleLocalFile proves additive init never interprets a partial file as removal intent.
+func TestSDKInitWorkspaceDraftPreservesRemoteStateMissingFromStaleLocalFile(t *testing.T) {
+	directory := t.TempDir()
+	withUnifiedInitGenerationRepairWorkingDirectory(t, directory)
+	workspacePath := filepath.Join(directory, ".fused", "workspace.yaml")
+	if err := os.MkdirAll(filepath.Dir(workspacePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(workspacePath, []byte("apiVersion: fused/v1\nkind: workspace\nservices:\n  slack:\n    service_id: service-slack\n    versions:\n      - version: v2\n        service_version_id: slack-v2\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		// The final plan must retain local-only Slack, live-only Gmail, and the requested Linear addition.
+		if request.URL.Path == "/workspace/config/plan" {
+			var body struct {
+				Config map[string]any `json:"config"`
+			}
+			if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+				t.Fatalf("decode stale additive workspace plan: %v", err)
+			}
+			services, _ := body.Config["services"].(map[string]any)
+			// All three identities prove the union preserved both sides before adding the requested service.
+			if len(services) != 3 || services["gmail"] == nil || services["slack"] == nil || services["linear"] == nil {
+				t.Fatalf("workspace plan is not additive: %#v", body.Config)
+			}
+			_, _ = writer.Write([]byte(`{"plan_id":"plan-workspace","config_key":"workspace","source_hash":"source","summary":{}}`))
+			return
+		}
+		var body struct {
+			Query string `json:"query"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			t.Fatalf("decode stale additive workspace GraphQL: %v", err)
+		}
+		// The remote snapshot uses one live service absent from the stale file.
+		switch {
+		case request.URL.Path == "/engine/graphql" && strings.Contains(body.Query, "WorkspaceServices"):
+			_, _ = writer.Write([]byte(`{"data":{"workspaceServices":[{"service_id":"service-gmail","service_slug":"gmail","service_name":"Gmail","enabled_versions":[{"service_version_id":"gmail-v1","version":"v1","status":"public"}]}]}}`))
+		case request.URL.Path == "/engine/graphql" && strings.Contains(body.Query, "WorkspaceConnectionProfiles"):
+			_, _ = writer.Write([]byte(`{"data":{"workspaceConnectionProfiles":[]}}`))
+		case request.URL.Path == "/graphql" && strings.Contains(body.Query, "ServiceVisibilities"):
+			_, _ = writer.Write([]byte(`{"data":{"servicesByIds":[{"id":"service-gmail","slug":"gmail","is_owner":false,"is_public":true}]}}`))
+		default:
+			t.Fatalf("unexpected stale additive workspace request: %s %s", request.URL.Path, body.Query)
+		}
+	}))
+	defer server.Close()
+	services := []sdkInitResolvedService{{
+		target: workspaceServiceAddTarget{slug: "linear", serviceID: "service-linear", requestedRefs: []string{"linear"}}, version: "v1",
+	}}
+	draft, err := planSDKInitWorkspace(api.NewClient(server.URL, "test-key"), services)
+	// Planning remains in memory while still demonstrating that no existing local or remote membership is dropped.
+	if err != nil || draft == nil || len(draft.config.Services) != 3 {
+		t.Fatalf("draft=%#v err=%v", draft, err)
+	}
+}
+
+// TestCompleteSDKInitCreateBucketFailsBeforeWorkspacePlanning locks the early credential-container preflight used by composed init.
+func TestCompleteSDKInitCreateBucketFailsBeforeWorkspacePlanning(t *testing.T) {
+	request := scaffoldRequest{services: []scaffoldService{{name: "linear", version: "v1"}}}
+	resolverCalls := 0
+	resolved, err := completeSDKInitCreateBucket(request, func() (string, error) {
+		resolverCalls++
+		return "", errors.New("no visible bucket is available")
+	})
+	// A missing bucket returns no partially resolved request and invokes the read-only dependency exactly once.
+	if err == nil || resolverCalls != 1 || resolved.services != nil || !strings.Contains(err.Error(), "no visible bucket") {
+		t.Fatalf("resolved=%#v resolverCalls=%d err=%v", resolved, resolverCalls, err)
 	}
 }
 
@@ -170,6 +303,74 @@ func TestSDKInitNoInputRequiresOperationScope(t *testing.T) {
 	}
 }
 
+// TestHydrateSDKInitExtendServiceReferencesPinsOperationOnlyServices proves extend can validate a new operation without repeating --service.
+func TestHydrateSDKInitExtendServiceReferencesPinsOperationOnlyServices(t *testing.T) {
+	path := writeSDKInitExtensionFixture(t)
+	request := scaffoldRequest{
+		kind: configfile.KindSDK, name: "support-sdk", path: path, extend: true,
+		operations: []scaffoldOperation{{service: "linear", operation: "issueUpdate"}},
+		selectAll:  []string{"linear"},
+	}
+	resolved, err := hydrateSDKInitExtendServiceReferences(request)
+	// Hydration must succeed locally before any Registry resolution is necessary.
+	if err != nil {
+		t.Fatalf("hydrate operation-only extension: %v", err)
+	}
+	// Repeated operation/select-all references must produce one exact pin copied from the accepted config.
+	if len(resolved.services) != 1 || resolved.services[0].name != "linear" || resolved.services[0].version != "v1" {
+		t.Fatalf("hydrated services = %#v; want linear@v1", resolved.services)
+	}
+}
+
+// TestSDKInitOperationOnlyExtensionRejectsInvalidOperationBeforeMutation proves inherited pins restore the normal Registry validation boundary.
+func TestSDKInitOperationOnlyExtensionRejectsInvalidOperationBeforeMutation(t *testing.T) {
+	path := writeSDKInitExtensionFixture(t)
+	before, err := os.ReadFile(path)
+	// The pre-test bytes are the accepted state that any failed extension must preserve exactly.
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutationCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		// Any lifecycle plan/apply request would prove invalid operation validation happened too late.
+		if request.URL.Path != "/engine/graphql" && request.URL.Path != "/graphql" {
+			mutationCalls++
+			t.Fatalf("invalid operation reached remote lifecycle path %s", request.URL.Path)
+		}
+		var body struct {
+			Query string `json:"query"`
+		}
+		// Read-only validation requests must still be well-formed GraphQL envelopes.
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			t.Fatalf("decode operation-only validation request: %v", err)
+		}
+		// Workspace-first resolution supplies immutable identity; Registry supplies the bounded operation catalogue.
+		switch {
+		case request.URL.Path == "/engine/graphql" && strings.Contains(body.Query, "WorkspaceServices"):
+			_, _ = writer.Write([]byte(`{"data":{"workspaceServices":[{"service_id":"00000000-0000-4000-8000-000000000001","service_slug":"linear","service_name":"Linear","enabled_versions":[{"service_version_id":"version-v1","version":"v1","status":"public"}]}]}}`))
+		case request.URL.Path == "/graphql" && strings.Contains(body.Query, "ServiceOperations"):
+			_, _ = writer.Write([]byte(`{"data":{"serviceOperations":[{"id":"endpoint-1","name":"issueGet","method":"GET","path":"/issues/{id}","description":"","service_id":"00000000-0000-4000-8000-000000000001"}]}}`))
+		default:
+			t.Fatalf("unexpected operation-only validation request: %s %s", request.URL.Path, body.Query)
+		}
+	}))
+	defer server.Close()
+	oldEngineURL, oldAPIKey, oldNoInput := EngineURL, APIKey, NoInput
+	EngineURL, APIKey, NoInput = server.URL, "test-key", true
+	t.Cleanup(func() { EngineURL, APIKey, NoInput = oldEngineURL, oldAPIKey, oldNoInput })
+	request := scaffoldRequest{
+		kind: configfile.KindSDK, name: "support-sdk", path: path, extend: true,
+		operations: []scaffoldOperation{{service: "linear", operation: "issueMissing"}},
+	}
+	_, err = prepareSDKInitLifecycle(&cobra.Command{}, request, defaultTestScaffoldBucket)
+	after, readErr := os.ReadFile(path)
+	// The missing operation must be actionable and leave the accepted config and every remote receipt untouched.
+	if err == nil || !strings.Contains(err.Error(), "operation issueMissing is not available for service linear version v1") || readErr != nil || !bytes.Equal(before, after) || mutationCalls != 0 {
+		t.Fatalf("error=%v readErr=%v unchanged=%t mutationCalls=%d", err, readErr, bytes.Equal(before, after), mutationCalls)
+	}
+}
+
 // TestSDKInitInteractiveExtensionInfersMinorSuccessor keeps one file while assigning a deterministic successor before planning.
 func TestSDKInitInteractiveExtensionInfersMinorSuccessor(t *testing.T) {
 	path := writeSDKInitExtensionFixture(t)
@@ -180,7 +381,7 @@ func TestSDKInitInteractiveExtensionInfersMinorSuccessor(t *testing.T) {
 	t.Setenv("CI", "")
 	t.Cleanup(func() { NoInput = oldNoInput })
 	request := sdkInitExtensionRequest(path)
-	resolved, err := completeSDKInitVersionExtension(api.NewClient(server.URL, "test-key"), request, noOpScaffoldRequirements, defaultTestScaffoldBucket)
+	resolved, err := completeSDKInitVersionExtension(api.NewClient(server.URL, "test-key"), request, defaultTestScaffoldBucket)
 	if err != nil {
 		t.Fatalf("infer interactive version extension: %v", err)
 	}
@@ -204,7 +405,7 @@ func TestSDKInitNoInputExtensionInfersMinorSuccessor(t *testing.T) {
 	oldNoInput := NoInput
 	NoInput = true
 	t.Cleanup(func() { NoInput = oldNoInput })
-	resolved, err := completeSDKInitVersionExtension(api.NewClient(server.URL, "test-key"), sdkInitExtensionRequest(path), noOpScaffoldRequirements, defaultTestScaffoldBucket)
+	resolved, err := completeSDKInitVersionExtension(api.NewClient(server.URL, "test-key"), sdkInitExtensionRequest(path), defaultTestScaffoldBucket)
 	// Non-interactive behavior cannot depend on terminal state or a prompt implementation.
 	if err != nil || resolved.version != "1.1.0" || !resolved.versionSet {
 		t.Fatalf("resolved=%#v err=%v", resolved, err)
@@ -216,7 +417,7 @@ func TestSDKInitExplicitCurrentVersionRejectsChangedAppliedScope(t *testing.T) {
 	path := writeSDKInitExtensionFixture(t)
 	request := sdkInitExtensionRequest(path)
 	request.version, request.versionSet = "1.0.0", true
-	_, err := completeSDKInitVersionExtension(nil, request, noOpScaffoldRequirements, defaultTestScaffoldBucket)
+	_, err := completeSDKInitVersionExtension(nil, request, defaultTestScaffoldBucket)
 	// The error must name the applied identity and exact successor flag without rewriting the source file.
 	data, readErr := os.ReadFile(path)
 	if err == nil || !strings.Contains(err.Error(), "support-sdk@1.0.0 already identifies the current config") || !strings.Contains(err.Error(), "--version <new-version>") || readErr != nil || !strings.Contains(string(data), "operations: [issueGet]") {
@@ -231,7 +432,7 @@ func TestSDKInitExplicitSuccessorCollisionFailsBeforeWrite(t *testing.T) {
 	defer server.Close()
 	request := sdkInitExtensionRequest(path)
 	request.version, request.versionSet = "1.1.0", true
-	_, err := completeSDKInitVersionExtension(api.NewClient(server.URL, "test-key"), request, noOpScaffoldRequirements, defaultTestScaffoldBucket)
+	_, err := completeSDKInitVersionExtension(api.NewClient(server.URL, "test-key"), request, defaultTestScaffoldBucket)
 	data, readErr := os.ReadFile(path)
 	// Collision checks must run before any candidate replaces the authored current version.
 	if err == nil || !strings.Contains(err.Error(), "support-sdk@1.1.0 already exists") || readErr != nil || !strings.Contains(string(data), "version: 1.0.0") {
@@ -244,7 +445,7 @@ func TestSDKInitIdempotentExtensionKeepsAppliedVersion(t *testing.T) {
 	path := writeSDKInitExtensionFixture(t)
 	request := sdkInitExtensionRequest(path)
 	request.operations = []scaffoldOperation{{service: "linear", operation: "issueGet"}}
-	resolved, err := completeSDKInitVersionExtension(nil, request, noOpScaffoldRequirements, defaultTestScaffoldBucket)
+	resolved, err := completeSDKInitVersionExtension(nil, request, defaultTestScaffoldBucket)
 	if err != nil {
 		t.Fatalf("complete idempotent extension: %v", err)
 	}
@@ -262,7 +463,7 @@ func TestSDKInitUnpublishedDraftExtensionAlsoInfersSuccessor(t *testing.T) {
 	oldNoInput := NoInput
 	NoInput = true
 	t.Cleanup(func() { NoInput = oldNoInput })
-	resolved, err := completeSDKInitVersionExtension(api.NewClient(server.URL, "test-key"), sdkInitExtensionRequest(path), noOpScaffoldRequirements, defaultTestScaffoldBucket)
+	resolved, err := completeSDKInitVersionExtension(api.NewClient(server.URL, "test-key"), sdkInitExtensionRequest(path), defaultTestScaffoldBucket)
 	if err != nil {
 		t.Fatalf("complete unpublished draft extension: %v", err)
 	}
@@ -390,6 +591,8 @@ func writeSDKInitEngineGraphQL(t *testing.T, writer http.ResponseWriter, query s
 	switch {
 	case strings.Contains(query, "WorkspaceServices"):
 		_, _ = writer.Write([]byte(`{"data":{"workspaceServices":[]}}`))
+	case strings.Contains(query, "WorkspaceConnectionProfiles"):
+		_, _ = writer.Write([]byte(`{"data":{"workspaceConnectionProfiles":[]}}`))
 	case strings.Contains(query, "BucketSummaryPage"):
 		_, _ = writer.Write([]byte(`{"data":{"bucketSummaryPage":{"total":1,"items":[{"id":"bucket-1","name":"default","is_default":true}]}}}`))
 	case strings.Contains(query, "AppScaffoldRequirements"):
@@ -408,8 +611,8 @@ func writeSDKInitRegistryGraphQL(t *testing.T, writer http.ResponseWriter, query
 	case strings.Contains(query, "GetServiceLatestVersion"):
 		_, _ = writer.Write([]byte(`{"data":{"service":{"service_versions":[{"name":"v1"}]}}}`))
 	// The shared selector consumes the same Registry operation projection in operation-add and init workflows.
-	case strings.Contains(query, "SearchEndpoints"):
-		_, _ = writer.Write([]byte(`{"data":{"searchEndpoints":[{"id":"endpoint-1","name":"issueUpdate","method":"PATCH","path":"/issues/{id}","description":"","service_id":"00000000-0000-4000-8000-000000000001"}]}}`))
+	case strings.Contains(query, "ServiceOperations"):
+		_, _ = writer.Write([]byte(`{"data":{"serviceOperations":[{"id":"endpoint-1","name":"issueUpdate","method":"PATCH","path":"/issues/{id}","description":"","service_id":"00000000-0000-4000-8000-000000000001"}]}}`))
 	default:
 		t.Fatalf("unexpected Registry GraphQL query: %s", query)
 	}

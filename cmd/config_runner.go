@@ -32,6 +32,7 @@ type planReceipt struct {
 
 type plannedConfig struct {
 	receipt             planReceipt
+	displayConfigKey    string
 	summary             map[string]interface{}
 	notifications       api.NotificationInbox
 	credentialReadiness *api.CredentialReadiness
@@ -101,6 +102,7 @@ type sdkApplyDownloadOutput struct {
 
 type sdkApplyStageError struct {
 	Stage          string
+	ResourceLabel  string
 	SDKName        string
 	SDKID          string
 	VersionID      string
@@ -115,20 +117,22 @@ const (
 	sdkGenerationWaitTimeout  = 10 * time.Minute
 )
 
-// sdkApplyOutcomeUnknownError prevents a lost SDK apply response from being presented as a safely retryable dependency failure.
+// sdkApplyOutcomeUnknownError prevents a lost SDK/API apply response from being presented as a safely retryable dependency failure.
 type sdkApplyOutcomeUnknownError struct {
 	cause     error
 	planID    string
 	configKey string
 	sdkName   string
 	version   string
+	resource  string
 }
 
 // Error explains the ambiguous mutation boundary and directs the operator to an exact read-only target.
 func (err *sdkApplyOutcomeUnknownError) Error() string {
+	label := normalizedSDKResourceLabel(err.resource)
 	return fmt.Sprintf(
-		"SDK apply outcome is unknown for plan %s and target %s; the response did not prove whether the version committed. Do not retry this apply until inspecting state with `%s`.",
-		safeWorkspaceOutcomeToken(err.planID, "unavailable"), safeSDKApplyRecoveryTarget(err.sdkName, err.version), err.recoveryCommand(),
+		"%s apply outcome is unknown for plan %s and target %s; the response did not prove whether the version committed. Do not retry this apply until inspecting state with `%s`.",
+		label, safeWorkspaceOutcomeToken(err.planID, "unavailable"), safeSDKApplyRecoveryTarget(err.sdkName, err.version), err.recoveryCommand(),
 	)
 }
 
@@ -137,7 +141,7 @@ func (err *sdkApplyOutcomeUnknownError) Unwrap() error {
 	return err.cause
 }
 
-// recoveryCommand builds one inert SDK state-inspection command for the immutable candidate version.
+// recoveryCommand builds one inert shared-lifecycle state-inspection command for the immutable candidate version.
 func (err *sdkApplyOutcomeUnknownError) recoveryCommand() string {
 	return "fused-cli sdk show " + shellQuoteWorkspaceServiceArg(safeSDKApplyRecoveryTarget(err.sdkName, err.version))
 }
@@ -161,7 +165,7 @@ func safeSDKApplyRecoveryTarget(name, version string) string {
 	return name + "@" + version
 }
 
-// classifySDKApplyFailure upgrades only unproven write-boundary failures while preserving authoritative commit evidence.
+// classifySDKApplyFailure upgrades only unproven SDK/API write-boundary failures while preserving authoritative commit evidence.
 func classifySDKApplyFailure(cause error, cfg *configfile.ParsedConfig, receipt planReceipt) error {
 	var apiErr *api.APIError
 	// Non-API preparation failures happen before this classifier's known write boundary and retain their original local semantics.
@@ -178,13 +182,13 @@ func classifySDKApplyFailure(cause error, cfg *configfile.ParsedConfig, receipt 
 	}
 	return &sdkApplyOutcomeUnknownError{
 		cause: cause, planID: receipt.PlanID, configKey: cfg.ConfigKey,
-		sdkName: cfg.SDK.Name, version: cfg.SDK.Version,
+		sdkName: cfg.SDK.Name, version: cfg.SDK.Version, resource: sdkApplyResourceLabel(cfg.SDK),
 	}
 }
 
-// Error reports the failed SDK lifecycle stage without discarding the Engine error.
+// Error reports the failed SDK/API lifecycle stage without discarding the Engine error.
 func (err *sdkApplyStageError) Error() string {
-	return fmt.Sprintf("SDK %s stage failed for %s: %v", err.Stage, err.SDKName, err.Err)
+	return fmt.Sprintf("%s %s stage failed for %s: %v", normalizedSDKResourceLabel(err.ResourceLabel), err.Stage, err.SDKName, err.Err)
 }
 
 // Unwrap exposes the underlying Engine or local filesystem failure.
@@ -297,11 +301,13 @@ func planOneConfig(client *api.Client, cfg *configfile.ParsedConfig, engineURL, 
 	case configfile.KindSDK:
 		raw, _ := json.Marshal(cfg.SDK)
 		resp, err := client.PlanSDKConfig(desiredConfigPlanIntent(cfg, raw, ownerTeamSlug))
+		// Package-free SDK configs are public APIs, even though they share the Engine adapter.
 		if err != nil {
-			return plannedConfig{}, fmt.Errorf("failed to plan SDK %s: %w", cfg.SDK.Name, err)
+			return plannedConfig{}, fmt.Errorf("failed to plan %s %s: %w", sdkApplyResourceLabel(cfg.SDK), cfg.SDK.Name, err)
 		}
 		return plannedConfig{
 			receipt:             newPlanReceipt(resp.PlanID, cfg.ConfigKey, cfg.SourceHash, engineURL),
+			displayConfigKey:    sdkConfigDisplayKey(cfg.ConfigKey, cfg.SDK),
 			summary:             resp.Summary,
 			notifications:       resp.Notifications,
 			credentialReadiness: resp.CredentialReadiness,
@@ -364,18 +370,25 @@ func maybeWritePlanReceipt(cfg *configfile.ParsedConfig, receipt planReceipt, op
 
 // printPlanResult renders complete human plan guidance or the equivalent stable structured receipt array.
 func printPlanResult(planned []plannedConfig, jsonOut bool) error {
+	// Structured output preserves canonical receipt fields for automation and backward compatibility.
 	if jsonOut {
 		return json.NewEncoder(os.Stdout).Encode(planResultOutputs(planned))
 	}
 	for _, result := range planned {
 		receipt := result.receipt
-		fmt.Printf("Plan created for %s (Plan ID: %s)\n", receipt.ConfigKey, receipt.PlanID)
+		displayConfigKey := result.displayConfigKey
+		// Older and non-SDK planned results retain their canonical receipt identity when no presentation alias exists.
+		if displayConfigKey == "" {
+			displayConfigKey = receipt.ConfigKey
+		}
+		fmt.Printf("Plan created for %s (Plan ID: %s)\n", displayConfigKey, receipt.PlanID)
+		// Summary rendering failures stop before later guidance produces an incomplete review.
 		if err := printPlanSummary(os.Stdout, result.summary); err != nil {
 			return err
 		}
 		printRequiredPermissions(os.Stdout, result.requiredPermissions)
-		printCredentialReadiness(os.Stdout, receipt.ConfigKey, result.credentialReadiness)
-		printNotificationInbox(os.Stdout, receipt.ConfigKey, result.notifications)
+		printCredentialReadiness(os.Stdout, displayConfigKey, result.credentialReadiness)
+		printNotificationInbox(os.Stdout, displayConfigKey, result.notifications)
 	}
 	return nil
 }
@@ -597,7 +610,7 @@ func applySDKConfigsJSON(client *api.Client, prepared []preparedConfigApply, opt
 // applyPreparedSDKJSON preserves apply identity and one-time token data across later stages.
 func applyPreparedSDKJSON(client *api.Client, cfg *configfile.ParsedConfig, receipt planReceipt, download bool) (sdkApplyOutput, error) {
 	resp, err := client.ApplySDKConfig(receipt.PlanID, receipt.SourceHash)
-	// SDK apply is a one-shot mutation boundary, so ambiguous failures need read-only recovery rather than generic retry guidance.
+	// SDK/API apply is a one-shot mutation boundary, so ambiguous failures need read-only recovery rather than generic retry guidance.
 	if err != nil {
 		classified := classifySDKApplyFailure(err, cfg, receipt)
 		var unknown *sdkApplyOutcomeUnknownError
@@ -605,7 +618,7 @@ func applyPreparedSDKJSON(client *api.Client, cfg *configfile.ParsedConfig, rece
 		if errors.As(classified, &unknown) {
 			return sdkApplyOutput{}, classified
 		}
-		return sdkApplyOutput{}, &sdkApplyStageError{Stage: "apply", SDKName: cfg.SDK.Name, Err: classified}
+		return sdkApplyOutput{}, &sdkApplyStageError{Stage: "apply", ResourceLabel: sdkApplyResourceLabel(cfg.SDK), SDKName: cfg.SDK.Name, Err: classified}
 	}
 	result := sdkApplyOutput{
 		ConfigKey: cfg.ConfigKey, PlanID: resp.PlanID, Status: resp.Status,
@@ -633,7 +646,7 @@ func applyPreparedSDKJSON(client *api.Client, cfg *configfile.ParsedConfig, rece
 	// Generation is a separate post-commit stage, so its failure retains the successful app identity and one-time token response semantics.
 	if err != nil {
 		return sdkApplyOutput{}, &sdkApplyStageError{
-			Stage: "generation", SDKName: cfg.SDK.Name, SDKID: resp.AppFamilyID,
+			Stage: "generation", ResourceLabel: sdkApplyResourceLabel(cfg.SDK), SDKName: cfg.SDK.Name, SDKID: resp.AppFamilyID,
 			VersionID: resp.AppID, JobID: result.Generation.JobID,
 			ExecutionToken: resp.ExecutionToken, Err: err,
 		}
@@ -641,7 +654,7 @@ func applyPreparedSDKJSON(client *api.Client, cfg *configfile.ParsedConfig, rece
 	result.Generation.Status = "completed"
 	if err := downloadSDKByIDQuiet(client, resp.AppID, cfg.SDK.Name, "."); err != nil {
 		return sdkApplyOutput{}, &sdkApplyStageError{
-			Stage: "download", SDKName: cfg.SDK.Name, SDKID: resp.AppFamilyID,
+			Stage: "download", ResourceLabel: sdkApplyResourceLabel(cfg.SDK), SDKName: cfg.SDK.Name, SDKID: resp.AppFamilyID,
 			VersionID: resp.AppID, JobID: resp.JobID,
 			ExecutionToken: resp.ExecutionToken, Err: err,
 		}
@@ -898,6 +911,31 @@ func sdkApplyResourceLabel(cfg *configfile.SDKConfig) string {
 		return "API"
 	}
 	return "SDK"
+}
+
+// normalizedSDKResourceLabel keeps legacy constructed errors SDK-labelled
+// while allowing generate:false workflows to identify themselves as APIs.
+func normalizedSDKResourceLabel(label string) string {
+	// API is the only public alias for the shared SDK lifecycle.
+	if label == "API" {
+		return label
+	}
+	return "SDK"
+}
+
+// sdkConfigDisplayKey aliases only package-free SDK keys for human output;
+// receipts and Engine requests continue to use the canonical sdk prefix.
+func sdkConfigDisplayKey(configKey string, cfg *configfile.SDKConfig) string {
+	// Generated SDKs and malformed nil fixtures retain the canonical key.
+	if cfg == nil || sdkGeneratesPackage(cfg) {
+		return configKey
+	}
+	suffix, found := strings.CutPrefix(configKey, string(configfile.KindSDK)+":")
+	// An unexpected key cannot be safely rewritten as a related API identity.
+	if !found {
+		return configKey
+	}
+	return "api:" + suffix
 }
 
 // sdkApplyGenerationStageStatus maps Engine lifecycle state into stable CLI stage vocabulary while preserving older Engine compatibility.

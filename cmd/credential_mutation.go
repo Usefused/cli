@@ -7,7 +7,7 @@ import (
 	"github.com/charmbracelet/huh"
 )
 
-var errCredentialStorageDeclined = errors.New("credential storage cancelled; SDK plan was not retried")
+var errCredentialStorageDeclined = errors.New("credential storage cancelled; plan was not retried")
 
 type credentialMutationOptions struct {
 	confirmation string

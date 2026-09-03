@@ -330,14 +330,15 @@ func TestMCPDeactivateResolvesOnlyMCPNames(t *testing.T) {
 }
 
 // TestSDKDeactivateResolvesOnlySDKNames proves CLI hard deletion resolves one
-// immutable SDK version before invoking the shared Engine lifecycle route.
+// immutable SDK or direct API version before invoking the shared Engine lifecycle route.
 func TestSDKDeactivateResolvesOnlySDKNames(t *testing.T) {
 	var sawResolution, sawDeactivate bool
 	server := httptest.NewServer(sdkDeactivateTestHandler(t, &sawResolution, &sawDeactivate))
 	defer server.Close()
 
 	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"sdk", "deactivate", "support@1.0.0"})
-	if !sawResolution || !sawDeactivate || !strings.Contains(out, "Deactivated SDK version") {
+	// Direct API apps share SDK-kind identity, so neutral output must cover both delivery modes.
+	if !sawResolution || !sawDeactivate || !strings.Contains(out, "Deactivated app version") {
 		t.Fatalf("SDK deactivate = resolution:%t deactivate:%t output:%q", sawResolution, sawDeactivate, out)
 	}
 }

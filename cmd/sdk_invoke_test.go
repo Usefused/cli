@@ -393,6 +393,64 @@ func TestDecodeSDKInvokeMissingCredentialBuildsSafeCommand(t *testing.T) {
 	if strings.Contains(malformed.Error(), "fused-cli") {
 		t.Fatalf("malformed metadata produced command: %q", malformed.Error())
 	}
+	providerAppBody := fmt.Sprintf(`{"error":{"code":"bucket_credentials_missing","message":"provider credentials are not configured","details":{"bucket_id":%q,"service_id":%q,"auth_type":"oauth","auth_name":"oauth2"}}}`, bucketID, serviceID)
+	providerAppErr := decodeSDKInvokeHTTPError(http.StatusConflict, []byte(providerAppBody))
+	providerAppWant := "fused-cli secret set " + serviceID + " --bucket " + bucketID + " --type 'oauth' --auth-name 'oauth2' --interactive"
+	// OAuth remediation configures only the application client pair through the secure family-aware prompt.
+	if !strings.Contains(providerAppErr.Error(), providerAppWant) {
+		t.Fatalf("OAuth application credential error = %q", providerAppErr.Error())
+	}
+}
+
+// TestDecodeSDKInvokeConnectionRequiredBuildsSafeCommandForHumanAndJSON proves
+// call-time OAuth failures expose one local UUID-pinned consent action.
+func TestDecodeSDKInvokeConnectionRequiredBuildsSafeCommandForHumanAndJSON(t *testing.T) {
+	bucketID, serviceID := uuid.NewString(), uuid.NewString()
+	body := fmt.Sprintf(`{"error":{"code":"connection_required","message":"a provider connection is required","details":{"bucket_id":%q,"service_id":%q,"end_user_ref":"","command":"ignored-server-command"}}}`, bucketID, serviceID)
+	err := decodeSDKInvokeHTTPError(http.StatusConflict, []byte(body))
+	want := "fused-cli workspace service connect " + serviceID + " --bucket " + bucketID + " --user-ref YOUR_USER_REFERENCE"
+	// Human output appends only the command reconstructed from validated local fields.
+	if !strings.Contains(err.Error(), "Run: "+want) || strings.Contains(err.Error(), "ignored-server-command") {
+		t.Fatalf("connection invocation error=%q", err.Error())
+	}
+	jsonCommand := &cobra.Command{Use: "invoke"}
+	addJSONOutputFlag(jsonCommand)
+	// Enabling the command's structured mode exercises the emitted envelope rather than only its classifier.
+	if flagErr := jsonCommand.Flags().Set(jsonOutputFlag, "true"); flagErr != nil {
+		t.Fatalf("enable JSON output: %v", flagErr)
+	}
+	var jsonOutput bytes.Buffer
+	// Rendering must succeed before the stable recovery field can be inspected.
+	if writeErr := writeCommandError(&jsonOutput, jsonCommand, err); writeErr != nil {
+		t.Fatalf("write JSON error: %v", writeErr)
+	}
+	var envelope jsonErrorEnvelope
+	// A valid envelope proves the command is available to automation without parsing prose.
+	if decodeErr := json.Unmarshal(jsonOutput.Bytes(), &envelope); decodeErr != nil {
+		t.Fatalf("decode JSON error: %v", decodeErr)
+	}
+	result := envelope.Error
+	// JSON keeps the Engine message separate and publishes the command in the stable recovery field.
+	if result.Code != "connection_required" || result.Message != "a provider connection is required" || result.Recovery != want || result.Remediation == "" || strings.Contains(result.Recovery, "ignored-server-command") || result.Details["command"] != nil {
+		t.Fatalf("connection JSON result=%#v", result)
+	}
+
+	malformedBodies := []string{
+		`{"bucket_id":"not-a-uuid","service_id":"` + serviceID + `","end_user_ref":""}`,
+		`{"bucket_id":"` + bucketID + `","service_id":"not-a-uuid","end_user_ref":""}`,
+		`{"bucket_id":"` + bucketID + `","service_id":"` + strings.ReplaceAll(serviceID, "-", "") + `","end_user_ref":""}`,
+		`{"bucket_id":"` + bucketID + `","service_id":"` + serviceID + `"}`,
+		`{"bucket_id":"` + bucketID + `","service_id":"` + serviceID + `","end_user_ref":"bad\nref"}`,
+	}
+	// Malformed or incomplete detail maps remain inert in both output formats.
+	for _, details := range malformedBodies {
+		malformed := decodeSDKInvokeHTTPError(http.StatusConflict, []byte(`{"error":{"code":"connection_required","message":"connection required","details":`+details+`}}`))
+		malformedResult := classifyCommandError(&cobra.Command{Use: "invoke"}, malformed)
+		// No unvalidated field may cross into a copyable command.
+		if strings.Contains(malformed.Error(), "fused-cli") || malformedResult.Recovery != "" {
+			t.Fatalf("malformed details=%s human=%q JSON=%#v", details, malformed.Error(), malformedResult)
+		}
+	}
 }
 
 // TestReadBoundedSDKInvokeResponseAllowsUnifiedAggregate verifies multiple bounded results may exceed the input cap.

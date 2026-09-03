@@ -105,6 +105,12 @@ func classifyCommandError(cmd *cobra.Command, err error) jsonErrorResult {
 	if errors.As(err, &invokeError) {
 		result.Code, result.Message, result.Category = invokeError.code, invokeError.message, invokeError.category
 		result.Details = invokeError.details
+		command := sdkInvokeCredentialCommand(invokeError.code, invokeError.details)
+		// Structured callers receive the same locally synthesized command without parsing human prose.
+		if command != "" {
+			result.Remediation = "Run the recovery command to configure the required provider authentication, then retry the invocation."
+			result.Recovery = command
+		}
 		return result
 	}
 	var applyError *sdkApplyStageError
@@ -168,11 +174,12 @@ func classifyCommandError(cmd *cobra.Command, err error) jsonErrorResult {
 	return classifyGenericCommandError(result, err)
 }
 
-// classifyUnknownSDKApply publishes the exact read-only recovery contract for an unproven immutable SDK mutation.
+// classifyUnknownSDKApply publishes the exact read-only recovery contract for an unproven immutable SDK/API mutation.
 func classifyUnknownSDKApply(result jsonErrorResult, unknownApply *sdkApplyOutcomeUnknownError) jsonErrorResult {
+	label := normalizedSDKResourceLabel(unknownApply.resource)
 	result.Code, result.Category, result.Retryable = "sdk_apply_outcome_unknown", "indeterminate", false
-	result.Message = "The SDK apply response did not prove whether the reviewed plan committed."
-	result.Remediation = "Inspect the exact SDK version before creating a new plan; do not replay this apply receipt blindly."
+	result.Message = fmt.Sprintf("The %s apply response did not prove whether the reviewed plan committed.", label)
+	result.Remediation = fmt.Sprintf("Inspect the exact %s version before creating a new plan; do not replay this apply receipt blindly.", label)
 	result.Phase = "apply"
 	result.OperationID = safeWorkspaceOutcomeToken(unknownApply.planID, "unavailable")
 	result.CommitState = "unknown"

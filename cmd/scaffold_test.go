@@ -656,3 +656,16 @@ func executeScaffoldCommandForTest(path string, args ...string) error {
 func noOpScaffoldRequirements([]api.AppScaffoldSelection) ([]api.AppScaffoldRequirement, error) {
 	return []api.AppScaffoldRequirement{}, nil
 }
+
+// TestMergeAppSelectAllPromotesExplicitOperations proves extend can widen a narrow service to the complete operation surface.
+func TestMergeAppSelectAllPromotesExplicitOperations(t *testing.T) {
+	config := &configfile.AppConfig{Services: map[string]configfile.AppService{
+		"linear": {Version: "v1", Operations: []string{"issueGet"}},
+	}}
+	changed, err := mergeAppSelectAll(config, []string{"linear"})
+	service := config.Services["linear"]
+	// Promotion must be a real change with one valid selection encoding and no stale explicit operation list.
+	if err != nil || !changed || !service.SelectAll || len(service.Operations) != 0 {
+		t.Fatalf("changed=%t err=%v service=%#v", changed, err, service)
+	}
+}

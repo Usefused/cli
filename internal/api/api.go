@@ -1936,8 +1936,8 @@ type DesiredConfigPlanIntent struct {
 	Config        json.RawMessage
 }
 
-// PlanSDKConfig sends native SDK desired state through the shared app
-// plan client while preserving the SDK-specific Engine route.
+// PlanSDKConfig sends SDK/API desired state through the shared app plan client
+// while preserving the SDK-specific Engine route.
 func (c *Client) PlanSDKConfig(intent DesiredConfigPlanIntent) (*SDKConfigPlanResponse, error) {
 	return c.planDesiredConfig("sdk", intent)
 }
@@ -1992,7 +1992,12 @@ func (c *Client) planDesiredConfig(kind string, intent DesiredConfigPlanIntent) 
 
 	if resp.StatusCode >= 400 {
 		respBody := readBoundedHTTPErrorBody(resp.Body)
-		return nil, fmt.Errorf("plan %s config failed (HTTP %d): %w", kind, resp.StatusCode, newHTTPError(resp.StatusCode, respBody))
+		failureResource := kind
+		// The SDK route carries both generated SDKs and direct APIs, so its transport context must not claim either public mode.
+		if kind == "sdk" {
+			failureResource = "app"
+		}
+		return nil, fmt.Errorf("plan %s config failed (HTTP %d): %w", failureResource, resp.StatusCode, newHTTPError(resp.StatusCode, respBody))
 	}
 
 	var out SDKConfigPlanResponse
@@ -2002,13 +2007,27 @@ func (c *Client) planDesiredConfig(kind string, intent DesiredConfigPlanIntent) 
 	return &out, nil
 }
 
-// PlanWorkspaceConfig requests a non-mutating workspace plan and safely
-// projects any Engine rejection.
+// WorkspaceRemovalTarget carries explicit destructive scope into workspace plan review.
+type WorkspaceRemovalTarget struct {
+	ServiceID string `json:"service_id"`
+	Version   string `json:"version,omitempty"`
+}
+
+// PlanWorkspaceConfig requests a non-mutating workspace plan without explicit removal targets.
 func (c *Client) PlanWorkspaceConfig(sourceHash, configKey string, config json.RawMessage) (*ConfigPlanResponse, error) {
+	return c.PlanWorkspaceConfigWithRemovals(sourceHash, configKey, config, nil)
+}
+
+// PlanWorkspaceConfigWithRemovals requests one auditable plan for declarative changes and exact destructive targets.
+func (c *Client) PlanWorkspaceConfigWithRemovals(sourceHash, configKey string, config json.RawMessage, removeTargets []WorkspaceRemovalTarget) (*ConfigPlanResponse, error) {
 	reqBody := map[string]any{
 		"source_hash": sourceHash,
 		"config_key":  configKey,
 		"config":      config,
+	}
+	// Omit empty scope so older non-removal callers retain their existing wire contract.
+	if len(removeTargets) > 0 {
+		reqBody["remove_targets"] = removeTargets
 	}
 	body, err := json.Marshal(reqBody)
 	if err != nil {
@@ -2126,7 +2145,7 @@ type WebhookConfigRegistration struct {
 }
 
 // ApplySDKConfig may return a plaintext execution token only when Engine first
-// creates the SDK. Callers must surface it without retaining it.
+// creates the SDK/API family. Callers must surface it without retaining it.
 func (c *Client) ApplySDKConfig(planID, sourceHash string) (*SDKConfigApplyResponse, error) {
 	reqBody := map[string]any{
 		"plan_id":     planID,
@@ -2154,14 +2173,14 @@ func (c *Client) ApplySDKConfig(planID, sourceHash string) (*SDKConfigApplyRespo
 
 	if resp.StatusCode >= 400 {
 		respBody := readBoundedHTTPErrorBody(resp.Body)
-		return nil, fmt.Errorf("apply SDK config failed (HTTP %d): %w", resp.StatusCode, newHTTPError(resp.StatusCode, respBody))
+		return nil, fmt.Errorf("apply app config failed (HTTP %d): %w", resp.StatusCode, newHTTPError(resp.StatusCode, respBody))
 	}
 
 	var out SDKConfigApplyResponse
 	// A malformed success body arrives after Engine accepted the mutation request, so decoding failure cannot prove non-commit.
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return nil, &APIError{
-			Code: "sdk_apply_response_invalid", Message: "Engine returned an invalid SDK apply response",
+			Code: "sdk_apply_response_invalid", Message: "Engine returned an invalid app apply response",
 			Category: "indeterminate", Retryable: false, Phase: "apply",
 			OperationID: safeErrorMetadataToken(planID), CommitState: "unknown", cause: err,
 		}

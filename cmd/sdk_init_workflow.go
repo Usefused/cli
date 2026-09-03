@@ -53,11 +53,13 @@ func runSDKInitWorkflow(cmd *cobra.Command, request scaffoldRequest, resolver sc
 
 // runServiceSDKInit prepares one reviewed lifecycle and delegates its two ordered commit boundaries.
 func runServiceSDKInit(cmd *cobra.Command, request scaffoldRequest, resolver scaffoldRequirementsResolver, bucketResolver scaffoldBucketResolver) error {
-	lifecycle, err := prepareSDKInitLifecycle(cmd, request, resolver, bucketResolver)
+	lifecycle, err := prepareSDKInitLifecycle(cmd, request, bucketResolver)
+	// Preparation must remain read-only so any failure precedes the single combined confirmation.
 	if err != nil {
 		return err
 	}
 	confirmed, err := confirmSDKInitIfNeeded(lifecycle.request, lifecycle.services, lifecycle.draft != nil)
+	// Terminal or confirmation errors retain the same mutation-free boundary as preparation failures.
 	if err != nil {
 		return err
 	}
@@ -69,12 +71,19 @@ func runServiceSDKInit(cmd *cobra.Command, request scaffoldRequest, resolver sca
 }
 
 // prepareSDKInitLifecycle resolves immutable selections and plans any required workspace activation without mutating desired state.
-func prepareSDKInitLifecycle(cmd *cobra.Command, request scaffoldRequest, resolver scaffoldRequirementsResolver, bucketResolver scaffoldBucketResolver) (sdkInitLifecycle, error) {
+func prepareSDKInitLifecycle(cmd *cobra.Command, request scaffoldRequest, bucketResolver scaffoldBucketResolver) (sdkInitLifecycle, error) {
+	request, err := hydrateSDKInitExtendServiceReferences(request)
+	// Operation-only extensions inherit exact service pins from the accepted file so validation cannot be skipped.
+	if err != nil {
+		return sdkInitLifecycle{}, err
+	}
 	client, err := getAPIClient()
+	// Lifecycle composition requires one authenticated Engine client shared across both receipts.
 	if err != nil {
 		return sdkInitLifecycle{}, err
 	}
 	resolvedRequest, resolvedServices, err := resolveSDKInitServices(request, client)
+	// Service ambiguity must be resolved before operation discovery or workspace planning.
 	if err != nil {
 		return sdkInitLifecycle{}, err
 	}
@@ -83,23 +92,106 @@ func prepareSDKInitLifecycle(cmd *cobra.Command, request scaffoldRequest, resolv
 	if err != nil {
 		return sdkInitLifecycle{}, err
 	}
-	resolvedRequest, err = completeSDKInitVersionExtension(client, resolvedRequest, resolver, bucketResolver)
+	resolvedRequest, err = completeSDKInitCreateBucket(resolvedRequest, bucketResolver)
+	// Missing bucket access is knowable before workspace activation and must not leave a partial onboarding receipt.
+	if err != nil {
+		return sdkInitLifecycle{}, err
+	}
+	resolvedRequest, err = completeSDKInitVersionExtension(client, resolvedRequest, bucketResolver)
 	// Applied immutable versions must receive an explicit new identity before workspace or app planning can begin.
 	if err != nil {
 		return sdkInitLifecycle{}, err
 	}
 	draft, err := planSDKInitWorkspace(client, resolvedServices)
+	// A workspace plan rejection cannot fall through to confirmation or app planning.
 	if err != nil {
 		return sdkInitLifecycle{}, err
 	}
+	// The reviewed summary must render successfully before the confirmation can authorize either receipt.
 	if err := printSDKInitWorkspacePlan(cmd, draft); err != nil {
 		return sdkInitLifecycle{}, err
 	}
 	return sdkInitLifecycle{client: client, request: resolvedRequest, services: resolvedServices, draft: draft}, nil
 }
 
+// hydrateSDKInitExtendServiceReferences adds existing exact service pins needed to validate operation-only extension flags.
+func hydrateSDKInitExtendServiceReferences(request scaffoldRequest) (scaffoldRequest, error) {
+	// Creation already carries every service through --service, while version-only extension has no operation scope to hydrate.
+	if !request.extend || (len(request.operations) == 0 && len(request.selectAll) == 0) {
+		return request, nil
+	}
+	data, err := os.ReadFile(request.path)
+	// The accepted config is the only authority for an omitted --service version during extension.
+	if err != nil {
+		return scaffoldRequest{}, err
+	}
+	current := &configfile.AppConfig{}
+	// Kind validation prevents an operation-only extension from borrowing service pins from a different resource type.
+	if err := decodeScaffoldDraft(data, request.path, request.kind, current); err != nil {
+		return scaffoldRequest{}, err
+	}
+	explicit := make(map[string]struct{}, len(request.services))
+	for _, service := range request.services {
+		explicit[service.name] = struct{}{}
+	}
+	referenced := make([]string, 0, len(request.operations)+len(request.selectAll))
+	seen := make(map[string]struct{}, cap(referenced))
+	for _, operation := range request.operations {
+		// Preserve first-reference order so Registry resolution and user-facing diagnostics remain deterministic.
+		if _, exists := seen[operation.service]; !exists {
+			seen[operation.service] = struct{}{}
+			referenced = append(referenced, operation.service)
+		}
+	}
+	for _, serviceName := range request.selectAll {
+		// A service referenced by both selection forms needs only one immutable pin for the later mutual-exclusion check.
+		if _, exists := seen[serviceName]; !exists {
+			seen[serviceName] = struct{}{}
+			referenced = append(referenced, serviceName)
+		}
+	}
+	for _, serviceName := range referenced {
+		// Explicit --service input remains authoritative and will be canonicalized by normal workspace-first resolution.
+		if _, exists := explicit[serviceName]; exists {
+			continue
+		}
+		service, exists := current.Services[serviceName]
+		// Unknown aliases remain untouched so the existing structural merge emits its precise unknown-service error without a network mutation.
+		if !exists {
+			continue
+		}
+		request.services = append(request.services, scaffoldService{name: serviceName, version: service.Version})
+		explicit[serviceName] = struct{}{}
+	}
+	return request, nil
+}
+
+// completeSDKInitCreateBucket resolves a new app's implicit bucket before any workspace service is applied.
+func completeSDKInitCreateBucket(request scaffoldRequest, resolver scaffoldBucketResolver) (scaffoldRequest, error) {
+	// Extensions derive their existing bucket from the authored file and resolve only when that file truly lacks one.
+	if request.extend {
+		return request, nil
+	}
+	// An explicit bucket remains authoritative and needs no discovery round-trip.
+	if request.bucketSet || strings.TrimSpace(request.bucket) != "" {
+		return request, nil
+	}
+	// Service-less local skeletons retain their offline-editable behavior without requiring Engine bucket access.
+	if len(request.services) == 0 {
+		return request, nil
+	}
+	bucket, err := resolver()
+	// Authentication, visibility, and empty-bucket failures must stop before workspace planning or confirmation.
+	if err != nil {
+		return scaffoldRequest{}, err
+	}
+	request.bucket = bucket
+	request.bucketSet = true
+	return request, nil
+}
+
 // completeSDKInitVersionExtension keeps one config file while assigning new immutable identity whenever its authored scope changes.
-func completeSDKInitVersionExtension(client *api.Client, request scaffoldRequest, resolver scaffoldRequirementsResolver, bucketResolver scaffoldBucketResolver) (scaffoldRequest, error) {
+func completeSDKInitVersionExtension(client *api.Client, request scaffoldRequest, bucketResolver scaffoldBucketResolver) (scaffoldRequest, error) {
 	// New files and ordinary creation require no inferred lifecycle decision.
 	if !request.extend {
 		return request, nil
@@ -114,8 +206,8 @@ func completeSDKInitVersionExtension(client *api.Client, request scaffoldRequest
 	if err := decodeScaffoldDraft(data, request.path, request.kind, current); err != nil {
 		return scaffoldRequest{}, err
 	}
-	_, changed, _, err := extendAppScaffoldData(request, data, resolver, bucketResolver)
-	// Local conflicts and enrichment failures must stop before any version prompt or write.
+	_, changed, _, err := extendAppScaffoldData(request, data, deferScaffoldRequirements, bucketResolver)
+	// Structural conflicts must stop before workspace apply, while runtime enrichment waits until newly enabled contracts can be refreshed.
 	if err != nil {
 		return scaffoldRequest{}, err
 	}
@@ -130,6 +222,7 @@ func completeSDKInitVersionExtension(client *api.Client, request scaffoldRequest
 	// An explicit different version overrides automatic successor inference after checking for a visible collision.
 	if request.versionSet {
 		exists, existsErr := sdkInitAppVersionExists(client, request.kind, current.Name, request.version)
+		// Lookup failures cannot be treated as proof that an explicitly requested version is free.
 		if existsErr != nil {
 			return scaffoldRequest{}, existsErr
 		}
@@ -147,6 +240,7 @@ func completeSDKInitVersionExtension(client *api.Client, request scaffoldRequest
 	request.version = version
 	request.versionSet = true
 	successorExists, successorErr := sdkInitAppVersionExists(client, request.kind, current.Name, version)
+	// Lookup failures cannot authorize publication of an automatically selected immutable identity.
 	if successorErr != nil {
 		return scaffoldRequest{}, successorErr
 	}
@@ -262,6 +356,18 @@ func resolveSDKInitServices(request scaffoldRequest, client *api.Client) (scaffo
 func completeSDKInitOperationSelections(cmd *cobra.Command, client *api.Client, request scaffoldRequest, services []sdkInitResolvedService) (scaffoldRequest, error) {
 	input := sdkInput
 	for _, service := range services {
+		explicitOperations := sdkInitExplicitOperations(request, service.target.slug)
+		usesSelectAll := containsString(request.selectAll, service.target.slug)
+		// Mutually exclusive selection encodings must fail before a missing workspace service is activated.
+		if len(explicitOperations) > 0 && usesSelectAll {
+			return scaffoldRequest{}, fmt.Errorf("service %q cannot combine --operation with --select-all", service.target.slug)
+		}
+		// Explicit operation IDs are verified against the pinned Registry version before workspace planning can mutate membership.
+		if len(explicitOperations) > 0 {
+			if err := validateSDKInitExplicitOperations(client, service, explicitOperations); err != nil {
+				return scaffoldRequest{}, err
+			}
+		}
 		// Explicit --operation and --select-all selections remain authoritative and bypass discovery prompts.
 		if sdkInitServiceHasOperationSelection(request, service.target.slug) {
 			continue
@@ -284,6 +390,39 @@ func completeSDKInitOperationSelections(cmd *cobra.Command, client *api.Client, 
 		}
 	}
 	return request, nil
+}
+
+// sdkInitExplicitOperations returns only operation flags belonging to one resolved canonical service key.
+func sdkInitExplicitOperations(request scaffoldRequest, serviceName string) []string {
+	operations := make([]string, 0)
+	for _, operation := range request.operations {
+		// Other services are validated in their own immutable Registry lookup.
+		if operation.service != serviceName {
+			continue
+		}
+		operations = append(operations, operation.operation)
+	}
+	return operations
+}
+
+// validateSDKInitExplicitOperations proves every requested operation exists on the selected immutable service version.
+func validateSDKInitExplicitOperations(client *api.Client, service sdkInitResolvedService, requested []string) error {
+	endpoints, err := client.ServiceOperations(service.target.serviceID, service.version)
+	// The complete immutable surface avoids treating valid operations beyond a search page as missing.
+	if err != nil {
+		return fmt.Errorf("validate operations for %s@%s: %w", service.target.slug, service.version, err)
+	}
+	available := make(map[string]struct{}, len(endpoints))
+	for _, endpoint := range endpoints {
+		available[endpoint.Name] = struct{}{}
+	}
+	for _, operation := range requested {
+		// A typo must name the exact missing operation and version before any workspace receipt is applied.
+		if _, exists := available[operation]; !exists {
+			return fmt.Errorf("operation %s is not available for service %s version %s; run 'fused-cli workspace service operations %s --version %s' to search available operations", operation, service.target.slug, service.version, service.target.slug, service.version)
+		}
+	}
+	return nil
 }
 
 // sdkInitServiceHasOperationSelection reports whether one resolved service already has an explicit capability boundary.
@@ -387,21 +526,30 @@ func planSDKInitWorkspace(client *api.Client, services []sdkInitResolvedService)
 		return nil, nil
 	}
 	path, config, err := loadWorkspaceConfigForSync("")
+	// Invalid local desired state cannot safely be combined with remote activation intent.
 	if err != nil {
 		return nil, err
 	}
+	// Every additive init rebases onto live Engine membership while retaining all authored local-only intent.
+	if err := mergeWorkspaceStateForAdditiveInit(client, config); err != nil {
+		return nil, fmt.Errorf("load current workspace before additive init: %w", err)
+	}
+	// Requested additions merge through the same identity conflict checks as the standalone workspace command.
 	if err := mergeWorkspaceServiceAdditions(config, additions); err != nil {
 		return nil, err
 	}
 	data, err := yaml.Marshal(config)
+	// The plan must consume the exact canonical bytes that will later be published locally.
 	if err != nil {
 		return nil, err
 	}
 	parsed, err := configfile.Parse(data, path)
+	// Shared semantic validation runs before the first workspace network mutation.
 	if err != nil {
 		return nil, err
 	}
 	plan, err := planOneConfig(client, parsed, client.BaseURL, "")
+	// A rejected workspace plan leaves both local and Engine desired state unchanged.
 	if err != nil {
 		return nil, err
 	}

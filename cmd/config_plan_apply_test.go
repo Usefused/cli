@@ -881,6 +881,27 @@ func TestWorkspaceHasCallsEngine(t *testing.T) {
 	}
 }
 
+// writeWorkspaceServiceLookupResponse returns a bounded live membership snapshot for force-removal tests.
+func writeWorkspaceServiceLookupResponse(t *testing.T, w http.ResponseWriter, serviceID, serviceName string, versions ...string) {
+	t.Helper()
+	// Tests using this helper must describe at least one active version because the CLI is proving a removal target.
+	if len(versions) == 0 {
+		t.Fatal("workspace service lookup fixture requires a version")
+	}
+	enabled := make([]map[string]string, 0, len(versions))
+	for _, version := range versions {
+		enabled = append(enabled, map[string]string{"version": version, "service_version_id": "version-" + version})
+	}
+	payload := map[string]any{"data": map[string]any{"workspaceServices": []map[string]any{{
+		"service_id": serviceID, "service_name": serviceName, "version": versions[0], "enabled_versions": enabled,
+	}}}}
+	// Encoding failures make the HTTP fixture unusable and should fail at their source.
+	if err := json.NewEncoder(w).Encode(payload); err != nil {
+		t.Fatalf("encode workspace service lookup: %v", err)
+	}
+}
+
+// TestWorkspaceVersionRemoveForceUpdatesPlanActionBeforeApply verifies one exact removal decision precedes apply.
 func TestWorkspaceVersionRemoveForceUpdatesPlanActionBeforeApply(t *testing.T) {
 	dir := t.TempDir()
 	path := writeSprintConfig(t, dir, "workspace.yaml", `
@@ -903,8 +924,8 @@ services:
 				"source_hash":"hash",
 				"base_generation":1,
 				"summary":{"actions":[{
-					"id":"disable_service_version:00000000-0000-0000-0000-000000000999:2026-07-01",
-					"type":"disable_service_version",
+					"id":"update_policy:00000000-0000-0000-0000-000000000999",
+					"type":"update_policy",
 					"service_id":"00000000-0000-0000-0000-000000000999",
 					"version":"2026-07-01",
 					"requires_decision":true
@@ -946,6 +967,295 @@ services:
 	}
 }
 
+// TestWorkspaceFinalVersionForceDisclosesOwnedRegistryArchive verifies both
+// final-version blockers are approved and their Registry consequence is shown unattended.
+func TestWorkspaceFinalVersionForceDisclosesOwnedRegistryArchive(t *testing.T) {
+	dir := t.TempDir()
+	path := writeSprintConfig(t, dir, ".fused/workspace.yaml", `
+apiVersion: fused/v1
+kind: workspace
+services:
+  gmail:
+    service_id: "00000000-0000-4000-8000-000000000001"
+    versions: [{version: "v1"}]
+`)
+	var paths []string
+	var plannedTargets []api.WorkspaceRemovalTarget
+	var patchedActions []map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.Method+" "+r.URL.Path)
+		switch r.URL.Path {
+		case "/engine/graphql":
+			// The final-version expansion is safe only after the CLI proves there is no live sibling.
+			writeWorkspaceServiceLookupResponse(t, w, "00000000-0000-4000-8000-000000000001", "gmail", "v1")
+		case "/workspace/config/plan":
+			var body struct {
+				RemoveTargets []api.WorkspaceRemovalTarget `json:"remove_targets"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode plan body: %v", err)
+			}
+			plannedTargets = body.RemoveTargets
+			_, _ = w.Write([]byte(`{"plan_id":"plan-workspace","config_key":"workspace","source_hash":"hash","base_generation":0,"summary":{"actions":[{"id":"disable_service_version:00000000-0000-4000-8000-000000000001:v1","type":"disable_service_version","service_id":"00000000-0000-4000-8000-000000000001","version":"v1","explicit_removal":true,"requires_decision":true},{"id":"remove_service:00000000-0000-4000-8000-000000000001","type":"remove_service","service_id":"00000000-0000-4000-8000-000000000001","will_archive":true,"requires_decision":true}]}}`))
+		case "/config/plans/plan-workspace/actions":
+			// One replacement must carry every approved blocker so apply never observes a partial review.
+			var body struct {
+				Actions []map[string]any `json:"actions"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode actions body: %v", err)
+			}
+			patchedActions = body.Actions
+			_, _ = w.Write([]byte(`{"status":"updated","plan_id":"plan-workspace","revision":2}`))
+		case "/workspace/config/apply":
+			_, _ = w.Write([]byte(`{"status":"applied","plan_id":"plan-workspace"}`))
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	oldNoInput := NoInput
+	// The unattended flag must not suppress disclosure of the Registry-side consequence.
+	t.Cleanup(func() { NoInput = oldNoInput })
+	out := runCommandInDirOutput(t, dir, server.URL, []string{"workspace", "service", "version", "delete", "gmail", "v1", "--force", "--no-input"})
+	// The complete governed sequence includes one read, one plan, one full decision replacement, and one apply.
+	if got := strings.Join(paths, ","); got != "POST /engine/graphql,POST /workspace/config/plan,PATCH /config/plans/plan-workspace/actions,POST /workspace/config/apply" {
+		t.Fatalf("unexpected final-version removal sequence %s", got)
+	}
+	// The explicit request remains exact even though the reviewed plan includes its equivalent whole-service consequence.
+	if len(plannedTargets) != 1 || plannedTargets[0].ServiceID != "00000000-0000-4000-8000-000000000001" || plannedTargets[0].Version != "v1" {
+		t.Fatalf("unexpected planned targets %#v", plannedTargets)
+	}
+	// Both blockers must be decided in one PATCH so no partially-authorized plan exists remotely.
+	if len(patchedActions) != 2 || patchedActions[0]["decision"] != "force_remove" || patchedActions[1]["decision"] != "force_remove" {
+		t.Fatalf("expected both final-removal blockers to be approved, got %#v", patchedActions)
+	}
+	// The exact version effect and owned-service Registry archive must both precede the completion message.
+	versionEffect := "Plan effect: disable version v1 of service gmail in this workspace."
+	archiveEffect := "Plan effect: archive owned service gmail from the Registry and remove it from this workspace."
+	completion := "Deleted version v1 from service gmail"
+	if !strings.Contains(out, versionEffect) || !strings.Contains(out, archiveEffect) || strings.Index(out, archiveEffect) > strings.Index(out, completion) {
+		t.Fatalf("force removal output did not disclose archival before completion: %q", out)
+	}
+	after, err := os.ReadFile(path)
+	// The successful remote apply must leave the corresponding local desired state readable.
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Removing the final version must leave a valid empty services map on disk.
+	if bytes.Contains(after, []byte("gmail:")) {
+		t.Fatalf("owned final-version removal left gmail in config:\n%s", after)
+	}
+}
+
+// TestWorkspaceFinalVersionForceRejectsLiveSibling fails before editing when local state would hide a live version.
+func TestWorkspaceFinalVersionForceRejectsLiveSibling(t *testing.T) {
+	dir := t.TempDir()
+	path := writeSprintConfig(t, dir, ".fused/workspace.yaml", `
+apiVersion: fused/v1
+kind: workspace
+services:
+  gmail:
+    service_id: "00000000-0000-4000-8000-000000000001"
+    versions: [{version: "v1"}]
+`)
+	before, err := os.ReadFile(path)
+	// Exact rollback comparison needs the accepted bytes, not a reparsed approximation.
+	if err != nil {
+		t.Fatal(err)
+	}
+	var paths []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.Method+" "+r.URL.Path)
+		// The live snapshot deliberately contains a sibling absent from the stale local document.
+		if r.URL.Path == "/engine/graphql" {
+			writeWorkspaceServiceLookupResponse(t, w, "00000000-0000-4000-8000-000000000001", "gmail", "v1", "v2")
+			return
+		}
+		t.Fatalf("stale-sibling rejection should not reach %s", r.URL.Path)
+	}))
+	defer server.Close()
+
+	errText := runCommandInDirExpectError(t, dir, server.URL, []string{"workspace", "service", "version", "delete", "gmail", "v1", "--force"})
+	// The diagnostic should tell the operator to reconcile stale local state.
+	if !strings.Contains(errText, "live versions outside requested version v1") {
+		t.Fatalf("unexpected sibling error %q", errText)
+	}
+	// No plan or mutation request may follow a failed live-scope proof.
+	if got := strings.Join(paths, ","); got != "POST /engine/graphql" {
+		t.Fatalf("sibling rejection performed remote mutations: %s", got)
+	}
+	after, err := os.ReadFile(path)
+	// A pre-edit rejection must preserve the original local document byte-for-byte.
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Stale remote state cannot silently rewrite local intent.
+	if !bytes.Equal(after, before) {
+		t.Fatalf("sibling rejection changed local config:\n%s", after)
+	}
+}
+
+// TestWorkspaceForceRemovalRejectsUnrelatedPlanWithoutPatch prevents partial approval of a broadened plan.
+func TestWorkspaceForceRemovalRejectsUnrelatedPlanWithoutPatch(t *testing.T) {
+	dir := t.TempDir()
+	path := writeSprintConfig(t, dir, "workspace.yaml", `
+apiVersion: fused/v1
+kind: workspace
+services:
+  okta:
+    service_id: "00000000-0000-4000-8000-000000000001"
+    versions: [{version: "v1"}, {version: "v2"}]
+`)
+	before, err := os.ReadFile(path)
+	// Exact rollback comparison needs the accepted bytes, not a reparsed approximation.
+	if err != nil {
+		t.Fatal(err)
+	}
+	var paths []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.Method+" "+r.URL.Path)
+		// A malformed or stale plan broadens the exact request with a sibling removal.
+		if r.URL.Path == "/workspace/config/plan" {
+			_, _ = w.Write([]byte(`{"plan_id":"plan-workspace","source_hash":"hash","summary":{"actions":[{"id":"disable_service_version:00000000-0000-4000-8000-000000000001:v1","type":"disable_service_version","service_id":"00000000-0000-4000-8000-000000000001","version":"v1","requires_decision":true},{"id":"disable_service_version:00000000-0000-4000-8000-000000000001:v2","type":"disable_service_version","service_id":"00000000-0000-4000-8000-000000000001","version":"v2","requires_decision":true}]}}`))
+			return
+		}
+		t.Fatalf("broadened plan must be rejected before %s", r.URL.Path)
+	}))
+	defer server.Close()
+
+	errText := runCommandInDirExpectError(t, dir, server.URL, []string{"workspace", "service", "version", "delete", "okta", "v1", "-f", path, "--force"})
+	// Broadened receipt scope must produce an actionable review error.
+	if !strings.Contains(errText, "unrelated removal") {
+		t.Fatalf("unexpected broadened-plan error %q", errText)
+	}
+	// Full validation must finish before the CLI sends any decision replacement or apply.
+	if got := strings.Join(paths, ","); got != "POST /workspace/config/plan" {
+		t.Fatalf("broadened plan received a partial decision or apply: %s", got)
+	}
+	after, err := os.ReadFile(path)
+	// Authoritative pre-apply rejection permits restoring the accepted bytes.
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Rejected expanded scope must not survive as speculative local state.
+	if !bytes.Equal(after, before) {
+		t.Fatalf("broadened-plan rejection left speculative config:\n%s", after)
+	}
+}
+
+// TestWorkspaceForceRemovalRestoresConfigWhenPlanOmitsTarget verifies old Engines fail closed without speculative local drift.
+func TestWorkspaceForceRemovalRestoresConfigWhenPlanOmitsTarget(t *testing.T) {
+	dir := t.TempDir()
+	path := writeSprintConfig(t, dir, ".fused/workspace.yaml", `
+apiVersion: fused/v1
+kind: workspace
+services:
+  gmail:
+    service_id: "00000000-0000-4000-8000-000000000001"
+    versions: [{version: "v1"}]
+`)
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Final-version scope verification precedes creation of the immutable plan.
+		if r.URL.Path == "/engine/graphql" {
+			writeWorkspaceServiceLookupResponse(t, w, "00000000-0000-4000-8000-000000000001", "gmail", "v1")
+			return
+		}
+		// An older Engine ignores remove_targets and therefore returns no exact action.
+		_, _ = w.Write([]byte(`{"plan_id":"plan-workspace","config_key":"workspace","source_hash":"hash","summary":{"actions":[]}}`))
+	}))
+	defer server.Close()
+
+	errText := runCommandInDirExpectError(t, dir, server.URL, []string{"workspace", "service", "version", "delete", "gmail", "v1", "--force"})
+	if !strings.Contains(errText, "upgrade the Engine") {
+		t.Fatalf("unexpected old-Engine error %q", errText)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(after, before) {
+		t.Fatalf("old-Engine rejection left speculative config:\n%s", after)
+	}
+}
+
+// TestWorkspaceForceRemovalRejectsMissingPlanHash verifies removal never infers receipt identity from local state.
+func TestWorkspaceForceRemovalRejectsMissingPlanHash(t *testing.T) {
+	dir := t.TempDir()
+	path := writeSprintConfig(t, dir, ".fused/workspace.yaml", `
+apiVersion: fused/v1
+kind: workspace
+services:
+  gmail:
+    service_id: "00000000-0000-4000-8000-000000000001"
+    versions: [{version: "v1"}]
+`)
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Final-version scope verification precedes creation of the immutable plan.
+		if r.URL.Path == "/engine/graphql" {
+			writeWorkspaceServiceLookupResponse(t, w, "00000000-0000-4000-8000-000000000001", "gmail", "v1")
+			return
+		}
+		_, _ = w.Write([]byte(`{"plan_id":"plan-workspace","config_key":"workspace","summary":{"actions":[{"id":"disable_service_version:00000000-0000-4000-8000-000000000001:v1","type":"disable_service_version","service_id":"00000000-0000-4000-8000-000000000001","version":"v1","explicit_removal":true}]}}`))
+	}))
+	defer server.Close()
+
+	errText := runCommandInDirExpectError(t, dir, server.URL, []string{"workspace", "service", "version", "delete", "gmail", "v1", "--force"})
+	if !strings.Contains(errText, "without source_hash") {
+		t.Fatalf("unexpected missing-hash error %q", errText)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(after, before) {
+		t.Fatalf("missing-hash rejection left speculative config:\n%s", after)
+	}
+}
+
+// TestWorkspaceForceRemovalRestoresConfigOnAuthoritativeApplyRejection verifies negative commit proof permits rollback.
+func TestWorkspaceForceRemovalRestoresConfigOnAuthoritativeApplyRejection(t *testing.T) {
+	dir := t.TempDir()
+	path := writeSprintConfig(t, dir, ".fused/workspace.yaml", `
+apiVersion: fused/v1
+kind: workspace
+services:
+  gmail:
+    service_id: "00000000-0000-4000-8000-000000000001"
+    versions: [{version: "v1"}]
+`)
+	before, _ := os.ReadFile(path)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Final-version scope verification precedes creation of the immutable plan.
+		if r.URL.Path == "/engine/graphql" {
+			writeWorkspaceServiceLookupResponse(t, w, "00000000-0000-4000-8000-000000000001", "gmail", "v1")
+			return
+		}
+		if r.URL.Path == "/workspace/config/plan" {
+			_, _ = w.Write([]byte(`{"plan_id":"plan-workspace","source_hash":"hash","summary":{"actions":[{"id":"disable_service_version:00000000-0000-4000-8000-000000000001:v1","type":"disable_service_version","service_id":"00000000-0000-4000-8000-000000000001","version":"v1","explicit_removal":true}]}}`))
+			return
+		}
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"error":{"code":"plan_stale","message":"plan stale","phase":"apply_admission","commit_state":"not_committed"}}`))
+	}))
+	defer server.Close()
+
+	runCommandInDirExpectError(t, dir, server.URL, []string{"workspace", "service", "version", "delete", "gmail", "v1", "--force"})
+	after, _ := os.ReadFile(path)
+	if !bytes.Equal(after, before) {
+		t.Fatalf("authoritative apply rejection left speculative config:\n%s", after)
+	}
+}
+
 func TestWorkspaceAddServiceWritesSlugOnlyYaml(t *testing.T) {
 	resetWorkspaceServiceAddState(t)
 	dir := t.TempDir()
@@ -976,6 +1286,7 @@ services: {}
 	}
 }
 
+// TestSDKInteractiveAddOperationUsesWorkspaceAndVersion keeps complete operation discovery pinned to the configured service version.
 func TestSDKInteractiveAddOperationUsesWorkspaceAndVersion(t *testing.T) {
 	dir := t.TempDir()
 	path := writeSprintConfig(t, dir, "fused.yaml", `
@@ -1007,7 +1318,7 @@ services:
 				t.Fatalf("unexpected serviceId variable %#v", body.Variables)
 			}
 			sawVersion, _ = body.Variables["version"].(string)
-			_, _ = w.Write([]byte(`{"data":{"searchEndpoints":[{"id":"ep1","name":"getUser","method":"GET","path":"/users/{id}","description":"","service_id":"00000000-0000-0000-0000-000000000001"},{"id":"ep2","name":"listGroups","method":"GET","path":"/groups","description":"","service_id":"00000000-0000-0000-0000-000000000001"}]}}`))
+			_, _ = w.Write([]byte(`{"data":{"serviceOperations":[{"id":"ep1","name":"getUser","method":"GET","path":"/users/{id}","description":"","service_id":"00000000-0000-0000-0000-000000000001"},{"id":"ep2","name":"listGroups","method":"GET","path":"/groups","description":"","service_id":"00000000-0000-0000-0000-000000000001"}]}}`))
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
@@ -1025,7 +1336,7 @@ services:
 
 	runCommandInDir(t, dir, server.URL, []string{"sdk", "operation", "add", "", "--interactive", "-f", path})
 	if sawVersion != "2026-07-01" {
-		t.Fatalf("expected versioned endpoint search, got %q", sawVersion)
+		t.Fatalf("expected versioned operation lookup, got %q", sawVersion)
 	}
 	after, err := os.ReadFile(path)
 	if err != nil {
@@ -1036,6 +1347,7 @@ services:
 	}
 }
 
+// TestSDKInteractiveAddOperationPromptsForService proves service choice precedes complete operation discovery for multi-service configs.
 func TestSDKInteractiveAddOperationPromptsForService(t *testing.T) {
 	dir := t.TempDir()
 	path := writeSprintConfig(t, dir, "fused.yaml", `
@@ -1059,7 +1371,7 @@ services:
 				t.Fatalf("unexpected engine graphql query")
 			}
 		case "/graphql":
-			_, _ = w.Write([]byte(`{"data":{"searchEndpoints":[{"id":"ep1","name":"getUser","method":"GET","path":"/users/{id}","description":"","service_id":"00000000-0000-0000-0000-000000000001"},{"id":"ep2","name":"listGroups","method":"GET","path":"/groups","description":"","service_id":"00000000-0000-0000-0000-000000000001"}]}}`))
+			_, _ = w.Write([]byte(`{"data":{"serviceOperations":[{"id":"ep1","name":"getUser","method":"GET","path":"/users/{id}","description":"","service_id":"00000000-0000-0000-0000-000000000001"},{"id":"ep2","name":"listGroups","method":"GET","path":"/groups","description":"","service_id":"00000000-0000-0000-0000-000000000001"}]}}`))
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}

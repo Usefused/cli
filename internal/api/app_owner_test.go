@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -60,6 +61,53 @@ func TestApplySDKConfigDecodesOneTimeExecutionToken(t *testing.T) {
 	requireAppTestNoError(t, err)
 	if response.ExecutionToken != "shown-once" {
 		t.Fatalf("execution token = %q, want shown-once", response.ExecutionToken)
+	}
+}
+
+// TestSDKConfigTransportErrorsUseAppLabels proves the shared SDK/API route
+// never leaks one public delivery mode into the other's nested error context.
+func TestSDKConfigTransportErrorsUseAppLabels(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// The same rejection body isolates the client-owned context from Engine-owned diagnostics.
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"error":{"code":"app_version_immutable","message":"Version is immutable"}}`))
+	}))
+	defer server.Close()
+	client := NewClient(server.URL, "fsk_test")
+	_, planErr := client.PlanSDKConfig(DesiredConfigPlanIntent{SourceHash: "hash", ConfigKey: "sdk:test:1", Config: json.RawMessage(`{"kind":"sdk"}`)})
+	requireAppConfigTransportError(t, planErr, "plan")
+	_, applyErr := client.ApplySDKConfig("plan-1", "hash")
+	requireAppConfigTransportError(t, applyErr, "apply")
+}
+
+// requireAppConfigTransportError verifies one shared-route failure keeps the
+// action and HTTP context while omitting the SDK-only adapter label.
+func requireAppConfigTransportError(t *testing.T, err error, action string) {
+	t.Helper()
+	// A missing rejection would make the wording assertion meaningless.
+	if err == nil {
+		t.Fatalf("%s unexpectedly succeeded", action)
+	}
+	message := err.Error()
+	// The outer transport context is neutral while the Engine diagnostic remains intact.
+	if !strings.Contains(message, action+" app config failed (HTTP 409)") || !strings.Contains(message, "Version is immutable") || strings.Contains(strings.ToLower(message), action+" sdk config failed") {
+		t.Fatalf("%s error=%q", action, message)
+	}
+}
+
+// TestApplySDKConfigInvalidResponseUsesAppLabel keeps malformed success
+// diagnostics neutral because the shared endpoint may have created an API.
+func TestApplySDKConfigInvalidResponseUsesAppLabel(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// A truncated document crosses the mutation boundary but cannot identify the public delivery mode.
+		_, _ = w.Write([]byte(`{"status":`))
+	}))
+	defer server.Close()
+	_, err := NewClient(server.URL, "fsk_test").ApplySDKConfig("plan-1", "hash")
+	// Decode failures must retain the stable code while avoiding SDK-only prose.
+	if err == nil || !strings.Contains(err.Error(), "invalid app apply response") || strings.Contains(err.Error(), "invalid SDK apply response") {
+		t.Fatalf("invalid response error=%v", err)
 	}
 }
 

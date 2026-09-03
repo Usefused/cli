@@ -11,8 +11,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// unifiedInitGenerationSnapshotTarget binds one configured service tag to its exact active workspace UUIDs.
-type unifiedInitGenerationSnapshotTarget struct {
+// unifiedInitSnapshotTarget binds one configured service tag to its exact active workspace UUIDs.
+type unifiedInitSnapshotTarget struct {
 	serviceKey       string
 	version          string
 	serviceID        string
@@ -35,7 +35,7 @@ func unifiedInitCanRefreshGenerationSnapshot(mode unifiedInitMode, parsed *confi
 
 // refreshUnifiedInitGenerationSnapshots refreshes every exact selected version once and reports each completed mutation.
 func refreshUnifiedInitGenerationSnapshots(cmd *cobra.Command, client *api.Client, parsed *configfile.ParsedConfig) ([]string, error) {
-	targets, err := resolveUnifiedInitGenerationSnapshotTargets(client, parsed)
+	targets, err := resolveUnifiedInitSnapshotTargets(client, parsed)
 	// Identity resolution must be complete before the first refresh so ambiguity cannot cause a partial mutation.
 	if err != nil {
 		return nil, err
@@ -59,29 +59,75 @@ func refreshUnifiedInitGenerationSnapshots(cmd *cobra.Command, client *api.Clien
 	return refreshed, nil
 }
 
-// resolveUnifiedInitGenerationSnapshotTargets maps config keys and tags onto exact active Engine workspace identities.
-func resolveUnifiedInitGenerationSnapshotTargets(client *api.Client, parsed *configfile.ParsedConfig) ([]unifiedInitGenerationSnapshotTarget, error) {
-	// Repair is valid only for a parsed SDK candidate whose complete service selection was already semantically checked.
-	if parsed == nil || parsed.SDK == nil {
-		return nil, errors.New("generated SDK snapshot refresh requires a parsed SDK config")
+// refreshUnifiedInitRuntimeSnapshots repairs only the selected exact versions before retrying scaffold enrichment once.
+func refreshUnifiedInitRuntimeSnapshots(cmd *cobra.Command, client *api.Client, parsed *configfile.ParsedConfig) ([]string, error) {
+	targets, err := resolveUnifiedInitSnapshotTargets(client, parsed)
+	// Exact workspace identity resolution must finish before the first repair mutation.
+	if err != nil {
+		return nil, err
 	}
-	serviceKeys := make([]string, 0, len(parsed.SDK.Services))
-	for serviceKey := range parsed.SDK.Services {
+	refreshed := make([]string, 0, len(targets))
+	for _, target := range targets {
+		label := target.serviceKey + "@" + target.version
+		fmt.Fprintf(cmd.OutOrStdout(), "Refreshing runtime contract for %s...\n", label)
+		result, err := client.RefreshServiceContract(target.serviceID, target.serviceVersionID)
+		// A failed exact refresh stops the retry and reports every earlier completed repair.
+		if err != nil {
+			return refreshed, fmt.Errorf("refresh runtime contract for %s: %w", label, err)
+		}
+		// A mismatched returned tag cannot authorize enrichment against a different immutable version.
+		if result.Version != target.version {
+			return refreshed, fmt.Errorf("refresh runtime contract for %s returned version %q", label, result.Version)
+		}
+		refreshed = append(refreshed, label)
+		fmt.Fprintf(cmd.OutOrStdout(), "Refreshed runtime contract for %s.\n", label)
+	}
+	return refreshed, nil
+}
+
+// unifiedInitCanRefreshRuntimeSnapshots admits only Engine scaffold dependency failures into the exact one-retry repair path.
+func unifiedInitCanRefreshRuntimeSnapshots(cause error) bool {
+	var apiErr *api.APIError
+	// Local validation and transport failures provide no evidence that a selected Engine snapshot needs repair.
+	if !errors.As(cause, &apiErr) {
+		return false
+	}
+	// Only the stable scaffold dependency code identifies the cold runtime-contract cache repaired by this path.
+	return apiErr.Code == "graphql_dependency_failed"
+}
+
+// resolveUnifiedInitSnapshotTargets maps config keys and tags onto exact active Engine workspace identities.
+func resolveUnifiedInitSnapshotTargets(client *api.Client, parsed *configfile.ParsedConfig) ([]unifiedInitSnapshotTarget, error) {
+	// Repair is valid only for a parsed app candidate whose complete service selection was already semantically checked.
+	if parsed == nil {
+		return nil, errors.New("app runtime snapshot refresh requires a parsed SDK or MCP config")
+	}
+	app := parsed.SDK
+	// MCP shares the same service-selection contract but is projected into a distinct parsed field.
+	if app == nil {
+		app = parsed.MCP
+	}
+	// Workspace configs and malformed parser state cannot authorize a runtime snapshot mutation.
+	if app == nil {
+		return nil, errors.New("app runtime snapshot refresh requires a parsed SDK or MCP config")
+	}
+	serviceKeys := make([]string, 0, len(app.Services))
+	for serviceKey := range app.Services {
 		serviceKeys = append(serviceKeys, serviceKey)
 	}
 	sort.Strings(serviceKeys)
 	// A pin failure without selected services is inconsistent and must not broaden the mutation to the whole workspace.
 	if len(serviceKeys) == 0 {
-		return nil, errors.New("generated SDK snapshot refresh has no selected services")
+		return nil, errors.New("app runtime snapshot refresh has no selected services")
 	}
 	workspaceServices, err := client.ListWorkspaceServices()
 	// A failed workspace read provides no safe UUID authority for the refresh mutation.
 	if err != nil {
-		return nil, fmt.Errorf("list enabled workspace services for SDK generation snapshot refresh: %w", err)
+		return nil, fmt.Errorf("list enabled workspace services for app runtime snapshot refresh: %w", err)
 	}
-	targets := make([]unifiedInitGenerationSnapshotTarget, 0, len(serviceKeys))
+	targets := make([]unifiedInitSnapshotTarget, 0, len(serviceKeys))
 	for _, serviceKey := range serviceKeys {
-		configured := parsed.SDK.Services[serviceKey]
+		configured := app.Services[serviceKey]
 		matches := matchingUnifiedInitWorkspaceServices(workspaceServices, serviceKey)
 		// Exactly one workspace service must own the selected key before any UUID is used for mutation.
 		if len(matches) != 1 {
@@ -92,7 +138,7 @@ func resolveUnifiedInitGenerationSnapshotTargets(client *api.Client, parsed *con
 		if len(versions) != 1 {
 			return nil, fmt.Errorf("selected service %s@%s resolves to %d exact enabled workspace versions; enable that exact version and retry", serviceKey, configured.Version, len(versions))
 		}
-		targets = append(targets, unifiedInitGenerationSnapshotTarget{
+		targets = append(targets, unifiedInitSnapshotTarget{
 			serviceKey: serviceKey, version: configured.Version,
 			serviceID: matches[0].ServiceID, serviceVersionID: versions[0].ServiceVersionID,
 		})

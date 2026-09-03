@@ -1,10 +1,10 @@
 package cmd
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 
@@ -22,11 +22,7 @@ type workspaceServiceConfigAddition struct {
 // addWorkspaceServices authors every resolved addition in one atomic config
 // write, preserving existing service policy and avoiding partial multi-add files.
 func addWorkspaceServices(path string, additions []workspaceServiceConfigAddition) error {
-	// Workspace authoring always requires an explicit config destination so a
-	// composite never writes into an inferred or unrelated config file.
-	if path == "" {
-		return errors.New("workspace config edit requires -f")
-	}
+	path = workspaceConfigEditPath(path)
 	cfg, err := loadWorkspaceConfigForEdit(path)
 	if err != nil {
 		return err
@@ -92,7 +88,9 @@ func mergeWorkspaceServiceSelection(config *configfile.WorkspaceConfig, serviceN
 	return changed
 }
 
+// removeWorkspaceService deletes one service while preserving the standard inferred workspace path.
 func removeWorkspaceService(path, serviceName string) error {
+	path = workspaceConfigEditPath(path)
 	cfg, err := loadWorkspaceConfigForEdit(path)
 	if err != nil {
 		return err
@@ -101,7 +99,9 @@ func removeWorkspaceService(path, serviceName string) error {
 	return writeWorkspaceConfig(path, cfg)
 }
 
+// addWorkspaceVersion adds one version without requiring callers to repeat the conventional workspace path.
 func addWorkspaceVersion(path, serviceName, version string) error {
+	path = workspaceConfigEditPath(path)
 	cfg, err := loadWorkspaceConfigForEdit(path)
 	if err != nil {
 		return err
@@ -119,7 +119,9 @@ func addWorkspaceVersion(path, serviceName, version string) error {
 	return writeWorkspaceConfig(path, cfg)
 }
 
+// removeWorkspaceVersion removes an exact enabled version and drops an empty service entry so Engine can plan its removal.
 func removeWorkspaceVersion(path, serviceName, version string) error {
+	path = workspaceConfigEditPath(path)
 	cfg, err := loadWorkspaceConfigForEdit(path)
 	if err != nil {
 		return err
@@ -128,8 +130,18 @@ func removeWorkspaceVersion(path, serviceName, version string) error {
 	if !ok {
 		return fmt.Errorf("service %s is not in this workspace config", serviceName)
 	}
+	// Reject a stale or mistyped version before rewriting the user's workspace file.
+	if !configWorkspaceServiceHasVersion(service, version) {
+		return fmt.Errorf("version %s of service %s is not in this workspace config", version, serviceName)
+	}
 	service.Versions = removeWorkspaceServiceVersion(service.Versions, version)
-	cfg.Services[serviceName] = service
+	// A workspace service without a selected version is invalid, so removing its
+	// final version is represented as removal of the service itself.
+	if len(service.Versions) == 0 {
+		delete(cfg.Services, serviceName)
+	} else {
+		cfg.Services[serviceName] = service
+	}
 	return writeWorkspaceConfig(path, cfg)
 }
 
@@ -167,7 +179,9 @@ func removeWorkspaceServiceVersion(versions []configfile.WorkspaceServiceVersion
 	return out
 }
 
+// addWorkspaceDeprecation appends a lifecycle directive to the conventional or explicit workspace file.
 func addWorkspaceDeprecation(path, serviceName, version, effectiveAt, reason string) error {
+	path = workspaceConfigEditPath(path)
 	cfg, err := loadWorkspaceConfigForEdit(path)
 	if err != nil {
 		return err
@@ -185,10 +199,18 @@ func addWorkspaceDeprecation(path, serviceName, version, effectiveAt, reason str
 	return writeWorkspaceConfig(path, cfg)
 }
 
-func loadWorkspaceConfigForEdit(path string) (*configfile.WorkspaceConfig, error) {
-	if path == "" {
-		return nil, errors.New("workspace config edit requires -f")
+// workspaceConfigEditPath makes the scaffolded workspace file the default for standalone edit commands.
+func workspaceConfigEditPath(path string) string {
+	// An explicit path always wins; only blank input opts into project-local discovery.
+	if strings.TrimSpace(path) != "" {
+		return path
 	}
+	return filepath.Join(".fused", "workspace.yaml")
+}
+
+// loadWorkspaceConfigForEdit reads an existing workspace config without creating an implicit empty file.
+func loadWorkspaceConfigForEdit(path string) (*configfile.WorkspaceConfig, error) {
+	path = workspaceConfigEditPath(path)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err

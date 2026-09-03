@@ -876,3 +876,56 @@ func TestSameStringSet(t *testing.T) {
 		})
 	}
 }
+
+// TestMergeWorkspaceServiceForAdditiveInitRetainsEveryLiveVersion proves a stale local row cannot deactivate remote scope during unrelated init.
+func TestMergeWorkspaceServiceForAdditiveInitRetainsEveryLiveVersion(t *testing.T) {
+	localTimeout, remoteTimeout := 2500, 5000
+	localPolicy := &configfile.ExecutionPolicy{TimeoutMs: &localTimeout}
+	remotePolicy := &configfile.ExecutionPolicy{TimeoutMs: &remoteTimeout}
+	local := configfile.WorkspaceService{
+		ServiceID: "service-gmail",
+		Versions: []configfile.WorkspaceServiceVersion{{
+			Version: "v1", ServiceVersionID: "gmail-v1", ExecutionPolicy: localPolicy,
+		}},
+	}
+	remote := configfile.WorkspaceService{
+		ServiceID: "service-gmail",
+		Versions: []configfile.WorkspaceServiceVersion{
+			{Version: "v1", ServiceVersionID: "gmail-v1", ExecutionPolicy: remotePolicy, ConnectionProfiles: []map[string]interface{}{{"auth_type": "oauth2"}}},
+			{Version: "v2", ServiceVersionID: "gmail-v2", ExecutionPolicy: remotePolicy},
+		},
+	}
+	merged, err := mergeWorkspaceServiceForAdditiveInit("gmail", local, remote)
+	// Existing authored policy wins, missing live profile metadata is restored, and the wholly missing v2 identity is appended.
+	if err != nil || len(merged.Versions) != 2 || merged.Versions[0].ExecutionPolicy != localPolicy || len(merged.Versions[0].ConnectionProfiles) != 1 || merged.Versions[1].ServiceVersionID != "gmail-v2" {
+		t.Fatalf("merged=%#v err=%v", merged, err)
+	}
+}
+
+// TestMergeWorkspaceServiceForAdditiveInitRejectsIdentityConflicts proves ambiguous local state never reaches workspace planning.
+func TestMergeWorkspaceServiceForAdditiveInitRejectsIdentityConflicts(t *testing.T) {
+	tests := []struct {
+		name   string
+		local  configfile.WorkspaceService
+		remote configfile.WorkspaceService
+	}{
+		{
+			name: "service identity", local: configfile.WorkspaceService{ServiceID: "service-a"}, remote: configfile.WorkspaceService{ServiceID: "service-b"},
+		},
+		{
+			name:   "version identity",
+			local:  configfile.WorkspaceService{ServiceID: "service-a", Versions: []configfile.WorkspaceServiceVersion{{Version: "v1", ServiceVersionID: "version-a"}}},
+			remote: configfile.WorkspaceService{ServiceID: "service-a", Versions: []configfile.WorkspaceServiceVersion{{Version: "v1", ServiceVersionID: "version-b"}}},
+		},
+	}
+	// Both immutable identity levels fail closed instead of guessing which side is authoritative.
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := mergeWorkspaceServiceForAdditiveInit("gmail", test.local, test.remote)
+			// A nil error would allow an unsafe full workspace plan to observe the conflicting draft.
+			if err == nil || !strings.Contains(err.Error(), "conflicts with live") {
+				t.Fatalf("conflict error = %v", err)
+			}
+		})
+	}
+}

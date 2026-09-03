@@ -278,7 +278,13 @@ func buildUnifiedInitRequest(cmd *cobra.Command, mode unifiedInitMode, name stri
 
 // runUnifiedInitLifecycle keeps the workspace and app receipt boundaries ordered behind one user confirmation.
 func runUnifiedInitLifecycle(cmd *cobra.Command, mode unifiedInitMode, request scaffoldRequest) error {
-	lifecycle, err := prepareSDKInitLifecycle(cmd, request, resolveScaffoldRequirements, resolveScaffoldBucket)
+	// Create-only collisions must fail before the composed workspace lifecycle can plan or apply a missing service.
+	if !request.extend {
+		if err := ensureUnifiedInitTargetAbsent(request.path); err != nil {
+			return err
+		}
+	}
+	lifecycle, err := prepareSDKInitLifecycle(cmd, request, resolveScaffoldBucket)
 	// Resolution and read-only workspace planning must succeed before the combined review.
 	if err != nil {
 		return err
@@ -325,6 +331,23 @@ func (err *unifiedInitPrecommitError) Unwrap() error {
 // createPlanApplyUnifiedInit plans one in-memory app candidate before publishing its config and applying the selected runtime outcome.
 func createPlanApplyUnifiedInit(cmd *cobra.Command, client *api.Client, mode unifiedInitMode, request scaffoldRequest, workspaceApplied bool, downloadPackage bool, resolver scaffoldRequirementsResolver, bucketResolver scaffoldBucketResolver) error {
 	result, parsed, pendingWrite, err := prepareUnifiedInitPlanInput(mode, request, resolver, bucketResolver)
+	// A just-enabled exact version may not have reached Engine's runtime-contract cache, so repair only that typed race and retry once.
+	if err != nil && unifiedInitCanRefreshRuntimeSnapshots(err) {
+		_, baseParsed, _, baseErr := prepareUnifiedInitPlanInput(mode, request, deferScaffoldRequirements, bucketResolver)
+		// Structural or bucket failures are not snapshot races and retain the original dependency diagnosis without a mutation.
+		if baseErr == nil {
+			refreshed, refreshErr := refreshUnifiedInitRuntimeSnapshots(cmd, client, baseParsed)
+			// A failed exact refresh reports completed mutations and never publishes the speculative app file.
+			if refreshErr != nil {
+				return contextualizeUnifiedInitPrecommitFailureAfterRefresh("runtime contract refresh", mode, request, workspaceApplied, refreshed, refreshErr)
+			}
+			result, parsed, pendingWrite, err = prepareUnifiedInitPlanInput(mode, request, resolver, bucketResolver)
+			// The single retry is authoritative; another failure cannot create a refresh loop.
+			if err != nil {
+				return contextualizeUnifiedInitPrecommitFailureAfterRefresh("configuration preflight retry", mode, request, workspaceApplied, refreshed, err)
+			}
+		}
+	}
 	// Candidate creation or extension must validate fully before app planning.
 	if err != nil {
 		return contextualizeUnifiedInitPrecommitFailure("configuration preflight", mode, request, workspaceApplied, err)
@@ -398,7 +421,7 @@ func stageUnifiedInitLocalApply(cmd *cobra.Command, client *api.Client, mode uni
 	state.configPublication = publication
 	recordGeneratedBindingCount(cmd.Context(), result.GeneratedBindingCount)
 	// Output failure occurs before receipt publication or remote apply, so the speculative config can be safely restored.
-	if err := printScaffoldResult(cmd, result); err != nil {
+	if err := printScaffoldResult(cmd, unifiedInitDisplayScaffoldResult(mode, result)); err != nil {
 		return state, rollbackUnifiedInitConfigFailure(err, publication)
 	}
 	receiptPublication, err := publishUnifiedInitReceipt(parsed, plan.receipt)
@@ -407,14 +430,15 @@ func stageUnifiedInitLocalApply(cmd *cobra.Command, client *api.Client, mode uni
 		return state, rollbackUnifiedInitConfigFailure(err, publication)
 	}
 	state.receiptPublication = receiptPublication
-	fmt.Fprintf(cmd.OutOrStdout(), "%s plan created for %s (Plan ID: %s)\n", strings.ToUpper(string(mode)), parsed.ConfigKey, plan.receipt.PlanID)
+	displayConfigKey := sdkConfigDisplayKey(parsed.ConfigKey, parsed.SDK)
+	fmt.Fprintf(cmd.OutOrStdout(), "%s plan created for %s (Plan ID: %s)\n", strings.ToUpper(string(mode)), displayConfigKey, plan.receipt.PlanID)
 	// Human review output must remain complete before the app mutation starts.
 	if err := printPlanSummary(cmd.OutOrStdout(), plan.summary); err != nil {
 		return state, rollbackUnifiedInitLocalFailure(err, publication, receiptPublication)
 	}
 	printRequiredPermissions(cmd.OutOrStdout(), plan.requiredPermissions)
-	printCredentialReadiness(cmd.OutOrStdout(), parsed.ConfigKey, plan.credentialReadiness)
-	printNotificationInbox(cmd.OutOrStdout(), parsed.ConfigKey, plan.notifications)
+	printCredentialReadiness(cmd.OutOrStdout(), displayConfigKey, plan.credentialReadiness)
+	printNotificationInbox(cmd.OutOrStdout(), displayConfigKey, plan.notifications)
 	prepared, err := prepareConfigApply(parsed, applyOptions{}, client.BaseURL)
 	// Receipt and Engine-target preflight must complete before calling the apply endpoint.
 	if err != nil {
@@ -422,6 +446,18 @@ func stageUnifiedInitLocalApply(cmd *cobra.Command, client *api.Client, mode uni
 	}
 	state.prepared = prepared
 	return state, nil
+}
+
+// unifiedInitDisplayScaffoldResult maps API mode onto its public resource name
+// without changing the SDK-kind candidate written to disk or sent to Engine.
+func unifiedInitDisplayScaffoldResult(mode unifiedInitMode, result scaffoldResult) scaffoldResult {
+	// SDK and MCP already have matching public and internal kind names.
+	if mode != unifiedInitModeAPI {
+		return result
+	}
+	display := result
+	display.Kind = configfile.ConfigKind(unifiedInitModeAPI)
+	return display
 }
 
 // rollbackUnifiedInitConfigFailure restores the byte-owned candidate after a local failure before receipt publication.
@@ -752,7 +788,7 @@ func contextualizeUnifiedInitPrecommitFailureAfterRefresh(stage string, mode uni
 	message := fmt.Sprintf("%s for %s failed during %s for selected services %s; %s; %s", unifiedInitModeLabel(mode), request.name, stage, unifiedInitSelectedServices(request), localState, workspaceState)
 	// A completed refresh is a durable Engine-local snapshot mutation even when the subsequent app plan remains unsuccessful.
 	if len(refreshed) > 0 {
-		message += fmt.Sprintf("; exact generation snapshot refresh completed for [%s]", strings.Join(refreshed, ", "))
+		message += fmt.Sprintf("; exact runtime contract refresh completed for [%s]", strings.Join(refreshed, ", "))
 	}
 	// Targeted recovery is appended only when the underlying structured code justifies it.
 	if recovery != "" {

@@ -102,7 +102,7 @@ func TestUnifiedInitGenerationPinRetryFailureReportsCompletedRefresh(t *testing.
 	var apiErr *api.APIError
 	_, statErr := os.Stat(path)
 	// Retry failure retains the second typed cause, records the completed mutation, and leaves no desired-state file behind.
-	if !errors.As(err, &apiErr) || apiErr.Code != "generation_contract_pin_unavailable" || calls.planCalls != 2 || calls.refreshCalls != 1 || calls.applyCalls != 0 || !errors.Is(statErr, os.ErrNotExist) || !strings.Contains(err.Error(), "exact generation snapshot refresh completed for [linear@v1]") || !strings.Contains(err.Error(), "Engine still did not retain the immutable API contract") {
+	if !errors.As(err, &apiErr) || apiErr.Code != "generation_contract_pin_unavailable" || calls.planCalls != 2 || calls.refreshCalls != 1 || calls.applyCalls != 0 || !errors.Is(statErr, os.ErrNotExist) || !strings.Contains(err.Error(), "exact runtime contract refresh completed for [linear@v1]") || !strings.Contains(err.Error(), "Engine still did not retain the immutable API contract") {
 		t.Fatalf("error=%v APIError=%#v calls=%#v statErr=%v", err, apiErr, calls, statErr)
 	}
 }

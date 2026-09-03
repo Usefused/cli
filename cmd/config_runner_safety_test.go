@@ -89,6 +89,91 @@ func TestApplyPreparedAPIUsesAPILabelAndReturnsIdentity(t *testing.T) {
 	}
 }
 
+// TestApplyPreparedAPIFailureUsesNeutralNestedLabel proves API-specific outer
+// prose is not contradicted by the shared SDK route's transport context.
+func TestApplyPreparedAPIFailureUsesNeutralNestedLabel(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// A proven non-commit preserves the complete nested HTTP error for inspection.
+		if r.URL.Path != "/sdk-config/apply" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"error":{"code":"app_version_immutable","message":"Version is immutable","commit_state":"not_committed"}}`))
+	}))
+	defer server.Close()
+	generate := false
+	cfg := &configfile.ParsedConfig{ConfigKey: "sdk:ledger:1.0.0", SDK: &configfile.SDKConfig{Name: "ledger", Version: "1.0.0", Generate: &generate}}
+	_, err := applyPreparedSDKWithResult(api.NewClient(server.URL, "fsk_test"), cfg, planReceipt{PlanID: "plan-1", SourceHash: "hash"}, false)
+	// The public API label and neutral app transport label must survive wrapping together.
+	if err == nil || !strings.Contains(err.Error(), "failed to apply API ledger: apply app config failed (HTTP 409)") || strings.Contains(strings.ToLower(err.Error()), "apply sdk config failed") {
+		t.Fatalf("API apply failure=%v", err)
+	}
+}
+
+// TestPlanAPIUsesAPILabelsForSuccessAndFailure proves direct sdk plan keeps
+// canonical transport identity while presenting generate:false as an API.
+func TestPlanAPIUsesAPILabelsForSuccessAndFailure(t *testing.T) {
+	generate := false
+	cfg := &configfile.ParsedConfig{
+		Kind: configfile.KindSDK, ConfigKey: "sdk:ledger:1.0.0", SourceHash: "hash",
+		SDK: &configfile.SDKConfig{Name: "ledger", Version: "1.0.0", Generate: &generate},
+	}
+	fail := false
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		// The test switches response mode without changing the shared SDK route.
+		if fail {
+			writer.WriteHeader(http.StatusBadGateway)
+			_, _ = writer.Write([]byte(`{"error":{"code":"registry_unavailable","message":"Registry unavailable"}}`))
+			return
+		}
+		_, _ = writer.Write([]byte(`{"plan_id":"plan-api","config_key":"sdk:ledger:1.0.0","source_hash":"hash","summary":{},"notifications":{"warnings":["registry_notifications_unavailable"]}}`))
+	}))
+	defer server.Close()
+	planned, err := planOneConfig(api.NewClient(server.URL, "fsk_test"), cfg, server.URL, "")
+	// Successful planning retains the receipt key while carrying a human-only API alias.
+	if err != nil || planned.receipt.ConfigKey != "sdk:ledger:1.0.0" || planned.displayConfigKey != "api:ledger:1.0.0" {
+		t.Fatalf("planned=%#v error=%v", planned, err)
+	}
+	out := captureStdout(t, func() {
+		if printErr := printPlanResult([]plannedConfig{planned}, false); printErr != nil {
+			t.Fatalf("print API plan: %v", printErr)
+		}
+	})
+	// Plan and notification headings must not expose the SDK-prefixed adapter key.
+	if !strings.Contains(out, "Plan created for api:ledger:1.0.0") || !strings.Contains(out, "Workspace notifications for api:ledger:1.0.0") || strings.Contains(out, "notifications for sdk:ledger") {
+		t.Fatalf("API plan output=%q", out)
+	}
+	// The same route now supplies a dependency failure so only presentation changes between assertions.
+	fail = true
+	_, err = planOneConfig(api.NewClient(server.URL, "fsk_test"), cfg, server.URL, "")
+	// Failure prose derives from generate:false while the shared transport context remains app-neutral.
+	if err == nil || !strings.Contains(err.Error(), "failed to plan API ledger: plan app config failed (HTTP 502)") || strings.Contains(err.Error(), "failed to plan SDK ledger") || strings.Contains(strings.ToLower(err.Error()), "plan sdk config failed") {
+		t.Fatalf("API plan failure=%v", err)
+	}
+}
+
+// TestAPIApplyAmbiguityUsesAPILabels proves lost apply responses do not revert
+// to SDK wording in either human or structured error presentation.
+func TestAPIApplyAmbiguityUsesAPILabels(t *testing.T) {
+	generate := false
+	cfg := &configfile.ParsedConfig{
+		ConfigKey: "sdk:ledger:1.0.0",
+		SDK:       &configfile.SDKConfig{Name: "ledger", Version: "1.0.0", Generate: &generate},
+	}
+	cause := &api.APIError{Code: "engine_unavailable", Message: "Engine unavailable", HTTPStatus: http.StatusBadGateway, CommitState: "unknown"}
+	classified := classifySDKApplyFailure(cause, cfg, planReceipt{PlanID: "plan-api"})
+	// Human recovery must name the API while retaining the sdk show compatibility command.
+	if !strings.Contains(classified.Error(), "API apply outcome is unknown") || strings.Contains(classified.Error(), "SDK apply outcome is unknown") || !strings.Contains(classified.Error(), "fused-cli sdk show") {
+		t.Fatalf("API apply ambiguity=%v", classified)
+	}
+	result := classifyCommandError(&cobra.Command{Use: "apply"}, classified)
+	// Structured messages describe the public API resource without changing stable error codes or recovery commands.
+	if result.Code != "sdk_apply_outcome_unknown" || !strings.Contains(result.Message, "API apply response") || !strings.Contains(result.Remediation, "API version") || result.Recovery != "fused-cli sdk show 'ledger@1.0.0'" {
+		t.Fatalf("API structured ambiguity=%#v", result)
+	}
+}
+
 // TestSDKApplyAmbiguousFailuresUseReadOnlyRecovery pins timeout, proxy, malformed-success, and explicit-unknown classification.
 func TestSDKApplyAmbiguousFailuresUseReadOnlyRecovery(t *testing.T) {
 	tests := []struct {

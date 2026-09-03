@@ -1,10 +1,13 @@
 package cmd
 
 import (
+	"bytes"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 )
 
 // TestWorkspaceServiceConnectStartsSession covers the CLI path users run,
@@ -41,6 +44,64 @@ func TestWorkspaceServiceConnectStartsSession(t *testing.T) {
 	}
 	if !strings.Contains(out, "https://provider.example/authorize?state=abc") {
 		t.Fatalf("expected authorize URL output, got %q", out)
+	}
+}
+
+// TestWorkspaceServiceConnectAcceptsExactServiceUUID proves runtime recovery
+// bypasses Registry lookup and checks membership by immutable Engine identity.
+func TestWorkspaceServiceConnectAcceptsExactServiceUUID(t *testing.T) {
+	const serviceID = "22222222-2222-4222-8222-222222222222"
+	const bucketID = "11111111-1111-4111-8111-111111111111"
+	var sawUnfilteredMembership, sawConnect bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// An exact UUID path must remain entirely on the entitlement-bounded Engine API.
+		if r.URL.Path != "/engine/graphql" {
+			t.Fatalf("UUID connect reached unexpected path %s", r.URL.Path)
+		}
+		body := decodeTestGraphQLBody(t, r)
+		// The two expected GraphQL operations have disjoint stable field names.
+		switch {
+		case strings.Contains(body.Query, "workspaceServices"):
+			_, hasNames := body.Variables["names"]
+			sawUnfilteredMembership = !hasNames || body.Variables["names"] == nil
+			_, _ = w.Write([]byte(`{"data":{"workspaceServices":[{"service_id":"` + serviceID + `","service_name":"Gmail","service_slug":"gmail","version":"v1","enabled_versions":[{"version":"v1","service_version_id":"ver-1"}]}]}}`))
+		case strings.Contains(body.Query, "startConnectSession"):
+			sawConnect = true
+			// Session creation must receive the same exact UUID returned by runtime remediation.
+			if body.Variables["serviceId"] != serviceID || body.Variables["bucketId"] != bucketID || body.Variables["endUserRef"] != "user-123" {
+				t.Fatalf("UUID connect variables=%#v", body.Variables)
+			}
+			_, _ = w.Write([]byte(`{"data":{"startConnectSession":{"authorize_url":"https://provider.example/authorize","expires_at":"2026-07-20T23:00:00Z"}}}`))
+		default:
+			t.Fatalf("unexpected Engine GraphQL query: %s", body.Query)
+		}
+	}))
+	defer server.Close()
+
+	oldEngineURL, oldAPIKey := EngineURL, APIKey
+	oldBucket, oldUserRef := workspaceServiceConnectBucket, workspaceServiceConnectUserRef
+	oldAuthType, oldAuthName, oldAuthRef := workspaceServiceConnectAuthType, workspaceServiceConnectAuthName, workspaceServiceConnectAuthRef
+	oldResourceInput := append([]string(nil), workspaceServiceConnectResourceInput...)
+	oldScopes := append([]string(nil), workspaceServiceConnectScopes...)
+	t.Cleanup(func() {
+		EngineURL, APIKey = oldEngineURL, oldAPIKey
+		workspaceServiceConnectBucket, workspaceServiceConnectUserRef = oldBucket, oldUserRef
+		workspaceServiceConnectAuthType, workspaceServiceConnectAuthName, workspaceServiceConnectAuthRef = oldAuthType, oldAuthName, oldAuthRef
+		workspaceServiceConnectResourceInput, workspaceServiceConnectScopes = oldResourceInput, oldScopes
+	})
+	EngineURL, APIKey = server.URL, "fsk_test"
+	workspaceServiceConnectBucket, workspaceServiceConnectUserRef = bucketID, "user-123"
+	workspaceServiceConnectAuthType, workspaceServiceConnectAuthName, workspaceServiceConnectAuthRef = "", "", ""
+	workspaceServiceConnectResourceInput, workspaceServiceConnectScopes = nil, nil
+	command := &cobra.Command{Use: "connect"}
+	var output bytes.Buffer
+	command.SetOut(&output)
+	if err := runWorkspaceServiceConnect(command, serviceID); err != nil {
+		t.Fatalf("connect by UUID: %v", err)
+	}
+	// Both membership and session creation must complete without Registry resolution.
+	if !sawUnfilteredMembership || !sawConnect || !strings.Contains(output.String(), "https://provider.example/authorize") {
+		t.Fatalf("unfiltered=%v connect=%v output=%q", sawUnfilteredMembership, sawConnect, output.String())
 	}
 }
 

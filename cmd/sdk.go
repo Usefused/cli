@@ -34,14 +34,14 @@ var sdkApplyReceiptPath string
 
 var sdkCmd = &cobra.Command{
 	Use:   "sdk",
-	Short: "Manage generated SDKs",
+	Short: "Manage generated SDKs and direct API apps",
 	Args:  cobra.NoArgs,
 	RunE:  requireSubcommand,
 }
 
 var sdkListCmd = &cobra.Command{
 	Use:   "list",
-	Short: "List generated SDKs",
+	Short: "List SDK and direct API app versions",
 	Args:  cobra.NoArgs,
 	RunE: WithTelemetry("cli.sdk.list", func(cmd *cobra.Command, _ []string) error {
 		return runSDKList(cmd)
@@ -49,8 +49,8 @@ var sdkListCmd = &cobra.Command{
 }
 
 var sdkDeactivateCmd = &cobra.Command{
-	Use:   "deactivate <sdk-name@version-or-version-id>",
-	Short: "Permanently deactivate one exact SDK version",
+	Use:   "deactivate <sdk-or-api-name@version-or-version-id>",
+	Short: "Permanently deactivate one exact SDK or API app version",
 	Args: func(cmd *cobra.Command, args []string) error {
 		// Hard deletion must never accept a family-wide or implicit-latest reference.
 		if err := cobra.ExactArgs(1)(cmd, args); err != nil {
@@ -63,7 +63,7 @@ var sdkDeactivateCmd = &cobra.Command{
 	}),
 }
 
-// runSDKDeactivate resolves one exact SDK version before using the shared
+// runSDKDeactivate resolves one exact SDK or direct API version before using the shared
 // Engine hard-deactivation route already used by the App UI and MCP CLI.
 func runSDKDeactivate(cmd *cobra.Command, target string) error {
 	// Revalidation keeps direct helper callers on the same exact-version boundary as Cobra.
@@ -76,15 +76,15 @@ func runSDKDeactivate(cmd *cobra.Command, target string) error {
 	}
 	sdkName, sdkVersion := parseSDKDownloadName(strings.TrimSpace(target))
 	appID, err := client.ResolveSDKAppReference(sdkName, sdkVersion)
-	// Kind-scoped resolution prevents an MCP UUID from crossing the SDK lifecycle boundary.
+	// SDK-kind resolution includes direct API delivery mode but excludes MCP identity.
 	if err != nil {
-		return fmt.Errorf("resolve SDK %q: %w", target, err)
+		return fmt.Errorf("resolve SDK or API app %q: %w", target, err)
 	}
 	if err := client.DeactivateApp(appID); err != nil {
-		return fmt.Errorf("deactivate SDK: %w", err)
+		return fmt.Errorf("deactivate SDK or API app: %w", err)
 	}
 	recordAppliedChange(cmd.Context(), "sdk.deactivate", "sdk")
-	fmt.Fprintf(cmd.OutOrStdout(), "Deactivated SDK version %s.\n", target)
+	fmt.Fprintf(cmd.OutOrStdout(), "Deactivated app version %s.\n", target)
 	return nil
 }
 
@@ -712,8 +712,8 @@ func selectSDKOperations(path, requestedService string) (string, []string, error
 
 // selectSDKOperationsForService presents Registry operations and returns both the concrete IDs and whether the user chose the complete surface.
 func selectSDKOperationsForService(client *api.Client, serviceID, serviceName, serviceVersion string, input io.Reader, out io.Writer) ([]string, bool, error) {
-	endpoints, err := client.SearchEndpoints(serviceID, serviceVersion, "")
-	// Registry is authoritative for the operation surface of the pinned provider version.
+	endpoints, err := client.ServiceOperations(serviceID, serviceVersion)
+	// Selection and its default select-all choice must see the complete immutable Registry operation surface.
 	if err != nil {
 		return nil, false, err
 	}

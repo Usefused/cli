@@ -646,41 +646,149 @@ Engine's data wins on any conflict) and removes any local service entry
 	}),
 }
 
+// PerformWorkspaceSync atomically publishes a complete Engine-owned workspace snapshot to local desired state.
 func PerformWorkspaceSync(ctx context.Context, client *api.Client, configPath string) (*workspaceSyncResult, error) {
 	path, cfg, err := loadWorkspaceConfigForSync(configPath)
+	// Invalid or unreadable local state cannot safely be replaced by a synchronized document.
 	if err != nil {
 		return nil, err
 	}
-	remote, err := client.ListWorkspaceServices()
+	result, profileCount, err := mergeWorkspaceStateFromEngine(client, cfg)
+	// A failed remote snapshot cannot authorize replacing the local workspace document.
 	if err != nil {
 		return nil, err
 	}
-	profiles, err := client.ListWorkspaceConnectionProfiles()
-	if err != nil {
-		return nil, err
-	}
-	visibility, err := client.ServiceVisibilities(serviceIDsFromWorkspaceServices(remote))
-	if err != nil {
-		return nil, err
-	}
-	versionsByServiceID, err := fetchOwnedServiceVersions(client, remote, visibility)
-	if err != nil {
-		return nil, err
-	}
-	result, err := mergeWorkspaceServicesFromRemote(cfg, remote, visibility, versionsByServiceID)
-	if err != nil {
-		return nil, err
-	}
-	profileUpdates, err := mergeWorkspaceConnectionProfilesFromRemote(cfg, remote, profiles)
-	if err != nil {
-		return nil, err
-	}
-	result.Updated = mergeWorkspaceSyncUpdates(result, profileUpdates)
+	// Publishing happens only after every remote dependency has been merged successfully in memory.
 	if err := writeWorkspaceConfig(path, cfg); err != nil {
 		return nil, err
 	}
-	recordWorkspaceSyncWrite(ctx, result, len(profiles))
+	recordWorkspaceSyncWrite(ctx, result, profileCount)
 	return &result, nil
+}
+
+// mergeWorkspaceStateFromEngine reconstructs the complete non-secret remote workspace state in memory without publishing a file.
+func mergeWorkspaceStateFromEngine(client *api.Client, cfg *configfile.WorkspaceConfig) (workspaceSyncResult, int, error) {
+	remote, err := client.ListWorkspaceServices()
+	// Service inventory is the primary authority; partial reconstruction would make omission destructive.
+	if err != nil {
+		return workspaceSyncResult{}, 0, err
+	}
+	profiles, err := client.ListWorkspaceConnectionProfiles()
+	// Connection profiles must move with their services so a sync cannot silently lose routing intent.
+	if err != nil {
+		return workspaceSyncResult{}, 0, err
+	}
+	visibility, err := client.ServiceVisibilities(serviceIDsFromWorkspaceServices(remote))
+	// Provider ownership controls which policy fields can be round-tripped into desired state.
+	if err != nil {
+		return workspaceSyncResult{}, 0, err
+	}
+	versionsByServiceID, err := fetchOwnedServiceVersions(client, remote, visibility)
+	// Owned version policy is required for a complete remote mirror and cannot be guessed locally.
+	if err != nil {
+		return workspaceSyncResult{}, 0, err
+	}
+	result, err := mergeWorkspaceServicesFromRemote(cfg, remote, visibility, versionsByServiceID)
+	// Conflicting remote identity must fail closed before profiles or the local file are changed.
+	if err != nil {
+		return workspaceSyncResult{}, 0, err
+	}
+	profileUpdates, err := mergeWorkspaceConnectionProfilesFromRemote(cfg, remote, profiles)
+	// Invalid profile bindings cannot be published as an otherwise successful workspace sync.
+	if err != nil {
+		return workspaceSyncResult{}, 0, err
+	}
+	result.Updated = mergeWorkspaceSyncUpdates(result, profileUpdates)
+	return result, len(profiles), nil
+}
+
+// mergeWorkspaceStateForAdditiveInit unions live Engine membership into authored local intent without turning init into a removal command.
+func mergeWorkspaceStateForAdditiveInit(client *api.Client, cfg *configfile.WorkspaceConfig) error {
+	remote := &configfile.WorkspaceConfig{
+		BaseConfig: configfile.BaseConfig{APIVersion: configfile.APIVersionV1, Kind: configfile.KindWorkspace},
+		Services:   map[string]configfile.WorkspaceService{},
+	}
+	_, _, err := mergeWorkspaceStateFromEngine(client, remote)
+	// A partial remote snapshot cannot safely establish the minimum live membership that init must preserve.
+	if err != nil {
+		return err
+	}
+	// Older or minimally authored files may omit the map even though additive merge requires a writable destination.
+	if cfg.Services == nil {
+		cfg.Services = map[string]configfile.WorkspaceService{}
+	}
+	localKeysByID := workspaceServiceKeysByID(cfg.Services)
+	for remoteKey, remoteService := range remote.Services {
+		localKey := remoteKey
+		// Stable service identity preserves an authored key when Registry visibility changes its canonical qualification.
+		if keyByID, exists := localKeysByID[remoteService.ServiceID]; exists {
+			localKey = keyByID
+		}
+		localService, exists := cfg.Services[localKey]
+		// A wholly absent live service is copied into the draft so applying another addition cannot remove it.
+		if !exists {
+			cfg.Services[remoteKey] = remoteService
+			continue
+		}
+		merged, mergeErr := mergeWorkspaceServiceForAdditiveInit(localKey, localService, remoteService)
+		// Conflicting immutable identities fail before the workspace plan can observe an unsafe draft.
+		if mergeErr != nil {
+			return mergeErr
+		}
+		cfg.Services[localKey] = merged
+	}
+	return nil
+}
+
+// mergeWorkspaceServiceForAdditiveInit retains authored policy while restoring every currently enabled remote version identity.
+func mergeWorkspaceServiceForAdditiveInit(key string, local, remote configfile.WorkspaceService) (configfile.WorkspaceService, error) {
+	// Equal config keys cannot silently represent different Registry services.
+	if local.ServiceID != "" && remote.ServiceID != "" && local.ServiceID != remote.ServiceID {
+		return configfile.WorkspaceService{}, fmt.Errorf("workspace service %s conflicts with live service identity %s", key, remote.ServiceID)
+	}
+	// A missing local identity is safely completed from the live Engine snapshot.
+	if local.ServiceID == "" {
+		local.ServiceID = remote.ServiceID
+	}
+	// Omitted authored visibility or policy inherits the live value, while explicit local intent remains authoritative for the pending plan.
+	if local.Public == nil {
+		local.Public = remote.Public
+	}
+	if local.ExecutionPolicy == nil {
+		local.ExecutionPolicy = remote.ExecutionPolicy
+	}
+	localVersions := make(map[string]int, len(local.Versions))
+	for index, version := range local.Versions {
+		localVersions[version.Version] = index
+	}
+	for _, remoteVersion := range remote.Versions {
+		index, exists := localVersions[remoteVersion.Version]
+		// Missing live versions must be retained verbatim so an unrelated init cannot deactivate them.
+		if !exists {
+			local.Versions = append(local.Versions, remoteVersion)
+			continue
+		}
+		localVersion := local.Versions[index]
+		// Reused version labels with different immutable IDs are unsafe to reconcile automatically.
+		if localVersion.ServiceVersionID != "" && remoteVersion.ServiceVersionID != "" && localVersion.ServiceVersionID != remoteVersion.ServiceVersionID {
+			return configfile.WorkspaceService{}, fmt.Errorf("workspace service %s version %s conflicts with live version identity %s", key, remoteVersion.Version, remoteVersion.ServiceVersionID)
+		}
+		// Missing identity and remote-derived fields are filled without overwriting explicit local desired state.
+		if localVersion.ServiceVersionID == "" {
+			localVersion.ServiceVersionID = remoteVersion.ServiceVersionID
+		}
+		if localVersion.Public == nil {
+			localVersion.Public = remoteVersion.Public
+		}
+		if localVersion.ExecutionPolicy == nil {
+			localVersion.ExecutionPolicy = remoteVersion.ExecutionPolicy
+		}
+		if len(localVersion.ConnectionProfiles) == 0 {
+			localVersion.ConnectionProfiles = remoteVersion.ConnectionProfiles
+		}
+		local.Versions[index] = localVersion
+	}
+	return local, nil
 }
 
 // mergeWorkspaceSyncUpdates adds connect changes to the service-level result

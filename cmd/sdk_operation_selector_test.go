@@ -73,6 +73,21 @@ func TestSelectSDKOperationsForServicePreservesAllChoice(t *testing.T) {
 	}
 }
 
+// TestCompleteSDKInitOperationSelectionsRejectsUnknownExplicitOperation proves typos fail before workspace planning.
+func TestCompleteSDKInitOperationSelectionsRejectsUnknownExplicitOperation(t *testing.T) {
+	server, _ := newSDKInitLifecycleServer(t)
+	defer server.Close()
+	request := scaffoldRequest{operations: []scaffoldOperation{{service: "linear", operation: "issueTypo"}}}
+	resolved := []sdkInitResolvedService{{
+		target: workspaceServiceAddTarget{slug: "linear", serviceID: generationRepairServiceID}, version: "v1",
+	}}
+	_, err := completeSDKInitOperationSelections(newCommandWithDiscardedOutput(), api.NewClient(server.URL, "test-key"), request, resolved)
+	// Registry advertises only issueUpdate, so the invalid explicit ID must remain a read-only actionable failure.
+	if err == nil || !strings.Contains(err.Error(), "operation issueTypo is not available") || !strings.Contains(err.Error(), "workspace service operations linear --version v1") {
+		t.Fatalf("unknown operation error = %v", err)
+	}
+}
+
 // TestSDKInitOperationSelectorsShareOneInputStream protects sequential prompts from losing buffered keyboard input between services.
 func TestSDKInitOperationSelectorsShareOneInputStream(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -83,7 +98,7 @@ func TestSDKInitOperationSelectorsShareOneInputStream(t *testing.T) {
 			t.Fatalf("decode Registry request: %v", err)
 		}
 		serviceID, _ := body.Variables["serviceId"].(string)
-		_, _ = writer.Write([]byte(`{"data":{"searchEndpoints":[{"id":"endpoint-1","name":"run","method":"POST","path":"/run","service_id":"` + serviceID + `"}]}}`))
+		_, _ = writer.Write([]byte(`{"data":{"serviceOperations":[{"id":"endpoint-1","name":"run","method":"POST","path":"/run","service_id":"` + serviceID + `"}]}}`))
 	}))
 	defer server.Close()
 

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -238,7 +239,7 @@ var workspaceServiceAddCmd = &cobra.Command{
 		return runWorkspaceServiceAdd(cmd, args)
 	}),
 }
-var workspaceServiceConnectCmd = newWorkspaceServiceCommand("connect <service-slug>", "Start an end-user connection", "cli.workspace.service.connect", runWorkspaceServiceConnectWithRequiredUser)
+var workspaceServiceConnectCmd = newWorkspaceServiceCommand("connect <service-slug-or-id>", "Start an end-user connection", "cli.workspace.service.connect", runWorkspaceServiceConnectWithRequiredUser)
 var workspaceServiceDeleteCmd = newWorkspaceServiceCommand("delete <service-slug>", "Delete a service from workspace configuration", "cli.workspace.service.delete", runWorkspaceServiceDelete)
 var workspaceServiceDeprecateCmd = newWorkspaceServiceCommand("deprecate <service-slug>", "Schedule service deprecation", "cli.workspace.service.deprecate", runWorkspaceServiceDeprecateWithRequiredDate)
 
@@ -490,11 +491,94 @@ func workspaceServiceFailedCommitState(err error) string {
 	return "unknown"
 }
 
+type workspaceRemovalPreApplyError struct {
+	cause error
+}
+
+// Error preserves the actionable planning failure while marking it as safely pre-commit.
+func (err workspaceRemovalPreApplyError) Error() string {
+	return err.cause.Error()
+}
+
+// Unwrap retains structured Engine diagnostics for ordinary CLI error rendering.
+func (err workspaceRemovalPreApplyError) Unwrap() error {
+	return err.cause
+}
+
+type workspaceRemovalConfigPublication struct {
+	path      string
+	previous  []byte
+	candidate []byte
+	mode      os.FileMode
+}
+
+// captureWorkspaceRemovalConfig snapshots exact accepted bytes before a force command edits local desired state.
+func captureWorkspaceRemovalConfig(path string) (workspaceRemovalConfigPublication, error) {
+	path = workspaceConfigEditPath(path)
+	previous, err := os.ReadFile(path)
+	// Missing accepted bytes make speculative mutation and rollback unsafe.
+	if err != nil {
+		return workspaceRemovalConfigPublication{}, err
+	}
+	info, err := os.Stat(path)
+	// Original permissions are part of the exact local state restored on rejection.
+	if err != nil {
+		return workspaceRemovalConfigPublication{}, err
+	}
+	return workspaceRemovalConfigPublication{path: path, previous: previous, mode: info.Mode().Perm()}, nil
+}
+
+// captureCandidate records the exact speculative bytes this invocation may later restore.
+func (publication *workspaceRemovalConfigPublication) captureCandidate() error {
+	candidate, err := os.ReadFile(publication.path)
+	// Candidate bytes are required to prove rollback still owns the file.
+	if err != nil {
+		return err
+	}
+	publication.candidate = candidate
+	return nil
+}
+
+// rollback restores accepted bytes only while the file still equals this invocation's speculative edit.
+func (publication workspaceRemovalConfigPublication) rollback() error {
+	current, err := os.ReadFile(publication.path)
+	// An unreadable file cannot be safely compared or overwritten.
+	if err != nil {
+		return err
+	}
+	// A concurrent edit invalidates ownership of the file and must never be overwritten by rollback.
+	if !bytes.Equal(current, publication.candidate) {
+		return errors.New("workspace config changed after the removal attempt")
+	}
+	// Atomic replacement prevents readers from observing a partial restoration.
+	if err := atomicWriteFile(publication.path, publication.previous, publication.mode, nil); err != nil {
+		return err
+	}
+	return os.Chmod(publication.path, publication.mode)
+}
+
+// workspaceRemovalRollbackSafe recognizes only failures proven to precede Engine workspace mutation.
+func workspaceRemovalRollbackSafe(err error) bool {
+	var preApply workspaceRemovalPreApplyError
+	// Planning and local preparation never mutate Engine workspace state.
+	if errors.As(err, &preApply) {
+		return true
+	}
+	var apiErr *cliapi.APIError
+	// Apply errors without an authoritative negative commit state remain ambiguous.
+	return errors.As(err, &apiErr) && apiErr.CommitState == "not_committed"
+}
+
 func runWorkspaceServiceDelete(cmd *cobra.Command, serviceSlug string) error {
 	targetServiceID := ""
+	var publication workspaceRemovalConfigPublication
 	if workspaceServiceRemoveForce {
 		var err error
 		targetServiceID, err = resolveForceRemoveServiceID(serviceSlug)
+		if err != nil {
+			return err
+		}
+		publication, err = captureWorkspaceRemovalConfig(ConfigFile)
 		if err != nil {
 			return err
 		}
@@ -502,11 +586,29 @@ func runWorkspaceServiceDelete(cmd *cobra.Command, serviceSlug string) error {
 	if err := removeWorkspaceService(ConfigFile, serviceSlug); err != nil {
 		return err
 	}
-	recordAppliedChange(cmd.Context(), cmd.CommandPath(), "workspace_config")
+	// Edit-only removal is final immediately; force removal records only once its local outcome is retained.
+	if !workspaceServiceRemoveForce {
+		recordAppliedChange(cmd.Context(), cmd.CommandPath(), "workspace_config")
+	}
 	if workspaceServiceRemoveForce {
-		if err := runForceRemoveWorkspace(targetServiceID, ""); err != nil {
+		if err := publication.captureCandidate(); err != nil {
 			return err
 		}
+		if err := runForceRemoveWorkspace(cmd.OutOrStdout(), targetServiceID, serviceSlug, "", true); err != nil {
+			// Only a proven pre-commit outcome authorizes restoring the exact bytes replaced by this command.
+			rollbackSafe := workspaceRemovalRollbackSafe(err)
+			if rollbackSafe {
+				if rollbackErr := publication.rollback(); rollbackErr != nil {
+					return fmt.Errorf("%w; restore workspace config: %v", err, rollbackErr)
+				}
+			}
+			// Ambiguous outcomes preserve local intent and therefore remain a real applied local change.
+			if !rollbackSafe {
+				recordAppliedChange(cmd.Context(), cmd.CommandPath(), "workspace_config")
+			}
+			return err
+		}
+		recordAppliedChange(cmd.Context(), cmd.CommandPath(), "workspace_config")
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "Deleted service %s\n", serviceSlug)
 	return nil
@@ -557,25 +659,120 @@ func runWorkspaceServiceVersionAdd(cmd *cobra.Command, serviceSlug, version stri
 	return nil
 }
 
+// runWorkspaceServiceVersionDelete edits one exact version and optionally governs its remote removal.
 func runWorkspaceServiceVersionDelete(cmd *cobra.Command, serviceSlug, version string) error {
 	targetServiceID := ""
+	allowWholeService := false
+	var publication workspaceRemovalConfigPublication
+	// Force mode needs remote scope proof and rollback material before touching accepted local bytes.
 	if workspaceServiceVersionRemoveForce {
 		var err error
+		allowWholeService, err = workspaceVersionRemovalDeletesService(ConfigFile, serviceSlug, version)
+		// Invalid local scope must fail before any Engine lookup or file edit.
+		if err != nil {
+			return err
+		}
 		targetServiceID, err = resolveForceRemoveServiceID(serviceSlug)
+		// Immutable service identity is required to bind the destructive plan target.
+		if err != nil {
+			return err
+		}
+		// A final local version may authorize whole-service removal only when Engine confirms no live sibling exists.
+		if allowWholeService {
+			// Remote scope mismatch must leave the local desired document untouched.
+			if err := verifySoleLiveWorkspaceVersion(targetServiceID, serviceSlug, version); err != nil {
+				return err
+			}
+		}
+		publication, err = captureWorkspaceRemovalConfig(ConfigFile)
+		// Without exact accepted bytes the command cannot guarantee safe rollback.
 		if err != nil {
 			return err
 		}
 	}
+	// The ordinary editor remains the sole implementation of the local version mutation.
 	if err := removeWorkspaceVersion(ConfigFile, serviceSlug, version); err != nil {
 		return err
 	}
-	recordAppliedChange(cmd.Context(), cmd.CommandPath(), "workspace_config")
+	// Edit-only removal is final immediately; force removal records only once its local outcome is retained.
+	if !workspaceServiceVersionRemoveForce {
+		recordAppliedChange(cmd.Context(), cmd.CommandPath(), "workspace_config")
+	}
+	// Force mode retains the edit only after a committed or deliberately ambiguous remote outcome.
 	if workspaceServiceVersionRemoveForce {
-		if err := runForceRemoveWorkspace(targetServiceID, version); err != nil {
+		// Candidate capture proves rollback still owns the bytes it may replace.
+		if err := publication.captureCandidate(); err != nil {
 			return err
 		}
+		// Canonical plan/apply is the only remote mutation path.
+		if err := runForceRemoveWorkspace(cmd.OutOrStdout(), targetServiceID, serviceSlug, version, allowWholeService); err != nil {
+			// Ambiguous apply outcomes retain local intent so a completed Engine mutation is never silently reversed.
+			rollbackSafe := workspaceRemovalRollbackSafe(err)
+			// Only authoritative pre-commit outcomes permit restoration.
+			if rollbackSafe {
+				// A concurrent local edit must surface instead of being overwritten.
+				if rollbackErr := publication.rollback(); rollbackErr != nil {
+					return fmt.Errorf("%w; restore workspace config: %v", err, rollbackErr)
+				}
+			}
+			// Ambiguous outcomes preserve local intent and therefore remain a real applied local change.
+			if !rollbackSafe {
+				recordAppliedChange(cmd.Context(), cmd.CommandPath(), "workspace_config")
+			}
+			return err
+		}
+		recordAppliedChange(cmd.Context(), cmd.CommandPath(), "workspace_config")
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "Deleted version %s from service %s\n", version, serviceSlug)
+	return nil
+}
+
+// workspaceVersionRemovalDeletesService determines whether the exact local edit will remove its service entry.
+func workspaceVersionRemovalDeletesService(path, serviceName, version string) (bool, error) {
+	cfg, err := loadWorkspaceConfigForEdit(path)
+	// Parsing errors cannot support reliable destructive-scope inference.
+	if err != nil {
+		return false, err
+	}
+	service, exists := cfg.Services[serviceName]
+	// Missing services remain ordinary edit errors rather than triggering remote scope checks.
+	if !exists {
+		return false, fmt.Errorf("service %s is not in this workspace config", serviceName)
+	}
+	// A stale version cannot become authority for whole-service approval.
+	if !configWorkspaceServiceHasVersion(service, version) {
+		return false, fmt.Errorf("version %s of service %s is not in this workspace config", version, serviceName)
+	}
+	return len(service.Versions) == 1, nil
+}
+
+// verifySoleLiveWorkspaceVersion proves whole-service removal is equivalent to the requested exact version removal.
+func verifySoleLiveWorkspaceVersion(serviceID, serviceName, version string) error {
+	client, err := getAPIClient()
+	// Engine connectivity is required before expanding exact scope to the service consequence.
+	if err != nil {
+		return err
+	}
+	service, err := workspaceServiceByID(client, serviceID, serviceName)
+	// Missing or inaccessible membership cannot prove sole-version equivalence.
+	if err != nil {
+		return err
+	}
+	versions := map[string]bool{}
+	// The primary version field remains relevant for older Engine response projections.
+	if strings.TrimSpace(service.Version) != "" {
+		versions[strings.TrimSpace(service.Version)] = true
+	}
+	for _, enabled := range service.EnabledVersions {
+		// Deduplication handles APIs that project the primary version in both fields.
+		if strings.TrimSpace(enabled.Version) != "" {
+			versions[strings.TrimSpace(enabled.Version)] = true
+		}
+	}
+	// Any sibling means remove_service would exceed the exact version scope requested by the user.
+	if len(versions) != 1 || !versions[version] {
+		return fmt.Errorf("service %s has live versions outside requested version %s; sync the workspace config and retry", serviceName, version)
+	}
 	return nil
 }
 
@@ -802,12 +999,15 @@ func parseResourceInputFlags(flags []string) (map[string]string, error) {
 	return values, nil
 }
 
-// workspaceServiceByID performs a bounded name lookup and then verifies the
-// immutable service ID before an operation uses the enriched workspace row.
+// workspaceServiceByID uses bounded name lookup for slugs and an entitlement-
+// bounded full workspace lookup for an exact UUID before verifying identity.
 func workspaceServiceByID(client *cliapi.Client, serviceID, serviceSlug string) (cliapi.WorkspaceService, error) {
-	// Engine applies the name filter before enrichment, which keeps this
-	// membership check bounded even in workspaces with many services.
-	services, err := client.ListWorkspaceServices(cliapi.ServiceLookupName(serviceSlug))
+	lookupNames := []string{cliapi.ServiceLookupName(serviceSlug)}
+	// A UUID is not a service name, so exact-ID remediation must avoid a misleading Engine name filter.
+	if _, exactID := canonicalWorkspaceServiceUUID(serviceSlug); exactID {
+		lookupNames = nil
+	}
+	services, err := client.ListWorkspaceServices(lookupNames...)
 	// Permission and transport errors are authoritative and must not be recast as
 	// a missing workspace membership.
 	if err != nil {
@@ -873,9 +1073,13 @@ func latestWorkspaceServiceVersion(service cliapi.WorkspaceService) string {
 	return bestVersion
 }
 
-// resolveServiceIDFromSlug asks the Registry because provider-qualified slugs
-// are public identities; callers still enforce workspace approval in Engine.
+// resolveServiceIDFromSlug passes exact UUIDs through locally and asks the
+// Registry only when a public slug still needs immutable identity resolution.
 func resolveServiceIDFromSlug(client *cliapi.Client, serviceSlug string) (string, error) {
+	// Runtime remediation already carries Engine's exact service identity and must not depend on Registry name lookup.
+	if serviceID, exact := canonicalWorkspaceServiceUUID(serviceSlug); exact {
+		return serviceID, nil
+	}
 	service, err := client.GetServiceInfo(serviceSlug)
 	if err != nil {
 		return "", err
@@ -886,6 +1090,17 @@ func resolveServiceIDFromSlug(client *cliapi.Client, serviceSlug string) (string
 	// Exact lookup avoids loading every version merely to recover the stable
 	// service ID shared by those versions.
 	return service.ID, nil
+}
+
+// canonicalWorkspaceServiceUUID normalizes only parseable UUID identities so
+// callers can safely distinguish them from Registry service references.
+func canonicalWorkspaceServiceUUID(reference string) (string, bool) {
+	parsed, err := uuid.Parse(reference)
+	// Non-canonical UUID spellings remain normal Registry references instead of silently changing lookup semantics.
+	if err != nil || parsed.String() != strings.ToLower(reference) {
+		return "", false
+	}
+	return parsed.String(), true
 }
 
 func printWorkspaceServiceVersions(out io.Writer, service cliapi.WorkspaceService) {
@@ -916,82 +1131,197 @@ func resolveForceRemoveServiceID(serviceName string) (string, error) {
 		return "", err
 	}
 	for _, service := range services {
-		if service.ServiceName == serviceName {
+		// The list response has enough identity to accept either the visible name or actionable slug.
+		if workspaceServiceMatchesReference(service, serviceName) {
 			return service.ServiceID, nil
 		}
 	}
 	return "", fmt.Errorf("service %s is not enabled in this workspace", serviceName)
 }
 
-func runForceRemoveWorkspace(serviceID string, version string) error {
+// workspaceServiceMatchesReference accepts the Engine display name or Registry slug case-insensitively.
+func workspaceServiceMatchesReference(service cliapi.WorkspaceService, reference string) bool {
+	reference = strings.TrimSpace(reference)
+	return strings.EqualFold(strings.TrimSpace(service.ServiceName), reference) ||
+		strings.EqualFold(strings.TrimSpace(service.ServiceSlug), reference)
+}
+
+// runForceRemoveWorkspace plans, discloses, and applies one explicitly approved destructive workspace removal.
+func runForceRemoveWorkspace(out io.Writer, serviceID, serviceLabel, version string, allowWholeService bool) error {
 	client, err := getAPIClient()
+	// Client setup failure precedes both remote planning and workspace mutation.
 	if err != nil {
-		return err
+		return workspaceRemovalPreApplyError{cause: err}
 	}
-	cfg, err := configfile.ParseFile(ConfigFile)
+	// Standalone edits default to the same project-local workspace file created by init.
+	cfg, err := configfile.ParseFile(workspaceConfigEditPath(ConfigFile))
+	// The just-authored desired document must remain parseable before it can be reviewed.
 	if err != nil {
-		return err
+		return workspaceRemovalPreApplyError{cause: err}
 	}
 	raw, err := json.Marshal(cfg.Workspace)
+	// Serialization failure cannot create a remote plan.
 	if err != nil {
-		return err
+		return workspaceRemovalPreApplyError{cause: err}
 	}
-	planResp, err := client.PlanWorkspaceConfig(cfg.SourceHash, cfg.ConfigKey, raw)
+	planResp, err := client.PlanWorkspaceConfigWithRemovals(cfg.SourceHash, cfg.ConfigKey, raw, []cliapi.WorkspaceRemovalTarget{{ServiceID: serviceID, Version: strings.TrimSpace(version)}})
+	// Planning is non-mutating, so every failure remains safe for local rollback.
 	if err != nil {
-		return err
+		return workspaceRemovalPreApplyError{cause: err}
 	}
-	actions, actionID, err := forceRemovePlanAction(planResp.Summary, serviceID, version)
+	actions, requestedActionID, decisionActionID, err := forceRemovePlanActions(planResp.Summary, serviceID, version, allowWholeService)
+	// Malformed review output cannot authorize an apply.
 	if err != nil {
-		return err
+		return workspaceRemovalPreApplyError{cause: err}
 	}
-	if actionID != "" {
-		if err := client.UpdateWorkspacePlanAction(planResp.PlanID, actions, actionID, "force_remove"); err != nil {
-			return err
+	// Missing target action means the Engine did not understand or preserve the requested destructive scope.
+	if requestedActionID == "" {
+		return workspaceRemovalPreApplyError{cause: fmt.Errorf("Engine did not include the requested workspace removal in its plan; upgrade the Engine and retry")}
+	}
+	// The upgraded plan contract must echo its canonical hash; inferring one would weaken receipt binding.
+	if strings.TrimSpace(planResp.SourceHash) == "" {
+		return workspaceRemovalPreApplyError{cause: fmt.Errorf("Engine returned a workspace removal plan without source_hash; upgrade the Engine and retry")}
+	}
+	// Every destructive consequence is shown after scope validation and before any decision patch or apply mutation, including unattended runs.
+	if err := printForceRemoveWorkspacePlanEffects(out, actions, serviceID, serviceLabel); err != nil {
+		return workspaceRemovalPreApplyError{cause: err}
+	}
+	// Unreferenced removals need no decision patch; referenced targets preserve the explicit force receipt.
+	if decisionActionID != "" {
+		// The replacement carries every prevalidated decision even though one action ID anchors the API call.
+		if err := client.UpdateWorkspacePlanAction(planResp.PlanID, actions, decisionActionID, "force_remove"); err != nil {
+			return workspaceRemovalPreApplyError{cause: err}
 		}
 	}
 
 	return applyForceRemoveWorkspacePlan(client, cfg, planResp)
 }
 
+// printForceRemoveWorkspacePlanEffects renders only the already validated
+// removal scope and distinguishes Registry archival from workspace removal.
+func printForceRemoveWorkspacePlanEffects(out io.Writer, actions []map[string]any, serviceID, serviceLabel string) error {
+	rendered := 0
+	for _, action := range actions {
+		actionServiceID, _ := action["service_id"].(string)
+		// Non-removal and unrelated informational actions are outside this command's consequence disclosure.
+		if actionServiceID != serviceID || !workspacePlanActionIsRemoval(action) {
+			continue
+		}
+		actionType, _ := action["type"].(string)
+		// Each admitted removal type has one explicit user-facing consequence.
+		switch actionType {
+		case "disable_service_version":
+			version, _ := action["version"].(string)
+			// Disclosure must succeed before the reviewed version-removal plan can cross into apply.
+			if _, err := fmt.Fprintf(out, "Plan effect: disable version %s of service %s in this workspace.\n", version, serviceLabel); err != nil {
+				return err
+			}
+		case "remove_service":
+			willArchive, _ := action["will_archive"].(bool)
+			// Ownership expands removal into Registry archival and must never be hidden behind local-only wording.
+			if willArchive {
+				// A failed disclosure keeps the archival plan at the non-mutating review boundary.
+				if _, err := fmt.Fprintf(out, "Plan effect: archive owned service %s from the Registry and remove it from this workspace.\n", serviceLabel); err != nil {
+					return err
+				}
+				break
+			}
+			// Non-owner removal remains workspace-local and is disclosed without claiming Registry mutation.
+			if _, err := fmt.Fprintf(out, "Plan effect: remove service %s from this workspace.\n", serviceLabel); err != nil {
+				return err
+			}
+		}
+		rendered++
+	}
+	// A validated destructive plan must always yield at least its exact requested effect before apply.
+	if rendered == 0 {
+		return errors.New("workspace removal plan had no displayable effects")
+	}
+	return nil
+}
+
 // applyForceRemoveWorkspacePlan reuses ordinary apply material collection without restoring provider credentials to YAML.
 func applyForceRemoveWorkspacePlan(client *cliapi.Client, cfg *configfile.ParsedConfig, planResp *cliapi.ConfigPlanResponse) error {
-	sourceHash := planResp.SourceHash
-	// Older plan responses may omit the hash, so the parsed source remains the exact fallback.
-	if sourceHash == "" {
-		sourceHash = cfg.SourceHash
-	}
 	profileMaterials, err := workspaceProfileMaterials(cfg)
+	// Local material resolution fails before the apply request crosses the transport boundary.
 	if err != nil {
-		return err
+		return workspaceRemovalPreApplyError{cause: err}
 	}
 	bucketSecretMaterials, err := cfg.WorkspaceBucketSecretMaterials()
 	// Force removal must retain generic webhook-style secrets exactly like ordinary apply.
 	if err != nil {
-		return err
+		return workspaceRemovalPreApplyError{cause: err}
 	}
-	_, err = client.ApplyWorkspaceConfig(planResp.PlanID, sourceHash, profileMaterials, bucketSecretMaterials)
+	_, err = client.ApplyWorkspaceConfig(planResp.PlanID, planResp.SourceHash, profileMaterials, bucketSecretMaterials)
 	return err
 }
 
-func forceRemovePlanAction(summary map[string]interface{}, serviceID string, version string) ([]map[string]any, string, error) {
+// forceRemovePlanActions validates the full destructive scope and prepares all authorized decisions atomically.
+func forceRemovePlanActions(summary map[string]interface{}, serviceID string, version string, allowWholeService bool) ([]map[string]any, string, string, error) {
 	actions, err := workspacePlanActions(summary)
+	// Unexpected summary shape cannot become destructive authority.
 	if err != nil {
-		return nil, "", err
+		return nil, "", "", err
 	}
-	for _, action := range actions {
+	requestedActionID := ""
+	decisionActionID := ""
+	approved := make([]int, 0, 2)
+	for index, action := range actions {
 		actionID, _ := action["id"].(string)
-		if actionID != "" && actionRequiresForce(action, serviceID, version) {
-			return actions, actionID, nil
+		authorized := actionID != "" && actionMatchesRemoval(action, serviceID, version)
+		// The exact action is mandatory even when its whole-service consequence also appears.
+		if authorized {
+			requestedActionID = actionID
+		}
+		// A final-version edit can also produce a declarative remove_service action for the same sole live version.
+		if !authorized && version != "" && actionMatchesRemoval(action, serviceID, "") {
+			// Whole-service approval is valid only when the caller proved the exact version is the sole live version.
+			if !allowWholeService {
+				return actions, "", "", fmt.Errorf("workspace plan would remove service %s beyond requested version %s; sync the workspace config and retry", serviceID, version)
+			}
+			authorized = true
+		}
+		// Authorized actions are collected without mutation until the complete plan passes scope review.
+		if authorized {
+			approved = append(approved, index)
+			continue
+		}
+		// Any other removal would broaden this command beyond the user's exact destructive request.
+		if workspacePlanActionIsRemoval(action) {
+			return actions, "", "", fmt.Errorf("workspace plan includes an unrelated removal; review and apply it separately")
 		}
 	}
-	return actions, "", nil
+	// The exact requested action must remain present even when an equivalent whole-service action accompanies it.
+	if requestedActionID == "" {
+		return actions, "", "", nil
+	}
+	for _, index := range approved {
+		requiresDecision, _ := actions[index]["requires_decision"].(bool)
+		// Only blockers need a decision; ordinary removals remain visible without synthetic approval.
+		if requiresDecision {
+			actions[index]["decision"] = "force_remove"
+			// One decided action anchors the single full-array replacement request.
+			if decisionActionID == "" {
+				decisionActionID, _ = actions[index]["id"].(string)
+			}
+		}
+	}
+	return actions, requestedActionID, decisionActionID, nil
 }
 
+// workspacePlanActionIsRemoval identifies destructive workspace membership actions without matching unrelated mutations.
+func workspacePlanActionIsRemoval(action map[string]any) bool {
+	actionType, _ := action["type"].(string)
+	return actionType == "remove_service" || actionType == "disable_service_version"
+}
+
+// workspacePlanActions normalizes the untyped receipt projection without accepting malformed action entries.
 func workspacePlanActions(summary map[string]interface{}) ([]map[string]any, error) {
 	rawActions, _ := summary["actions"].([]interface{})
 	actions := make([]map[string]any, 0, len(rawActions))
 	for _, raw := range rawActions {
 		action, ok := raw.(map[string]interface{})
+		// Every entry must remain addressable as a complete action during the atomic replacement.
 		if !ok {
 			return nil, fmt.Errorf("workspace plan action has unexpected shape")
 		}
@@ -1000,14 +1330,16 @@ func workspacePlanActions(summary map[string]interface{}) ([]map[string]any, err
 	return actions, nil
 }
 
-func actionRequiresForce(action map[string]any, serviceID string, version string) bool {
-	requiresDecision, _ := action["requires_decision"].(bool)
+// actionMatchesRemoval identifies exact whole-service or version scope without conflating it with force requirements.
+func actionMatchesRemoval(action map[string]any, serviceID string, version string) bool {
 	actionType, _ := action["type"].(string)
 	actionServiceID, _ := action["service_id"].(string)
 	actionVersion, _ := action["version"].(string)
-	if !requiresDecision || actionServiceID != serviceID {
+	// Service identity must match before interpreting the optional version selector.
+	if actionServiceID != serviceID {
 		return false
 	}
+	// A blank selector explicitly means whole-service removal.
 	if version == "" {
 		return actionType == "remove_service"
 	}

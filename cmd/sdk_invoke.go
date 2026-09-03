@@ -124,9 +124,13 @@ func (err *sdkInvokeError) Error() string {
 }
 
 // sdkInvokeCredentialCommand validates UUID and auth metadata before producing
-// the copyable CLI remediation instead of trusting a server-supplied shell string.
+// a local copyable remediation instead of trusting a server-supplied shell string.
 func sdkInvokeCredentialCommand(code string, details map[string]any) string {
-	// Only the dedicated runtime code authorizes this command surface.
+	// Connected-user failures have a distinct safe command whose arguments come only from UUID fields.
+	if code == "connection_required" {
+		return sdkInvokeConnectionCommand(details)
+	}
+	// Only the dedicated static/application credential code authorizes secret mutation guidance.
 	if code != "bucket_credentials_missing" {
 		return ""
 	}
@@ -134,21 +138,66 @@ func sdkInvokeCredentialCommand(code string, details map[string]any) string {
 	bucketID, bucketOK := details["bucket_id"].(string)
 	authType, typeOK := details["auth_type"].(string)
 	authName, nameOK := details["auth_name"].(string)
-	_, serviceErr := uuid.Parse(serviceID)
-	_, bucketErr := uuid.Parse(bucketID)
+	canonicalServiceID, serviceUUID := canonicalSDKInvokeUUID(serviceID)
+	canonicalBucketID, bucketUUID := canonicalSDKInvokeUUID(bucketID)
 	// Closed identity and auth-family checks prevent malformed response metadata from becoming shell guidance.
-	if !serviceOK || !bucketOK || !typeOK || !nameOK || serviceErr != nil || bucketErr != nil || !sdkInvokeStaticAuthType(authType) || invalidSDKInvokeAuthName(authName) {
+	if !serviceOK || !bucketOK || !typeOK || !nameOK || !serviceUUID || !bucketUUID || !sdkInvokeConfigurableAuthType(authType) || invalidSDKInvokeAuthName(authName) {
 		return ""
 	}
 	return fmt.Sprintf("fused-cli secret set %s --bucket %s --type %s --auth-name %s --interactive",
-		serviceID, bucketID, shellQuoteSDKInvokeArgument(authType), shellQuoteSDKInvokeArgument(authName))
+		canonicalServiceID, canonicalBucketID, shellQuoteSDKInvokeArgument(authType), shellQuoteSDKInvokeArgument(authName))
 }
 
-// sdkInvokeStaticAuthType admits only app-configurable static families whose
-// values can be collected by the shared secret set command.
-func sdkInvokeStaticAuthType(value string) bool {
+// sdkInvokeConnectionCommand reconstructs one standalone consent command from
+// exact Engine identities while keeping the user reference caller-owned.
+func sdkInvokeConnectionCommand(details map[string]any) string {
+	serviceID, serviceOK := details["service_id"].(string)
+	bucketID, bucketOK := details["bucket_id"].(string)
+	endUserRef, userOK := details["end_user_ref"].(string)
+	canonicalServiceID, serviceUUID := canonicalSDKInvokeUUID(serviceID)
+	canonicalBucketID, bucketUUID := canonicalSDKInvokeUUID(bucketID)
+	// All expected fields must have their reviewed types before any response metadata enters shell guidance.
+	if !serviceOK || !bucketOK || !userOK || !serviceUUID || !bucketUUID {
+		return ""
+	}
+	userArgument := "YOUR_USER_REFERENCE"
+	// A caller-selected reference can be reused only when it remains one bounded shell word; the empty live case keeps an explicit placeholder.
+	if endUserRef != "" {
+		if invalidSDKInvokeUserReference(endUserRef) {
+			return ""
+		}
+		userArgument = shellQuoteSDKInvokeArgument(endUserRef)
+	}
+	return fmt.Sprintf(
+		"fused-cli workspace service connect %s --bucket %s --user-ref %s",
+		canonicalServiceID, canonicalBucketID, userArgument,
+	)
+}
+
+// canonicalSDKInvokeUUID admits only canonical UUID text before placing an
+// Engine detail into a local shell command.
+func canonicalSDKInvokeUUID(value string) (string, bool) {
+	parsed, err := uuid.Parse(value)
+	// Alternate UUID encodings are unnecessary Engine output and stay inert rather than being normalized into guidance.
+	if err != nil || parsed.String() != strings.ToLower(value) {
+		return "", false
+	}
+	return parsed.String(), true
+}
+
+// invalidSDKInvokeUserReference rejects control text, surrounding whitespace,
+// and oversized routing identity before local shell quoting.
+func invalidSDKInvokeUserReference(value string) bool {
+	trimmed := strings.TrimSpace(value)
+	// Stable user references must survive copying without normalization or hidden terminal control.
+	return trimmed == "" || trimmed != value || len(value) > maxSDKInvokeSelectorBytes || strings.ContainsAny(value, "\r\n\x00")
+}
+
+// sdkInvokeConfigurableAuthType admits only credential families whose values
+// can be collected safely by the shared secret set command.
+func sdkInvokeConfigurableAuthType(value string) bool {
 	switch value {
-	case "api_key", "bearer", "basic", "mtls":
+	case "api_key", "bearer", "basic", "mtls", "oauth", "oidc":
 		return true
 	default:
 		return false
@@ -601,10 +650,16 @@ func sdkInvokeHTTPErrorCategory(statusCode int) string {
 	}
 }
 
-// copySDKInvokeErrorDetails prevents later decoder reuse from mutating the surfaced details map.
+// copySDKInvokeErrorDetails prevents decoder reuse and removes server-authored
+// command prose before exposing the reviewed detail map.
 func copySDKInvokeErrorDetails(source map[string]any) map[string]any {
 	copied := make(map[string]any, len(source)+1)
 	for key, value := range source {
+		// Recovery commands are always reconstructed locally from validated fields, never forwarded from Engine text.
+		switch strings.ToLower(strings.TrimSpace(key)) {
+		case "command", "recovery", "remediation":
+			continue
+		}
 		copied[key] = value
 	}
 	return copied
