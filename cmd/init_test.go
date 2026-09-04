@@ -174,21 +174,21 @@ func TestUnifiedInitNoApplyPlansAppWhenServicesAreEnabled(t *testing.T) {
 // TestUnifiedInitNoApplyReturnsModeSpecificApplyCommands proves deferred output maps each public outcome to its real apply surface.
 func TestUnifiedInitNoApplyReturnsModeSpecificApplyCommands(t *testing.T) {
 	tests := []struct {
-		name      string
-		mode      unifiedInitMode
-		want      string
-		forbidden string
+		name, want, forbidden string
+		mode                  unifiedInitMode
+		appPlanned            bool
 	}{
-		{name: "SDK downloads", mode: unifiedInitModeSDK, want: "fused-cli sdk apply -f 'app.yaml' --download"},
-		{name: "API uses SDK resource", mode: unifiedInitModeAPI, want: "fused-cli sdk apply -f 'app.yaml'", forbidden: "--download"},
-		{name: "MCP uses hosted resource", mode: unifiedInitModeMCP, want: "fused-cli mcp apply -f 'app.yaml'", forbidden: "--download"},
+		{name: "SDK downloads", mode: unifiedInitModeSDK, appPlanned: true, want: "fused-cli sdk apply -f 'app.yaml' --download"},
+		{name: "API uses generic apply", mode: unifiedInitModeAPI, appPlanned: true, want: "fused-cli apply -f 'app.yaml'", forbidden: "fused-cli sdk apply"},
+		{name: "API deferred plan uses generic commands", mode: unifiedInitModeAPI, want: "fused-cli plan -f 'app.yaml'\n  fused-cli apply -f 'app.yaml'", forbidden: "fused-cli sdk"},
+		{name: "MCP uses hosted resource", mode: unifiedInitModeMCP, appPlanned: true, want: "fused-cli mcp apply -f 'app.yaml'", forbidden: "--download"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			var output bytes.Buffer
 			command := &cobra.Command{}
 			command.SetOut(&output)
-			printUnifiedInitDeferredNextSteps(command, test.mode, "app.yaml", nil, true)
+			printUnifiedInitDeferredNextSteps(command, test.mode, "app.yaml", nil, test.appPlanned)
 			text := output.String()
 			// Each user-facing mode must return a copy-ready command without leaking another mode's package behavior.
 			if !strings.Contains(text, test.want) || (test.forbidden != "" && strings.Contains(text, test.forbidden)) {

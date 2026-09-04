@@ -409,6 +409,31 @@ func TestActionableAppOpenAPIRetryPreservesBothPublicSurfaces(t *testing.T) {
 	}
 }
 
+// TestAPIOpenAPISchemaConflictPreservesStructuredRecovery proves JSON callers receive executable repair metadata without parsing prose.
+func TestAPIOpenAPISchemaConflictPreservesStructuredRecovery(t *testing.T) {
+	resetSDKOpenAPITestState(t)
+	// JSON mode must be active on the executing command for the shared error writer to emit its envelope.
+	if err := apiOpenAPICmd.Flags().Set(jsonOutputFlag, "true"); err != nil {
+		t.Fatalf("set JSON output: %v", err)
+	}
+	cause := &api.APIError{HTTPStatus: http.StatusConflict, Code: "app_openapi_schema_unavailable", Message: "immutable operation schemas are unavailable or inconsistent", Category: "dependency"}
+	err := actionableAppOpenAPIExportError(sdkDownloadTarget{Name: "billing", Version: "1.2.0"}, sdkOpenAPIOptions{Format: "yaml", JSON: true}, true, cause)
+	var output bytes.Buffer
+	// Rendering must preserve the locally reviewed recovery metadata carried by the typed API error.
+	if writeErr := writeCommandError(&output, apiOpenAPICmd, err); writeErr != nil {
+		t.Fatalf("write structured error: %v", writeErr)
+	}
+	var envelope jsonErrorEnvelope
+	// The output must remain a valid single JSON object for automation.
+	if decodeErr := json.Unmarshal(output.Bytes(), &envelope); decodeErr != nil {
+		t.Fatalf("decode structured error: %v", decodeErr)
+	}
+	// Recovery is an exact bounded command, while remediation retains the direct-API retry surface.
+	if envelope.Error.Code != "app_openapi_schema_unavailable" || envelope.Error.HTTPStatus != http.StatusConflict || envelope.Error.Recovery != "fused-cli workspace services refresh-missing-contracts --limit 100 --json" || !strings.Contains(envelope.Error.Remediation, "fused-cli api openapi 'billing@1.2.0' --json") || strings.Contains(envelope.Error.Remediation, "fused-cli sdk openapi") {
+		t.Fatalf("structured error = %#v", envelope.Error)
+	}
+}
+
 // TestRepairableAppOpenAPISchemaErrorRequiresConflictStatus prevents retry advice for unrelated HTTP failures or codes.
 func TestRepairableAppOpenAPISchemaErrorRequiresConflictStatus(t *testing.T) {
 	tests := []struct {

@@ -58,6 +58,42 @@ func TestRunWorkspaceRefreshMissingContractsPrintsSummary(t *testing.T) {
 	}
 }
 
+// TestRunWorkspaceRefreshMissingContractsWritesJSON verifies the suggested repair command is safe for structured automation.
+func TestRunWorkspaceRefreshMissingContractsWritesJSON(t *testing.T) {
+	origEngineURL, origAPIKey, origLimit := EngineURL, APIKey, workspaceRefreshMissingContractsLimit
+	defer func() {
+		EngineURL, APIKey, workspaceRefreshMissingContractsLimit = origEngineURL, origAPIKey, origLimit
+	}()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Only the Engine GraphQL maintenance mutation is valid for this focused command fixture.
+		if r.URL.Path != "/engine/graphql" {
+			t.Fatalf("unexpected path %q", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"data":{"refreshMissingServiceContracts":{"status":"ok","missing":1,"refreshed":1,"failed":0,"results":[{"service_id":"svc-1","service_version_id":"ver-1","version":"1.0.0","contract_hash":"sha256:abc"}]}}}`))
+	}))
+	defer server.Close()
+	EngineURL, APIKey, workspaceRefreshMissingContractsLimit = server.URL, "fsk_test", 100
+	command := &cobra.Command{}
+	addJSONOutputFlag(command)
+	// The recovery command's advertised flag must select structured output.
+	if err := command.Flags().Set(jsonOutputFlag, "true"); err != nil {
+		t.Fatalf("set JSON output: %v", err)
+	}
+	var output strings.Builder
+	command.SetOut(&output)
+	if err := runWorkspaceRefreshMissingContracts(command); err != nil {
+		t.Fatalf("run structured refresh: %v", err)
+	}
+	var result map[string]any
+	// Successful JSON must expose exact progress so callers know whether another pass is required.
+	if err := json.Unmarshal([]byte(output.String()), &result); err != nil {
+		t.Fatalf("decode refresh output: %v", err)
+	}
+	if result["status"] != "ok" || result["missing"] != float64(1) || result["refreshed"] != float64(1) || result["failed"] != float64(0) {
+		t.Fatalf("structured refresh = %#v", result)
+	}
+}
+
 // TestWorkspaceRefreshMissingContractsHelpNamesUnpinnedSnapshots keeps discovery and limit guidance aligned with Engine classification.
 func TestWorkspaceRefreshMissingContractsHelpNamesUnpinnedSnapshots(t *testing.T) {
 	// The compatibility command name remains stable while its summary describes the full repair scope.
@@ -68,5 +104,9 @@ func TestWorkspaceRefreshMissingContractsHelpNamesUnpinnedSnapshots(t *testing.T
 	// A registered limit flag must describe the same bounded missing-or-unpinned batch.
 	if limitFlag == nil || !strings.Contains(limitFlag.Usage, "missing or unpinned activated service versions") {
 		t.Fatalf("unexpected limit flag %#v", limitFlag)
+	}
+	// Recovery metadata may advertise JSON only when the repair command registers the corresponding flag.
+	if workspaceRefreshMissingContractsCmd.Flags().Lookup(jsonOutputFlag) == nil {
+		t.Fatal("refresh-missing-contracts must support --json")
 	}
 }

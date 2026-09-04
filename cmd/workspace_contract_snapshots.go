@@ -29,6 +29,10 @@ func runWorkspaceRefreshMissingContracts(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
+	// Structured callers need exact batch outcomes to decide whether another bounded repair pass is required.
+	if wantsJSON(cmd) {
+		return writeJSON(cmd, result)
+	}
 	fmt.Fprintf(cmd.OutOrStdout(), "Refreshed %d of %d missing or unpinned runtime contract snapshots (%d failed).\n", result.Refreshed, result.Missing, result.Failed)
 	return nil
 }
@@ -36,5 +40,6 @@ func runWorkspaceRefreshMissingContracts(cmd *cobra.Command) error {
 // init registers the compatibility-named maintenance command with wording that reflects both repairable snapshot states.
 func init() {
 	workspaceRefreshMissingContractsCmd.Flags().IntVar(&workspaceRefreshMissingContractsLimit, "limit", 100, "Maximum missing or unpinned activated service versions to refresh")
+	addJSONOutputFlag(workspaceRefreshMissingContractsCmd)
 	workspaceServicesCmd.AddCommand(workspaceRefreshMissingContractsCmd)
 }

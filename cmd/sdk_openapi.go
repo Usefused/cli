@@ -239,7 +239,16 @@ func actionableAppOpenAPIExportError(target sdkDownloadTarget, options sdkOpenAP
 	if options.JSON {
 		retry += " --json"
 	}
-	return fmt.Errorf("%w. Run 'fused-cli workspace services refresh-missing-contracts --limit 100' repeatedly until it reports 0 missing, then retry `%s`", cause, retry)
+	repair := "fused-cli workspace services refresh-missing-contracts --limit 100"
+	// Structured recovery stays machine-readable when the failed export requested JSON.
+	if options.JSON {
+		repair += " --json"
+	}
+	recoveryError := *apiErr
+	// The exact bounded repair command must survive shared JSON classification instead of remaining only in wrapped prose.
+	recoveryError.Recovery = repair
+	recoveryError.Remediation = "Run the recovery command repeatedly until it reports 0 missing, then retry `" + retry + "`."
+	return &recoveryError
 }
 
 // repairableAppOpenAPISchemaError recognizes both the stable code and the bounded legacy 409 emitted before that code existed.

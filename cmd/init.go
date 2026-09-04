@@ -396,16 +396,16 @@ func printUnifiedInitDeferredNextSteps(cmd *cobra.Command, mode unifiedInitMode,
 		fmt.Fprintln(cmd.OutOrStdout(), "  # App planning waits for the selected workspace service version to become active.")
 		fmt.Fprintf(cmd.OutOrStdout(), "  fused-cli workspace apply -f %s\n", shellQuoteWorkspaceServiceArg(workspaceDraft.path))
 	}
-	resource := string(mode)
-	// Direct API apps use the existing SDK plan/apply resource with generation disabled.
+	commandGroup := "fused-cli " + string(mode)
+	// Direct APIs use the generic config plan/apply surface because they deliberately have no API apply subgroup.
 	if mode == unifiedInitModeAPI {
-		resource = "sdk"
+		commandGroup = "fused-cli"
 	}
 	// App planning is deferred only when its selected workspace snapshot does not exist yet.
 	if !appPlanned {
-		fmt.Fprintf(cmd.OutOrStdout(), "  fused-cli %s plan -f %s\n", resource, shellQuoteWorkspaceServiceArg(appPath))
+		fmt.Fprintf(cmd.OutOrStdout(), "  %s plan -f %s\n", commandGroup, shellQuoteWorkspaceServiceArg(appPath))
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "  fused-cli %s apply -f %s", resource, shellQuoteWorkspaceServiceArg(appPath))
+	fmt.Fprintf(cmd.OutOrStdout(), "  %s apply -f %s", commandGroup, shellQuoteWorkspaceServiceArg(appPath))
 	// A deferred generated SDK still needs an explicit package download after its later apply.
 	if mode == unifiedInitModeSDK {
 		fmt.Fprint(cmd.OutOrStdout(), " --download")
