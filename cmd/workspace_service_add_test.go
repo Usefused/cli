@@ -88,6 +88,7 @@ func newCompositeWorkspaceServiceServer(t *testing.T) (*httptest.Server, *int, *
 	engineReads, registryReads := 0, 0
 	activationRequestID := ""
 	activations := make([]api.AddWorkspaceServiceRequest, 0, 2)
+	// Serve the bounded membership response while preserving this fixture's command-specific checks.
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		// Each endpoint represents one existing production boundary; any other
 		// route would signal duplicated or unexpectedly broadened orchestration.
@@ -96,7 +97,7 @@ func newCompositeWorkspaceServiceServer(t *testing.T) (*httptest.Server, *int, *
 			_, _ = writer.Write([]byte(`{"environment":"development"}`))
 		case "/engine/graphql":
 			engineReads++
-			_, _ = writer.Write([]byte(`{"data":{"workspaceServices":[]}}`))
+			_, _ = writer.Write([]byte(`{"data":{"workspaceServicePage":{"data":[],"total":0}}}`))
 		case "/graphql":
 			registryReads++
 			_, _ = writer.Write([]byte(`{"data":{"serviceCandidatesByRefs":[{"ref":"linear","candidates":[{"id":"00000000-0000-4000-8000-000000000001","name":"Linear","slug":"linear","is_owner":true,"is_public":true}]},{"ref":"square","candidates":[{"id":"00000000-0000-4000-8000-000000000002","name":"Square","slug":"square","is_owner":true,"is_public":true}]}]}}`))
@@ -264,6 +265,7 @@ func TestWorkspaceAddApplyReportsPartialOutcomeAndExactRecovery(t *testing.T) {
 func newPartialWorkspaceServiceApplyServer(t *testing.T) (*httptest.Server, *int) {
 	t.Helper()
 	activationCalls := 0
+	// Serve the bounded membership response while preserving this fixture's command-specific checks.
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		// Discovery succeeds in bounded calls so only sequential scoped activation
 		// determines the partial outcome exercised by this fixture.
@@ -271,7 +273,7 @@ func newPartialWorkspaceServiceApplyServer(t *testing.T) (*httptest.Server, *int
 		case "/health":
 			_, _ = writer.Write([]byte(`{"environment":"development"}`))
 		case "/engine/graphql":
-			_, _ = writer.Write([]byte(`{"data":{"workspaceServices":[]}}`))
+			_, _ = writer.Write([]byte(`{"data":{"workspaceServicePage":{"data":[],"total":0}}}`))
 		case "/graphql":
 			_, _ = writer.Write([]byte(`{"data":{"serviceCandidatesByRefs":[
 				{"ref":"linear","candidates":[{"id":"00000000-0000-4000-8000-000000000001","name":"Linear","slug":"linear","is_owner":true}]},
@@ -401,6 +403,7 @@ func TestWorkspaceServiceFailedCommitState(t *testing.T) {
 func newWorkspaceServiceDiscoveryServer(t *testing.T, workspaceJSON, registryJSON string) (*httptest.Server, *int) {
 	t.Helper()
 	registryCalls := 0
+	// Serve the bounded membership response while preserving this fixture's command-specific checks.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request struct {
 			Query     string         `json:"query"`
@@ -414,10 +417,11 @@ func newWorkspaceServiceDiscoveryServer(t *testing.T, workspaceJSON, registryJSO
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/engine/graphql":
-			if !strings.Contains(request.Query, "workspaceServices") {
-				t.Errorf("expected workspaceServices query, got %q", request.Query)
+			// Match the bounded membership read used by catalogue and sync commands.
+			if !strings.Contains(request.Query, "workspaceServicePage") {
+				t.Errorf("expected workspaceServicePage query, got %q", request.Query)
 			}
-			_, _ = w.Write([]byte(`{"data":{"workspaceServices":` + workspaceJSON + `}}`))
+			_, _ = w.Write(workspaceServicePageFixture(t, workspaceJSON))
 		case "/graphql":
 			registryCalls++
 			writeWorkspaceServiceRegistryFixture(t, w, request.Query, request.Variables, registryJSON)
@@ -692,14 +696,16 @@ func TestChooseRegistryServiceInteractiveUsesSharedSelector(t *testing.T) {
 	}
 }
 
+// TestWorkspaceAddServiceStopsOnRegistryPermissionFailure verifies workspace behavior using the bounded Engine service page contract.
 func TestWorkspaceAddServiceStopsOnRegistryPermissionFailure(t *testing.T) {
 	resetWorkspaceServiceAddState(t)
 	dir := t.TempDir()
 	path := writeSprintConfig(t, dir, "workspace.yaml", "apiVersion: fused/v1\nkind: workspace\nservices: {}\n")
+	// Serve the bounded membership response while preserving this fixture's command-specific checks.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/engine/graphql" {
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"data":{"workspaceServices":[]}}`))
+			_, _ = w.Write([]byte(`{"data":{"workspaceServicePage":{"data":[],"total":0}}}`))
 			return
 		}
 		http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)

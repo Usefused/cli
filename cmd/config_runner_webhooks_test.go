@@ -146,11 +146,13 @@ func writeServiceLookupForWebhookList(t *testing.T, w http.ResponseWriter, r *ht
 	_, _ = w.Write([]byte(`{"data":{"service":{"id":"svc-github"}}}`))
 }
 
+// writeEngineWebhookListResponse verifies workspace behavior using the bounded Engine service page contract.
 func writeEngineWebhookListResponse(t *testing.T, w http.ResponseWriter, r *http.Request) {
 	t.Helper()
 	body := decodeTestGraphQLBody(t, r)
-	if strings.Contains(body.Query, "workspaceServices") {
-		_, _ = w.Write([]byte(`{"data":{"workspaceServices":[{"service_id":"svc-github","service_name":"GitHub REST API","version":"2026-07-01"}]}}`))
+	// Match the bounded membership read used by catalogue and sync commands.
+	if strings.Contains(body.Query, "workspaceServicePage") {
+		_, _ = w.Write([]byte(`{"data":{"workspaceServicePage":{"data":[{"service_id":"svc-github","service_name":"GitHub REST API","version":"2026-07-01"}],"total":1}}}`))
 		return
 	}
 	if strings.Contains(body.Query, "workspaceWebhooks") {
@@ -163,16 +165,19 @@ func writeEngineWebhookListResponse(t *testing.T, w http.ResponseWriter, r *http
 	t.Fatalf("unexpected engine graphql query: %s", body.Query)
 }
 
+// TestWorkspaceServiceWebhooks_NoRegistrations_PrintsMessage verifies workspace behavior using the bounded Engine service page contract.
 func TestWorkspaceServiceWebhooks_NoRegistrations_PrintsMessage(t *testing.T) {
 	dir := t.TempDir()
+	// Serve the bounded membership response while preserving this fixture's command-specific checks.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/graphql":
 			_, _ = w.Write([]byte(`{"data":{"service":{"id":"svc-github"}}}`))
 		case r.URL.Path == "/engine/graphql":
 			body := decodeTestGraphQLBody(t, r)
-			if strings.Contains(body.Query, "workspaceServices") {
-				_, _ = w.Write([]byte(`{"data":{"workspaceServices":[{"service_id":"svc-github","service_name":"GitHub REST API","version":"2026-07-01"}]}}`))
+			// Match the bounded membership read used by catalogue and sync commands.
+			if strings.Contains(body.Query, "workspaceServicePage") {
+				_, _ = w.Write([]byte(`{"data":{"workspaceServicePage":{"data":[{"service_id":"svc-github","service_name":"GitHub REST API","version":"2026-07-01"}],"total":1}}}`))
 				return
 			}
 			if strings.Contains(body.Query, "workspaceWebhooks") {

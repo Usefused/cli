@@ -149,12 +149,13 @@ func TestUnifiedInitRuntimeRefreshClassifierRejectsUnrelatedFailures(t *testing.
 // newUnifiedInitRuntimeRepairServer serves one exact workspace identity plus bounded refresh and app lifecycle outcomes.
 func newUnifiedInitRuntimeRepairServer(t *testing.T, refreshCalls, planCalls, applyCalls *int, refreshStatus int) *httptest.Server {
 	t.Helper()
+	// Serve the bounded membership response while preserving this fixture's command-specific checks.
 	return httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
 		// Each route is counted independently so an accidental retry loop or early mutation is observable.
 		switch request.URL.Path {
 		case "/engine/graphql":
-			_, _ = writer.Write([]byte(`{"data":{"workspaceServices":[{"service_id":"` + generationRepairServiceID + `","service_slug":"linear","service_name":"Linear","enabled_versions":[{"service_version_id":"` + generationRepairVersionID + `","version":"v1","status":"public"}]}]}}`))
+			_, _ = writer.Write([]byte(`{"data":{"workspaceServicePage":{"data":[{"service_id":"` + generationRepairServiceID + `","service_slug":"linear","service_name":"Linear","enabled_versions":[{"service_version_id":"` + generationRepairVersionID + `","version":"v1","status":"public"}]}],"total":1}}}`))
 		case "/workspace/services/" + generationRepairServiceID + "/versions/" + generationRepairVersionID + "/refresh":
 			*refreshCalls = *refreshCalls + 1
 			// The error response remains structured so production APIError classification is exercised.
@@ -179,12 +180,13 @@ func newUnifiedInitRuntimeRepairServer(t *testing.T, refreshCalls, planCalls, ap
 // newUnifiedInitMCPRuntimeRepairServer serves the MCP-specific plan/apply boundary around the shared exact refresh.
 func newUnifiedInitMCPRuntimeRepairServer(t *testing.T, refreshCalls, planCalls, applyCalls *int) *httptest.Server {
 	t.Helper()
+	// Serve the bounded membership response while preserving this fixture's command-specific checks.
 	return httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
 		// Route counts distinguish shared refresh behavior from the MCP-specific publication endpoints.
 		switch request.URL.Path {
 		case "/engine/graphql":
-			_, _ = writer.Write([]byte(`{"data":{"workspaceServices":[{"service_id":"` + generationRepairServiceID + `","service_slug":"linear","service_name":"Linear","enabled_versions":[{"service_version_id":"` + generationRepairVersionID + `","version":"v1","status":"public"}]}]}}`))
+			_, _ = writer.Write([]byte(`{"data":{"workspaceServicePage":{"data":[{"service_id":"` + generationRepairServiceID + `","service_slug":"linear","service_name":"Linear","enabled_versions":[{"service_version_id":"` + generationRepairVersionID + `","version":"v1","status":"public"}]}],"total":1}}}`))
 		case "/workspace/services/" + generationRepairServiceID + "/versions/" + generationRepairVersionID + "/refresh":
 			*refreshCalls = *refreshCalls + 1
 			_, _ = writer.Write([]byte(`{"status":"refreshed","service_id":"` + generationRepairServiceID + `","service_version_id":"` + generationRepairVersionID + `","version":"v1","contract_hash":"sha256:test"}`))

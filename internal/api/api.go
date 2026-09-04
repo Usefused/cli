@@ -1066,30 +1066,67 @@ type InjectionConfig struct {
 	Mode     string `json:"mode,omitempty"`
 }
 
+// ListWorkspaceServices assembles a complete snapshot through Engine's bounded, authorized page resolver.
 func (c *Client) ListWorkspaceServices(names ...string) ([]WorkspaceService, error) {
+	const pageSize = 100
 	query := `
-		query WorkspaceServices($names: [String]) {
-			workspaceServices(names: $names) {
-				id
-				workspace_id
-				service_id
-				service_version_id
-				version
-				service_name
-				service_slug
-				added_by
-				created_at
-				enabled_versions { id service_version_id version status created_at enabled_at }
-			}
+  query WorkspaceServices($names: [String], $limit: Int, $offset: Int) {
+   workspaceServicePage(names: $names, limit: $limit, offset: $offset) {
+    total
+    data {
+     id workspace_id service_id service_version_id version
+     service_name service_slug added_by created_at
+     enabled_versions { id service_version_id version status created_at enabled_at }
+    }
+   }
+  }
+ `
+	services := make([]WorkspaceService, 0)
+	seen := make(map[string]bool)
+	total := -1
+	// Each successful page must advance toward the original total; incomplete snapshots must never reach sync.
+	for offset := 0; ; offset += pageSize {
+		var resp struct {
+			Page *struct {
+				Services *[]WorkspaceService `json:"data"`
+				Total    *int                `json:"total"`
+			} `json:"workspaceServicePage"`
 		}
-	`
-	var resp struct {
-		Services []WorkspaceService `json:"workspaceServices"`
+		// Reuse Engine transport so every page retains the same credentials and server-side name filter.
+		if err := c.EngineGraphQL(query, map[string]any{"names": names, "limit": pageSize, "offset": offset}, &resp); err != nil {
+			return nil, fmt.Errorf("list workspace services at offset %d: %w", offset, err)
+		}
+		// Missing metadata cannot prove an empty workspace or safe pagination completion.
+		if resp.Page == nil || resp.Page.Services == nil || resp.Page.Total == nil || *resp.Page.Total < 0 {
+			return nil, fmt.Errorf("incomplete workspace service page at offset %d", offset)
+		}
+		// Pin the advertised size so concurrent membership changes fail safely instead of producing a mixed snapshot.
+		if total < 0 {
+			total = *resp.Page.Total
+		}
+		// A changing total requires a fresh read rather than returning partially collected memberships.
+		if *resp.Page.Total != total {
+			return nil, fmt.Errorf("workspace service total changed during pagination")
+		}
+		expected := min(pageSize, total-offset)
+		// A short or oversized page cannot satisfy the requested offset range and must not drive another iteration.
+		if len(*resp.Page.Services) != expected {
+			return nil, fmt.Errorf("incomplete workspace service page at offset %d: got %d services, expected %d", offset, len(*resp.Page.Services), expected)
+		}
+		// Repeated identities can reveal an offset shift even when concurrent changes preserve the total.
+		for _, service := range *resp.Page.Services {
+			// Refuse duplicate memberships so sync cannot silently lose one service while counting another twice.
+			if seen[service.ServiceID] {
+				return nil, fmt.Errorf("duplicate workspace service %q during pagination", service.ServiceID)
+			}
+			seen[service.ServiceID] = true
+		}
+		services = append(services, (*resp.Page.Services)...)
+		// Return only after the full advertised snapshot has been collected, including a genuinely empty workspace.
+		if len(services) == total {
+			return services, nil
+		}
 	}
-	// Service listing is a read path, and Engine GraphQL now exposes the
-	// same version/slug enrichment REST used to provide without client-side joins.
-	err := c.EngineGraphQL(query, map[string]any{"names": names}, &resp)
-	return resp.Services, err
 }
 
 // ListWorkspaceConnectionProfiles reads routing policy without exposing or depending on bucket credentials.
@@ -1909,10 +1946,18 @@ type ConfigPlanResponse struct {
 	Notifications NotificationInbox `json:"notifications"`
 }
 
+// WorkspaceApplyServiceResult reports Engine-owned receipts without inferring success from transport status.
+type WorkspaceApplyServiceResult struct {
+	Key       string `json:"key"`
+	Status    string `json:"status"`
+	ErrorCode string `json:"error_code,omitempty"`
+}
+
 type ConfigApplyResponse struct {
-	Status   string                 `json:"status"`
-	PlanID   string                 `json:"plan_id"`
-	Webhooks []AppliedWebhookConfig `json:"webhooks,omitempty"`
+	Services []WorkspaceApplyServiceResult `json:"services,omitempty"`
+	Status   string                        `json:"status"`
+	PlanID   string                        `json:"plan_id"`
+	Webhooks []AppliedWebhookConfig        `json:"webhooks,omitempty"`
 }
 
 type ConnectMaterial struct {
@@ -2287,8 +2332,14 @@ func (c *Client) ApplyWorkspaceConfig(planID, sourceHash string, profileMaterial
 	}
 	defer resp.Body.Close()
 
+	// Partial results deliberately use HTTP 409 so older clients cannot print unconditional success.
 	if resp.StatusCode >= 400 {
 		respBody := readBoundedHTTPErrorBody(resp.Body)
+		var partial ConfigApplyResponse
+		// Only a matching, structured Engine receipt is usable as a partial result.
+		if resp.StatusCode == http.StatusConflict && json.Unmarshal(respBody, &partial) == nil && partial.Status == "partially_applied" && partial.PlanID == planID && len(partial.Services) > 0 {
+			return &partial, nil
+		}
 		return nil, fmt.Errorf("apply workspace config failed (HTTP %d): %w", resp.StatusCode, newHTTPError(resp.StatusCode, respBody))
 	}
 

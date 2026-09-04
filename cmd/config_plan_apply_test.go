@@ -628,6 +628,7 @@ func TestWorkspaceServiceVersionsUsesSlugResolvedServiceID(t *testing.T) {
 // visibility separate from Engine workspace approval.
 func TestWorkspaceServiceVersionsRejectsUnapprovedService(t *testing.T) {
 	dir := t.TempDir()
+	// Serve the bounded membership response while preserving this fixture's command-specific checks.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/graphql":
@@ -635,7 +636,7 @@ func TestWorkspaceServiceVersionsRejectsUnapprovedService(t *testing.T) {
 			_, _ = w.Write([]byte(`{"data":{"service":{"id":"svc-github"}}}`))
 		case "/engine/graphql":
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"data":{"workspaceServices":[{"service_id":"svc-other","service_name":"Other","enabled_versions":[]}]}}`))
+			_, _ = w.Write([]byte(`{"data":{"workspaceServicePage":{"data":[{"service_id":"svc-other","service_name":"Other","enabled_versions":[]}],"total":1}}}`))
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
@@ -653,8 +654,10 @@ type workspaceServiceVersionsSlugState struct {
 	sawWorkspaceList bool
 }
 
+// workspaceServiceVersionsSlugHandler verifies workspace behavior using the bounded Engine service page contract.
 func workspaceServiceVersionsSlugHandler(t *testing.T, state *workspaceServiceVersionsSlugState) http.HandlerFunc {
 	t.Helper()
+	// Serve the bounded membership response while preserving this fixture's command-specific checks.
 	return func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/graphql":
@@ -665,7 +668,8 @@ func workspaceServiceVersionsSlugHandler(t *testing.T, state *workspaceServiceVe
 		case "/engine/graphql":
 			state.sawWorkspaceList = true
 			body := decodeTestGraphQLBody(t, r)
-			if !strings.Contains(body.Query, "workspaceServices") {
+			// Match the bounded membership read used by catalogue and sync commands.
+			if !strings.Contains(body.Query, "workspaceServicePage") {
 				t.Fatalf("unexpected engine graphql query: %s", body.Query)
 			}
 			names, _ := body.Variables["names"].([]interface{})
@@ -673,10 +677,10 @@ func workspaceServiceVersionsSlugHandler(t *testing.T, state *workspaceServiceVe
 				t.Fatalf("expected server-filtered workspace lookup, got %#v", body.Variables)
 			}
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"data":{"workspaceServices":[
+			_, _ = w.Write([]byte(`{"data":{"workspaceServicePage":{"data":[
 				{"service_id":"svc-other","service_name":"GitHub","version":"2026-01-01","enabled_versions":[{"version":"2026-01-01","service_version_id":"ver-other"}]},
 				{"service_id":"svc-github","service_name":"GitHub REST API","version":"2026-07-01","enabled_versions":[{"version":"2026-07-01","service_version_id":"ver-1","status":"public","enabled_at":"2026-07-16T00:00:00Z"}]}
-			]}}`))
+			],"total":2}}}`))
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
@@ -743,17 +747,35 @@ type testGraphQLBody struct {
 	Variables map[string]any `json:"variables"`
 }
 
+// workspaceServicePageFixture keeps dynamic membership fixtures consistent with Engine's bounded response.
+func workspaceServicePageFixture(t *testing.T, servicesJSON string) []byte {
+	t.Helper()
+	var services []json.RawMessage
+	// Invalid fixture data must fail where it is authored rather than masquerade as an empty workspace.
+	if err := json.Unmarshal([]byte(servicesJSON), &services); err != nil {
+		t.Fatalf("decode workspace services fixture: %v", err)
+	}
+	payload, err := json.Marshal(map[string]any{"data": map[string]any{"workspaceServicePage": map[string]any{"data": services, "total": len(services)}}})
+	// Encoding errors invalidate the HTTP fixture and cannot be ignored by a command test.
+	if err != nil {
+		t.Fatalf("encode workspace service page fixture: %v", err)
+	}
+	return payload
+}
+
+// writeEngineWorkspaceServices verifies workspace behavior using the bounded Engine service page contract.
 func writeEngineWorkspaceServices(t *testing.T, w http.ResponseWriter, r *http.Request, servicesJSON string) bool {
 	t.Helper()
 	if r.URL.Path != "/engine/graphql" {
 		return false
 	}
 	body := decodeTestGraphQLBody(t, r)
-	if !strings.Contains(body.Query, "workspaceServices") {
+	// Match the bounded membership read used by catalogue and sync commands.
+	if !strings.Contains(body.Query, "workspaceServicePage") {
 		return false
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_, _ = w.Write([]byte(`{"data":{"workspaceServices":` + servicesJSON + `}}`))
+	_, _ = w.Write(workspaceServicePageFixture(t, servicesJSON))
 	return true
 }
 
@@ -855,8 +877,10 @@ func TestWorkspaceServiceSlugHelpShowsReadableActions(t *testing.T) {
 	}
 }
 
+// TestWorkspaceHasCallsEngine verifies workspace behavior using the bounded Engine service page contract.
 func TestWorkspaceHasCallsEngine(t *testing.T) {
 	dir := t.TempDir()
+	// Serve the bounded membership response while preserving this fixture's command-specific checks.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/engine/graphql" {
 			t.Fatalf("unexpected path %s", r.URL.Path)
@@ -868,9 +892,9 @@ func TestWorkspaceHasCallsEngine(t *testing.T) {
 			name, _ = names[0].(string)
 		}
 		if name == "okta" {
-			_, _ = w.Write([]byte(`{"data":{"workspaceServices":[{"service_id":"00000000-0000-0000-0000-000000000001","service_name":"okta","version":"2026-07-01","enabled_versions":[{"version":"2026-07-01"},{"version":"2026-07-02"}]}]}}`))
+			_, _ = w.Write([]byte(`{"data":{"workspaceServicePage":{"data":[{"service_id":"00000000-0000-0000-0000-000000000001","service_name":"okta","version":"2026-07-01","enabled_versions":[{"version":"2026-07-01"},{"version":"2026-07-02"}]}],"total":1}}}`))
 		} else {
-			_, _ = w.Write([]byte(`{"data":{"workspaceServices":[]}}`))
+			_, _ = w.Write([]byte(`{"data":{"workspaceServicePage":{"data":[],"total":0}}}`))
 		}
 	}))
 	defer server.Close()
@@ -892,9 +916,9 @@ func writeWorkspaceServiceLookupResponse(t *testing.T, w http.ResponseWriter, se
 	for _, version := range versions {
 		enabled = append(enabled, map[string]string{"version": version, "service_version_id": "version-" + version})
 	}
-	payload := map[string]any{"data": map[string]any{"workspaceServices": []map[string]any{{
+	payload := map[string]any{"data": map[string]any{"workspaceServicePage": map[string]any{"total": 1, "data": []map[string]any{{
 		"service_id": serviceID, "service_name": serviceName, "version": versions[0], "enabled_versions": enabled,
-	}}}}
+	}}}}}
 	// Encoding failures make the HTTP fixture unusable and should fail at their source.
 	if err := json.NewEncoder(w).Encode(payload); err != nil {
 		t.Fatalf("encode workspace service lookup: %v", err)

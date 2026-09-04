@@ -203,7 +203,7 @@ func (fixture *deferredApplyFixture) serve(t *testing.T, w http.ResponseWriter, 
 		}
 		// Reflect accepted workspace applies in subsequent discovery reads.
 		if strings.Contains(body.Query, "WorkspaceServices") && fixture.enabled {
-			fmt.Fprint(w, `{"data":{"workspaceServices":[{"service_id":"00000000-0000-4000-8000-000000000001","service_name":"Linear","service_slug":"linear","version":"v1","enabled_versions":[{"version":"v1"}]}]}}`)
+			fmt.Fprint(w, `{"data":{"workspaceServicePage":{"data":[{"service_id":"00000000-0000-4000-8000-000000000001","service_name":"Linear","service_slug":"linear","version":"v1","enabled_versions":[{"version":"v1"}]}],"total":1}}}`)
 			return
 		}
 		writeSDKInitEngineGraphQL(t, w, body.Query)

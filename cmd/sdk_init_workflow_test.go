@@ -59,6 +59,7 @@ func TestSDKInitComposesWorkspaceAndAppReceipts(t *testing.T) {
 func TestSDKInitWorkspaceDraftSeedsRemoteStateWithoutLocalFile(t *testing.T) {
 	directory := t.TempDir()
 	withUnifiedInitGenerationRepairWorkingDirectory(t, directory)
+	// Serve the bounded membership response while preserving this fixture's command-specific checks.
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
 		// Only the in-memory remote snapshot and final workspace plan are expected before confirmation.
@@ -89,7 +90,7 @@ func TestSDKInitWorkspaceDraftSeedsRemoteStateWithoutLocalFile(t *testing.T) {
 		// Engine inventory and Registry visibility are the minimum authority needed to reconstruct safe additive intent.
 		switch {
 		case request.URL.Path == "/engine/graphql" && strings.Contains(body.Query, "WorkspaceServices"):
-			_, _ = writer.Write([]byte(`{"data":{"workspaceServices":[{"service_id":"service-gmail","service_slug":"@provider/gmail","service_name":"Gmail","enabled_versions":[{"service_version_id":"gmail-v1","version":"v1","status":"public"}]}]}}`))
+			_, _ = writer.Write([]byte(`{"data":{"workspaceServicePage":{"data":[{"service_id":"service-gmail","service_slug":"@provider/gmail","service_name":"Gmail","enabled_versions":[{"service_version_id":"gmail-v1","version":"v1","status":"public"}]}],"total":1}}}`))
 		case request.URL.Path == "/engine/graphql" && strings.Contains(body.Query, "WorkspaceConnectionProfiles"):
 			_, _ = writer.Write([]byte(`{"data":{"workspaceConnectionProfiles":[]}}`))
 		case request.URL.Path == "/graphql" && strings.Contains(body.Query, "ServiceVisibilities"):
@@ -126,6 +127,7 @@ func TestSDKInitWorkspaceDraftPreservesRemoteStateMissingFromStaleLocalFile(t *t
 	if err := os.WriteFile(workspacePath, []byte("apiVersion: fused/v1\nkind: workspace\nservices:\n  slack:\n    service_id: service-slack\n    versions:\n      - version: v2\n        service_version_id: slack-v2\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// Serve the bounded membership response while preserving this fixture's command-specific checks.
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
 		// The final plan must retain local-only Slack, live-only Gmail, and the requested Linear addition.
@@ -153,7 +155,7 @@ func TestSDKInitWorkspaceDraftPreservesRemoteStateMissingFromStaleLocalFile(t *t
 		// The remote snapshot uses one live service absent from the stale file.
 		switch {
 		case request.URL.Path == "/engine/graphql" && strings.Contains(body.Query, "WorkspaceServices"):
-			_, _ = writer.Write([]byte(`{"data":{"workspaceServices":[{"service_id":"service-gmail","service_slug":"gmail","service_name":"Gmail","enabled_versions":[{"service_version_id":"gmail-v1","version":"v1","status":"public"}]}]}}`))
+			_, _ = writer.Write([]byte(`{"data":{"workspaceServicePage":{"data":[{"service_id":"service-gmail","service_slug":"gmail","service_name":"Gmail","enabled_versions":[{"service_version_id":"gmail-v1","version":"v1","status":"public"}]}],"total":1}}}`))
 		case request.URL.Path == "/engine/graphql" && strings.Contains(body.Query, "WorkspaceConnectionProfiles"):
 			_, _ = writer.Write([]byte(`{"data":{"workspaceConnectionProfiles":[]}}`))
 		case request.URL.Path == "/graphql" && strings.Contains(body.Query, "ServiceVisibilities"):
@@ -331,6 +333,7 @@ func TestSDKInitOperationOnlyExtensionRejectsInvalidOperationBeforeMutation(t *t
 		t.Fatal(err)
 	}
 	mutationCalls := 0
+	// Serve the bounded membership response while preserving this fixture's command-specific checks.
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
 		// Any lifecycle plan/apply request would prove invalid operation validation happened too late.
@@ -348,7 +351,7 @@ func TestSDKInitOperationOnlyExtensionRejectsInvalidOperationBeforeMutation(t *t
 		// Workspace-first resolution supplies immutable identity; Registry supplies the bounded operation catalogue.
 		switch {
 		case request.URL.Path == "/engine/graphql" && strings.Contains(body.Query, "WorkspaceServices"):
-			_, _ = writer.Write([]byte(`{"data":{"workspaceServices":[{"service_id":"00000000-0000-4000-8000-000000000001","service_slug":"linear","service_name":"Linear","enabled_versions":[{"service_version_id":"version-v1","version":"v1","status":"public"}]}]}}`))
+			_, _ = writer.Write([]byte(`{"data":{"workspaceServicePage":{"data":[{"service_id":"00000000-0000-4000-8000-000000000001","service_slug":"linear","service_name":"Linear","enabled_versions":[{"service_version_id":"version-v1","version":"v1","status":"public"}]}],"total":1}}}`))
 		case request.URL.Path == "/graphql" && strings.Contains(body.Query, "ServiceOperations"):
 			_, _ = writer.Write([]byte(`{"data":{"serviceOperations":[{"id":"endpoint-1","name":"issueGet","method":"GET","path":"/issues/{id}","description":"","service_id":"00000000-0000-4000-8000-000000000001"}]}}`))
 		default:
@@ -590,7 +593,7 @@ func writeSDKInitEngineGraphQL(t *testing.T, writer http.ResponseWriter, query s
 	t.Helper()
 	switch {
 	case strings.Contains(query, "WorkspaceServices"):
-		_, _ = writer.Write([]byte(`{"data":{"workspaceServices":[]}}`))
+		_, _ = writer.Write([]byte(`{"data":{"workspaceServicePage":{"data":[],"total":0}}}`))
 	case strings.Contains(query, "WorkspaceConnectionProfiles"):
 		_, _ = writer.Write([]byte(`{"data":{"workspaceConnectionProfiles":[]}}`))
 	case strings.Contains(query, "BucketSummaryPage"):

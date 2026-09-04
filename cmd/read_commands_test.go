@@ -73,8 +73,10 @@ func TestServiceOperationsSearchUsesServerPagination(t *testing.T) {
 	}
 }
 
+// TestWorkspaceServiceOperationsUsesServerPaginationWithoutQuery verifies workspace behavior using the bounded Engine service page contract.
 func TestWorkspaceServiceOperationsUsesServerPaginationWithoutQuery(t *testing.T) {
 	var sawSearchVars map[string]any
+	// Serve the bounded membership response while preserving this fixture's command-specific checks.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			Query     string         `json:"query"`
@@ -88,7 +90,7 @@ func TestWorkspaceServiceOperationsUsesServerPaginationWithoutQuery(t *testing.T
 		case strings.Contains(body.Query, "GetServiceInfo"):
 			_, _ = w.Write([]byte(`{"data":{"service":{"id":"svc-1","name":"GitHub","slug":"github","base_url":"https://api.github.test","provider":null,"is_owner":true,"servers":[],"auth_configs":[]}}}`))
 		case strings.Contains(body.Query, "WorkspaceServices"):
-			_, _ = w.Write([]byte(`{"data":{"workspaceServices":[{"service_id":"svc-1","service_name":"GitHub","service_slug":"github","version":"v1","enabled_versions":[{"service_version_id":"version-1","version":"v1","status":"active"}]}]}}`))
+			_, _ = w.Write([]byte(`{"data":{"workspaceServicePage":{"data":[{"service_id":"svc-1","service_name":"GitHub","service_slug":"github","version":"v1","enabled_versions":[{"service_version_id":"version-1","version":"v1","status":"active"}]}],"total":1}}}`))
 		case strings.Contains(body.Query, "searchEndpoints"):
 			sawSearchVars = body.Variables
 			_, _ = w.Write([]byte(`{"data":{"searchEndpoints":[{"id":"ep-1","name":"issuesList","path":"/issues","method":"GET","description":"","service_id":"svc-1"}]}}`))

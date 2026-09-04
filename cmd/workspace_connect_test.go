@@ -15,14 +15,16 @@ import (
 func TestWorkspaceServiceConnectStartsSession(t *testing.T) {
 	dir := t.TempDir()
 	var sawConnect bool
+	// Serve the bounded membership response while preserving this fixture's command-specific checks.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/graphql":
 			_, _ = w.Write([]byte(`{"data":{"service":{"id":"svc-github"}}}`))
 		case "/engine/graphql":
 			body := decodeTestGraphQLBody(t, r)
-			if strings.Contains(body.Query, "workspaceServices") {
-				_, _ = w.Write([]byte(`{"data":{"workspaceServices":[{"service_id":"svc-github","service_name":"GitHub REST API","version":"2026-07-01","enabled_versions":[{"version":"2026-07-01","service_version_id":"ver-1"}]}]}}`))
+			// Match the bounded membership read used by catalogue and sync commands.
+			if strings.Contains(body.Query, "workspaceServicePage") {
+				_, _ = w.Write([]byte(`{"data":{"workspaceServicePage":{"data":[{"service_id":"svc-github","service_name":"GitHub REST API","version":"2026-07-01","enabled_versions":[{"version":"2026-07-01","service_version_id":"ver-1"}]}],"total":1}}}`))
 				return
 			}
 			if strings.Contains(body.Query, "startConnectSession") {
@@ -53,6 +55,7 @@ func TestWorkspaceServiceConnectAcceptsExactServiceUUID(t *testing.T) {
 	const serviceID = "22222222-2222-4222-8222-222222222222"
 	const bucketID = "11111111-1111-4111-8111-111111111111"
 	var sawUnfilteredMembership, sawConnect bool
+	// Serve the bounded membership response while preserving this fixture's command-specific checks.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// An exact UUID path must remain entirely on the entitlement-bounded Engine API.
 		if r.URL.Path != "/engine/graphql" {
@@ -61,10 +64,10 @@ func TestWorkspaceServiceConnectAcceptsExactServiceUUID(t *testing.T) {
 		body := decodeTestGraphQLBody(t, r)
 		// The two expected GraphQL operations have disjoint stable field names.
 		switch {
-		case strings.Contains(body.Query, "workspaceServices"):
+		case strings.Contains(body.Query, "workspaceServicePage"):
 			_, hasNames := body.Variables["names"]
 			sawUnfilteredMembership = !hasNames || body.Variables["names"] == nil
-			_, _ = w.Write([]byte(`{"data":{"workspaceServices":[{"service_id":"` + serviceID + `","service_name":"Gmail","service_slug":"gmail","version":"v1","enabled_versions":[{"version":"v1","service_version_id":"ver-1"}]}]}}`))
+			_, _ = w.Write([]byte(`{"data":{"workspaceServicePage":{"data":[{"service_id":"` + serviceID + `","service_name":"Gmail","service_slug":"gmail","version":"v1","enabled_versions":[{"version":"v1","service_version_id":"ver-1"}]}],"total":1}}}`))
 		case strings.Contains(body.Query, "startConnectSession"):
 			sawConnect = true
 			// Session creation must receive the same exact UUID returned by runtime remediation.

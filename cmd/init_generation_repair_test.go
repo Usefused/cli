@@ -158,6 +158,7 @@ func TestSDKInitCompatibilityGenerationRepairUsesGenerateDefault(t *testing.T) {
 func newUnifiedInitGenerationRepairServer(t *testing.T, fixture unifiedInitGenerationRepairFixture) (*httptest.Server, *unifiedInitGenerationRepairCalls) {
 	t.Helper()
 	calls := &unifiedInitGenerationRepairCalls{}
+	// Serve the bounded membership response while preserving this fixture's command-specific checks.
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
 		calls.paths = append(calls.paths, request.URL.Path)
@@ -183,7 +184,7 @@ func newUnifiedInitGenerationRepairServer(t *testing.T, fixture unifiedInitGener
 			writeUnifiedInitGenerationRepairPlan(t, writer, body)
 		case "/engine/graphql":
 			calls.listCalls++
-			_, _ = writer.Write([]byte(`{"data":{"workspaceServices":[{"id":"00000000-0000-4000-8000-000000000003","workspace_id":"00000000-0000-4000-8000-000000000004","service_id":"` + generationRepairServiceID + `","service_version_id":"` + generationRepairVersionID + `","version":"v1","service_name":"Linear","service_slug":"linear","enabled_versions":[{"id":"00000000-0000-4000-8000-000000000005","service_version_id":"` + generationRepairVersionID + `","version":"v1","status":"public"}]}]}}`))
+			_, _ = writer.Write([]byte(`{"data":{"workspaceServicePage":{"data":[{"id":"00000000-0000-4000-8000-000000000003","workspace_id":"00000000-0000-4000-8000-000000000004","service_id":"` + generationRepairServiceID + `","service_version_id":"` + generationRepairVersionID + `","version":"v1","service_name":"Linear","service_slug":"linear","enabled_versions":[{"id":"00000000-0000-4000-8000-000000000005","service_version_id":"` + generationRepairVersionID + `","version":"v1","status":"public"}]}],"total":1}}}`))
 		case "/workspace/services/" + generationRepairServiceID + "/versions/" + generationRepairVersionID + "/refresh":
 			calls.refreshCalls++
 			// A configured refresh dependency failure must remain typed and prevent plan replay.

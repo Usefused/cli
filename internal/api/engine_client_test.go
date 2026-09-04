@@ -12,9 +12,11 @@ import (
 	"github.com/Usefused/cli/internal/api"
 )
 
+// TestListWorkspaceServices_SendsNameFilterAsGraphQLVariable verifies workspace behavior using the bounded Engine service page contract.
 func TestListWorkspaceServices_SendsNameFilterAsGraphQLVariable(t *testing.T) {
 	var sawPath string
 	var sawNames []interface{}
+	// Serve the bounded membership response while preserving this fixture's command-specific checks.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sawPath = r.URL.Path
 		var body struct {
@@ -24,12 +26,13 @@ func TestListWorkspaceServices_SendsNameFilterAsGraphQLVariable(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatalf("decode graphql body: %v", err)
 		}
-		if !strings.Contains(body.Query, "workspaceServices") {
-			t.Fatalf("expected workspaceServices query, got %s", body.Query)
+		// Match the bounded membership read used by catalogue and sync commands.
+		if !strings.Contains(body.Query, "workspaceServicePage") {
+			t.Fatalf("expected workspaceServicePage query, got %s", body.Query)
 		}
 		sawNames, _ = body.Variables["names"].([]interface{})
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"data":{"workspaceServices":[]}}`))
+		w.Write([]byte(`{"data":{"workspaceServicePage":{"data":[],"total":0}}}`))
 	}))
 	defer srv.Close()
 

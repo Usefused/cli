@@ -25,8 +25,10 @@ func newServiceInfoTestServer(t *testing.T, serviceJSON string) *httptest.Server
 	}))
 }
 
+// newServiceSearchTestServer verifies workspace behavior using the bounded Engine service page contract.
 func newServiceSearchTestServer(t *testing.T, servicesJSON string) *httptest.Server {
 	t.Helper()
+	// Serve the bounded membership response while preserving this fixture's command-specific checks.
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			Query     string                 `json:"query"`
@@ -46,10 +48,11 @@ func newServiceSearchTestServer(t *testing.T, servicesJSON string) *httptest.Ser
 			}
 			_, _ = w.Write([]byte(`{"data":{"searchServices":` + servicesJSON + `}}`))
 		case "/engine/graphql":
-			if !strings.Contains(body.Query, "workspaceServices") {
-				t.Fatalf("expected workspaceServices query, got %q", body.Query)
+			// Match the bounded membership read used by catalogue and sync commands.
+			if !strings.Contains(body.Query, "workspaceServicePage") {
+				t.Fatalf("expected workspaceServicePage query, got %q", body.Query)
 			}
-			_, _ = w.Write([]byte(`{"data":{"workspaceServices":[]}}`))
+			_, _ = w.Write([]byte(`{"data":{"workspaceServicePage":{"data":[],"total":0}}}`))
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}

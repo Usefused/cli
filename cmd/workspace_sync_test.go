@@ -457,6 +457,7 @@ func TestMergeWorkspaceServicesFromRemote_LatestVersionIncludedInVersions(t *tes
 // TestWorkspaceSyncCreatesDefaultFusedConfig covers an empty profile export alongside one active service.
 func TestWorkspaceSyncCreatesDefaultFusedConfig(t *testing.T) {
 	dir := t.TempDir()
+	// Serve the bounded membership response while preserving this fixture's command-specific checks.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/engine/graphql":
@@ -465,8 +466,9 @@ func TestWorkspaceSyncCreatesDefaultFusedConfig(t *testing.T) {
 				_, _ = w.Write([]byte(`{"data":{"workspaceConnectionProfiles":[]}}`))
 				return
 			}
-			if strings.Contains(body.Query, "workspaceServices") {
-				_, _ = w.Write([]byte(`{"data":{"workspaceServices":[{"service_name":"github","service_id":"svc-github","version":"1.1.4","enabled_versions":[{"version":"1.1.4"}]}]}}`))
+			// Match the bounded membership read used by catalogue and sync commands.
+			if strings.Contains(body.Query, "workspaceServicePage") {
+				_, _ = w.Write([]byte(`{"data":{"workspaceServicePage":{"data":[{"service_name":"github","service_id":"svc-github","version":"1.1.4","enabled_versions":[{"version":"1.1.4"}]}],"total":1}}}`))
 				return
 			}
 			t.Fatalf("unexpected engine graphql query")
@@ -493,6 +495,7 @@ func TestWorkspaceSyncCreatesDefaultFusedConfig(t *testing.T) {
 // TestWorkspaceSyncDoesNotWriteCredentialMaterial proves profile export cannot reconstruct secrets.
 func TestWorkspaceSyncDoesNotWriteCredentialMaterial(t *testing.T) {
 	dir := t.TempDir()
+	// Serve the bounded membership response while preserving this fixture's command-specific checks.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/engine/graphql":
@@ -501,8 +504,9 @@ func TestWorkspaceSyncDoesNotWriteCredentialMaterial(t *testing.T) {
 				_, _ = w.Write([]byte(`{"data":{"workspaceConnectionProfiles":[]}}`))
 				return
 			}
-			if strings.Contains(body.Query, "workspaceServices") {
-				_, _ = w.Write([]byte(`{"data":{"workspaceServices":[{"service_name":"github","service_id":"svc-github","version":"1.1.4","enabled_versions":[{"version":"1.1.4","service_version_id":"ver-github"}]}]}}`))
+			// Match the bounded membership read used by catalogue and sync commands.
+			if strings.Contains(body.Query, "workspaceServicePage") {
+				_, _ = w.Write([]byte(`{"data":{"workspaceServicePage":{"data":[{"service_name":"github","service_id":"svc-github","version":"1.1.4","enabled_versions":[{"version":"1.1.4","service_version_id":"ver-github"}]}],"total":1}}}`))
 				return
 			}
 			t.Fatalf("unexpected engine graphql query")

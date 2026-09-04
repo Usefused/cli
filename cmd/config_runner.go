@@ -1018,6 +1018,22 @@ func applyWorkspaceConfig(client *api.Client, cfg *configfile.ParsedConfig, rece
 	if err != nil {
 		return fmt.Errorf("failed to apply workspace %s: %w", cfg.ConfigKey, err)
 	}
+	// The Engine owns per-service completion; a decoded HTTP result is not itself proof of full success.
+	if resp.Status == "partially_applied" {
+		for _, service := range resp.Services {
+			fmt.Printf("  %s: %s", safeWorkspaceRecoveryValue(service.Key), safeWorkspaceOutcomeToken(service.Status, "unknown"))
+			// Recovery codes distinguish a retryable local failure from an uncertain external write.
+			if service.ErrorCode != "" {
+				fmt.Printf(" (%s)", safeWorkspaceOutcomeToken(service.ErrorCode, "unknown"))
+			}
+			fmt.Println()
+		}
+		return fmt.Errorf("workspace partially applied (plan %s); rerun workspace apply with the same receipt to resume; uncertain Registry actions require reconciliation", receipt.PlanID)
+	}
+	// Unknown success shapes must not be mistaken for a completed plan.
+	if resp.Status != "applied" {
+		return fmt.Errorf("workspace apply returned unconfirmed status %q", safeWorkspaceOutcomeToken(resp.Status, "unknown"))
+	}
 	fmt.Printf("Successfully applied workspace config\n")
 	printAppliedWebhooks(client.BaseURL, resp.Webhooks)
 	return nil

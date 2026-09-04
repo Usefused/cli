@@ -859,11 +859,12 @@ func newUnifiedInitApplyFailureServer(t *testing.T, status int, body string) *ht
 func TestUnifiedInitPinRepairResolutionFailureLeavesNoConfig(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "support-sdk.yaml")
 	planCalls := 0
+	// Serve the bounded membership response while preserving this fixture's command-specific checks.
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		// Repair may read workspace identity after the typed plan failure but must not mutate without one exact match.
 		if request.URL.Path == "/engine/graphql" {
 			writer.Header().Set("Content-Type", "application/json")
-			_, _ = writer.Write([]byte(`{"data":{"workspaceServices":[]}}`))
+			_, _ = writer.Write([]byte(`{"data":{"workspaceServicePage":{"data":[],"total":0}}}`))
 			return
 		}
 		// No other route besides the initial plan and read-only workspace lookup is permitted.
