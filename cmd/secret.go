@@ -297,17 +297,20 @@ type secretCredentialInput struct {
 var collectSecretCredentialInput = resolveSecretCredentialInput
 
 // setSecretForAuth is the one static-credential mutation path used by both
-// `secret set` and interactive SDK planning. Keeping collection, provider key
-// naming, validation, persistence, output, and audit together prevents a plan
-// convenience flow from becoming a second credential implementation.
+// `secret set` and interactive SDK planning. Optional setup is accepted before
+// collecting credentials so an operator can keep a valid plan without supplying
+// material. Explicit secret writes retain the same validation and persistence.
 func setSecretForAuth(client *api.Client, serviceID, bucketID string, auth *api.AuthConfig, value string, expiresAt *time.Time, serviceDisplay string, out io.Writer, mutation credentialMutationOptions) error {
-	input, err := collectSecretCredentialInput(auth, value)
-	if err != nil {
-		return err
-	}
+	// Declining optional setup must not first require a valid credential pair.
 	if err := authorizeCredentialMutation(mutation); err != nil {
 		return err
 	}
+	input, err := collectSecretCredentialInput(auth, value)
+	// After opting in, invalid or cancelled input must never reach storage.
+	if err != nil {
+		return err
+	}
+	// A failed write remains visible; it cannot be treated as skipped setup.
 	if err := persistSecretCredential(client, serviceID, bucketID, auth, input, expiresAt); err != nil {
 		return err
 	}

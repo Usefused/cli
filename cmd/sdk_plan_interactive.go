@@ -190,8 +190,10 @@ func applySDKPlanCredentialRequirement(client *api.Client, bucket *api.MissingCr
 	return setSecretForAuth(client, requirement.ServiceID, bucket.ID, missingCredentialAuth(requirement), "", nil, display, opts.output, mutation)
 }
 
+// credentialConfirmationMessage names the exact write target before the user
+// chooses whether to configure the successful plan's missing credentials now.
 func credentialConfirmationMessage(requirement api.MissingCredentialRequirement, bucket *api.MissingCredentialBucket) string {
-	return fmt.Sprintf("Store %s credentials for %s in bucket %q?", requirement.AuthType, credentialServiceDisplay(requirement), bucket.Name)
+	return fmt.Sprintf("Set up and store %s credentials for %s in bucket %q now?", requirement.AuthType, credentialServiceDisplay(requirement), bucket.Name)
 }
 
 func credentialServiceDisplay(requirement api.MissingCredentialRequirement) string {

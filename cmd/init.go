@@ -482,21 +482,27 @@ func createPlanApplyUnifiedInit(cmd *cobra.Command, client *api.Client, mode uni
 	return nil
 }
 
-// planUnifiedInitCandidate creates one app plan and performs only the bounded exact-snapshot repair authorized for generated SDKs.
+// planUnifiedInitCandidate creates one app plan and performs only the bounded exact-snapshot repair authorized by a typed app contract failure.
 func planUnifiedInitCandidate(cmd *cobra.Command, client *api.Client, mode unifiedInitMode, request scaffoldRequest, workspaceApplied bool, parsed *configfile.ParsedConfig, opts planOptions) (plannedConfig, error) {
 	plan, err := planConfigWithRemediation(client, parsed, client.BaseURL, opts)
 	// Ordinary plan success needs no repair or contextual error wrapping.
 	if err == nil {
 		return plan, nil
 	}
-	// Unrelated plan failures preserve either candidate absence or the exact accepted extension file.
-	if !unifiedInitCanRefreshGenerationSnapshot(mode, parsed, err) {
+	refresh := refreshUnifiedInitGenerationSnapshots
+	stage := "generation snapshot refresh"
+	// Direct APIs repair only the exact schemas required by their OpenAPI projection and never request package generation.
+	if unifiedInitCanRefreshAPISchemaSnapshot(mode, parsed, err) {
+		refresh = refreshUnifiedInitAPISchemaSnapshots
+		stage = "OpenAPI snapshot refresh"
+	} else if !unifiedInitCanRefreshGenerationSnapshot(mode, parsed, err) {
+		// Unrelated plan failures preserve either candidate absence or the exact accepted extension file.
 		return plannedConfig{}, contextualizeUnifiedInitPrecommitFailure("app plan", mode, request, workspaceApplied, err)
 	}
-	refreshed, refreshErr := refreshUnifiedInitGenerationSnapshots(cmd, client, parsed)
+	refreshed, refreshErr := refresh(cmd, client, parsed)
 	// Refresh failure stops before config publication and reports any exact snapshots already completed.
 	if refreshErr != nil {
-		return plannedConfig{}, contextualizeUnifiedInitPrecommitFailureAfterRefresh("generation snapshot refresh", mode, request, workspaceApplied, refreshed, refreshErr)
+		return plannedConfig{}, contextualizeUnifiedInitPrecommitFailureAfterRefresh(stage, mode, request, workspaceApplied, refreshed, refreshErr)
 	}
 	plan, err = planConfigWithRemediation(client, parsed, client.BaseURL, opts)
 	// The one retry is authoritative; a second failure cannot trigger another refresh or publish the candidate.
@@ -884,7 +890,7 @@ func contextualizeUnifiedInitPrecommitFailureAfterRefresh(stage string, mode uni
 	message := fmt.Sprintf("%s for %s failed during %s for selected services %s; %s; %s", unifiedInitModeLabel(mode), request.name, stage, unifiedInitSelectedServices(request), localState, workspaceState)
 	// A completed refresh is a durable Engine-local snapshot mutation even when the subsequent app plan remains unsuccessful.
 	if len(refreshed) > 0 {
-		message += fmt.Sprintf("; exact runtime contract refresh completed for [%s]", strings.Join(refreshed, ", "))
+		message += fmt.Sprintf("; exact immutable contract refresh completed for [%s]", strings.Join(refreshed, ", "))
 	}
 	// Targeted recovery is appended only when the underlying structured code justifies it.
 	if recovery != "" {
@@ -903,6 +909,10 @@ func unifiedInitFailureRecoveryAfterRefresh(cause error, refreshCompleted bool) 
 	// Only a repeated missing-pin response needs different guidance after a proven exact refresh.
 	if errors.As(cause, &apiErr) && apiErr.Code == "generation_contract_pin_unavailable" {
 		return "the exact selected snapshot refresh completed, but Engine still did not retain the immutable API contract required for generation; inspect this workspace's Engine and Registry logs, or select another enabled version, then retry. This is not a credential or operation-selection failure"
+	}
+	// A repeated OpenAPI projection failure after refresh indicates retained contract corruption or an incompatible immutable source.
+	if errors.As(cause, &apiErr) && apiErr.Code == "app_openapi_schema_unavailable" {
+		return "the exact selected snapshot refresh completed, but Engine still could not project the immutable REST API schemas; inspect this workspace's Engine and Registry logs, or select another enabled version, then retry. No schema fallback was generated"
 	}
 	return unifiedInitFailureRecovery(cause)
 }
@@ -967,6 +977,10 @@ func unifiedInitFailureRecovery(cause error) string {
 	if apiErr.Code == "generation_contract_pin_unavailable" {
 		return "the selected enabled service snapshot does not retain the immutable API contract required to generate a typed SDK; refresh or publish that Registry version, or select another enabled version, then retry. This is not a credential or operation-selection failure"
 	}
+	// Direct API schema failures require the same exact snapshot refresh that init can perform once before publishing local state.
+	if apiErr.Code == "app_openapi_schema_unavailable" {
+		return "the selected enabled service snapshot cannot produce the immutable REST API OpenAPI contract; refresh or publish that Registry version, or select another enabled version, then retry. No schema fallback is used"
+	}
 	// GraphQL dependency failures belong in the mono-workspace Engine/Registry path, where workspace owners can inspect complete logs safely.
 	if apiErr.Code == "graphql_dependency_failed" {
 		return "confirm the Engine can reach Registry, inspect this workspace's Engine logs for the dependency failure, and retry"
@@ -995,18 +1009,97 @@ func validateUnifiedInitModeRequest(mode unifiedInitMode, request scaffoldReques
 	return nil
 }
 
-// printUnifiedInitAPINextStep renders one concrete REST call with the resolved immutable app ID and configured Engine URL.
+// printUnifiedInitAPINextStep keeps connection routing and the exact REST
+// contract visible even when initialization intentionally builds no package.
 func printUnifiedInitAPINextStep(cmd *cobra.Command, client *api.Client, parsed *configfile.ParsedConfig, appID string) {
+	ref := appID
+	// Older apply responses still have an exact name/version documentation target.
+	if strings.TrimSpace(ref) == "" {
+		ref = parsed.SDK.Name + "@" + parsed.SDK.Version
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "Direct API ready. Export its OpenAPI contract with:\n  fused-cli api openapi %s --out app.openapi.yaml\n", shellQuoteWorkspaceServiceArg(ref))
+	fmt.Fprintln(cmd.OutOrStdout(), "Use app.openapi.yaml to choose an operation and supply its required input and selectors.")
+	printAPIInitConnections(cmd, parsed.SDK)
 	// Older or synthetic apply responses may omit identity, so preserve an actionable exact-name fallback without another network read.
 	if strings.TrimSpace(appID) == "" {
-		fmt.Fprintf(cmd.OutOrStdout(), "Direct API ready. Export its REST contract with:\n  fused-cli sdk openapi %s@%s\n", parsed.SDK.Name, parsed.SDK.Version)
 		return
 	}
 	operation := firstUnifiedInitAPIOperation(parsed.SDK)
 	endpoint := strings.TrimRight(client.BaseURL, "/") + "/v1/apps/" + appID + "/executions"
-	payload, _ := json.Marshal(map[string]any{"operation": operation, "input": map[string]any{}})
-	fmt.Fprintf(cmd.OutOrStdout(), "Direct API ready. Set FUSED_SDK_TOKEN to the token shown above, then adapt this REST request template with the operation's required input:\n")
-	fmt.Fprintf(cmd.OutOrStdout(), "  curl -X POST '%s' -H \"Authorization: Bearer $FUSED_SDK_TOKEN\" -H 'Content-Type: application/json' -d %s\n", endpoint, shellQuoteWorkspaceServiceArg(string(payload)))
+	payload := map[string]any{"operation": operation, "input": map[string]any{}}
+	// Known connected auth makes the required stable user selector explicit in the template.
+	if apiInitNeedsConnection(parsed.SDK, operation) {
+		payload["selector"] = map[string]string{"end_user_ref": "user-123"}
+	}
+	var encoded strings.Builder
+	encoder := json.NewEncoder(&encoded)
+	encoder.SetEscapeHTML(false)
+	_ = encoder.Encode(payload)
+	fmt.Fprintln(cmd.OutOrStdout(), "Set FUSED_SDK_TOKEN to the app token shown above. Replace any operation placeholder and fill the required input using app.openapi.yaml before running this REST request template:")
+	fmt.Fprintf(cmd.OutOrStdout(), "  curl -X POST %s -H \"Authorization: Bearer ${FUSED_SDK_TOKEN:?Set the app execution token first}\" -H 'Content-Type: application/json' -d %s\n", shellQuoteWorkspaceServiceArg(endpoint), shellQuoteWorkspaceServiceArg(strings.TrimSpace(encoded.String())))
+}
+
+// apiInitNeedsConnection adds a user selector only for the chosen connected
+// operation, or when every possible service behind a placeholder is connected.
+func apiInitNeedsConnection(config *configfile.SDKConfig, operation string) bool {
+	for _, service := range config.Services {
+		for _, selected := range service.Operations {
+			// An exact physical operation uses only its owning service's auth metadata.
+			if selected == operation {
+				return apiInitServiceIsConnected(service)
+			}
+		}
+	}
+	// Unresolved explicit operations and empty service sets cannot imply a provider connection.
+	if operation != "<operationId>" || len(config.Services) == 0 {
+		return false
+	}
+	for _, service := range config.Services {
+		// A mixed or inferred selection must leave user routing to the exported schema.
+		if !apiInitServiceIsConnected(service) {
+			return false
+		}
+	}
+	return true
+}
+
+// apiInitServiceIsConnected recognizes only explicitly configured OAuth/OIDC schemes.
+func apiInitServiceIsConnected(service configfile.AppService) bool {
+	return service.Auth != nil && isConnectAuthType(canonicalSecretTypeName(service.Auth.Type))
+}
+
+// printAPIInitConnections offers exact selected-bucket consent commands without
+// starting sessions or requiring credentials as part of initialization.
+func printAPIInitConnections(cmd *cobra.Command, config *configfile.SDKConfig) {
+	fmt.Fprintln(cmd.OutOrStdout(), "For OAuth/OIDC: configure missing client credentials, open each service's connection URL, and complete consent. Send the same user reference in selector.end_user_ref on physical calls; Unified calls use service-keyed selectors.")
+	// An omitted bucket has no exact local value that this output can safely suggest.
+	if config.Bucket == "" {
+		return
+	}
+	names := make([]string, 0, len(config.Services))
+	for name := range config.Services {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		service := config.Services[name]
+		// Missing or ambiguous selectors belong to the authoritative OpenAPI contract, not a guessed command.
+		if service.Auth == nil || service.Auth.Name == "" || !isConnectAuthType(canonicalSecretTypeName(service.Auth.Type)) {
+			continue
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "  fused-cli workspace service connect %s --bucket %s --user-ref 'user-123' --type %s --auth-name %s", shellQuoteWorkspaceServiceArg(name), shellQuoteWorkspaceServiceArg(config.Bucket), shellQuoteWorkspaceServiceArg(service.Auth.Type), shellQuoteWorkspaceServiceArg(service.Auth.Name))
+		// A configured shared client pair must also be selected by standalone consent.
+		if service.Auth.Ref != "" {
+			fmt.Fprintf(cmd.OutOrStdout(), " --auth-ref %s", shellQuoteWorkspaceServiceArg(service.Auth.Ref))
+		}
+		// Explicit consent scopes remain the app's selected ceiling.
+		if service.Connect != nil {
+			for _, scope := range service.Connect.Scopes {
+				fmt.Fprintf(cmd.OutOrStdout(), " --scope %s", shellQuoteWorkspaceServiceArg(scope))
+			}
+		}
+		fmt.Fprintln(cmd.OutOrStdout())
+	}
 }
 
 // firstUnifiedInitAPIOperation selects one deterministic configured operation or leaves an explicit template placeholder.

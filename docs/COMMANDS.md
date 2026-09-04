@@ -640,7 +640,9 @@ skills share one discovery root.
 
 ## `sdk openapi <sdk-name@version-or-version-id>`
 
-Export an OpenAPI 3.1 document for one exact immutable SDK version. The CLI
+Export an OpenAPI 3.1 document for one exact immutable **generated SDK**
+version. Use `api openapi` for an app created with `init --api` or any SDK
+configuration whose `generate` field is `false`. The CLI
 resolves the Version ID with its ordinary control credential and `app.read`,
 then calls `GET /apps/{app_id}/openapi`; an SDK execution token does not
 authorize this export. The document describes the real
@@ -662,6 +664,29 @@ a request-branch count consistent with the declared operation count.
 | `--out` | `-o` | Atomic output file path | `<safe-sdk-name>-<version>.openapi.<format>`; Version ID input uses `<version-id>.openapi.<format>` |
 | `--format` | | Output format: `yaml` or `json` | `"yaml"` |
 | `--json` | | Print export metadata only (SDK, version, Version ID, operation, `operation_count`, format, path, bytes, `sha256:<64 lowercase hex>`, server URL, and status) | `false` |
+
+## `api openapi <api-name@version-or-version-id>`
+
+Export the OpenAPI 3.1 execution contract for one exact immutable direct REST
+API version created with `init --api` or represented by an SDK configuration
+with `generate: false`.
+
+```bash
+fused-cli api openapi billing-api@1.2.0 --out billing-api.openapi.yaml
+```
+
+The export has the same immutable-version resolution, `app.read` control
+credential, operation filtering, atomic file writing, size bound, and document
+validation described for `sdk openapi`. It describes the same Engine execution
+route and runtime Bearer token contract. Its generated filename and `--json`
+metadata identify the resource as an API instead of an SDK.
+
+| Argument | Short | Description | Default |
+|----------|-------|-------------|---------|
+| `--operation` | | Export one exact physical or Unified operation name | `""` |
+| `--out` | `-o` | Atomic output file path | `<safe-api-name>-<version>.openapi.<format>`; Version ID input uses `<version-id>.openapi.<format>` |
+| `--format` | | Output format: `yaml` or `json` | `"yaml"` |
+| `--json` | | Print export metadata only, using the `api` field for the resource name | `false` |
 
 ## `sdk invoke <sdk-name@version-or-version-id> <operation>`
 

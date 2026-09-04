@@ -37,9 +37,13 @@ func authorizeCredentialMutation(opts credentialMutationOptions) error {
 	return nil
 }
 
+// confirmCredentialMutation makes optional setup explicit before collection and
+// defaults to preserving the valid plan without changing bucket credentials.
 func confirmCredentialMutation(message string) (bool, error) {
-	confirmed := true
-	err := huh.NewConfirm().Title(message).Affirmative("Store").Negative("Cancel").Value(&confirmed).Run()
+	confirmed := false
+	err := huh.NewConfirm().Title(message).
+		Description("You can create the app now and configure credentials before connecting accounts or calling secured operations.").
+		Affirmative("Set up now").Negative("Skip for now").Value(&confirmed).Run()
 	return confirmed, err
 }
 

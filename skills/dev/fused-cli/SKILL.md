@@ -179,7 +179,7 @@ group's `--help` output to choose the exact subcommand.
 
 Use `--json` whenever the confirmed command help exposes it. This includes
 read/list/show/validate commands, plan commands, `sdk apply`, `sdk download`,
-`sdk openapi`, `sdk token generate`, `sdk invoke`, and `sdk activity`. Do not scrape IDs, one-time tokens,
+`sdk openapi`, `api openapi`, `sdk token generate`, `sdk invoke`, and `sdk activity`. Do not scrape IDs, one-time tokens,
 receipt fields, retry timing, or execution results from human output. A command
 without `--json` must be treated as a human-only mutation unless its domain
 skill documents a stable alternative.
@@ -196,6 +196,13 @@ Engine. The CLI verifies the returned Version ID and real POST path before
 replacement, including its matching `app_id` enum and request-branch count.
 JSON metadata includes `operation_count` and `sha256:<64 lowercase hex>` of the
 final rendered file bytes.
+
+For a direct REST API created by `fused-cli init --api`, or a `kind: sdk`
+configuration with `generate: false`, use `fused-cli api openapi
+<api-name@version-or-version-id>`. It shares the exact-version export and
+validation contract above but reports the resource under the `api` metadata
+field and uses an API-oriented default filename. Reserve `sdk openapi` for
+generated SDK versions.
 
 `fused-cli skill install` installs from the immutable `skills/<version>/`
 snapshot shipped beside a release binary when available. This is intentionally

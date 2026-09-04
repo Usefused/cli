@@ -154,6 +154,7 @@ fused-cli sdk apply
 fused-cli sdk validate
 fused-cli sdk download <sdk-name@version-or-version-id>
 fused-cli sdk openapi <sdk-name@version-or-version-id> [--operation <exact-operation-id>] [-o <path>] [--format yaml|json]
+fused-cli api openapi <api-name@version-or-version-id> [--operation <exact-operation-id>] [-o <path>] [--format yaml|json]
 fused-cli sdk sync <sdk-name>
 fused-cli sdk show <sdk-name@version-or-version-id>
 fused-cli sdk services <sdk-name@version-or-version-id>
@@ -193,6 +194,11 @@ when apply succeeded before generation waiting or download failed.
 
 `sdk openapi` resolves one exact Version ID with the control credential and
 `app.read`, then GETs `/apps/{app_id}/openapi`; the execution token cannot authorize it.
+Use it for generated SDK versions. For direct REST APIs created with `init
+--api`, including `kind: sdk` configurations with `generate: false`, use `api
+openapi` with the exact API version reference instead. The two commands share
+the immutable export and validation contract; structured output uses `sdk` for
+generated SDKs and `api` for direct APIs.
 It atomically writes YAML or JSON; `--operation` is one exact physical or Unified name.
 `--json` reports metadata only: `operation_count` and `sha256:<64 lowercase hex>` of final file bytes.
 Before replacement it accepts only OpenAPI 3.1.x with matching `x-fused-app-id`,

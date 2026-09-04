@@ -878,7 +878,7 @@ func applyPreparedSDKWithResult(client *api.Client, cfg *configfile.ParsedConfig
 	// A direct API has no package job or download stage, but its exact identity remains useful to unified init.
 	if !sdkGeneratesPackage(cfg.SDK) {
 		result.Generation.JobID = ""
-		fmt.Printf("  Package: not built (generate: false) -- call it over REST, or describe it with 'fused-cli sdk openapi %s@%s'\n", cfg.SDK.Name, cfg.SDK.Version)
+		fmt.Printf("  Package: not built (generate: false) -- call it over REST, or describe it with 'fused-cli api openapi %s@%s'\n", cfg.SDK.Name, cfg.SDK.Version)
 		return result, nil
 	}
 	// A normal apply returns after durable publication and reports whether generation queued or completed immediately.

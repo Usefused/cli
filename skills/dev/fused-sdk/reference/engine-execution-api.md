@@ -7,16 +7,28 @@ execution token, never a provider credential or the CLI control key.
 
 ## Resolve the exact contract
 
-1. Resolve the intended immutable SDK version:
+1. Resolve the intended immutable app version. For a generated SDK, inspect it
+   with:
 
    ```shell
    fused-cli sdk show <sdk-name@version-or-version-id> --json
    ```
 
-2. Export its Engine-owned OpenAPI document:
+2. Export its Engine-owned OpenAPI document. Use `sdk openapi` for a generated
+   SDK:
 
    ```shell
    fused-cli sdk openapi <sdk-name@version-or-version-id> \
+     --out engine-execution.openapi.yaml \
+     --format yaml \
+     --json
+   ```
+
+   For a direct REST API created with `fused-cli init --api`, or a `kind: sdk`
+   configuration with `generate: false`, use its public API command instead:
+
+   ```shell
+   fused-cli api openapi <api-name@version-or-version-id> \
      --out engine-execution.openapi.yaml \
      --format yaml \
      --json

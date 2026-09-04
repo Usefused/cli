@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Usefused/cli/internal/api"
 	"gopkg.in/yaml.v3"
 )
 
@@ -19,6 +21,13 @@ const sdkOpenAPITestVersionID = "8c664473-3318-45fe-993b-81251034d625"
 
 type sdkOpenAPICommandTestHandler struct {
 	t *testing.T
+}
+
+type failingOpenAPIMetadataWriter struct{}
+
+// Write simulates a closed stdout stream after the OpenAPI file has committed successfully.
+func (failingOpenAPIMetadataWriter) Write([]byte) (int, error) {
+	return 0, errors.New("metadata output closed")
 }
 
 // ServeHTTP returns exact app resolution and an app-bound OpenAPI fixture for the command test.
@@ -49,16 +58,24 @@ func resetSDKOpenAPITestState(t *testing.T) {
 	t.Helper()
 	oldEngineURL, oldAPIKey, oldTimeout := EngineURL, APIKey, RequestTimeout
 	oldOperation, oldOut, oldFormat := sdkOpenAPIOperation, sdkOpenAPIOut, sdkOpenAPIFormat
+	oldAPIOperation, oldAPIOut, oldAPIFormat := apiOpenAPIOperation, apiOpenAPIOut, apiOpenAPIFormat
 	operationFlag, outFlag, formatFlag, jsonFlag := sdkOpenAPICmd.Flags().Lookup("operation"), sdkOpenAPICmd.Flags().Lookup("out"), sdkOpenAPICmd.Flags().Lookup("format"), sdkOpenAPICmd.Flags().Lookup(jsonOutputFlag)
+	apiOperationFlag, apiOutFlag, apiFormatFlag, apiJSONFlag := apiOpenAPICmd.Flags().Lookup("operation"), apiOpenAPICmd.Flags().Lookup("out"), apiOpenAPICmd.Flags().Lookup("format"), apiOpenAPICmd.Flags().Lookup(jsonOutputFlag)
 	t.Cleanup(func() {
 		EngineURL, APIKey, RequestTimeout = oldEngineURL, oldAPIKey, oldTimeout
 		sdkOpenAPIOperation, sdkOpenAPIOut, sdkOpenAPIFormat = oldOperation, oldOut, oldFormat
+		apiOpenAPIOperation, apiOpenAPIOut, apiOpenAPIFormat = oldAPIOperation, oldAPIOut, oldAPIFormat
 		operationFlag.Changed, outFlag.Changed, formatFlag.Changed, jsonFlag.Changed = false, false, false, false
+		apiOperationFlag.Changed, apiOutFlag.Changed, apiFormatFlag.Changed, apiJSONFlag.Changed = false, false, false, false
 		_ = sdkOpenAPICmd.Flags().Set(jsonOutputFlag, "false")
+		_ = apiOpenAPICmd.Flags().Set(jsonOutputFlag, "false")
 	})
 	sdkOpenAPIOperation, sdkOpenAPIOut, sdkOpenAPIFormat = "", "", defaultSDKOpenAPIFormat
+	apiOpenAPIOperation, apiOpenAPIOut, apiOpenAPIFormat = "", "", defaultSDKOpenAPIFormat
 	operationFlag.Changed, outFlag.Changed, formatFlag.Changed, jsonFlag.Changed = false, false, false, false
+	apiOperationFlag.Changed, apiOutFlag.Changed, apiFormatFlag.Changed, apiJSONFlag.Changed = false, false, false, false
 	_ = sdkOpenAPICmd.Flags().Set(jsonOutputFlag, "false")
+	_ = apiOpenAPICmd.Flags().Set(jsonOutputFlag, "false")
 	RequestTimeout = 5 * time.Second
 }
 
@@ -77,6 +94,34 @@ func TestSDKOpenAPIExportsDefaultYAMLAndStructuredMetadata(t *testing.T) {
 	data, output := readSDKOpenAPICommandOutput(t, wantPath, stdout.Bytes())
 	assertSDKOpenAPIYAMLExactNumbers(t, data, server.URL)
 	assertSDKOpenAPIMetadata(t, output, wantPath, server.URL, data)
+}
+
+// TestAPIOpenAPIExportsThroughRESTSurface proves direct APIs retain shared identity internals while exposing API-named metadata and commands.
+func TestAPIOpenAPIExportsThroughRESTSurface(t *testing.T) {
+	resetSDKOpenAPITestState(t)
+	workspace := t.TempDir()
+	t.Chdir(workspace)
+	server := httptest.NewServer(sdkOpenAPICommandTestHandler{t: t})
+	defer server.Close()
+	EngineURL, APIKey = server.URL, "fsk_control"
+	// Exact operation filtering and structured metadata must behave the same on the REST API surface.
+	if err := apiOpenAPICmd.Flags().Set("operation", "issues.create/exact"); err != nil {
+		t.Fatalf("set operation: %v", err)
+	}
+	if err := apiOpenAPICmd.Flags().Set(jsonOutputFlag, "true"); err != nil {
+		t.Fatalf("set JSON output: %v", err)
+	}
+	var stdout bytes.Buffer
+	apiOpenAPICmd.SetOut(&stdout)
+	if err := runAPIOpenAPI(apiOpenAPICmd, sdkDownloadTarget{Name: "jira api", Version: "1.2.0"}); err != nil {
+		t.Fatalf("run API OpenAPI: %v", err)
+	}
+	data, output := readSDKOpenAPICommandOutput(t, "jira-api-1.2.0.openapi.yaml", stdout.Bytes())
+	// Direct API JSON must use the API noun and never claim that a package SDK was exported.
+	if output.API != "jira api" || output.SDK != "" || output.Version != "1.2.0" {
+		t.Fatalf("API metadata = %#v", output)
+	}
+	assertSDKOpenAPIHash(t, output.SHA256, data)
 }
 
 // configureSDKOpenAPICommandTest selects exact filtering and metadata output against the test Engine.
@@ -233,6 +278,30 @@ func TestSDKOpenAPIFailedRenderLeavesExistingOutputUntouched(t *testing.T) {
 	}
 }
 
+// TestAPIOpenAPIMetadataFailureDoesNotInvalidateCommittedFile proves presentation failure cannot mislabel a durable export as retryable.
+func TestAPIOpenAPIMetadataFailureDoesNotInvalidateCommittedFile(t *testing.T) {
+	resetSDKOpenAPITestState(t)
+	outputPath := filepath.Join(t.TempDir(), "threadify.openapi.yaml")
+	server := httptest.NewServer(sdkOpenAPICommandTestHandler{t: t})
+	defer server.Close()
+	EngineURL, APIKey = server.URL, "fsk_control"
+	if err := apiOpenAPICmd.Flags().Set("operation", "issues.create/exact"); err != nil {
+		t.Fatalf("set operation: %v", err)
+	}
+	if err := apiOpenAPICmd.Flags().Set("out", outputPath); err != nil {
+		t.Fatalf("set output: %v", err)
+	}
+	apiOpenAPICmd.SetOut(failingOpenAPIMetadataWriter{})
+	// A completed file is the durable command outcome even when the optional status line cannot be delivered.
+	if err := runAPIOpenAPI(apiOpenAPICmd, sdkDownloadTarget{Name: "threadify", Version: "1.0.0"}); err != nil {
+		t.Fatalf("committed export returned failure: %v", err)
+	}
+	data, err := os.ReadFile(outputPath)
+	if err != nil || !bytes.Contains(data, []byte(`openapi: 3.1.0`)) {
+		t.Fatalf("committed OpenAPI = %q, %v", data, err)
+	}
+}
+
 // TestSDKOpenAPICommandHelpDocumentsFileAndMetadataControls protects the public CLI surface.
 func TestSDKOpenAPICommandHelpDocumentsFileAndMetadataControls(t *testing.T) {
 	if sdkOpenAPICmd.Use != "openapi <sdk-name@version-or-version-id>" {
@@ -251,6 +320,114 @@ func TestSDKOpenAPICommandHelpDocumentsFileAndMetadataControls(t *testing.T) {
 	}
 	if usage := sdkOpenAPICmd.Flags().Lookup(jsonOutputFlag).Usage; !strings.Contains(usage, "metadata") {
 		t.Fatalf("--json usage = %q", usage)
+	}
+}
+
+// TestAPIOpenAPICommandHelpUsesRESTNouns protects the direct API command from regressing into the SDK namespace.
+func TestAPIOpenAPICommandHelpUsesRESTNouns(t *testing.T) {
+	if apiCmd.Use != "api" || apiOpenAPICmd.Use != "openapi <api-name@version-or-version-id>" || !strings.Contains(apiOpenAPICmd.Short, "REST API") {
+		t.Fatalf("API commands = %q / %q (%q)", apiCmd.Use, apiOpenAPICmd.Use, apiOpenAPICmd.Short)
+	}
+	for _, name := range []string{"operation", "out", "format", jsonOutputFlag} {
+		// The API surface must retain every exact export control supported by the shared implementation.
+		if apiOpenAPICmd.Flags().Lookup(name) == nil {
+			t.Fatalf("missing API --%s", name)
+		}
+	}
+}
+
+// TestAPIOpenAPISchemaConflictSuggestsBoundedRepair covers current and legacy Engine errors without writing a partial document.
+func TestAPIOpenAPISchemaConflictSuggestsBoundedRepair(t *testing.T) {
+	tests := []struct {
+		name, code, message string
+	}{
+		{name: "stable code", code: "app_openapi_schema_unavailable", message: "immutable operation schemas are unavailable or inconsistent"},
+		{name: "legacy conflict", code: "configuration_conflict", message: "immutable operation schemas are unavailable or inconsistent"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			resetSDKOpenAPITestState(t)
+			outputPath := filepath.Join(t.TempDir(), "threadify.openapi.json")
+			server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+				response.Header().Set("Content-Type", "application/json")
+				// Name/version resolution succeeds before the exact app export returns its repairable schema conflict.
+				if request.URL.Path == "/engine/graphql" {
+					_, _ = response.Write([]byte(`{"data":{"appReference":{"id":"` + sdkOpenAPITestVersionID + `","kind":"app"}}}`))
+					return
+				}
+				// Only the immutable app export route may fail in this fixture.
+				if request.URL.Path != "/apps/"+sdkOpenAPITestVersionID+"/openapi" {
+					t.Fatalf("unexpected path %q", request.URL.Path)
+				}
+				response.WriteHeader(http.StatusConflict)
+				_, _ = fmt.Fprintf(response, `{"error":{"code":%q,"message":%q,"category":"dependency"}}`, test.code, test.message)
+			}))
+			defer server.Close()
+			EngineURL, APIKey = server.URL, "fsk_control"
+			if err := apiOpenAPICmd.Flags().Set("out", outputPath); err != nil {
+				t.Fatalf("set output: %v", err)
+			}
+			if err := apiOpenAPICmd.Flags().Set("operation", "gmail.users.drafts.send"); err != nil {
+				t.Fatalf("set operation: %v", err)
+			}
+			if err := apiOpenAPICmd.Flags().Set("format", "json"); err != nil {
+				t.Fatalf("set format: %v", err)
+			}
+			if err := apiOpenAPICmd.Flags().Set(jsonOutputFlag, "true"); err != nil {
+				t.Fatalf("set JSON metadata: %v", err)
+			}
+			err := runAPIOpenAPI(apiOpenAPICmd, sdkDownloadTarget{Name: "threadify", Version: "1.0.0"})
+			_, statErr := os.Stat(outputPath)
+			message := fmt.Sprint(err)
+			// Recovery is explicit, bounded, API-named, and leaves an earlier or absent file untouched.
+			if err == nil || !errors.Is(statErr, os.ErrNotExist) || !strings.Contains(message, "workspace services refresh-missing-contracts --limit 100") || !strings.Contains(message, "fused-cli api openapi 'threadify@1.0.0'") || !strings.Contains(message, "--out '"+outputPath+"' --operation 'gmail.users.drafts.send' --format 'json' --json") || strings.Contains(message, "fused-cli sdk openapi") {
+				t.Fatalf("error=%v statErr=%v", err, statErr)
+			}
+		})
+	}
+}
+
+// TestActionableAppOpenAPIRetryPreservesBothPublicSurfaces verifies recovery never changes the requested command or export controls.
+func TestActionableAppOpenAPIRetryPreservesBothPublicSurfaces(t *testing.T) {
+	cause := &api.APIError{HTTPStatus: http.StatusConflict, Code: "app_openapi_schema_unavailable", Message: "immutable operation schemas are unavailable or inconsistent"}
+	options := sdkOpenAPIOptions{Out: "contract.json", Operation: "issues.create", Format: "json", JSON: true}
+	for _, test := range []struct {
+		name, surface string
+		direct        bool
+	}{
+		{name: "generated SDK", surface: "sdk", direct: false},
+		{name: "direct API", surface: "api", direct: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			message := actionableAppOpenAPIExportError(sdkDownloadTarget{Name: "billing", Version: "1.2.0"}, options, test.direct, cause).Error()
+			want := "fused-cli " + test.surface + " openapi 'billing@1.2.0' --out 'contract.json' --operation 'issues.create' --format 'json' --json"
+			// Each compatibility surface must retain its own noun and every content-affecting option.
+			if !strings.Contains(message, want) {
+				t.Fatalf("recovery = %q", message)
+			}
+		})
+	}
+}
+
+// TestRepairableAppOpenAPISchemaErrorRequiresConflictStatus prevents retry advice for unrelated HTTP failures or codes.
+func TestRepairableAppOpenAPISchemaErrorRequiresConflictStatus(t *testing.T) {
+	tests := []struct {
+		name    string
+		error   *api.APIError
+		repairs bool
+	}{
+		{name: "current conflict", error: &api.APIError{HTTPStatus: http.StatusConflict, Code: "app_openapi_schema_unavailable"}, repairs: true},
+		{name: "legacy conflict", error: &api.APIError{HTTPStatus: http.StatusConflict, Code: "configuration_conflict", Message: "immutable operation schemas are unavailable or inconsistent"}, repairs: true},
+		{name: "current server error", error: &api.APIError{HTTPStatus: http.StatusInternalServerError, Code: "app_openapi_schema_unavailable"}},
+		{name: "unrelated conflict", error: &api.APIError{HTTPStatus: http.StatusConflict, Code: "configuration_conflict", Message: "different conflict"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			// Only the exact immutable-schema 409 classification may suggest a service-contract mutation.
+			if got := repairableAppOpenAPISchemaError(test.error); got != test.repairs {
+				t.Fatalf("repairable = %t, want %t", got, test.repairs)
+			}
+		})
 	}
 }
 

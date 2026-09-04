@@ -211,7 +211,7 @@ func resolveSDKDownloadTargets(args []string, configPath string) ([]sdkDownloadT
 	if len(targets) == 0 {
 		if len(skipped) > 0 {
 			return nil, fmt.Errorf(
-				"no sdk configs build a package: %s set generate: false; call them over REST, or describe one with 'fused-cli sdk openapi'",
+				"no sdk configs build a package: %s set generate: false; call them over REST, or describe one with 'fused-cli api openapi'",
 				strings.Join(skipped, ", "),
 			)
 		}

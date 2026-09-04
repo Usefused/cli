@@ -33,8 +33,32 @@ func unifiedInitCanRefreshGenerationSnapshot(mode unifiedInitMode, parsed *confi
 	return apiErr.Code == "generation_contract_pin_unavailable"
 }
 
+// unifiedInitCanRefreshAPISchemaSnapshot limits automatic repair to direct API init and the Engine's exact OpenAPI projection failure.
+func unifiedInitCanRefreshAPISchemaSnapshot(mode unifiedInitMode, parsed *configfile.ParsedConfig, cause error) bool {
+	// Only an explicit package-free SDK config represents the direct REST API lifecycle.
+	if mode != unifiedInitModeAPI || parsed == nil || parsed.SDK == nil || sdkGeneratesPackage(parsed.SDK) {
+		return false
+	}
+	var apiErr *api.APIError
+	// Transport and unrelated plan failures provide no authority to mutate service snapshots.
+	if !errors.As(cause, &apiErr) {
+		return false
+	}
+	return apiErr.Code == "app_openapi_schema_unavailable"
+}
+
 // refreshUnifiedInitGenerationSnapshots refreshes every exact selected version once and reports each completed mutation.
 func refreshUnifiedInitGenerationSnapshots(cmd *cobra.Command, client *api.Client, parsed *configfile.ParsedConfig) ([]string, error) {
+	return refreshUnifiedInitAppSnapshots(cmd, client, parsed, "immutable SDK generation snapshot")
+}
+
+// refreshUnifiedInitAPISchemaSnapshots refreshes exact selected versions without adding package-generation behavior to a REST API.
+func refreshUnifiedInitAPISchemaSnapshots(cmd *cobra.Command, client *api.Client, parsed *configfile.ParsedConfig) ([]string, error) {
+	return refreshUnifiedInitAppSnapshots(cmd, client, parsed, "immutable REST API OpenAPI snapshot")
+}
+
+// refreshUnifiedInitAppSnapshots performs one fully resolved sequence of exact snapshot mutations with mode-specific output.
+func refreshUnifiedInitAppSnapshots(cmd *cobra.Command, client *api.Client, parsed *configfile.ParsedConfig, description string) ([]string, error) {
 	targets, err := resolveUnifiedInitSnapshotTargets(client, parsed)
 	// Identity resolution must be complete before the first refresh so ambiguity cannot cause a partial mutation.
 	if err != nil {
@@ -43,18 +67,18 @@ func refreshUnifiedInitGenerationSnapshots(cmd *cobra.Command, client *api.Clien
 	refreshed := make([]string, 0, len(targets))
 	for _, target := range targets {
 		label := target.serviceKey + "@" + target.version
-		fmt.Fprintf(cmd.OutOrStdout(), "Refreshing immutable SDK generation snapshot for %s...\n", label)
+		fmt.Fprintf(cmd.OutOrStdout(), "Refreshing %s for %s...\n", description, label)
 		result, err := client.RefreshServiceContract(target.serviceID, target.serviceVersionID)
 		// A failed exact refresh stops the repair; the caller will not retry app planning with incomplete snapshots.
 		if err != nil {
-			return refreshed, fmt.Errorf("refresh immutable SDK generation snapshot for %s: %w", label, err)
+			return refreshed, fmt.Errorf("refresh %s for %s: %w", description, label, err)
 		}
 		// The returned tag must agree with the configured tag even though the API client already verifies both stable UUIDs.
 		if result.Version != target.version {
-			return refreshed, fmt.Errorf("refresh immutable SDK generation snapshot for %s returned version %q", label, result.Version)
+			return refreshed, fmt.Errorf("refresh %s for %s returned version %q", description, label, result.Version)
 		}
 		refreshed = append(refreshed, label)
-		fmt.Fprintf(cmd.OutOrStdout(), "Refreshed immutable SDK generation snapshot for %s.\n", label)
+		fmt.Fprintf(cmd.OutOrStdout(), "Refreshed %s for %s.\n", description, label)
 	}
 	return refreshed, nil
 }

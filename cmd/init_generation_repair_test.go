@@ -102,7 +102,7 @@ func TestUnifiedInitGenerationPinRetryFailureReportsCompletedRefresh(t *testing.
 	var apiErr *api.APIError
 	_, statErr := os.Stat(path)
 	// Retry failure retains the second typed cause, records the completed mutation, and leaves no desired-state file behind.
-	if !errors.As(err, &apiErr) || apiErr.Code != "generation_contract_pin_unavailable" || calls.planCalls != 2 || calls.refreshCalls != 1 || calls.applyCalls != 0 || !errors.Is(statErr, os.ErrNotExist) || !strings.Contains(err.Error(), "exact runtime contract refresh completed for [linear@v1]") || !strings.Contains(err.Error(), "Engine still did not retain the immutable API contract") {
+	if !errors.As(err, &apiErr) || apiErr.Code != "generation_contract_pin_unavailable" || calls.planCalls != 2 || calls.refreshCalls != 1 || calls.applyCalls != 0 || !errors.Is(statErr, os.ErrNotExist) || !strings.Contains(err.Error(), "exact immutable contract refresh completed for [linear@v1]") || !strings.Contains(err.Error(), "Engine still did not retain the immutable API contract") {
 		t.Fatalf("error=%v APIError=%#v calls=%#v statErr=%v", err, apiErr, calls, statErr)
 	}
 }
@@ -136,6 +136,48 @@ func TestUnifiedInitGenerationRepairExcludesDirectAPI(t *testing.T) {
 	// API mode stays REST-only even though its durable resource kind is SDK.
 	if unifiedInitCanRefreshGenerationSnapshot(unifiedInitModeAPI, parsed, cause) {
 		t.Fatal("direct API candidate unexpectedly enabled generation snapshot repair")
+	}
+}
+
+// TestUnifiedInitAPISchemaRefreshesExactVersionAndRetriesOnce proves REST API init repairs only the selected contract before apply.
+func TestUnifiedInitAPISchemaRefreshesExactVersionAndRetriesOnce(t *testing.T) {
+	directory := t.TempDir()
+	withUnifiedInitGenerationRepairWorkingDirectory(t, directory)
+	originalNoInput := NoInput
+	NoInput = true
+	t.Cleanup(func() { NoInput = originalNoInput })
+	server, calls := newUnifiedInitGenerationRepairServer(t, unifiedInitGenerationRepairFixture{firstErrorCode: "app_openapi_schema_unavailable"})
+	defer server.Close()
+	request := unifiedInitFailureTestRequest(filepath.Join(directory, "support-api.yaml"))
+	request.generate, request.generateSet = false, true
+	var output bytes.Buffer
+	command := &cobra.Command{}
+	command.SetOut(&output)
+	err := createPlanApplyUnifiedInit(command, api.NewClient(server.URL, "test-key"), unifiedInitModeAPI, request, false, false, noOpScaffoldRequirements, defaultTestScaffoldBucket)
+	// The exact refresh and byte-identical retry must finish before one API apply and its public OpenAPI guidance.
+	if err != nil || calls.planCalls != 2 || calls.refreshCalls != 1 || calls.applyCalls != 1 || !strings.Contains(output.String(), "Refreshing immutable REST API OpenAPI snapshot for linear@v1") || !strings.Contains(output.String(), "fused-cli api openapi") || strings.Contains(output.String(), "fused-cli sdk openapi") {
+		t.Fatalf("error=%v calls=%#v output=%q", err, calls, output.String())
+	}
+}
+
+// TestUnifiedInitAPISchemaRefreshFailureStopsBeforeApply proves a failed repair leaves no API config, receipt, or remote app mutation.
+func TestUnifiedInitAPISchemaRefreshFailureStopsBeforeApply(t *testing.T) {
+	directory := t.TempDir()
+	server, calls := newUnifiedInitGenerationRepairServer(t, unifiedInitGenerationRepairFixture{
+		firstErrorCode: "app_openapi_schema_unavailable", refreshErrorCode: "runtime_contract_dependency_unavailable",
+	})
+	defer server.Close()
+	path := filepath.Join(directory, "support-api.yaml")
+	request := unifiedInitFailureTestRequest(path)
+	request.generate, request.generateSet = false, true
+	command := &cobra.Command{}
+	command.SetOut(&bytes.Buffer{})
+	err := createPlanApplyUnifiedInit(command, api.NewClient(server.URL, "test-key"), unifiedInitModeAPI, request, false, false, noOpScaffoldRequirements, defaultTestScaffoldBucket)
+	var apiErr *api.APIError
+	_, statErr := os.Stat(path)
+	// One failed exact refresh retains its typed cause and cannot reach plan retry or apply.
+	if !errors.As(err, &apiErr) || apiErr.Code != "runtime_contract_dependency_unavailable" || calls.planCalls != 1 || calls.refreshCalls != 1 || calls.applyCalls != 0 || !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("error=%v APIError=%#v calls=%#v statErr=%v", err, apiErr, calls, statErr)
 	}
 }
 

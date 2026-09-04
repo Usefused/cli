@@ -331,8 +331,10 @@ func resolveBatchWorkspaceServiceAddTargets(queries []string, opts workspaceServ
 	if err != nil {
 		return nil, err
 	}
+	// Suggestions enrich genuine misses without changing resolution or hiding
+	// permission, transport, or ambiguity failures.
 	if err := resolveWorkspaceAddTargetsFromRegistry(targets, unresolved, normalizedQueries, registryResults, opts); err != nil {
-		return nil, err
+		return nil, withServiceSuggestions(client, err)
 	}
 	return deduplicateWorkspaceServiceTargets(targets), nil
 }
@@ -589,16 +591,21 @@ func registryServiceTargetFromResultsWithOptions(query string, results []service
 	}, nil
 }
 
+// chooseRegistryService preserves exact and interactive selection while marking
+// catalogue misses separately so optional hints cannot become selected targets.
 func chooseRegistryService(query string, results []serviceSearchResult, interactive bool) (serviceSearchResult, error) {
 	matches := exactRegistryServiceMatches(query, results)
+	// Exact identity takes precedence over broader lexical matches.
 	if len(matches) == 1 {
 		return matches[0], nil
 	}
+	// Preserve the established unique-result resolution for the original query.
 	if len(results) == 1 {
 		return results[0], nil
 	}
+	// A typed miss permits read-only suggestions without parsing error prose.
 	if len(results) == 0 {
-		return serviceSearchResult{}, fmt.Errorf("service %q was not found in the workspace or Registry", query)
+		return serviceSearchResult{}, &serviceNotFoundError{query: query}
 	}
 	// Non-interactive callers must pin identity rather than guessing among
 	// multiple Registry candidates with the same lexical match.
