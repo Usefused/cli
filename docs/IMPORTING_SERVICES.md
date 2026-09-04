@@ -20,6 +20,12 @@ The plan is reviewable and the apply step commits the exact planned source.
 `--target` accepts `all`, `endpoints`, or `webhooks` and defaults to
 `endpoints`.
 
+Successful planning saves `.fused/.state/import.plan.json`, including with
+`--json`. JSON mode changes stdout only, so the next `fused-cli import apply`
+still works without additional flags. Use `--receipt-out <path>` to save a
+different receipt, then `fused-cli import apply --receipt <path>` to apply it.
+Each successful plan replaces the receipt at its chosen path.
+
 Plan and apply allow 20 minutes by default for large reviewed specifications.
 Use `--timeout 30m` (or another explicit duration) when the deployment needs a
 larger bound. If apply times out, its outcome is unknown because the Registry

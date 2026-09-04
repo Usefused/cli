@@ -153,7 +153,7 @@ func runImportPlan(cmd *cobra.Command, specArg string, opts importSpecPlanOption
 	)
 
 	// A durable receipt must contain the same reviewed response that the user sees.
-	if err := maybeWriteImportPlanReceipt(newImportPlanReceipt(resp), opts); err != nil {
+	if err := persistImportPlanReceipt(newImportPlanReceipt(resp), opts); err != nil {
 		return err
 	}
 	// Structured mode returns the complete bounded Registry response for automation.
@@ -352,11 +352,10 @@ func newImportPlanReceipt(resp *api.SpecImportPlanResponse) importPlanReceipt {
 	return receipt
 }
 
-func maybeWriteImportPlanReceipt(receipt importPlanReceipt, opts importSpecPlanOptions) error {
-	if opts.jsonOut && strings.TrimSpace(opts.receiptOut) == "" {
-		return nil
-	}
+// persistImportPlanReceipt keeps apply resumable regardless of the plan's display format.
+func persistImportPlanReceipt(receipt importPlanReceipt, opts importSpecPlanOptions) error {
 	path := opts.receiptOut
+	// An explicit destination overrides the shared default in both human and JSON modes.
 	if path == "" {
 		path = defaultImportReceiptPath
 	}
