@@ -2,9 +2,12 @@ package cmd
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/spf13/cobra"
 )
+
+const defaultMissingContractsRefreshTimeout = 10 * time.Minute
 
 var workspaceRefreshMissingContractsLimit int
 
@@ -19,7 +22,7 @@ var workspaceRefreshMissingContractsCmd = &cobra.Command{
 
 // runWorkspaceRefreshMissingContracts repairs the bounded set of absent or generation-incomplete active snapshots reported by Engine.
 func runWorkspaceRefreshMissingContracts(cmd *cobra.Command) error {
-	client, err := getAPIClient()
+	client, err := getAPIClientWithTimeout(missingContractsRefreshTimeout(cmd))
 	// Client resolution must succeed before the maintenance mutation can begin.
 	if err != nil {
 		return err
@@ -35,6 +38,15 @@ func runWorkspaceRefreshMissingContracts(cmd *cobra.Command) error {
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "Refreshed %d of %d missing or unpinned runtime contract snapshots (%d failed).\n", result.Refreshed, result.Missing, result.Failed)
 	return nil
+}
+
+// missingContractsRefreshTimeout gives a full repair pass enough time while preserving an explicit operator budget.
+func missingContractsRefreshTimeout(cmd *cobra.Command) time.Duration {
+	// An explicit timeout remains authoritative for automation that needs a stricter deadline.
+	if timeoutFlagChanged(cmd) {
+		return RequestTimeout
+	}
+	return defaultMissingContractsRefreshTimeout
 }
 
 // init registers the compatibility-named maintenance command with wording that reflects both repairable snapshot states.

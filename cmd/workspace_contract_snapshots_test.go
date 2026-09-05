@@ -6,9 +6,29 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 )
+
+// TestMissingContractsRefreshTimeoutUsesLongDefaultAndExplicitOverride protects live bulk repair from the root one-minute budget.
+func TestMissingContractsRefreshTimeoutUsesLongDefaultAndExplicitOverride(t *testing.T) {
+	previousTimeout := RequestTimeout
+	t.Cleanup(func() { RequestTimeout = previousTimeout })
+	command := &cobra.Command{Use: "refresh-missing-contracts"}
+	command.Flags().DurationVar(&RequestTimeout, "timeout", time.Minute, "test timeout")
+	// The maintenance default must cover bounded Registry fallback for a full one-hundred-version pass.
+	if got := missingContractsRefreshTimeout(command); got != defaultMissingContractsRefreshTimeout {
+		t.Fatalf("default timeout = %s, want %s", got, defaultMissingContractsRefreshTimeout)
+	}
+	// A caller-supplied value must override the maintenance default exactly.
+	if err := command.Flags().Set("timeout", "45s"); err != nil {
+		t.Fatal(err)
+	}
+	if got := missingContractsRefreshTimeout(command); got != 45*time.Second {
+		t.Fatalf("explicit timeout = %s, want 45s", got)
+	}
+}
 
 // TestRunWorkspaceRefreshMissingContractsPrintsSummary verifies the maintenance summary names both repairable snapshot states.
 func TestRunWorkspaceRefreshMissingContractsPrintsSummary(t *testing.T) {
