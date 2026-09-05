@@ -58,6 +58,26 @@ func TestRefreshServiceContractPreservesTypedEngineError(t *testing.T) {
 	}
 }
 
+// TestRefreshServiceContractPreservesRejectionReason verifies exact repair commands display Engine's reviewed diagnostic.
+func TestRefreshServiceContractPreservesRejectionReason(t *testing.T) {
+	const serviceID = "00000000-0000-4000-8000-000000000001"
+	const versionID = "00000000-0000-4000-8000-000000000002"
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		writer.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = writer.Write([]byte(`{"error":{"code":"runtime_contract_rejected","message":"Fused cannot use the saved API contract for this service version.","category":"validation","retryable":false,"details":{"service_version_id":"` + versionID + `","server_detail":"generation_contract_duplicate_record_id: The saved contract contains the same immutable Fused record ID more than once. Re-import the service from its original OpenAPI file or URL, then try again."}}}`))
+	}))
+	defer server.Close()
+
+	_, err := api.NewClient(server.URL, "test-key").RefreshServiceContract(serviceID, versionID)
+	var apiErr *api.APIError
+	// The exact safe reason must survive typed decoding and normal terminal formatting.
+	if !errors.As(err, &apiErr) || apiErr.Code != "runtime_contract_rejected" || apiErr.Details.ServerDetail != "generation_contract_duplicate_record_id: The saved contract contains the same immutable Fused record ID more than once. Re-import the service from its original OpenAPI file or URL, then try again." || !strings.Contains(err.Error(), apiErr.Details.ServerDetail) {
+		t.Fatalf("typed rejection=%v APIError=%#v", err, apiErr)
+	}
+}
+
+// TestRefreshMissingServiceContractsUsesEngineGraphQL verifies the bulk repair requests and retains safe per-version diagnostics.
 func TestRefreshMissingServiceContractsUsesEngineGraphQL(t *testing.T) {
 	var sawPath string
 	var sawLimit any
@@ -89,6 +109,10 @@ func TestRefreshMissingServiceContractsUsesEngineGraphQL(t *testing.T) {
 	}
 	if !strings.Contains(sawQuery, "refreshMissingServiceContracts") {
 		t.Fatalf("expected refreshMissingServiceContracts mutation, got %s", sawQuery)
+	}
+	// The mutation must request the safe diagnostic instead of reducing failures to an opaque code.
+	if !strings.Contains(sawQuery, "error_message") {
+		t.Fatalf("expected error_message selection, got %s", sawQuery)
 	}
 	if sawLimit != float64(2) {
 		t.Fatalf("expected limit variable 2, got %#v", sawLimit)

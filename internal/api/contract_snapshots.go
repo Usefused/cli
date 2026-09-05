@@ -21,6 +21,7 @@ const refreshMissingServiceContractsMutation = `mutation RefreshMissingServiceCo
 			version
 			contract_hash
 			error
+			error_message
 		}
 	}
 }`
@@ -39,6 +40,7 @@ type RefreshMissingContractResult struct {
 	Version          string `json:"version"`
 	ContractHash     string `json:"contract_hash"`
 	Error            string `json:"error"`
+	ErrorMessage     string `json:"error_message"`
 }
 
 // RefreshServiceContractResult identifies the exact immutable workspace snapshot refreshed through Engine.

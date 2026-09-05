@@ -30,7 +30,7 @@ func TestMissingContractsRefreshTimeoutUsesLongDefaultAndExplicitOverride(t *tes
 	}
 }
 
-// TestRunWorkspaceRefreshMissingContractsPrintsSummary verifies the maintenance summary names both repairable snapshot states.
+// TestRunWorkspaceRefreshMissingContractsPrintsSummary verifies the summary and safe per-version failure reason remain actionable.
 func TestRunWorkspaceRefreshMissingContractsPrintsSummary(t *testing.T) {
 	origEngineURL, origAPIKey, origLimit := EngineURL, APIKey, workspaceRefreshMissingContractsLimit
 	defer func() {
@@ -52,7 +52,7 @@ func TestRunWorkspaceRefreshMissingContractsPrintsSummary(t *testing.T) {
 			t.Fatalf("expected refreshMissingServiceContracts mutation, got %s", body.Query)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"data":{"refreshMissingServiceContracts":{"status":"ok","missing":3,"refreshed":2,"failed":1,"results":[]}}}`))
+		_, _ = w.Write([]byte(`{"data":{"refreshMissingServiceContracts":{"status":"ok","missing":3,"refreshed":2,"failed":1,"results":[{"service_id":"svc-linear","service_version_id":"ver-linear","version":"2026-09-04","error":"runtime_contract_rejected","error_message":"generation_contract_duplicate_record_id: The saved contract contains the same immutable Fused record ID more than once. Re-import the service from its original OpenAPI file or URL, then try again."}]}}}`))
 	}))
 	defer srv.Close()
 
@@ -76,9 +76,13 @@ func TestRunWorkspaceRefreshMissingContractsPrintsSummary(t *testing.T) {
 	if !strings.Contains(out.String(), "Refreshed 2 of 3 missing or unpinned runtime contract snapshots (1 failed).") {
 		t.Fatalf("unexpected output: %q", out.String())
 	}
+	// The human output must pair the actionable reason with the exact failed immutable version.
+	if !strings.Contains(out.String(), "Could not refresh service svc-linear (version 2026-09-04): generation_contract_duplicate_record_id: The saved contract contains the same immutable Fused record ID more than once. Re-import the service from its original OpenAPI file or URL, then try again.") || strings.Contains(out.String(), "runtime_contract_rejected") {
+		t.Fatalf("missing per-version failure detail: %q", out.String())
+	}
 }
 
-// TestRunWorkspaceRefreshMissingContractsWritesJSON verifies the suggested repair command is safe for structured automation.
+// TestRunWorkspaceRefreshMissingContractsWritesJSON verifies structured automation receives the stable code and safe failure reason.
 func TestRunWorkspaceRefreshMissingContractsWritesJSON(t *testing.T) {
 	origEngineURL, origAPIKey, origLimit := EngineURL, APIKey, workspaceRefreshMissingContractsLimit
 	defer func() {
@@ -89,7 +93,7 @@ func TestRunWorkspaceRefreshMissingContractsWritesJSON(t *testing.T) {
 		if r.URL.Path != "/engine/graphql" {
 			t.Fatalf("unexpected path %q", r.URL.Path)
 		}
-		_, _ = w.Write([]byte(`{"data":{"refreshMissingServiceContracts":{"status":"ok","missing":1,"refreshed":1,"failed":0,"results":[{"service_id":"svc-1","service_version_id":"ver-1","version":"1.0.0","contract_hash":"sha256:abc"}]}}}`))
+		_, _ = w.Write([]byte(`{"data":{"refreshMissingServiceContracts":{"status":"partial","missing":1,"refreshed":0,"failed":1,"results":[{"service_id":"svc-1","service_version_id":"ver-1","version":"1.0.0","error":"runtime_contract_rejected","error_message":"generation_contract_selection_invalid: The operations saved for this API no longer match the service contract. Recreate the API, select the operations again, then retry."}]}}}`))
 	}))
 	defer server.Close()
 	EngineURL, APIKey, workspaceRefreshMissingContractsLimit = server.URL, "fsk_test", 100
@@ -109,8 +113,38 @@ func TestRunWorkspaceRefreshMissingContractsWritesJSON(t *testing.T) {
 	if err := json.Unmarshal([]byte(output.String()), &result); err != nil {
 		t.Fatalf("decode refresh output: %v", err)
 	}
-	if result["status"] != "ok" || result["missing"] != float64(1) || result["refreshed"] != float64(1) || result["failed"] != float64(0) {
+	if result["status"] != "partial" || result["missing"] != float64(1) || result["refreshed"] != float64(0) || result["failed"] != float64(1) {
 		t.Fatalf("structured refresh = %#v", result)
+	}
+	results, ok := result["results"].([]any)
+	// Structured output must preserve Engine's reviewed diagnostic for unattended repair tooling.
+	if !ok || len(results) != 1 {
+		t.Fatalf("structured refresh results = %#v", result["results"])
+	}
+	failure, ok := results[0].(map[string]any)
+	// The failure entry must retain both the stable branch code and the human diagnostic.
+	if !ok || failure["error"] != "runtime_contract_rejected" || failure["error_message"] != "generation_contract_selection_invalid: The operations saved for this API no longer match the service contract. Recreate the API, select the operations again, then retry." {
+		t.Fatalf("structured refresh failure = %#v", results[0])
+	}
+}
+
+// TestMissingContractFailureMessageGuidesOlderClients verifies code-only failures still tell an operator what to do next.
+func TestMissingContractFailureMessageGuidesOlderClients(t *testing.T) {
+	tests := []struct {
+		code string
+		want string
+	}{
+		{code: "runtime_contract_rejected", want: "Re-import the service"},
+		{code: "runtime_contract_fetch_failed", want: "check that Registry is reachable"},
+		{code: "runtime_contract_store_failed", want: "check Engine storage"},
+		{code: "unknown_failure", want: "check Engine and Registry logs"},
+	}
+	for _, test := range tests {
+		message := missingContractFailureMessage(test.code, "")
+		// Every fallback must be readable terminal prose with an explicit next action.
+		if !strings.Contains(message, test.want) || !strings.Contains(message, ": ") {
+			t.Fatalf("code %q produced %q", test.code, message)
+		}
 	}
 }
 
