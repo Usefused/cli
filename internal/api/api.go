@@ -2703,8 +2703,9 @@ func newSpecImportApplyOutcomeUnknownError(cause error) error {
 func classifySpecImportApplyHTTPError(status int, body []byte) error {
 	err := newHTTPError(status, body)
 	var apiErr *APIError
-	// Stable commit knowledge and recovery distinguish authoritative import errors from generic HTTP categories.
-	if errors.As(err, &apiErr) && apiErr.Phase != "" && validImportCommitState(apiErr.CommitState) && apiErr.Recovery != "" {
+	// A proven pre-commit rejection needs no replay command; unknown or committed
+	// outcomes still require server-owned recovery before the CLI can trust them.
+	if errors.As(err, &apiErr) && apiErr.Phase != "" && validImportCommitState(apiErr.CommitState) && (apiErr.CommitState == "not_committed" || apiErr.Recovery != "") {
 		return fmt.Errorf("apply spec import failed (HTTP %d): %w", status, apiErr)
 	}
 	return newSpecImportApplyOutcomeUnknownError(err)

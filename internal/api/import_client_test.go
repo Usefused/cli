@@ -488,6 +488,38 @@ func TestImportSafeErrorPreservesRecoveryContract(t *testing.T) {
 	}
 }
 
+// TestImportApplyPreservesDeterministicEngineRejectionWithoutRecovery proves
+// a known pre-commit validator failure is not relabeled as an unknown mutation.
+func TestImportApplyPreservesDeterministicEngineRejectionWithoutRecovery(t *testing.T) {
+	operationID := "11111111-1111-4111-8111-111111111111"
+	detail := `service contract endpoint name "find" is duplicated`
+	body, marshalErr := json.Marshal(map[string]any{"error": map[string]any{
+		"code": "import_runtime_contract_rejected", "message": "Engine rejected the prospective runtime contract.",
+		"category": "validation", "retryable": false, "phase": "engine_preflight", "operation_id": operationID,
+		"commit_state": "not_committed", "remediation": "Correct the reported contract issue, create a new import plan, and apply its receipt.",
+		"details": map[string]any{"server_detail": detail},
+	}})
+	// A malformed fixture cannot prove the production client accepts the typed envelope.
+	if marshalErr != nil {
+		t.Fatal(marshalErr)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = w.Write(body)
+	}))
+	defer server.Close()
+
+	_, err := api.NewClient(server.URL, "test-key").ApplySpecImport(operationID, "review-1")
+	var apiError *api.APIError
+	if !errors.As(err, &apiError) {
+		t.Fatalf("error = %T %v, want APIError", err, err)
+	}
+	// The typed failure must preserve its exact safe detail without inventing a retry command.
+	if apiError.Code != "import_runtime_contract_rejected" || apiError.Phase != "engine_preflight" || apiError.CommitState != "not_committed" || apiError.Recovery != "" || apiError.Details.ServerDetail != detail || !strings.Contains(err.Error(), detail) {
+		t.Fatalf("deterministic import rejection = %#v, error = %v", apiError, err)
+	}
+}
+
 // TestImportApplyPreservesCommittedWorkspaceActivationFailure proves the CLI does not relabel a known partial commit as unknown.
 func TestImportApplyPreservesCommittedWorkspaceActivationFailure(t *testing.T) {
 	operationID := "11111111-1111-4111-8111-111111111111"
