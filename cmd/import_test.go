@@ -285,11 +285,12 @@ func TestImportPlanReceiptContainsReviewMetadataOnly(t *testing.T) {
 	}
 }
 
+// TestPrintImportPlanSummaryIncludesDiagnostics keeps summary, detail, and remediation distinct in human output.
 func TestPrintImportPlanSummaryIncludesDiagnostics(t *testing.T) {
 	response := &api.SpecImportPlanResponse{
 		PlanID: "plan-1", Name: "Widgets", Slug: "widgets", TargetVersion: "1.0", TargetType: "endpoints", Action: "create_service",
 		Diagnostics: []api.SpecImportDiagnostic{
-			{Severity: "warning", Code: "unsupported_request_media_type", Scope: "operation", Method: "post", Path: "/widgets", Message: "Request body\nmedia type was not imported.", Recommendation: "Choose a supported media type."},
+			{Severity: "warning", Code: "unsupported_request_media_type", Scope: "operation", Method: "post", Path: "/widgets", Message: "Request body\nmedia type was not imported.", Detail: "Declared media type cannot be serialized.", Recommendation: "Choose a supported media type."},
 			{Severity: "info", Code: "source_format_detected", Scope: "source", Message: "OpenAPI 3.1 detected."},
 		},
 	}
@@ -299,6 +300,7 @@ func TestPrintImportPlanSummaryIncludesDiagnostics(t *testing.T) {
 	for _, expected := range []string{
 		"Diagnostics (2):",
 		"WARNING unsupported_request_media_type [POST /widgets]: Request body media type was not imported.",
+		"Detail: Declared media type cannot be serialized.",
 		"Recommendation: Choose a supported media type.",
 		"INFO source_format_detected [source]: OpenAPI 3.1 detected.",
 	} {

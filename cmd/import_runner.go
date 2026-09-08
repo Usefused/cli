@@ -429,6 +429,10 @@ func printImportDiagnostics(out io.Writer, diagnostics []api.SpecImportDiagnosti
 			severity = "INFO"
 		}
 		fmt.Fprintf(out, "  - %s %s [%s]: %s\n", severity, compactDiagnosticText(diagnostic.Code), importDiagnosticLocation(diagnostic), compactDiagnosticText(diagnostic.Message))
+		// Actionable detail is separate from the stable summary so scripts and people receive the same repair reason.
+		if detail := compactDiagnosticText(diagnostic.Detail); detail != "" {
+			fmt.Fprintf(out, "    Detail: %s\n", detail)
+		}
 		if recommendation := compactDiagnosticText(diagnostic.Recommendation); recommendation != "" {
 			fmt.Fprintf(out, "    Recommendation: %s\n", recommendation)
 		}
@@ -519,6 +523,10 @@ func runImportApply(cmd *cobra.Command, opts importSpecApplyOptions) error {
 		return err
 	}
 	recordAppliedChange(cmd.Context(), cmd.CommandPath(), "service_import")
+	// Structured apply returns the complete committed proof that the API client already validated against the receipt.
+	if wantsJSON(cmd) {
+		return writeJSON(cmd, resp)
+	}
 	printImportApplyResult(cmd.OutOrStdout(), resp)
 	return nil
 }

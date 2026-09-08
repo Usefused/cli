@@ -191,11 +191,12 @@ func TestPlanSpecImportSendsStrictMode(t *testing.T) {
 	}
 }
 
+// TestPlanSpecImportDecodesDiagnostics preserves the complete bounded diagnostic contract from Registry.
 func TestPlanSpecImportDecodesDiagnostics(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(api.SpecImportPlanResponse{Diagnostics: []api.SpecImportDiagnostic{{
 			Severity: "warning", Code: "unsupported_request_media_type", Scope: "operation",
-			Method: "POST", Path: "/widgets", Message: "Request body media type was not imported.",
+			Method: "POST", Path: "/widgets", Message: "Request body media type was not imported.", Detail: "Invalid example: value must be an object.",
 			SourceFormat: "openapi", SourceVersion: "3.1.0", Pointer: "/paths/~1widgets/post/requestBody",
 			Service: "widgets", Disposition: "diagnosed", RequiredCapability: "http.request.alternatives.v1",
 			Provenance: "openapi-source",
@@ -210,7 +211,7 @@ func TestPlanSpecImportDecodesDiagnostics(t *testing.T) {
 		t.Fatalf("expected diagnostics to decode, got %+v", response.Diagnostics)
 	}
 	diagnostic := response.Diagnostics[0]
-	if diagnostic.SourceVersion != "3.1.0" || diagnostic.Pointer == "" || diagnostic.RequiredCapability == "" || len(diagnostic.Provenance) == 0 {
+	if diagnostic.SourceVersion != "3.1.0" || diagnostic.Pointer == "" || diagnostic.RequiredCapability == "" || len(diagnostic.Provenance) == 0 || diagnostic.Detail != "Invalid example: value must be an object." {
 		t.Fatalf("expected loss-aware diagnostic metadata to decode, got %+v", diagnostic)
 	}
 }
@@ -222,7 +223,7 @@ func TestPlanSpecImportDecodesStrictRejectionWithoutRawBody(t *testing.T) {
 			"error":{
 				"code":"strict_import_rejected",
 				"message":"strict import rejected provider contract diagnostics",
-				"diagnostics":[{"severity":"warning","code":"unsupported_request_media_type","scope":"operation","method":"POST","path":"/widgets","message":"Request body was skipped."}]
+				"diagnostics":[{"severity":"warning","code":"unsupported_request_media_type","scope":"operation","method":"POST","path":"/widgets","message":"Request body was skipped.","detail":"Invalid example: token=fsk_must_not_leak"}]
 			},
 			"unrecognized_secret":"must-not-leak"
 		}`))
@@ -235,6 +236,10 @@ func TestPlanSpecImportDecodesStrictRejectionWithoutRawBody(t *testing.T) {
 	}
 	if len(strictError.Diagnostics) != 1 || strictError.Diagnostics[0].Code != "unsupported_request_media_type" {
 		t.Fatalf("unexpected strict diagnostics: %+v", strictError.Diagnostics)
+	}
+	// Actionable detail survives the client boundary while credential-shaped fragments are removed.
+	if detail := strictError.Diagnostics[0].Detail; !strings.Contains(detail, "Invalid example") || strings.Contains(detail, "fsk_must_not_leak") {
+		t.Fatalf("unsafe strict diagnostic detail: %q", detail)
 	}
 	if strings.Contains(err.Error(), "must-not-leak") {
 		t.Fatalf("strict rejection leaked an unknown response field: %v", err)

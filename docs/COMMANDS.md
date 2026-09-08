@@ -40,7 +40,8 @@ Exact-object and non-paged reads return the object or array directly. Sensitive
 reads keep the same safe projection as human output: secret values, decrypted
 connect credentials, and execution-token values are never returned by list
 commands. Plan commands retain their existing `--json` plan-result contract;
-SDK apply, token generation, invocation, and activity also provide stable JSON.
+import and SDK apply, token generation, invocation, and activity also provide
+stable JSON.
 
 When a command using `--json` fails, stdout remains reserved for successful
 output and stderr receives one JSON object before the CLI exits non-zero:
@@ -1030,6 +1031,7 @@ published; run the recovery command instead of replaying the import.
 | `--plan-id` | | Apply a specific remote plan ID (requires `--review-hash`) | `""` |
 | `--review-hash` | | Combined Registry review hash to pair with `--plan-id` | `""` |
 | `--receipt` | | Read a specific plan receipt (default: most recent local receipt) | `""` |
+| `--json` | | Print the validated committed apply proof as JSON | `false` |
 
 ## `import status <operation-id>`
 Read the durable outcome of an import apply without retrying its mutation. The

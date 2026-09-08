@@ -131,6 +131,7 @@ func init() {
 	importApplyCmd.Flags().StringVar(&importApplyPlanID, "plan-id", "", "Apply a specific remote plan ID (requires --review-hash)")
 	importApplyCmd.Flags().StringVar(&importApplyReviewHash, "review-hash", "", "Combined review hash to pair with --plan-id")
 	importApplyCmd.Flags().StringVar(&importApplyReceiptPath, "receipt", "", "Read a specific plan or discovery receipt (default: most recent local receipt)")
+	addJSONOutputFlag(importApplyCmd)
 
 	importCmd.AddCommand(importStatusCmd)
 	addJSONOutputFlag(importStatusCmd)

@@ -72,9 +72,24 @@ func TestImportJSONPlanThenApply(t *testing.T) {
 	if err != nil || receipt.PlanID != response.PlanID || receipt.ReviewHash != response.ReviewHash || receipt.EngineURL != server.URL {
 		t.Fatalf("receipt mismatch: %+v, error: %v", receipt, err)
 	}
-	// Empty options exercise the same default receipt resolution as plain import apply.
+	output.Reset()
+	addJSONOutputFlag(command)
+	// Apply JSON is command-local so successful stdout stays one complete committed proof.
+	if err := command.Flags().Set(jsonOutputFlag, "true"); err != nil {
+		t.Fatal(err)
+	}
+	// Empty options exercise the same default receipt resolution as plain import apply while JSON changes presentation only.
 	if err := runImportApply(command, importSpecApplyOptions{}); err != nil {
 		t.Fatal(err)
+	}
+	var appliedResponse api.SpecImportApplyResponse
+	// Decoding the entire output rejects any human success text mixed into structured mode.
+	if err := json.Unmarshal([]byte(output.String()), &appliedResponse); err != nil {
+		t.Fatalf("apply stdout is not a single JSON response: %v", err)
+	}
+	// The structured success must retain the same receipt-bound operation and durable result identity validated by the client.
+	if appliedResponse.OperationID != response.PlanID || appliedResponse.CommitState != "committed" || appliedResponse.ServiceID == "" || appliedResponse.ServiceVersionID == "" {
+		t.Fatalf("apply JSON omitted committed proof: %+v", appliedResponse)
 	}
 	// A single plan and exact review hash demonstrate that no recovery fallback was required.
 	if planCalls != 1 || applyCalls != 1 || applied["plan_id"] != response.PlanID || applied["review_hash"] != response.ReviewHash {

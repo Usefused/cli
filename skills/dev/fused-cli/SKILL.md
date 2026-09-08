@@ -178,7 +178,7 @@ group's `--help` output to choose the exact subcommand.
 ## Structured output for agents
 
 Use `--json` whenever the confirmed command help exposes it. This includes
-read/list/show/validate commands, plan commands, `sdk apply`, `sdk download`,
+read/list/show/validate commands, plan commands, `import apply`, `sdk apply`, `sdk download`,
 `sdk openapi`, `api openapi`, `sdk token generate`, `sdk invoke`, and `sdk activity`. Do not scrape IDs, one-time tokens,
 receipt fields, retry timing, or execution results from human output. A command
 without `--json` must be treated as a human-only mutation unless its domain
@@ -416,6 +416,12 @@ mutation. Allow endpoint semantic-search ranking to catch up asynchronously:
 background enrichment retries transient failures, and a periodic repair sweep
 recovers interrupted work. Do not re-run plan/apply or wait/poll merely for
 that optional enrichment.
+
+`import apply --json` returns the complete receipt-bound committed proof after
+the client validates its operation, service, version, revision, action, and
+commit state. Failures continue to use the shared structured error envelope on
+stderr, including the import recovery contract when commit state is not a clean
+success.
 
 Large reviewed specifications receive a 20-minute plan/apply request budget by
 default; an explicit global `--timeout` overrides it. Treat timeout, connection

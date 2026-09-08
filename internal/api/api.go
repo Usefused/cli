@@ -2453,6 +2453,7 @@ type SpecImportDiagnostic struct {
 	Path               string   `json:"path,omitempty"`
 	OperationID        string   `json:"operation_id,omitempty"`
 	Message            string   `json:"message"`
+	Detail             string   `json:"detail,omitempty"`
 	Recommendation     string   `json:"recommendation,omitempty"`
 	Source             string   `json:"source,omitempty"`
 	SourceFormat       string   `json:"source_format,omitempty"`
@@ -2641,6 +2642,7 @@ func safeSpecImportDiagnostic(diagnostic SpecImportDiagnostic) SpecImportDiagnos
 	diagnostic.Path = safeCredentialMetadata(diagnostic.Path)
 	diagnostic.OperationID = safeCredentialMetadata(diagnostic.OperationID)
 	diagnostic.Message = safeServerDetail(diagnostic.Message)
+	diagnostic.Detail = safeServerDetail(diagnostic.Detail)
 	diagnostic.Recommendation = safeServerDetail(diagnostic.Recommendation)
 	diagnostic.Source = safeCredentialMetadata(diagnostic.Source)
 	diagnostic.SourceFormat = safeErrorMetadataToken(diagnostic.SourceFormat)

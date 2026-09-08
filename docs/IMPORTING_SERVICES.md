@@ -17,6 +17,8 @@ fused-cli import apply
 ```
 
 The plan is reviewable and the apply step commits the exact planned source.
+Pass `--json` to apply when automation needs the validated committed proof,
+including the operation, service, version, revision, action, and commit state.
 `--target` accepts `all`, `endpoints`, or `webhooks` and defaults to
 `endpoints`.
 
@@ -25,6 +27,11 @@ Successful planning saves `.fused/.state/import.plan.json`, including with
 still works without additional flags. Use `--receipt-out <path>` to save a
 different receipt, then `fused-cli import apply --receipt <path>` to apply it.
 Each successful plan replaces the receipt at its chosen path.
+
+Strict OpenAPI validation diagnostics include a bounded `detail` field with
+the violated rule. Raw schemas and example values are excluded, and the CLI
+redacts credential-shaped fragments before rendering either human or JSON
+output.
 
 Plan and apply allow 20 minutes by default for large reviewed specifications.
 Use `--timeout 30m` (or another explicit duration) when the deployment needs a
