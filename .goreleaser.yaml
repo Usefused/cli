@@ -39,6 +39,10 @@ archives:
 checksum:
   name_template: 'checksums.txt'
 
+release:
+  # A retried workflow may encounter assets from a partial publish; replace only matching names before re-uploading.
+  replace_existing_artifacts: true
+
 snapshot:
   version_template: "{{ incpatch .Version }}-next"
 
