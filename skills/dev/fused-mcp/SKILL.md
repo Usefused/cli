@@ -210,7 +210,7 @@ fused-cli mcp apply
 fused-cli mcp validate
 fused-cli mcp list
 fused-cli mcp deactivate <mcp-name@version-or-version-id>
-fused-cli mcp token generate <mcp-name-or-id> <token-name> --allow <operation-id> --expires-in 15m
+fused-cli mcp token generate <mcp-name-or-id> <token-name> --allow <operation-id> --expires-in 15m --json
 fused-cli mcp token generate <mcp-name-or-id> <token-name> --expires-in 1h \
   --fixed-binding '<service-slug>,<auth-name>,<end-user-ref>[,<resource-uuid>]'
 fused-cli mcp token generate <mcp-name-or-id> <token-name> \
@@ -254,7 +254,9 @@ apply does not reveal it again. Store it immediately. After an Engine database
 reset, Registry cannot restore the MCP or its token; reapply the exact config
 and securely distribute the newly issued token.
 
-`mcp token generate` also reveals the plaintext once. Omit `--expires-in` for
+`mcp token generate --json` reveals the plaintext once in a structured object
+with exact expiry, allowlist, binding metadata, and creation time. Use JSON for
+automation and store the token immediately. Omit `--expires-in` for
 no expiry; omit `--allow` for the full-access `*` default. Repeat `--allow` or
 pass a comma-separated list for multiple exact operation IDs. Applications
 that need dynamic agent sessions can use Engine's equivalent app-token API;

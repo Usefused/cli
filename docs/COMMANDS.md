@@ -756,7 +756,9 @@ Revoke an SDK execution token by name.
 ## `mcp token generate <mcp-name-or-id> <token-name>`
 Generate a named MCP execution token. It defaults to full access (`--allow "*"`)
 with no expiry. Repeat `--allow <operation-id>` (or pass a comma-separated list)
-to narrow the token, and use `--expires-in 15m` to make it short-lived.
+to narrow the token, and use `--expires-in 15m` to make it short-lived. Pass
+`--json` to receive the one-time token, absolute expiry, allowlist, binding
+metadata, and creation time as a structured object.
 
 ## `mcp token list <mcp-name-or-id>`
 List MCP execution-token metadata, including its operation allowlist, expiry,

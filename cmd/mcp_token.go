@@ -178,7 +178,8 @@ func runMCPTokenRevoke(cmd *cobra.Command, target, name string) error {
 func init() {
 	mcpCmd.AddCommand(mcpTokenCmd)
 	mcpTokenCmd.AddCommand(mcpTokenGenerateCmd, mcpTokenListCmd, mcpTokenRevokeCmd)
-	addJSONOutputFlag(mcpTokenListCmd)
+	// Generation returns one-time credential material, so automation needs the same structured output contract as listing.
+	addJSONOutputFlag(mcpTokenGenerateCmd, mcpTokenListCmd)
 	mcpTokenGenerateCmd.Flags().StringSlice("allow", []string{api.AppTokenAllowAllWildcard}, "Exact operation IDs to allow; * grants all operations")
 	addAppTokenExpiryFlag(mcpTokenGenerateCmd)
 	// Repeating the flag supports a different connected-user reference per

@@ -179,7 +179,7 @@ group's `--help` output to choose the exact subcommand.
 
 Use `--json` whenever the confirmed command help exposes it. This includes
 read/list/show/validate commands, plan commands, `import apply`, `sdk apply`, `sdk download`,
-`sdk openapi`, `api openapi`, `sdk token generate`, `sdk invoke`, and `sdk activity`. Do not scrape IDs, one-time tokens,
+`sdk openapi`, `api openapi`, `sdk token generate`, `mcp token generate`, `sdk invoke`, and `sdk activity`. Do not scrape IDs, one-time tokens,
 receipt fields, retry timing, or execution results from human output. A command
 without `--json` must be treated as a human-only mutation unless its domain
 skill documents a stable alternative.

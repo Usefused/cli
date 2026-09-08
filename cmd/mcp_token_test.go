@@ -1,6 +1,9 @@
 package cmd
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -66,6 +69,40 @@ func TestMCPTokenGenerateRequestParsesPerServiceFixedBindings(t *testing.T) {
 	assertPerServiceFixedBindings(t, request.Bindings)
 }
 
+// TestMCPTokenGenerateJSONReturnsOneTimeCredential verifies the public command emits the complete issuance result without human prose.
+func TestMCPTokenGenerateJSONReturnsOneTimeCredential(t *testing.T) {
+	// The fixture exposes only family resolution and issuance so any extra request fails the test.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// Family resolution must precede the token mutation and retain the MCP kind boundary.
+		switch r.URL.Path {
+		case "/engine/graphql":
+			_, _ = w.Write([]byte(`{"data":{"appFamilyReference":{"id":"family-1","kind":"mcp"}}}`))
+		case "/workspace/app-tokens":
+			// The issuance endpoint must be called exactly as a token-creation mutation.
+			if r.Method != http.MethodPost {
+				t.Fatalf("token request method = %s", r.Method)
+			}
+			_, _ = w.Write([]byte(`{"id":"token-1","app_family_id":"family-1","name":"agent","allow":["*"],"binding_mode":"","binding_count":0,"token":"shown-once","created_at":"2026-09-08T12:00:00Z"}`))
+		default:
+			// An unexpected path would indicate an unreviewed fallback or extra mutation boundary.
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	output := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"mcp", "token", "generate", "support-mcp", "agent", "--json"})
+	var result api.AppTokenGenerateResponse
+	// Structured output must be valid JSON containing the one-time credential and family metadata.
+	if err := json.Unmarshal([]byte(output), &result); err != nil {
+		t.Fatalf("decode token JSON %q: %v", output, err)
+	}
+	// Human copy instructions would corrupt the JSON envelope used by automation.
+	if result.Token != "shown-once" || result.AppFamilyID != "family-1" || strings.Contains(output, "Token generated") {
+		t.Fatalf("token JSON = %#v, output = %q", result, output)
+	}
+}
+
 func assertPerServiceFixedBindings(t *testing.T, bindings []api.AppTokenBindingRequest) {
 	t.Helper()
 	if bindings[0].ServiceSlug != "@google/gmail" || bindings[0].EndUserRef != "customer-mail" {
@@ -105,7 +142,7 @@ func TestAppTokenExpiryRejectsInvalidDurations(t *testing.T) {
 	}
 }
 
-// TestAppTokenCommandSurface keeps shared expiry separate from MCP-only scope and binding controls.
+// TestAppTokenCommandSurface keeps structured issuance and shared expiry separate from MCP-only scope and binding controls.
 func TestAppTokenCommandSurface(t *testing.T) {
 	// All MCP token actions must remain executable while their generate flags evolve.
 	for _, command := range []*cobra.Command{mcpTokenGenerateCmd, mcpTokenListCmd, mcpTokenRevokeCmd} {
@@ -114,9 +151,9 @@ func TestAppTokenCommandSurface(t *testing.T) {
 			t.Fatalf("%s is not an executable command", command.CommandPath())
 		}
 	}
-	// MCP continues to own operation scope, expiry, and fixed connected-user bindings.
-	if mcpTokenGenerateCmd.Flags().Lookup("allow") == nil || mcpTokenGenerateCmd.Flags().Lookup("expires-in") == nil || mcpTokenGenerateCmd.Flags().Lookup("fixed-binding") == nil {
-		t.Fatal("MCP token generation must expose scope and expiry flags")
+	// MCP generation exposes structured one-time output alongside operation scope, expiry, and fixed connected-user bindings.
+	if mcpTokenGenerateCmd.Flags().Lookup(jsonOutputFlag) == nil || mcpTokenGenerateCmd.Flags().Lookup("allow") == nil || mcpTokenGenerateCmd.Flags().Lookup("expires-in") == nil || mcpTokenGenerateCmd.Flags().Lookup("fixed-binding") == nil {
+		t.Fatal("MCP token generation must expose JSON, scope, expiry, and binding flags")
 	}
 	// SDK tokens expose only expiry because trial access still needs the application's full operation surface.
 	if sdkTokenGenerateCmd.Flags().Lookup("expires-in") == nil || sdkTokenGenerateCmd.Flags().Lookup("allow") != nil || sdkTokenGenerateCmd.Flags().Lookup("fixed-binding") != nil {

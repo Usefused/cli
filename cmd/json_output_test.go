@@ -43,9 +43,11 @@ func TestMutationCommandsDoNotInheritJSON(t *testing.T) {
 	}
 }
 
-// TestSDKMutationsNeededByAgentsExposeStableJSON verifies agent-facing mutation flags.
-func TestSDKMutationsNeededByAgentsExposeStableJSON(t *testing.T) {
-	for _, command := range []*cobra.Command{sdkApplyCmd, sdkDownloadCmd, sdkTokenGenerateCmd, importApplyCmd} {
+// TestMutationsNeededByAgentsExposeStableJSON verifies agent-facing mutation flags across app kinds.
+func TestMutationsNeededByAgentsExposeStableJSON(t *testing.T) {
+	// One-time credentials and structured receipts must never require parsing human output.
+	for _, command := range []*cobra.Command{sdkApplyCmd, sdkDownloadCmd, sdkTokenGenerateCmd, mcpTokenGenerateCmd, importApplyCmd} {
+		// Every listed mutation has a reviewed success envelope for automation.
 		if command.Flags().Lookup(jsonOutputFlag) == nil {
 			t.Errorf("%s does not expose --json", command.CommandPath())
 		}
