@@ -60,8 +60,8 @@ var workspaceApplyCmd = &cobra.Command{
 }
 
 // warnIfProductionEnvironment is a best-effort UX nudge (Task 8,
-// engine_workspace_registration_plan.md): `workspace apply` can activate or
-// deactivate services workspace-wide, so before running it we check the
+// engine_workspace_registration_plan.md): `workspace apply` can change
+// shared service policy and explicit activation state, so before running it we check the
 // Engine's /health echo of its --environment label and warn if it's
 // "production" (the default -- most Engines will hit this unless an
 // operator has explicitly labeled a non-production deployment). Never
@@ -1197,8 +1197,7 @@ func runForceRemoveWorkspace(out io.Writer, serviceID, serviceLabel, version str
 	return applyForceRemoveWorkspacePlan(client, cfg, planResp)
 }
 
-// printForceRemoveWorkspacePlanEffects renders only the already validated
-// removal scope and distinguishes Registry archival from workspace removal.
+// printForceRemoveWorkspacePlanEffects renders only the already validated workspace-local removal scope.
 func printForceRemoveWorkspacePlanEffects(out io.Writer, actions []map[string]any, serviceID, serviceLabel string) error {
 	rendered := 0
 	for _, action := range actions {
@@ -1218,15 +1217,11 @@ func printForceRemoveWorkspacePlanEffects(out io.Writer, actions []map[string]an
 			}
 		case "remove_service":
 			willArchive, _ := action["will_archive"].(bool)
-			// Ownership expands removal into Registry archival and must never be hidden behind local-only wording.
+			// Older Engines that propose Registry archival are incompatible with workspace-local removal safety.
 			if willArchive {
-				// A failed disclosure keeps the archival plan at the non-mutating review boundary.
-				if _, err := fmt.Fprintf(out, "Plan effect: archive owned service %s from the Registry and remove it from this workspace.\n", serviceLabel); err != nil {
-					return err
-				}
-				break
+				return errors.New("Engine proposed Registry archival for a workspace removal; upgrade the Engine and retry")
 			}
-			// Non-owner removal remains workspace-local and is disclosed without claiming Registry mutation.
+			// Explicit service removal changes only this workspace and never Registry service lifecycle.
 			if _, err := fmt.Fprintf(out, "Plan effect: remove service %s from this workspace.\n", serviceLabel); err != nil {
 				return err
 			}

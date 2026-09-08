@@ -153,12 +153,11 @@ func (c *Client) ListSecretMetaPage(bucketID string, opts PageOptions) (*SecretM
 	return &resp.Page, err
 }
 
-// ListAuthConnectionPage returns safe refresh lifecycle metadata for the
-// bucket-authorized connection page without requesting credential material.
-func (c *Client) ListAuthConnectionPage(bucketID string, serviceID string, endUserRef string, opts PageOptions) (*AuthConnectionPageResponse, error) {
+// ListAuthConnectionPage returns one globally paginated union of whole-service and exact-version connection matches.
+func (c *Client) ListAuthConnectionPage(bucketID string, serviceIDs, serviceVersionIDs []string, endUserRef string, opts PageOptions) (*AuthConnectionPageResponse, error) {
 	query := `
-		query AuthConnectionPage($bucketId: String!, $serviceId: String, $endUserRef: String, $limit: Int!, $offset: Int!) {
-			authConnectionPage(bucket_id: $bucketId, service_id: $serviceId, end_user_ref: $endUserRef, limit: $limit, offset: $offset) {
+		query AuthConnectionPage($bucketId: String!, $serviceIds: [String], $serviceVersionIds: [String], $endUserRef: String, $limit: Int!, $offset: Int!) {
+			authConnectionPage(bucket_id: $bucketId, service_ids: $serviceIds, service_version_ids: $serviceVersionIds, end_user_ref: $endUserRef, limit: $limit, offset: $offset) {
 				total
 				items {
 					id bucket_id service_id service_version_id end_user_ref created_by_app_id
@@ -173,7 +172,8 @@ func (c *Client) ListAuthConnectionPage(bucketID string, serviceID string, endUs
 		Page AuthConnectionPageResponse `json:"authConnectionPage"`
 	}
 	vars := bucketPageVars(bucketID, opts)
-	vars["serviceId"] = serviceID
+	vars["serviceIds"] = serviceIDs
+	vars["serviceVersionIds"] = serviceVersionIDs
 	vars["endUserRef"] = endUserRef
 	err := c.EngineGraphQL(query, vars, &resp)
 	return &resp.Page, err

@@ -199,10 +199,12 @@ to both. Registry stores no MCP runtime/config/package data.
 This list may be behind the CLI's actual flags/subcommands -- run
 `fused-cli mcp <subcommand> --help` to confirm before relying on one. The
 `fused-cli` skill documents init's batched server-variable enrichment.
+`--service` accepts comma-separated selectors or repeated flags; MCP selections
+use canonical `<service>@<version>` to name their exact immutable version.
 
 ```shell
-fused-cli init <name> --mcp --description '<LLM-authored capability summary>' --service '<service>[=<version>]' [--operation '<service>=<operationId>']
-fused-cli extend <name> [--version <new>] --service '<service>[=<version>]' --select-all '<service>'
+fused-cli init <name> --mcp --description '<LLM-authored capability summary>' --service '<service>[@<version>]' [--operation '<service>=<operationId>']
+fused-cli extend <name> [--version <new>] --service '<service>[@<version>]' --select-all '<service>'
 fused-cli mcp plan
 fused-cli mcp apply
 fused-cli mcp validate

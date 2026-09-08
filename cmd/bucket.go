@@ -24,7 +24,7 @@ var bucketSecretsFlags listFlags
 var bucketValuesFlags listFlags
 var bucketConnectionsFlags listFlags
 var bucketSDKsFlags listFlags
-var bucketConnectionsService string
+var bucketConnectionsServices []string
 var bucketConnectionsUser string
 
 var bucketCreateCmd = newBucketCommand("create <bucket-name>", "Create a bucket", "cli.bucket.create", runBucketCreate)
@@ -197,11 +197,13 @@ func runBucketConnections(cmd *cobra.Command, nameOrID string) error {
 	if err != nil {
 		return err
 	}
-	serviceID, err := resolveOptionalServiceID(client, bucketConnectionsService)
+	serviceIDs, serviceVersionIDs, err := resolveConnectionServiceSelectors(client, bucketConnectionsServices)
+	// A malformed or unresolved selector must fail before Engine receives a potentially broader filter.
 	if err != nil {
 		return err
 	}
-	page, err := client.ListAuthConnectionPage(bucketID, serviceID, bucketConnectionsUser, bucketConnectionsFlags.pageOptions())
+	page, err := client.ListAuthConnectionPage(bucketID, serviceIDs, serviceVersionIDs, bucketConnectionsUser, bucketConnectionsFlags.pageOptions())
+	// Engine owns union filtering and pagination so limits apply across all requested services together.
 	if err != nil {
 		return err
 	}
@@ -271,11 +273,78 @@ func resolveExplicitBucketID(value string) (string, error) {
 	return client.ResolveBucketReference(reference)
 }
 
-func resolveOptionalServiceID(client *cliapi.Client, serviceSlug string) (string, error) {
-	if strings.TrimSpace(serviceSlug) == "" {
-		return "", nil
+// resolveConnectionServiceSelectors turns CLI references into disjoint whole-service and exact-version ID filters.
+func resolveConnectionServiceSelectors(client *cliapi.Client, values []string) ([]string, []string, error) {
+	selectors, err := parseScaffoldServices(values, false)
+	// Reject malformed input before any partial Registry resolution can influence the query.
+	if err != nil {
+		return nil, nil, err
 	}
-	return resolveServiceIDFromSlug(client, serviceSlug)
+	serviceIDs := make([]string, 0, len(selectors))
+	serviceVersionIDs := make([]string, 0, len(selectors))
+	wholeServices := make(map[string]bool, len(selectors))
+	seenVersionIDs := make(map[string]bool, len(selectors))
+	versionServices := make(map[string]string, len(selectors))
+	serviceIDsByName := make(map[string]string, len(selectors))
+	versionsByService := make(map[string][]cliapi.ServiceVersion, len(selectors))
+	for _, selector := range selectors {
+		serviceID, cached := serviceIDsByName[selector.name]
+		// Resolve stable service identity once when repeated exact versions share a service reference.
+		if !cached {
+			serviceID, err = resolveServiceIDFromSlug(client, selector.name)
+			// Every named service must resolve so a typo cannot silently narrow a multi-service result.
+			if err != nil {
+				return nil, nil, err
+			}
+			serviceIDsByName[selector.name] = serviceID
+		}
+		// Omitting a version intentionally selects every connection version for this service.
+		if selector.version == "" {
+			// Repeated whole-service selectors contribute one stable query argument.
+			if !wholeServices[serviceID] {
+				wholeServices[serviceID] = true
+				serviceIDs = append(serviceIDs, serviceID)
+			}
+			continue
+		}
+		versions, cached := versionsByService[selector.name]
+		// Resolve the immutable version identity once per service even when several exact versions were requested.
+		if !cached {
+			versions, err = client.ServiceVersions(selector.name)
+			// Version lookup failures must not degrade an exact selector into a whole-service match.
+			if err != nil {
+				return nil, nil, err
+			}
+			versionsByService[selector.name] = versions
+		}
+		versionID := ""
+		for _, version := range versions {
+			// Version names are exact immutable selectors; fuzzy or latest-version matching would make scripts drift.
+			if version.Name == selector.version {
+				versionID = version.ID
+				break
+			}
+		}
+		// A missing immutable identity means the requested service version cannot be filtered safely.
+		if versionID == "" {
+			return nil, nil, fmt.Errorf("service %s version %s not found", selector.name, selector.version)
+		}
+		// Repeated selectors are accepted but only one version ID is sent to Engine.
+		if !seenVersionIDs[versionID] {
+			seenVersionIDs[versionID] = true
+			versionServices[versionID] = serviceID
+			serviceVersionIDs = append(serviceVersionIDs, versionID)
+		}
+	}
+	filteredVersionIDs := serviceVersionIDs[:0]
+	for _, versionID := range serviceVersionIDs {
+		// A whole-service selector subsumes every exact version selected for the same service.
+		if wholeServices[versionServices[versionID]] {
+			continue
+		}
+		filteredVersionIDs = append(filteredVersionIDs, versionID)
+	}
+	return serviceIDs, filteredVersionIDs, nil
 }
 
 func formatOptionalTime(value *time.Time) string {
@@ -295,6 +364,6 @@ func init() {
 	addListFlags(bucketValuesCmd, &bucketValuesFlags)
 	addListFlags(bucketConnectionsCmd, &bucketConnectionsFlags)
 	addListFlags(bucketSDKsCmd, &bucketSDKsFlags)
-	bucketConnectionsCmd.Flags().StringVar(&bucketConnectionsService, "service", "", "Service slug")
+	bucketConnectionsCmd.Flags().StringSliceVar(&bucketConnectionsServices, "service", nil, "Service filter as <service>[@<version>]; comma-separated or repeatable")
 	bucketConnectionsCmd.Flags().StringVar(&bucketConnectionsUser, "user", "", "End-user reference")
 }

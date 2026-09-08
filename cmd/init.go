@@ -118,7 +118,7 @@ retain available plan receipts without applying Engine state.`,
 	command.Flags().BoolVar(&opts.extend, "extend", false, "Compatibility alias for 'fused-cli extend'; use --version for an applied successor")
 	// Existing scripts retain --extend, while help directs new additive workflows to the root extend command.
 	_ = command.Flags().MarkHidden("extend")
-	command.Flags().StringSliceVar(&opts.services, "service", nil, "Registry service as <service>[=<version>]; repeatable")
+	command.Flags().StringSliceVar(&opts.services, "service", nil, "Registry service as <service>[@<version>]; comma-separated or repeatable")
 	command.Flags().StringSliceVar(&opts.operations, "operation", nil, "Selected operation as <service>=<operationId>; repeatable")
 	command.Flags().StringSliceVar(&opts.selectAll, "select-all", nil, "Service whose complete operation surface should be selected; repeatable")
 	command.Flags().StringVar(&opts.version, "version", defaultScaffoldVersion, "App version")

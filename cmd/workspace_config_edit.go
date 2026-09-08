@@ -218,6 +218,7 @@ func loadWorkspaceConfigForEdit(path string) (*configfile.WorkspaceConfig, error
 	return parseWorkspaceConfig(path, data)
 }
 
+// loadWorkspaceConfigForSync reads one explicit sync target or initializes an absent aggregate document in memory.
 func loadWorkspaceConfigForSync(path string) (string, *configfile.WorkspaceConfig, error) {
 	target := path
 	if target == "" {
@@ -237,14 +238,18 @@ func loadWorkspaceConfigForSync(path string) (string, *configfile.WorkspaceConfi
 	return target, cfg, err
 }
 
+// parseWorkspaceConfig accepts either aggregate workspace or scoped services document syntax for local editing.
 func parseWorkspaceConfig(path string, data []byte) (*configfile.WorkspaceConfig, error) {
 	var cfg configfile.WorkspaceConfig
+	// Sync preserves comments less strictly than plan parsing, but still requires a valid workspace-shaped document identity.
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, err
 	}
-	if cfg.Kind != configfile.KindWorkspace {
-		return nil, fmt.Errorf("expected workspace config in %s", path)
+	// Aggregate and scoped services files share the same body while remaining distinct local document types.
+	if !((cfg.Kind == configfile.KindWorkspace && cfg.Type == "") || (cfg.Kind == "" && cfg.Type == configfile.KindServices)) {
+		return nil, fmt.Errorf("expected kind: workspace or type: services in %s", path)
 	}
+	// Older hand-authored files may omit the map, but sync needs a writable destination.
 	if cfg.Services == nil {
 		cfg.Services = map[string]configfile.WorkspaceService{}
 	}

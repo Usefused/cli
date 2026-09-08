@@ -110,9 +110,15 @@ func newScaffoldCommandWithWorkflow(kind configfile.ConfigKind, resolver scaffol
 	use := "init [name]"
 	args := cobra.RangeArgs(0, 1)
 	selectionDescription := "services and operation selections"
-	serviceFlagDescription := "Service key with an optional version as <key>[=<version>]; repeatable"
+	serviceFlagDescription := "Service as <service>[@<version>]; comma-separated or repeatable"
 	operationFlagDescription := "Selected operation as <service>=<operationId>; repeatable"
 	selectAllFlagDescription := "Service key whose operations should all be selected; repeatable"
+	longDescription := fmt.Sprintf(`Create a %s config skeleton.
+
+By default the command refuses to replace an existing file. Pass --extend to
+merge %s into that file; an explicit --version retargets an app file to its
+immutable successor.`, kind, selectionDescription)
+	extendFlagDescription := "Merge into an existing config; use --version for an applied successor"
 	// SDK init can discover operation scope after service resolution, while other scaffold kinds retain explicit flag guidance.
 	if kind == configfile.KindSDK {
 		operationFlagDescription = "Selected operation as <service>=<operationId>; repeatable; omit to choose interactively"
@@ -120,22 +126,24 @@ func newScaffoldCommandWithWorkflow(kind configfile.ConfigKind, resolver scaffol
 	}
 	// MCP keeps exact version selection because only SDK init owns version-default orchestration.
 	if kind == configfile.KindMCP {
-		serviceFlagDescription = "Service key and version as <key>=<version>; repeatable"
+		serviceFlagDescription = "Service and version as <service>@<version>; comma-separated or repeatable"
 	}
 	if kind == configfile.KindWorkspace {
 		use = "init"
 		args = cobra.NoArgs
 		selectionDescription = "services"
+		// Workspace documents are unversioned desired state, so their help must not advertise app successor flags.
+		longDescription = `Create a workspace config skeleton.
+
+By default the command refuses to replace an existing file. Pass --extend to
+merge services into that file.`
+		extendFlagDescription = "Merge services into an existing workspace config"
 	}
 	command := &cobra.Command{
 		Use:   use,
 		Short: "Create or extend a Fused config file",
-		Long: fmt.Sprintf(`Create a %s config skeleton.
-
-By default the command refuses to replace an existing file. Pass --extend to
-merge %s into that file; an explicit --version retargets an app file to its
-immutable successor.`, kind, selectionDescription),
-		Args: args,
+		Long:  longDescription,
+		Args:  args,
 		RunE: WithTelemetry(fmt.Sprintf("cli.%s.init", kind), func(cmd *cobra.Command, args []string) error {
 			request, err := buildScaffoldRequest(cmd, kind, args, opts)
 			// Invalid local arguments must fail before either Engine discovery dependency is invoked.
@@ -156,7 +164,7 @@ immutable successor.`, kind, selectionDescription),
 		}),
 	}
 
-	command.Flags().BoolVar(&opts.extend, "extend", false, "Merge into an existing config; use --version for an applied successor")
+	command.Flags().BoolVar(&opts.extend, "extend", false, extendFlagDescription)
 	command.Flags().StringSliceVar(&opts.services, "service", nil, serviceFlagDescription)
 	if kind != configfile.KindWorkspace {
 		command.Flags().StringSliceVar(&opts.operations, "operation", nil, operationFlagDescription)
@@ -297,20 +305,53 @@ func scaffoldTargetPath(kind configfile.ConfigKind, name, explicit string) (stri
 	return filepath.Join(".fused", directory, fileName+".yaml"), nil
 }
 
+// parseScaffoldServices converts multi-value service flags into normalized service/version selections.
 func parseScaffoldServices(values []string, requireVersion bool) ([]scaffoldService, error) {
 	services := make([]scaffoldService, 0, len(values))
 	for _, value := range values {
-		name, version, _ := strings.Cut(strings.TrimSpace(value), "=")
-		name, version = strings.TrimSpace(name), strings.TrimSpace(version)
-		if name == "" {
-			return nil, fmt.Errorf("--service requires <key>=<version>")
+		service, err := parseServiceSelector(value, requireVersion)
+		// One malformed item rejects the complete multi-service request before any config is written.
+		if err != nil {
+			return nil, err
 		}
-		if requireVersion && version == "" {
-			return nil, fmt.Errorf("--service %q requires a version as <key>=<version>", name)
-		}
-		services = append(services, scaffoldService{name: name, version: version})
+		services = append(services, service)
 	}
 	return services, nil
+}
+
+// parseServiceSelector binds an optional canonical version suffix while preserving a leading provider qualifier.
+func parseServiceSelector(value string, requireVersion bool) (scaffoldService, error) {
+	raw := strings.TrimSpace(value)
+	name := raw
+	version := ""
+	hasVersion := false
+	// Equals belongs to operation selectors and must not remain as an ambiguous service-version spelling.
+	if strings.Contains(raw, "=") {
+		return scaffoldService{}, fmt.Errorf("--service %q must use <service>@<version>", raw)
+	}
+	// The final at-sign binds version while a leading at-sign remains part of a provider-qualified service.
+	if separator := strings.LastIndex(raw, "@"); separator > 0 {
+		// Splitting on the final at-sign preserves a leading provider qualifier such as @google/drive.
+		name, version, hasVersion = raw[:separator], raw[separator+1:], true
+	}
+	name, version = strings.TrimSpace(name), strings.TrimSpace(version)
+	// An empty service cannot be resolved or represented as a stable config key.
+	if name == "" {
+		return scaffoldService{}, fmt.Errorf("--service requires <service>[@<version>]")
+	}
+	// Only one leading at-sign may remain in a provider-qualified service after the version suffix is removed.
+	if strings.Contains(name, "@") && (!strings.HasPrefix(name, "@") || strings.Count(name, "@") != 1) {
+		return scaffoldService{}, fmt.Errorf("--service %q must use <service>@<version>", raw)
+	}
+	// An explicit separator must never silently fall back to command-specific latest-version behavior.
+	if hasVersion && version == "" {
+		return scaffoldService{}, fmt.Errorf("--service %q requires a version after @", name)
+	}
+	// MCP and other immutable selectors require an exact version at local admission.
+	if requireVersion && !hasVersion {
+		return scaffoldService{}, fmt.Errorf("--service %q requires a version as <service>@<version>", name)
+	}
+	return scaffoldService{name: name, version: version}, nil
 }
 
 func parseScaffoldOperations(values []string) ([]scaffoldOperation, error) {
@@ -806,8 +847,9 @@ func mergeAppServices(config *configfile.AppConfig, services []scaffoldService) 
 	changed := false
 	for _, requested := range services {
 		service, exists := config.Services[requested.name]
+		// Generated apps bind one immutable version per service and reject conflicting repeated selectors.
 		if exists && service.Version != "" && service.Version != requested.version {
-			return false, fmt.Errorf("service %q already uses version %q", requested.name, service.Version)
+			return false, fmt.Errorf("service %q already uses version %q; select only one <service>@<version>", requested.name, service.Version)
 		}
 		if !exists || service.Version == "" {
 			service.Version = requested.version
@@ -826,7 +868,7 @@ func mergeAppOperations(config *configfile.AppConfig, operations []scaffoldOpera
 	for _, requested := range operations {
 		service, exists := config.Services[requested.service]
 		if !exists {
-			return false, fmt.Errorf("operation service %q is not declared; add --service %s=<version>", requested.service, requested.service)
+			return false, fmt.Errorf("operation service %q is not declared; add --service %s@<version>", requested.service, requested.service)
 		}
 		if service.SelectAll {
 			return false, fmt.Errorf("service %q already uses select_all and cannot list operations", requested.service)
@@ -846,7 +888,7 @@ func mergeAppSelectAll(config *configfile.AppConfig, services []string) (bool, e
 		service, exists := config.Services[serviceName]
 		// A complete-surface selection still requires an explicitly declared service and immutable version.
 		if !exists {
-			return false, fmt.Errorf("select-all service %q is not declared; add --service %s=<version>", serviceName, serviceName)
+			return false, fmt.Errorf("select-all service %q is not declared; add --service %s@<version>", serviceName, serviceName)
 		}
 		// Promoting a narrow list to select_all is an additive scope expansion; the two equivalent encodings cannot coexist.
 		if len(service.Operations) > 0 {

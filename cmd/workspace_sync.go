@@ -3,6 +3,8 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
@@ -20,42 +22,75 @@ import (
 type workspaceSyncResult struct {
 	Added   []string
 	Updated []string
-	Removed []string
+	Missing []string
 }
 
-// mergeWorkspaceServicesFromRemote is Task 4's core logic
-// (engine_workspace_registration_plan.md): full-mirrors the Engine GraphQL
-// workspaceServices list into cfg.Services --
-// every remote workspace service is added or updated locally with the
-// Engine's data winning on any conflict, and any local entry whose service
-// is no longer enabled remotely is removed, not just flagged. Pure and
-// side-effect-free (no file or network I/O) so it's directly testable.
+// workspaceSyncTarget describes one fully preflighted local document mutation.
+type workspaceSyncTarget struct {
+	Path           string
+	Services       []api.WorkspaceService
+	SelectFromFile bool
+	RemoveKeys     map[string]bool
+}
+
+// workspaceSyncMove transfers one existing declaration while preserving its authored local policy.
+type workspaceSyncMove struct {
+	SourcePath string
+	TargetPath string
+	ServiceKey string
+}
+
+// preparedWorkspaceSyncWrite carries validated content and audit metadata into the all-target commit stage.
+type preparedWorkspaceSyncWrite struct {
+	target       workspaceSyncTarget
+	result       workspaceSyncResult
+	profileCount int
+}
+
+// workspaceSyncFileBackup retains exact pre-sync bytes so a failed later write can restore the local set.
+type workspaceSyncFileBackup struct {
+	path    string
+	data    []byte
+	mode    os.FileMode
+	existed bool
+}
+
+// workspaceSyncSnapshot keeps one complete Engine read reusable across every locally scoped services-file write.
+type workspaceSyncSnapshot struct {
+	Services            []api.WorkspaceService
+	Profiles            []api.WorkspaceConnectionProfile
+	Visibility          map[string]api.ServiceVisibility
+	VersionsByServiceID map[string][]api.ServiceVersion
+}
+
+// workspaceSyncServiceRequest aggregates repeated exact-version selectors before one service is projected.
+type workspaceSyncServiceRequest struct {
+	service     api.WorkspaceService
+	allVersions bool
+	versions    []string
+	seenVersion map[string]bool
+}
+
+var workspaceSyncServices []string
+var workspaceSyncAll bool
+
+// mergeWorkspaceServicesFromRemote refreshes selected Engine services without interpreting remote absence as local deletion intent.
 func mergeWorkspaceServicesFromRemote(cfg *configfile.WorkspaceConfig, remote []api.WorkspaceService, visibility map[string]api.ServiceVisibility, versionsByServiceID map[string][]api.ServiceVersion) (workspaceSyncResult, error) {
+	// A nil map is valid for a new services file and must become writable before selected services are projected.
 	if cfg.Services == nil {
 		cfg.Services = map[string]configfile.WorkspaceService{}
 	}
 	var result workspaceSyncResult
-
-	remoteByName, err := workspaceServicesByConfigKey(remote, visibility)
-	if err != nil {
-		return result, err
-	}
 	localByServiceID := workspaceServicesByID(cfg.Services)
 
-	// Remove local entries no longer enabled remotely.
-	for name := range cfg.Services {
-		if _, ok := remoteByName[name]; !ok {
-			delete(cfg.Services, name)
-			result.Removed = append(result.Removed, name)
-		}
-	}
-
-	// Add/update from remote -- remote always wins over whatever was there.
+	// Selected remote services are the only entries this pull may add or refresh.
 	for _, svc := range remote {
 		key, changed, err := mergeRemoteWorkspaceService(cfg.Services, svc, visibility, versionsByServiceID, localByServiceID)
+		// Missing canonical Registry identity cannot safely generate a local service key.
 		if err != nil {
 			return result, err
 		}
+		// Report the exact local mutation without letting map order affect output.
 		switch changed {
 		case workspaceSyncAdded:
 			result.Added = append(result.Added, key)
@@ -66,7 +101,7 @@ func mergeWorkspaceServicesFromRemote(cfg *configfile.WorkspaceConfig, remote []
 
 	sort.Strings(result.Added)
 	sort.Strings(result.Updated)
-	sort.Strings(result.Removed)
+	sort.Strings(result.Missing)
 	return result, nil
 }
 
@@ -78,20 +113,6 @@ const (
 	workspaceSyncAdded
 	workspaceSyncUpdated
 )
-
-// workspaceServicesByConfigKey resolves every remote service to its canonical
-// YAML key before destructive full-mirror removal decisions are made.
-func workspaceServicesByConfigKey(remote []api.WorkspaceService, visibility map[string]api.ServiceVisibility) (map[string]api.WorkspaceService, error) {
-	byName := make(map[string]api.WorkspaceService, len(remote))
-	for _, svc := range remote {
-		key, err := workspaceServiceConfigKey(svc, visibility)
-		if err != nil {
-			return nil, err
-		}
-		byName[key] = svc
-	}
-	return byName, nil
-}
 
 // workspaceServicesByID retains local state across a display-name-to-slug key
 // migration by indexing the stable Engine identity.
@@ -109,6 +130,7 @@ func workspaceServicesByID(services map[string]configfile.WorkspaceService) map[
 // while carrying local runtime intent forward until its dedicated sync runs.
 func mergeRemoteWorkspaceService(services map[string]configfile.WorkspaceService, svc api.WorkspaceService, visibility map[string]api.ServiceVisibility, versionsByServiceID map[string][]api.ServiceVersion, localByServiceID map[string]configfile.WorkspaceService) (string, workspaceSyncChange, error) {
 	key, err := workspaceServiceConfigKey(svc, visibility)
+	// Canonical keys are required before any existing entry can be rekeyed or updated.
 	if err != nil {
 		return "", workspaceSyncUnchanged, err
 	}
@@ -117,11 +139,29 @@ func mergeRemoteWorkspaceService(services map[string]configfile.WorkspaceService
 	// refreshes the Engine-owned identity/version fields while keeping
 	// bucket/connect/webhook settings that a later apply must not erase.
 	existing, existed := services[key]
+	existingKey := key
+	// Stable identity locates an existing local entry even when its canonical Registry slug changed.
 	if !existed {
 		existing = localByServiceID[svc.ServiceID]
+		for candidateKey, candidate := range services {
+			// Only the exact immutable service identity can authorize a local key migration.
+			if candidate.ServiceID == svc.ServiceID {
+				existingKey = candidateKey
+				existed = true
+				break
+			}
+		}
 	}
 	newEntry = workspaceServiceWithLocalState(newEntry, existing)
+	// A canonical slug change updates the key in place without treating unrelated omitted services as removable.
+	if existed && existingKey != key {
+		delete(services, existingKey)
+	}
 	services[key] = newEntry
+	// A stable-ID key migration is an update, not a newly adopted service.
+	if existed && existingKey != key {
+		return key, workspaceSyncUpdated, nil
+	}
 	if !existed {
 		return key, workspaceSyncAdded, nil
 	}
@@ -179,6 +219,16 @@ func workspaceServiceWithLocalState(remote, local configfile.WorkspaceService) c
 		// Public is deliberately NOT copied from existing here -- see doc
 		// comment above: it always reflects the value workspaceServiceVersionsFromRemote
 		// just derived from live Registry state, never a stale local one.
+	}
+	remoteVersions := make(map[string]bool, len(remote.Versions))
+	for _, version := range remote.Versions {
+		remoteVersions[version.Version] = true
+	}
+	for _, version := range local.Versions {
+		// Remote absence and exact-version sync scope are never authority to erase another local version declaration.
+		if !remoteVersions[version.Version] {
+			remote.Versions = append(remote.Versions, version)
+		}
 	}
 	return remote
 }
@@ -295,11 +345,16 @@ func workspaceConnectionProfilesByServiceVersion(services map[string]api.Workspa
 // workspaceEnabledVersionIDs requires resolved IDs because connection
 // profiles attach to immutable service versions, not mutable display names.
 func workspaceEnabledVersionIDs(service api.WorkspaceService) map[string]bool {
-	ids := make(map[string]bool, len(service.EnabledVersions))
+	ids := make(map[string]bool, len(service.EnabledVersions)+1)
 	for _, version := range service.EnabledVersions {
+		// Only immutable IDs can prove a profile belongs to the selected version.
 		if version.ServiceVersionID != "" {
 			ids[version.ServiceVersionID] = true
 		}
+	}
+	// The primary version is a compatibility fallback when older Engine projections omit it from enabled_versions.
+	if service.ServiceVersionID != "" {
+		ids[service.ServiceVersionID] = true
 	}
 	return ids
 }
@@ -621,21 +676,31 @@ func sameStringSet(a, b []string) bool {
 	return true
 }
 
-// workspaceSyncCmd full-mirrors Engine GraphQL state into local workspace YAML.
+// workspaceSyncCmd pulls selected Engine state into local workspace documents without changing the Engine.
 var workspaceSyncCmd = &cobra.Command{
 	Use:   "sync",
-	Short: "Full-mirror the local workspace config from the Engine's current service state",
-	Long: `Overwrites the local workspace config's services with whatever is currently
-enabled remotely: adds or updates every remote workspace service (the
-Engine's data wins on any conflict) and removes any local service entry
-	that's no longer enabled remotely.`,
+	Short: "Pull selected Engine service configuration into local workspace files",
+	Long: `Refreshes only services already declared in discovered workspace files by default.
+Use --file to scope the pull to one document, --service <service>[@<version>]
+to create or update type: services files, or --all to explicitly import every active workspace service.
+Sync never changes Engine state and never deletes a local service declaration.`,
 	Args: cobra.NoArgs,
 	RunE: WithTelemetry("cli.workspace.sync", func(cmd *cobra.Command, args []string) error {
+		serviceRefs := append([]string(nil), workspaceSyncServices...)
+		all := workspaceSyncAll
+		// Package-level Cobra bindings are reset after execution so repeated in-process command runs cannot inherit scope.
+		defer resetWorkspaceSyncFlags(cmd)
+		// Full import and exact service selection are mutually exclusive scopes.
+		if all && len(serviceRefs) > 0 {
+			return fmt.Errorf("--all cannot be combined with --service")
+		}
 		client, err := getAPIClient()
+		// Client construction must succeed before any local target is created.
 		if err != nil {
 			return err
 		}
-		result, err := PerformWorkspaceSync(cmd.Context(), client, ConfigFile)
+		result, err := performWorkspaceSyncSelection(cmd.Context(), client, ConfigFile, serviceRefs, all)
+		// A failed remote snapshot or local write remains a command failure with no Engine mutation.
 		if err != nil {
 			return err
 		}
@@ -646,54 +711,617 @@ Engine's data wins on any conflict) and removes any local service entry
 	}),
 }
 
-// PerformWorkspaceSync atomically publishes a complete Engine-owned workspace snapshot to local desired state.
+// resetWorkspaceSyncFlags restores command scope defaults for tests and embedded callers that execute Cobra more than once.
+func resetWorkspaceSyncFlags(cmd *cobra.Command) {
+	workspaceSyncServices = nil
+	workspaceSyncAll = false
+	for _, name := range []string{"service", "all"} {
+		// Clearing Changed lets the next parse treat a newly supplied StringArray as its first value.
+		if flag := cmd.Flags().Lookup(name); flag != nil {
+			flag.Changed = false
+		}
+	}
+}
+
+// PerformWorkspaceSync preserves the programmatic full-import entry point while using non-destructive local merge semantics.
 func PerformWorkspaceSync(ctx context.Context, client *api.Client, configPath string) (*workspaceSyncResult, error) {
-	path, cfg, err := loadWorkspaceConfigForSync(configPath)
-	// Invalid or unreadable local state cannot safely be replaced by a synchronized document.
+	return performWorkspaceSyncSelection(ctx, client, configPath, nil, true)
+}
+
+// performWorkspaceSyncSelection resolves local scope before writing selected non-secret Engine state.
+func performWorkspaceSyncSelection(ctx context.Context, client *api.Client, configPath string, serviceRefs []string, all bool) (*workspaceSyncResult, error) {
+	snapshot, err := fetchWorkspaceSyncSnapshot(client)
+	// A complete remote snapshot is required before any destination file is created or replaced.
 	if err != nil {
 		return nil, err
 	}
-	result, profileCount, err := mergeWorkspaceStateFromEngine(client, cfg)
-	// A failed remote snapshot cannot authorize replacing the local workspace document.
+	paths, err := configfile.DiscoverWorkspaceConfigPaths(".fused")
+	// Every existing workspace document is validated together before sync chooses or mutates ownership.
+	if err == nil {
+		err = configfile.ValidateWorkspaceConfigPaths(paths)
+	}
+	// Invalid or duplicate local ownership must fail before any destination file is created or replaced.
 	if err != nil {
 		return nil, err
 	}
-	// Publishing happens only after every remote dependency has been merged successfully in memory.
-	if err := writeWorkspaceConfig(path, cfg); err != nil {
+	targets, moves, err := workspaceSyncTargets(configPath, serviceRefs, all, snapshot)
+	// Ambiguous service identity or an absent local scope must fail before filesystem mutation.
+	if err != nil {
 		return nil, err
 	}
-	recordWorkspaceSyncWrite(ctx, result, profileCount)
-	return &result, nil
+	configs := make(map[string]*configfile.WorkspaceConfig, len(targets))
+	for _, target := range targets {
+		cfg, loadErr := loadWorkspaceSyncTarget(target.Path, target.SelectFromFile || len(target.Services) > 0)
+		// Every target is loaded before the first write so a later invalid document cannot cause a partial sync.
+		if loadErr != nil {
+			return nil, loadErr
+		}
+		configs[target.Path] = cfg
+	}
+	for _, move := range moves {
+		source, target := configs[move.SourcePath], configs[move.TargetPath]
+		service, exists := source.Services[move.ServiceKey]
+		// Ownership was resolved from this exact source during planning; disappearance indicates inconsistent local state.
+		if !exists {
+			return nil, fmt.Errorf("workspace service %s is no longer declared in %s", move.ServiceKey, move.SourcePath)
+		}
+		// Preserve locally authored policy in the destination before Engine-owned fields are refreshed.
+		target.Services[move.ServiceKey] = service
+		delete(source.Services, move.ServiceKey)
+	}
+	aggregate := workspaceSyncResult{}
+	prepared := make([]preparedWorkspaceSyncWrite, 0, len(targets))
+	for _, target := range targets {
+		cfg := configs[target.Path]
+		targetServices := target.Services
+		// Default file-scoped sync derives its remote selection from services already declared in that file.
+		if target.SelectFromFile {
+			var selectErr error
+			targetServices, aggregate.Missing, selectErr = selectWorkspaceServicesForConfig(cfg, snapshot, aggregate.Missing)
+			// A local key that cannot be compared with canonical remote identity must not be guessed.
+			if selectErr != nil {
+				return nil, selectErr
+			}
+		}
+		result := workspaceSyncResult{}
+		profileCount := 0
+		var mergeErr error
+		// Removal-only source files preserve their remaining declarations without refreshing unrelated Engine state.
+		if len(targetServices) > 0 {
+			result, profileCount, mergeErr = mergeWorkspaceSnapshot(cfg, snapshot, targetServices)
+		}
+		// Identity or profile conflicts must stop before the current target is published.
+		if mergeErr != nil {
+			return nil, mergeErr
+		}
+		prepared = append(prepared, preparedWorkspaceSyncWrite{target: target, result: result, profileCount: profileCount})
+		aggregate.Added = append(aggregate.Added, result.Added...)
+		aggregate.Updated = append(aggregate.Updated, result.Updated...)
+	}
+	// The batch restores earlier targets if a later filesystem replacement fails.
+	if err := writeWorkspaceSyncBatch(prepared, configs); err != nil {
+		return nil, err
+	}
+	for _, write := range prepared {
+		recordWorkspaceSyncWrite(ctx, write.result, write.profileCount, len(write.target.RemoveKeys) > 0)
+	}
+	aggregate.Added = uniqueSortedStrings(aggregate.Added)
+	aggregate.Updated = uniqueSortedStrings(aggregate.Updated)
+	aggregate.Missing = uniqueSortedStrings(aggregate.Missing)
+	return &aggregate, nil
+}
+
+// writeWorkspaceSyncBatch replaces every validated target and rolls back exact prior bytes after a later write failure.
+func writeWorkspaceSyncBatch(writes []preparedWorkspaceSyncWrite, configs map[string]*configfile.WorkspaceConfig) error {
+	backups := make([]workspaceSyncFileBackup, 0, len(writes))
+	for _, write := range writes {
+		backup := workspaceSyncFileBackup{path: write.target.Path, mode: 0o644}
+		data, err := os.ReadFile(backup.path)
+		// A missing destination is represented explicitly so rollback removes only a file created by this batch.
+		if err == nil {
+			backup.data = data
+			backup.existed = true
+			if info, statErr := os.Stat(backup.path); statErr == nil {
+				backup.mode = info.Mode().Perm()
+			} else {
+				return statErr
+			}
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+		backups = append(backups, backup)
+	}
+	for index, write := range writes {
+		// Every target is replaced only after the complete multi-file selection and backup set are valid.
+		if err := writeWorkspaceConfig(write.target.Path, configs[write.target.Path]); err != nil {
+			rollbackErr := rollbackWorkspaceSyncFiles(backups[:index+1])
+			// Preserve both the triggering failure and any restoration failure for manual recovery.
+			if rollbackErr != nil {
+				return fmt.Errorf("workspace sync write failed: %w; rollback failed: %v", err, rollbackErr)
+			}
+			return err
+		}
+	}
+	return nil
+}
+
+// rollbackWorkspaceSyncFiles restores successfully written targets in reverse order to their exact prior state.
+func rollbackWorkspaceSyncFiles(backups []workspaceSyncFileBackup) error {
+	var firstErr error
+	for index := len(backups) - 1; index >= 0; index-- {
+		backup := backups[index]
+		var err error
+		// Existing files regain their exact bytes and mode; newly created files are removed to restore absence.
+		if backup.existed {
+			err = atomicWriteFile(backup.path, backup.data, backup.mode, nil)
+		} else {
+			err = os.Remove(backup.path)
+			// An already absent generated target satisfies the rollback invariant.
+			if os.IsNotExist(err) {
+				err = nil
+			}
+		}
+		// Continue restoring every earlier target while retaining the first diagnostic.
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
+// workspaceSyncTargets maps command scope to local destinations without sending those paths to the Engine.
+func workspaceSyncTargets(configPath string, serviceRefs []string, all bool, snapshot workspaceSyncSnapshot) ([]workspaceSyncTarget, []workspaceSyncMove, error) {
+	// Explicit full import intentionally retains the legacy single-file destination unless the caller chooses another file.
+	if all {
+		target := configPath
+		// The conventional root path keeps an explicit --all invocation predictable in a new repository.
+		if strings.TrimSpace(target) == "" {
+			target = filepath.Join(".fused", "workspace.yaml")
+		}
+		return []workspaceSyncTarget{{Path: target, Services: snapshot.Services}}, nil, nil
+	}
+	// Exact service pulls may update an existing owner document or create deterministic one-service files.
+	if len(serviceRefs) > 0 {
+		services, err := resolveWorkspaceSyncServices(serviceRefs, snapshot)
+		// An absent or ambiguous reference must fail before choosing a destination.
+		if err != nil {
+			return nil, nil, err
+		}
+		// An explicit file collects every selected service into that caller-owned destination.
+		if strings.TrimSpace(configPath) != "" {
+			targets := []workspaceSyncTarget{{Path: configPath, Services: services}}
+			moves := make([]workspaceSyncMove, 0)
+			sourceIndexes := make(map[string]int)
+			for _, service := range services {
+				ownerPath, ownerKey, found, findErr := findWorkspaceServiceConfigOwner(service, snapshot.Visibility)
+				// Invalid local workspace documents cannot be ignored while checking duplicate ownership.
+				if findErr != nil {
+					return nil, nil, findErr
+				}
+				// A caller-selected destination explicitly authorizes a local ownership transfer without changing Engine state.
+				if found && !sameWorkspaceSyncPath(ownerPath, configPath) {
+					index, exists := sourceIndexes[ownerPath]
+					// Each source file appears once even when several of its declarations move together.
+					if !exists {
+						index = len(targets)
+						sourceIndexes[ownerPath] = index
+						targets = append(targets, workspaceSyncTarget{Path: ownerPath, RemoveKeys: map[string]bool{}})
+					}
+					targets[index].RemoveKeys[ownerKey] = true
+					moves = append(moves, workspaceSyncMove{SourcePath: ownerPath, TargetPath: configPath, ServiceKey: ownerKey})
+				}
+			}
+			return targets, moves, nil
+		}
+		targetsByPath := make(map[string]*workspaceSyncTarget, len(services))
+		claimedPaths := make(map[string]string, len(services))
+		for _, service := range services {
+			target, _, found, findErr := findWorkspaceServiceConfigOwner(service, snapshot.Visibility)
+			// Local discovery failure prevents a safe choice between update and create.
+			if findErr != nil {
+				return nil, nil, findErr
+			}
+			// A previously unmanaged service receives one deterministic type: services file.
+			if !found {
+				key, keyErr := workspaceServiceConfigKey(service, snapshot.Visibility)
+				// Canonical identity is required before the CLI can derive a stable local filename.
+				if keyErr != nil {
+					return nil, nil, keyErr
+				}
+				target, keyErr = workspaceSyncServiceFilePath(key, service.ServiceID, claimedPaths)
+				// Filename derivation must preserve one-file-per-service ownership even when readable slugs collide.
+				if keyErr != nil {
+					return nil, nil, keyErr
+				}
+			}
+			entry := targetsByPath[target]
+			// Repeated exact-version selectors intentionally share their service's one destination.
+			if entry == nil {
+				entry = &workspaceSyncTarget{Path: target}
+				targetsByPath[target] = entry
+			}
+			entry.Services = append(entry.Services, service)
+		}
+		targetPaths := make([]string, 0, len(targetsByPath))
+		for path := range targetsByPath {
+			targetPaths = append(targetPaths, path)
+		}
+		sort.Strings(targetPaths)
+		targets := make([]workspaceSyncTarget, 0, len(targetPaths))
+		for _, path := range targetPaths {
+			targets = append(targets, *targetsByPath[path])
+		}
+		return targets, nil, nil
+	}
+	// File-only sync refreshes exactly the services already declared in that document.
+	if strings.TrimSpace(configPath) != "" {
+		// A missing scoped file cannot identify any services and should not silently become empty YAML.
+		if _, err := os.Stat(configPath); err != nil {
+			return nil, nil, fmt.Errorf("workspace sync file %s is unavailable: %w", configPath, err)
+		}
+		return []workspaceSyncTarget{{Path: configPath, SelectFromFile: true}}, nil, nil
+	}
+	paths, err := configfile.DiscoverWorkspaceConfigPaths(".fused")
+	// Default sync is intentionally local-first: discovery failure cannot expand scope to all Engine services.
+	if err != nil {
+		return nil, nil, err
+	}
+	// UI-only workspaces have nothing local to refresh until --service or --all is requested.
+	if len(paths) == 0 {
+		return nil, nil, fmt.Errorf("no local workspace config found; use --service to create one or --all to import every active service")
+	}
+	targets := make([]workspaceSyncTarget, 0, len(paths))
+	for _, path := range paths {
+		targets = append(targets, workspaceSyncTarget{Path: path, SelectFromFile: true})
+	}
+	return targets, nil, nil
+}
+
+// sameWorkspaceSyncPath compares absolute cleaned paths so mixed relative and absolute spellings cannot trigger a self-move.
+func sameWorkspaceSyncPath(left, right string) bool {
+	leftPath, leftErr := filepath.Abs(left)
+	rightPath, rightErr := filepath.Abs(right)
+	// Failure to canonicalize either path must fail closed as non-equivalence.
+	if leftErr != nil || rightErr != nil {
+		return false
+	}
+	return filepath.Clean(leftPath) == filepath.Clean(rightPath)
+}
+
+// workspaceSyncServiceFilePath keeps readable default names while disambiguating collisions with stable service identity.
+func workspaceSyncServiceFilePath(key, serviceID string, claimed map[string]string) (string, error) {
+	fileName := safeConfigFileName(strings.TrimPrefix(key, "@"))
+	// An unusable canonical key cannot become a hidden or directory-valued services path.
+	if fileName == "" {
+		return "", fmt.Errorf("workspace service %s has no safe local filename", serviceID)
+	}
+	target := filepath.Join(".fused", "services", fileName+".yaml")
+	owner := claimed[target]
+	collides := owner != "" && owner != serviceID
+	// An existing non-empty file cannot receive an undeclared service implicitly; --file is required for intentional grouping.
+	if !collides {
+		if info, statErr := os.Stat(target); statErr == nil && !info.IsDir() {
+			cfg, loadErr := loadWorkspaceSyncTarget(target, true)
+			// Invalid existing content must be repaired instead of bypassed with a suffixed path.
+			if loadErr != nil {
+				return "", loadErr
+			}
+			collides = len(cfg.Services) > 0
+		} else if statErr != nil && !os.IsNotExist(statErr) {
+			return "", statErr
+		}
+	}
+	// A colliding readable slug gains the complete immutable identity so distinct services cannot share a default file.
+	if collides {
+		suffix := safeConfigFileName(serviceID)
+		// Stable service identity must also be usable as a local filename component.
+		if suffix == "" {
+			return "", fmt.Errorf("workspace service %s has no safe local filename suffix", serviceID)
+		}
+		target = filepath.Join(".fused", "services", fileName+"-"+suffix+".yaml")
+		// A second collision at the identity-qualified path is ambiguous and must not silently group declarations.
+		if existingOwner := claimed[target]; existingOwner != "" && existingOwner != serviceID {
+			return "", fmt.Errorf("workspace services %s and %s resolve to the same local filename", existingOwner, serviceID)
+		}
+	}
+	claimed[target] = serviceID
+	return target, nil
+}
+
+// loadWorkspaceSyncTarget reads an existing document or initializes the requested local document type.
+func loadWorkspaceSyncTarget(path string, servicesDocument bool) (*configfile.WorkspaceConfig, error) {
+	_, statErr := os.Stat(path)
+	missing := os.IsNotExist(statErr)
+	// Filesystem errors other than absence must fail before the generic loader can treat the path as creatable.
+	if statErr != nil && !missing {
+		return nil, statErr
+	}
+	_, cfg, err := loadWorkspaceConfigForSync(path)
+	// Parse and read failures must not be hidden by document-type initialization.
+	if err != nil {
+		return nil, err
+	}
+	// Newly created scoped files use type: services; existing documents retain their authored discriminator.
+	if missing && servicesDocument {
+		cfg.BaseConfig = configfile.BaseConfig{APIVersion: configfile.APIVersionV1, Type: configfile.KindServices}
+	}
+	return cfg, err
+}
+
+// resolveWorkspaceSyncServices resolves active workspace services by immutable ID, canonical slug, or unambiguous display name.
+func resolveWorkspaceSyncServices(refs []string, snapshot workspaceSyncSnapshot) ([]api.WorkspaceService, error) {
+	requests := make(map[string]*workspaceSyncServiceRequest)
+	order := make([]string, 0, len(refs))
+	for _, rawRef := range refs {
+		selector, selectorErr := parseServiceSelector(rawRef, false)
+		// Shared selector grammar keeps sync consistent with init and extend before remote matching begins.
+		if selectorErr != nil {
+			return nil, selectorErr
+		}
+		ref := selector.name
+		matches := make([]api.WorkspaceService, 0, 1)
+		for _, service := range snapshot.Services {
+			key, keyErr := workspaceServiceConfigKey(service, snapshot.Visibility)
+			// Missing Registry slug identity is a snapshot integrity failure, not a non-match.
+			if keyErr != nil {
+				return nil, keyErr
+			}
+			// All supported identities are exact and case-insensitive; sync never performs Registry discovery.
+			if strings.EqualFold(ref, service.ServiceID) || strings.EqualFold(ref, service.ServiceName) || strings.EqualFold(ref, service.ServiceSlug) || strings.EqualFold(ref, key) {
+				matches = append(matches, service)
+			}
+		}
+		// Only active workspace services can be reconstructed by sync.
+		if len(matches) == 0 {
+			return nil, fmt.Errorf("workspace service %q is not active", ref)
+		}
+		// Ambiguous display names require a canonical slug or immutable ID rather than an interactive guess.
+		if len(matches) > 1 {
+			return nil, fmt.Errorf("workspace service %q is ambiguous; use a canonical slug or service ID", ref)
+		}
+		service := matches[0]
+		request := requests[service.ServiceID]
+		// The first alias establishes deterministic output order and the complete remote service identity.
+		if request == nil {
+			request = &workspaceSyncServiceRequest{service: service, seenVersion: map[string]bool{}}
+			requests[service.ServiceID] = request
+			order = append(order, service.ServiceID)
+		}
+		// An unversioned selector intentionally widens this service to every active version.
+		if selector.version == "" {
+			request.allVersions = true
+			request.versions = nil
+			continue
+		}
+		// Once all versions are selected, narrower aliases cannot reduce the established scope.
+		if request.allVersions {
+			continue
+		}
+		// Repeated exact selectors are idempotent while preserving first-seen version order.
+		if !request.seenVersion[selector.version] {
+			request.versions = append(request.versions, selector.version)
+			request.seenVersion[selector.version] = true
+		}
+	}
+	selected := make([]api.WorkspaceService, 0, len(order))
+	for _, serviceID := range order {
+		request := requests[serviceID]
+		// Unversioned selections retain the complete active Engine projection.
+		if request.allVersions {
+			selected = append(selected, request.service)
+			continue
+		}
+		service, err := selectWorkspaceServiceVersions(request.service, request.versions)
+		// Every exact version must already be active because sync cannot create Engine state.
+		if err != nil {
+			return nil, err
+		}
+		selected = append(selected, service)
+	}
+	return selected, nil
+}
+
+// selectWorkspaceServiceVersions narrows one remote service projection to requested active versions without changing Engine state.
+func selectWorkspaceServiceVersions(service api.WorkspaceService, requested []string) (api.WorkspaceService, error) {
+	// Internal callers must never turn an empty exact selection into an index panic or accidental full-service pull.
+	if len(requested) == 0 {
+		return api.WorkspaceService{}, fmt.Errorf("workspace service %q requires at least one selected version", service.ServiceName)
+	}
+	wanted := make(map[string]bool, len(requested))
+	for _, version := range requested {
+		wanted[version] = true
+	}
+	selected := make([]api.WorkspaceServiceVersion, 0, len(requested))
+	seen := make(map[string]bool, len(requested))
+	for _, version := range service.EnabledVersions {
+		// Remote order remains authoritative, but only explicitly selected active versions enter the local projection.
+		if wanted[version.Version] {
+			selected = append(selected, version)
+			seen[version.Version] = true
+		}
+	}
+	// Some Engine versions expose the primary active version separately from an incomplete enabled_versions list.
+	if wanted[service.Version] && !seen[service.Version] {
+		selected = append(selected, api.WorkspaceServiceVersion{Version: service.Version, ServiceVersionID: service.ServiceVersionID})
+		seen[service.Version] = true
+	}
+	for _, version := range requested {
+		// Sync rejects inactive versions instead of turning a pull into activation or speculative local intent.
+		if !seen[version] {
+			return api.WorkspaceService{}, fmt.Errorf("workspace service %q version %q is not active", service.ServiceName, version)
+		}
+	}
+	service.EnabledVersions = selected
+	service.Version = selected[0].Version
+	service.ServiceVersionID = selected[0].ServiceVersionID
+	return service, nil
+}
+
+// findWorkspaceServiceConfigOwner locates the exact existing declaration and key before sync creates or transfers ownership.
+func findWorkspaceServiceConfigOwner(service api.WorkspaceService, visibility map[string]api.ServiceVisibility) (string, string, bool, error) {
+	paths, err := configfile.DiscoverWorkspaceConfigPaths(".fused")
+	// Discovery errors make duplicate ownership checks incomplete.
+	if err != nil {
+		return "", "", false, err
+	}
+	key, err := workspaceServiceConfigKey(service, visibility)
+	// Canonical identity is required for legacy entries that have no stored service ID yet.
+	if err != nil {
+		return "", "", false, err
+	}
+	foundPath := ""
+	foundKey := ""
+	for _, path := range paths {
+		parsed, parseErr := configfile.ParseFile(path)
+		// Invalid local workspace files must be repaired instead of bypassed by creating a duplicate.
+		if parseErr != nil {
+			return "", "", false, parseErr
+		}
+		for localKey, localService := range parsed.Workspace.Services {
+			// Stable ID wins, while the canonical key supports concise pre-sync declarations.
+			if localService.ServiceID != service.ServiceID && localKey != key {
+				continue
+			}
+			// More than one matching file is ambiguous regardless of whether their keys differ.
+			if foundPath != "" && filepath.Clean(foundPath) != filepath.Clean(path) {
+				return "", "", false, fmt.Errorf("workspace service %s is declared in both %s and %s", key, foundPath, path)
+			}
+			foundPath = path
+			foundKey = localKey
+		}
+	}
+	return foundPath, foundKey, foundPath != "", nil
+}
+
+// selectWorkspaceServicesForConfig restricts a default pull to local declarations and reports declarations absent from Engine state.
+func selectWorkspaceServicesForConfig(cfg *configfile.WorkspaceConfig, snapshot workspaceSyncSnapshot, missing []string) ([]api.WorkspaceService, []string, error) {
+	byID := make(map[string]api.WorkspaceService, len(snapshot.Services))
+	byKey := make(map[string]api.WorkspaceService, len(snapshot.Services))
+	for _, service := range snapshot.Services {
+		key, err := workspaceServiceConfigKey(service, snapshot.Visibility)
+		// Every compared remote service needs canonical slug identity.
+		if err != nil {
+			return nil, missing, err
+		}
+		byID[service.ServiceID] = service
+		byKey[key] = service
+	}
+	selected := make([]api.WorkspaceService, 0, len(cfg.Services))
+	seen := make(map[string]bool)
+	for localKey, localService := range cfg.Services {
+		service, exists := byID[localService.ServiceID]
+		// Slug-key lookup supports concise declarations before their first resolution.
+		if !exists {
+			service, exists = byKey[localKey]
+		}
+		// Remote absence is drift to report, never authority to erase local intent.
+		if !exists {
+			missing = append(missing, localKey)
+			continue
+		}
+		// Aliased local keys cannot cause the same remote service to be merged twice.
+		if !seen[service.ServiceID] {
+			selected = append(selected, service)
+			seen[service.ServiceID] = true
+		}
+	}
+	return selected, missing, nil
+}
+
+// workspaceProfilesForServices filters the global safe profile snapshot to exact selected service versions while retaining integrity checks.
+func workspaceProfilesForServices(profiles []api.WorkspaceConnectionProfile, services, activeServices []api.WorkspaceService) ([]api.WorkspaceConnectionProfile, error) {
+	selectedIDs := make(map[string]bool, len(services))
+	selectedVersionIDs := make(map[string]map[string]bool, len(services))
+	for _, service := range services {
+		selectedIDs[service.ServiceID] = true
+		selectedVersionIDs[service.ServiceID] = workspaceEnabledVersionIDs(service)
+	}
+	activeVersionIDs := make(map[string]map[string]bool, len(activeServices))
+	for _, service := range activeServices {
+		activeVersionIDs[service.ServiceID] = workspaceEnabledVersionIDs(service)
+	}
+	out := make([]api.WorkspaceConnectionProfile, 0)
+	for _, profile := range profiles {
+		// Unselected service profiles must not require or mutate unrelated local declarations.
+		if !selectedIDs[profile.ServiceID] {
+			continue
+		}
+		// Profiles for active but unselected versions are valid remote state outside this exact pull scope.
+		if !selectedVersionIDs[profile.ServiceID][profile.ServiceVersionID] && activeVersionIDs[profile.ServiceID][profile.ServiceVersionID] {
+			continue
+		}
+		// A profile outside the complete active snapshot remains an integrity failure rather than disappearing during filtering.
+		if !activeVersionIDs[profile.ServiceID][profile.ServiceVersionID] {
+			return nil, fmt.Errorf("workspace sync received a connection profile for an inactive version of service_id %s", profile.ServiceID)
+		}
+		out = append(out, profile)
+	}
+	return out, nil
+}
+
+// uniqueSortedStrings produces deterministic command targets and summaries without duplicate aliases.
+func uniqueSortedStrings(values []string) []string {
+	seen := make(map[string]bool, len(values))
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		// First occurrence is sufficient because output is sorted after collection.
+		if !seen[value] {
+			seen[value] = true
+			out = append(out, value)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // mergeWorkspaceStateFromEngine reconstructs the complete non-secret remote workspace state in memory without publishing a file.
 func mergeWorkspaceStateFromEngine(client *api.Client, cfg *configfile.WorkspaceConfig) (workspaceSyncResult, int, error) {
-	remote, err := client.ListWorkspaceServices()
-	// Service inventory is the primary authority; partial reconstruction would make omission destructive.
+	snapshot, err := fetchWorkspaceSyncSnapshot(client)
+	// Service inventory and its policy projections must be captured consistently before merge.
 	if err != nil {
 		return workspaceSyncResult{}, 0, err
+	}
+	return mergeWorkspaceSnapshot(cfg, snapshot, snapshot.Services)
+}
+
+// fetchWorkspaceSyncSnapshot reads every non-secret source needed to reconstruct selected workspace services.
+func fetchWorkspaceSyncSnapshot(client *api.Client) (workspaceSyncSnapshot, error) {
+	remote, err := client.ListWorkspaceServices()
+	// An incomplete membership page cannot safely drive local import decisions.
+	if err != nil {
+		return workspaceSyncSnapshot{}, err
 	}
 	profiles, err := client.ListWorkspaceConnectionProfiles()
 	// Connection profiles must move with their services so a sync cannot silently lose routing intent.
 	if err != nil {
-		return workspaceSyncResult{}, 0, err
+		return workspaceSyncSnapshot{}, err
 	}
 	visibility, err := client.ServiceVisibilities(serviceIDsFromWorkspaceServices(remote))
 	// Provider ownership controls which policy fields can be round-tripped into desired state.
 	if err != nil {
-		return workspaceSyncResult{}, 0, err
+		return workspaceSyncSnapshot{}, err
 	}
 	versionsByServiceID, err := fetchOwnedServiceVersions(client, remote, visibility)
-	// Owned version policy is required for a complete remote mirror and cannot be guessed locally.
+	// Owned version policy is required for a complete selected projection and cannot be guessed locally.
 	if err != nil {
-		return workspaceSyncResult{}, 0, err
+		return workspaceSyncSnapshot{}, err
 	}
-	result, err := mergeWorkspaceServicesFromRemote(cfg, remote, visibility, versionsByServiceID)
+	return workspaceSyncSnapshot{Services: remote, Profiles: profiles, Visibility: visibility, VersionsByServiceID: versionsByServiceID}, nil
+}
+
+// mergeWorkspaceSnapshot projects only selected services and their profiles into one local document.
+func mergeWorkspaceSnapshot(cfg *configfile.WorkspaceConfig, snapshot workspaceSyncSnapshot, selected []api.WorkspaceService) (workspaceSyncResult, int, error) {
+	result, err := mergeWorkspaceServicesFromRemote(cfg, selected, snapshot.Visibility, snapshot.VersionsByServiceID)
 	// Conflicting remote identity must fail closed before profiles or the local file are changed.
 	if err != nil {
 		return workspaceSyncResult{}, 0, err
 	}
-	profileUpdates, err := mergeWorkspaceConnectionProfilesFromRemote(cfg, remote, profiles)
+	profiles, profileSelectErr := workspaceProfilesForServices(snapshot.Profiles, selected, snapshot.Services)
+	// Exact version scope filters valid sibling profiles while retaining inactive-profile safety checks.
+	if profileSelectErr != nil {
+		return workspaceSyncResult{}, 0, profileSelectErr
+	}
+	profileUpdates, err := mergeWorkspaceConnectionProfilesFromRemote(cfg, selected, profiles)
 	// Invalid profile bindings cannot be published as an otherwise successful workspace sync.
 	if err != nil {
 		return workspaceSyncResult{}, 0, err
@@ -809,15 +1437,15 @@ func mergeWorkspaceSyncUpdates(result workspaceSyncResult, updates []string) []s
 
 // recordWorkspaceSyncWrite attaches mutation counts to the command span and
 // emits an audit event only when the user-triggered sync changed local YAML.
-func recordWorkspaceSyncWrite(ctx context.Context, result workspaceSyncResult, connectionProfileCount int) {
+func recordWorkspaceSyncWrite(ctx context.Context, result workspaceSyncResult, connectionProfileCount int, movedDeclarations bool) {
 	span := trace.SpanFromContext(ctx)
-	changed := len(result.Added)+len(result.Updated)+len(result.Removed) > 0
+	// A source file changed during regrouping even though service removal is not part of the user-facing sync result.
+	changed := movedDeclarations || len(result.Added)+len(result.Updated) > 0
 	span.SetAttributes(
 		attribute.String("user_action", "workspace.sync"),
 		attribute.Bool("config_changed", changed),
 		attribute.Int("service_added_count", len(result.Added)),
 		attribute.Int("service_updated_count", len(result.Updated)),
-		attribute.Int("service_removed_count", len(result.Removed)),
 		attribute.Int("connection_profile_count", connectionProfileCount),
 	)
 	if changed {
@@ -865,7 +1493,8 @@ func serviceIDsFromWorkspaceServices(services []api.WorkspaceService) []string {
 // printWorkspaceSyncResult renders the already-computed diff without reading
 // the file again or duplicating merge decisions.
 func printWorkspaceSyncResult(cmd *cobra.Command, result workspaceSyncResult) {
-	if len(result.Added) == 0 && len(result.Updated) == 0 && len(result.Removed) == 0 {
+	// A clean result includes no inactive local declarations as well as no file mutations.
+	if len(result.Added) == 0 && len(result.Updated) == 0 && len(result.Missing) == 0 {
 		fmt.Fprintln(cmd.OutOrStdout(), "Workspace config already in sync.")
 		return
 	}
@@ -875,12 +1504,14 @@ func printWorkspaceSyncResult(cmd *cobra.Command, result workspaceSyncResult) {
 	for _, name := range result.Updated {
 		fmt.Fprintf(cmd.OutOrStdout(), "~ updated %s\n", name)
 	}
-	for _, name := range result.Removed {
-		fmt.Fprintf(cmd.OutOrStdout(), "- removed %s\n", name)
+	for _, name := range result.Missing {
+		fmt.Fprintf(cmd.OutOrStdout(), "! inactive remotely; retained %s\n", name)
 	}
 }
 
 // init registers workspace sync under the existing workspace command tree.
 func init() {
+	workspaceSyncCmd.Flags().StringSliceVar(&workspaceSyncServices, "service", nil, "Active service as <service>[@<version>]; comma-separated or repeatable")
+	workspaceSyncCmd.Flags().BoolVar(&workspaceSyncAll, "all", false, "Explicitly import every active workspace service")
 	workspaceCmd.AddCommand(workspaceSyncCmd)
 }

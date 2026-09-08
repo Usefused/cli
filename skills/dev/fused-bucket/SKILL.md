@@ -118,7 +118,7 @@ fused-cli bucket show <bucket-name-or-id>             # + created_at
 fused-cli bucket services <bucket-name-or-id>         # per-service breakdown: secrets/values/OAuth application families/connected-user counts
 fused-cli bucket secrets <bucket-name-or-id>          # metadata only; never values
 fused-cli bucket values <bucket-name-or-id>
-fused-cli bucket connections <bucket-name-or-id> [--service <service-slug>] [--user <end-user-reference>]
+fused-cli bucket connections <bucket-name-or-id> [--service <service>[@<version>][,<service>[@<version>]...]] [--service ...] [--user <end-user-reference>]
 fused-cli bucket sdks <bucket-name-or-id>
 ```
 
@@ -127,6 +127,11 @@ to *any* service through this bucket, and whether their token is
 healthy/refreshing/failing) with `workspace connection resources` below (for *one*
 already-connected user, which provider tenants their token can reach) --
 they're different scopes of the word "connection."
+
+`bucket connections --service` accepts comma-separated values or repeated
+flags. An unversioned service includes all of its versions; canonical
+`<service>@<version>` selects one immutable version. Engine filters and
+paginates the union as one result set.
 
 ## Permissions and team access
 

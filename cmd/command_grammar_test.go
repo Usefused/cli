@@ -109,6 +109,15 @@ func TestSDKAndMCPHaveDistinctManagementRoots(t *testing.T) {
 	}
 }
 
+// TestSDKPromptIsNotRegistered protects the temporary removal from the public SDK command surface.
+func TestSDKPromptIsNotRegistered(t *testing.T) {
+	command, remaining, err := sdkCmd.Find([]string{"prompt"})
+	// Cobra leaves an unknown child unresolved at its parent, which proves there is no executable prompt command.
+	if err != nil || command != sdkCmd || len(remaining) != 1 || remaining[0] != "prompt" {
+		t.Fatalf("paused SDK command is still registered: command=%v remaining=%v err=%v", command, remaining, err)
+	}
+}
+
 func TestCanonicalCommandsRejectSupersededForms(t *testing.T) {
 	tests := []struct {
 		name string

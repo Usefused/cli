@@ -37,6 +37,7 @@ var promptCmd = &cobra.Command{
 	}),
 }
 
+// init preserves the dormant prompt command definition so it can be restored without rebuilding its flag contract.
 func init() {
 	promptCmd.Flags().StringVarP(&sdkName, "name", "n", "", "Name of the generated SDK (e.g., 'stripe-sdk')")
 	promptCmd.Flags().StringVarP(&appVersion, "version", "v", "1.0.0", "Version of the generated SDK")
@@ -46,7 +47,8 @@ func init() {
 
 	promptCmd.MarkFlagRequired("name")
 
-	sdkCmd.AddCommand(promptCmd)
+	// Keep this command out of the public CLI while SDK creation is handled by deterministic init and extend workflows.
+	// sdkCmd.AddCommand(promptCmd)
 }
 
 // searchAndAddEndpoints resolves one natural-language request and persists any

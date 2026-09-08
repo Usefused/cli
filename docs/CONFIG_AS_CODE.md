@@ -11,11 +11,11 @@ editable workspace skeleton:
 ```bash
 fused-cli workspace init
 fused-cli init my-sdk --sdk \
-  --service okta \
+  --service okta@v2 \
   --operation okta=listLogEvents
 fused-cli init support-agent --mcp \
   --description "Help support teams manage issues" \
-  --service jira \
+  --service jira@v3 \
   --select-all jira
 ```
 
@@ -26,7 +26,7 @@ existing YAML to infer SDK, API, or MCP mode:
 
 ```bash
 fused-cli extend my-sdk \
-  --service stripe \
+  --service stripe@2026-08-01 \
   --operation stripe=createPayment
 ```
 
@@ -211,7 +211,8 @@ generated-name collisions.
 
 ## Workspace configuration
 
-Create `.fused/workspace.yaml`:
+Local workspace configuration is optional when the UI owns the workspace. Use
+`.fused/workspace.yaml` when one aggregate file is convenient:
 
 ```yaml
 apiVersion: fused/v1
@@ -225,6 +226,23 @@ services:
     versions:
       - version: "1.0.0"
 ```
+
+For independently owned service sets, use `type: services` files anywhere
+under `.fused/services/`:
+
+```yaml
+apiVersion: fused/v1
+type: services
+services:
+  stripe:
+    versions:
+      - version: "2026-07-09"
+```
+
+Default discovery composes the aggregate file and every services file into one
+sparse workspace plan. A service may be declared in only one local file.
+Omitting or deleting a local declaration does not remove the active service;
+explicit service/version removal remains a separately reviewed operation.
 
 Service keys are Registry slugs. Engine resolves slugs and version identities
 during planning. If versions are omitted, the Engine resolves the latest public
@@ -271,13 +289,27 @@ replaces the previous file.
 ## Sync remote state
 
 ```bash
-fused-cli workspace sync -f .fused/workspace.yaml
+fused-cli workspace sync
+fused-cli workspace sync --file .fused/services/payments.yaml
+fused-cli workspace sync --service stripe
+fused-cli workspace sync --service stripe@v1,github@v3 --file .fused/services/payments.yaml
+fused-cli workspace sync --all
 fused-cli sdk sync my-sdk -f .fused/sdks/my-sdk.yaml
 ```
 
-Workspace sync mirrors active Engine services. SDK sync mirrors one exact
-generated SDK version, including selected services, versions, and operation
-names.
+Workspace sync is a non-destructive Engine-to-local pull. By default it refreshes
+only services already declared in local aggregate or `type: services` files;
+`--file` scopes that set to one file. `--service <service>[@<version>]` accepts
+comma-separated values or repeated flags and creates or refreshes selected
+services in one explicit file. A declaration in another local file transfers
+to that destination with authored policy intact. Without `--file`, each new
+service gets its own readable default file; a stable service-identity suffix
+disambiguates colliding slugs. An omitted version pulls all active versions; an
+exact version pulls only that version without deleting unselected local
+versions. Only `--all` imports every active service. Removing a service from a
+local file does not remove it from the workspace, and sync retains declarations
+the Engine no longer reports. SDK sync mirrors one exact generated SDK version,
+including selected services, versions, and operation names.
 
 ## Execution policy ownership
 

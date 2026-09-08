@@ -23,17 +23,17 @@ func TestScaffoldCommandCreatesRunnableConfigs(t *testing.T) {
 	}{
 		{
 			name: "workspace",
-			args: []string{"workspace", "--service", "jira=1001.0.0", "--json"},
+			args: []string{"workspace", "--service", "jira@1001.0.0,slack@v2", "--json"},
 			kind: configfile.KindWorkspace,
 		},
 		{
 			name: "sdk",
-			args: []string{"sdk", "google-workspace", "--service", "@google/drive=v3", "--operation", "@google/drive=listFiles", "--json"},
+			args: []string{"sdk", "google-workspace", "--service", "@google/drive@v3", "--operation", "@google/drive=listFiles", "--json"},
 			kind: configfile.KindSDK,
 		},
 		{
 			name: "mcp",
-			args: []string{"mcp", "support-agent", "--description", "Find and manage customer support issues in Jira.", "--service", "jira=1001.0.0", "--select-all", "jira", "--json"},
+			args: []string{"mcp", "support-agent", "--description", "Find and manage customer support issues in Jira.", "--service", "jira@1001.0.0", "--select-all", "jira", "--json"},
 			kind: configfile.KindMCP,
 		},
 	}
@@ -68,6 +68,51 @@ func TestScaffoldCommandCreatesRunnableConfigs(t *testing.T) {
 				t.Fatalf("unexpected result: %+v", result)
 			}
 		})
+	}
+}
+
+// TestWorkspaceScaffoldHelpOmitsAppVersionFlags keeps unversioned workspace guidance distinct from app lifecycle help.
+func TestWorkspaceScaffoldHelpOmitsAppVersionFlags(t *testing.T) {
+	command := newScaffoldCommandWithResolver(configfile.KindWorkspace, noOpScaffoldRequirements)
+	output := &bytes.Buffer{}
+	command.SetOut(output)
+	command.SetErr(output)
+	command.SetArgs([]string{"--help"})
+	// Help rendering should complete without invoking scaffold dependencies.
+	if err := command.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	text := output.String()
+	// Workspace help must advertise additive service authoring without a nonexistent app successor flag.
+	if strings.Contains(text, "--version") || !strings.Contains(text, "Merge services into an existing workspace config") {
+		t.Fatalf("unexpected workspace init help:\n%s", text)
+	}
+}
+
+// TestParseServiceSelectorSupportsCanonicalProviderForms locks one grammar across init, extend, sync, and bucket filtering.
+func TestParseServiceSelectorSupportsCanonicalProviderForms(t *testing.T) {
+	tests := []struct {
+		value       string
+		require     bool
+		wantName    string
+		wantVersion string
+	}{
+		{value: "stripe@v1", wantName: "stripe", wantVersion: "v1"},
+		{value: "@google/drive@v3", require: true, wantName: "@google/drive", wantVersion: "v3"},
+		{value: "@google/drive", wantName: "@google/drive"},
+	}
+	for _, test := range tests {
+		got, err := parseServiceSelector(test.value, test.require)
+		// Each accepted spelling must preserve both sides of the service-version identity exactly.
+		if err != nil || got.name != test.wantName || got.version != test.wantVersion {
+			t.Fatalf("parseServiceSelector(%q) = %#v, %v", test.value, got, err)
+		}
+	}
+	for _, value := range []string{"stripe@", "stripe@v1@v2", "stripe@v1=v2", "stripe=v1", "@google/drive=v3", ""} {
+		// Malformed separators and empty identities must fail before config mutation.
+		if _, err := parseServiceSelector(value, false); err == nil {
+			t.Fatalf("parseServiceSelector(%q) unexpectedly succeeded", value)
+		}
 	}
 }
 
@@ -196,7 +241,7 @@ services:
 
 	runScaffoldCommandForTest(t, path,
 		"sdk", "--extend",
-		"--service", "@google/drive=v3",
+		"--service", "@google/drive@v3",
 		"--operation", "@google/drive=listFiles",
 		"--operation", "jira=createIssue",
 	)
@@ -357,7 +402,7 @@ func assertScaffoldCommandAddsServerVariableBindings(t *testing.T, kind configfi
 		}, nil
 	}
 	path := filepath.Join(t.TempDir(), string(kind)+".yaml")
-	args := []string{string(kind), "sendbird-app", "--service", "send bird=v3", "--operation", "send bird=listUsers", "--json"}
+	args := []string{string(kind), "sendbird-app", "--service", "send bird@v3", "--operation", "send bird=listUsers", "--json"}
 	// MCP configs require server-level prose while SDK scaffolds have no protocol identity description.
 	if kind == configfile.KindMCP {
 		args = append(args, "--description", "Manage users through the connected Sendbird service.")
@@ -440,7 +485,7 @@ services:
 		}, nil
 	}
 	output := runScaffoldCommandWithResolverForTest(t, path, resolver,
-		"sdk", "existing", "--extend", "--service", "jira=v1", "--operation", "jira=listProjects", "--json",
+		"sdk", "existing", "--extend", "--service", "jira@v1", "--operation", "jira=listProjects", "--json",
 	)
 	parsed, err := configfile.ParseFile(path)
 	// The final atomic file must validate after enrichment.
@@ -515,7 +560,7 @@ func TestEnrichAppScaffoldRejectsNormalizedKeyCollision(t *testing.T) {
 func TestScaffoldCommandExtensionIsIdempotent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "mcp.yaml")
 	runScaffoldCommandForTest(t, path,
-		"mcp", "support", "--service", "jira=1001.0.0", "--operation", "jira=listProjects",
+		"mcp", "support", "--service", "jira@1001.0.0", "--operation", "jira=listProjects",
 	)
 	before, err := os.ReadFile(path)
 	if err != nil {
@@ -523,7 +568,7 @@ func TestScaffoldCommandExtensionIsIdempotent(t *testing.T) {
 	}
 
 	output := runScaffoldCommandForTest(t, path,
-		"mcp", "support", "--extend", "--service", "jira=1001.0.0", "--operation", "jira=listProjects", "--json",
+		"mcp", "support", "--extend", "--service", "jira@1001.0.0", "--operation", "jira=listProjects", "--json",
 	)
 	after, err := os.ReadFile(path)
 	if err != nil {
@@ -544,7 +589,7 @@ func TestScaffoldCommandExtensionIsIdempotent(t *testing.T) {
 func TestScaffoldCommandRejectsConflictingExtension(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "sdk.yaml")
 	runScaffoldCommandForTest(t, path,
-		"sdk", "payments", "--service", "stripe=2026-08-01", "--operation", "stripe=createPayment",
+		"sdk", "payments", "--service", "stripe@2026-08-01", "--operation", "stripe=createPayment",
 	)
 	original, err := os.ReadFile(path)
 	if err != nil {
@@ -552,7 +597,7 @@ func TestScaffoldCommandRejectsConflictingExtension(t *testing.T) {
 	}
 
 	err = executeScaffoldCommandForTest(path,
-		"sdk", "payments", "--extend", "--service", "stripe=2026-09-01",
+		"sdk", "payments", "--extend", "--service", "stripe@2026-09-01",
 	)
 	if err == nil || !strings.Contains(err.Error(), "already uses version") {
 		t.Fatalf("expected version conflict, got %v", err)
@@ -590,7 +635,7 @@ func TestScaffoldCommandRejectsWrongKindAndMultipleDocuments(t *testing.T) {
 			if err := os.WriteFile(path, []byte(test.body), 0644); err != nil {
 				t.Fatal(err)
 			}
-			err := executeScaffoldCommandForTest(path, "sdk", "--extend", "--service", "jira=v1")
+			err := executeScaffoldCommandForTest(path, "sdk", "--extend", "--service", "jira@v1")
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("expected %q, got %v", test.want, err)
 			}

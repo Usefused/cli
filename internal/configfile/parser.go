@@ -22,10 +22,19 @@ func LoadRun(path string) (*Run, error) {
 	return loadFusedDirectory()
 }
 
+// loadSingleConfig parses one explicit file and normalizes local-only document types for Engine routing.
 func loadSingleConfig(path string) (*Run, error) {
 	parsed, err := ParseFile(path)
+	// A scoped services document must be normalized before it is sent through the workspace plan endpoint.
 	if err != nil {
 		return nil, err
+	}
+	if parsed.Kind == KindWorkspace && parsed.Workspace.Type == KindServices {
+		parsed, err = mergeWorkspaceConfigs([]*ParsedConfig{parsed})
+		// Normalization preserves the local source hash while removing the local-only document discriminator.
+		if err != nil {
+			return nil, err
+		}
 	}
 	return &Run{Configs: []*ParsedConfig{parsed}}, nil
 }
@@ -65,20 +74,182 @@ func ensureFusedDirectory(fusedDir string) error {
 	return nil
 }
 
+// appendWorkspaceConfig composes optional aggregate and services documents into one sparse workspace request.
 func appendWorkspaceConfig(run *Run, fusedDir string) error {
-	wsPath := filepath.Join(fusedDir, "workspace.yaml")
-	if _, err := os.Stat(wsPath); err != nil {
-		return nil
-	}
-	parsed, err := ParseFile(wsPath)
+	paths, err := DiscoverWorkspaceConfigPaths(fusedDir)
+	// An unreadable services directory cannot safely produce a partial workspace plan.
 	if err != nil {
 		return err
 	}
-	if parsed.Kind != KindWorkspace {
-		return fmt.Errorf("expected workspace kind in %s", wsPath)
+	// Workspaces managed entirely through the UI need no local workspace document.
+	if len(paths) == 0 {
+		return nil
 	}
-	run.Configs = append(run.Configs, parsed)
+	configs := make([]*ParsedConfig, 0, len(paths))
+	for _, wsPath := range paths {
+		parsed, parseErr := ParseFile(wsPath)
+		// Every discovered file must be a complete document so it remains independently usable with --file.
+		if parseErr != nil {
+			return parseErr
+		}
+		// A misplaced app document must not silently join the sparse workspace request.
+		if parsed.Kind != KindWorkspace {
+			return fmt.Errorf("expected workspace config or services type in %s", wsPath)
+		}
+		isRoot := filepath.Clean(wsPath) == filepath.Clean(filepath.Join(fusedDir, "workspace.yaml"))
+		// The conventional aggregate file retains kind: workspace for backward compatibility and explicit full imports.
+		if isRoot && parsed.Workspace.Kind != KindWorkspace {
+			return fmt.Errorf("expected kind: workspace in %s", wsPath)
+		}
+		// Files under .fused/services use the first-class type: services discriminator.
+		if !isRoot && parsed.Workspace.Type != KindServices {
+			return fmt.Errorf("expected type: services in %s", wsPath)
+		}
+		configs = append(configs, parsed)
+	}
+	merged, err := mergeWorkspaceConfigs(configs)
+	// Duplicate ownership is ambiguous because two local documents cannot safely manage the same service or bucket.
+	if err != nil {
+		return err
+	}
+	run.Configs = append(run.Configs, merged)
 	return nil
+}
+
+// DiscoverWorkspaceConfigPaths returns the optional aggregate file plus recursively discovered services documents in stable order.
+func DiscoverWorkspaceConfigPaths(fusedDir string) ([]string, error) {
+	paths := make([]string, 0)
+	rootPath := filepath.Join(fusedDir, "workspace.yaml")
+	// The aggregate workspace file remains an optional member of the sparse local declaration set.
+	if info, err := os.Stat(rootPath); err == nil && !info.IsDir() {
+		paths = append(paths, rootPath)
+	} else if err != nil && !os.IsNotExist(err) {
+		return nil, fmt.Errorf("failed to access %s: %w", rootPath, err)
+	}
+	servicesDir := filepath.Join(fusedDir, "services")
+	// A missing services directory is valid for UI-only and aggregate-file workspaces.
+	if _, err := os.Stat(servicesDir); os.IsNotExist(err) {
+		sort.Strings(paths)
+		return paths, nil
+	} else if err != nil {
+		return nil, fmt.Errorf("failed to access %s: %w", servicesDir, err)
+	}
+	err := filepath.WalkDir(servicesDir, func(path string, entry fs.DirEntry, walkErr error) error {
+		// Filesystem traversal errors must stop discovery before any incomplete bundle is planned.
+		if walkErr != nil {
+			return walkErr
+		}
+		// Directories and non-YAML files are organizational details, not service declarations.
+		if entry.IsDir() || !isYAMLFile(entry.Name()) {
+			return nil
+		}
+		paths = append(paths, path)
+		return nil
+	})
+	// Stable ordering makes the composite source hash independent of filesystem enumeration order.
+	if err != nil {
+		return nil, err
+	}
+	sort.Strings(paths)
+	return paths, nil
+}
+
+// ValidateWorkspaceConfigPaths preflights a selected workspace document set so sync cannot write through ambiguous ownership.
+func ValidateWorkspaceConfigPaths(paths []string) error {
+	configs := make([]*ParsedConfig, 0, len(paths))
+	for _, path := range paths {
+		parsed, err := ParseFile(path)
+		// Every selected document must parse before aggregate ownership can be trusted.
+		if err != nil {
+			return err
+		}
+		// Non-workspace documents cannot participate in service ownership validation.
+		if parsed.Kind != KindWorkspace {
+			return fmt.Errorf("expected workspace config or services type in %s", path)
+		}
+		configs = append(configs, parsed)
+	}
+	// An empty local workspace has no ownership conflicts to validate.
+	if len(configs) == 0 {
+		return nil
+	}
+	_, err := mergeWorkspaceConfigs(configs)
+	return err
+}
+
+// mergeWorkspaceConfigs composes aggregate and services documents into one Engine workspace request without exposing local paths.
+func mergeWorkspaceConfigs(configs []*ParsedConfig) (*ParsedConfig, error) {
+	// A single aggregate document already has the Engine wire shape and retains conventional receipt behavior.
+	if len(configs) == 1 && configs[0].Workspace.Type != KindServices {
+		return configs[0], nil
+	}
+	mergedPath := filepath.Join(".fused", "workspace")
+	mergedHash := ""
+	// A directly selected services file keeps its source identity even though its wire document is normalized.
+	if len(configs) == 1 {
+		mergedPath = configs[0].Path
+		mergedHash = configs[0].SourceHash
+	}
+	merged := &ParsedConfig{
+		Kind:      KindWorkspace,
+		Path:      mergedPath,
+		ConfigKey: "workspace",
+		Workspace: &WorkspaceConfig{
+			BaseConfig: BaseConfig{APIVersion: APIVersionV1, Kind: KindWorkspace},
+			Services:   map[string]WorkspaceService{},
+			Buckets:    map[string]WorkspaceBucket{},
+		},
+	}
+	serviceOwners := make(map[string]string)
+	serviceIDOwners := make(map[string]string)
+	bucketOwners := make(map[string]string)
+	deprecationOwners := make(map[string]string)
+	hasher := sha256.New()
+	for _, config := range configs {
+		// Composite receipts bind only source contents; local paths remain process-local and never influence Engine-visible data.
+		if len(configs) > 1 {
+			_, _ = hasher.Write([]byte(config.SourceHash + "\x00"))
+		}
+		for serviceName, service := range config.Workspace.Services {
+			// Exact service-key ownership prevents document order from deciding which policy wins.
+			if owner, exists := serviceOwners[serviceName]; exists {
+				return nil, fmt.Errorf("workspace service %q is declared in both %s and %s", serviceName, owner, config.Path)
+			}
+			serviceOwners[serviceName] = config.Path
+			serviceID := strings.TrimSpace(service.ServiceID)
+			// Stable identity also prevents aliases in separate files from managing the same Registry service twice.
+			if serviceID != "" {
+				if owner, exists := serviceIDOwners[serviceID]; exists {
+					return nil, fmt.Errorf("workspace service_id %q is declared in both %s and %s", serviceID, owner, config.Path)
+				}
+				serviceIDOwners[serviceID] = config.Path
+			}
+			merged.Workspace.Services[serviceName] = service
+		}
+		for bucketName, bucket := range config.Workspace.Buckets {
+			// Bucket material is scoped by name, so duplicate names cannot be merged safely.
+			if owner, exists := bucketOwners[bucketName]; exists {
+				return nil, fmt.Errorf("workspace bucket %q is declared in both %s and %s", bucketName, owner, config.Path)
+			}
+			bucketOwners[bucketName] = config.Path
+			merged.Workspace.Buckets[bucketName] = bucket
+		}
+		for _, deprecation := range config.Workspace.Deprecations {
+			identity := strings.TrimSpace(deprecation.ServiceID) + "\x00" + strings.TrimSpace(deprecation.Version)
+			// One document owns each lifecycle directive so repeated applies remain deterministic.
+			if owner, exists := deprecationOwners[identity]; exists {
+				return nil, fmt.Errorf("workspace deprecation for service %q version %q is declared in both %s and %s", deprecation.ServiceID, deprecation.Version, owner, config.Path)
+			}
+			deprecationOwners[identity] = config.Path
+			merged.Workspace.Deprecations = append(merged.Workspace.Deprecations, deprecation)
+		}
+	}
+	// Multi-document plans bind receipts to every local source; one-file plans retain the file's ordinary content hash.
+	if len(configs) > 1 {
+		mergedHash = fmt.Sprintf("sha256:%x", hasher.Sum(nil))
+	}
+	merged.SourceHash = mergedHash
+	return merged, nil
 }
 
 // appendDesiredConfigs discovers one kind-specific directory without letting
@@ -150,15 +321,20 @@ func Parse(data []byte, sourcePath string) (*ParsedConfig, error) {
 	if base.APIVersion != APIVersionV1 {
 		return nil, fmt.Errorf("unsupported config apiVersion %q; use %q", base.APIVersion, APIVersionV1)
 	}
+	kind, err := effectiveConfigKind(base)
+	// The two discriminators are mutually exclusive so file identity cannot depend on precedence.
+	if err != nil {
+		return nil, err
+	}
 
 	hash := sha256.Sum256(data)
 	parsed := &ParsedConfig{
-		Kind:       base.Kind,
+		Kind:       kind,
 		Path:       sourcePath,
 		SourceHash: fmt.Sprintf("sha256:%x", hash),
 	}
 
-	if err := parseTypedConfig(data, base.Kind, parsed); err != nil {
+	if err := parseTypedConfig(data, kind, parsed); err != nil {
 		return nil, err
 	}
 
@@ -167,6 +343,23 @@ func Parse(data []byte, sourcePath string) (*ParsedConfig, error) {
 	}
 
 	return parsed, nil
+}
+
+// effectiveConfigKind maps the local-only type: services discriminator onto the existing workspace execution path.
+func effectiveConfigKind(base BaseConfig) (ConfigKind, error) {
+	// A document cannot declare two competing top-level identities.
+	if base.Kind != "" && base.Type != "" {
+		return "", fmt.Errorf("config must set exactly one of kind or type")
+	}
+	// Scoped service files are planned as sparse workspace intent after local composition.
+	if base.Kind == "" && base.Type == KindServices {
+		return KindWorkspace, nil
+	}
+	// Unknown type values are diagnosed separately from established kind values.
+	if base.Kind == "" && base.Type != "" {
+		return "", fmt.Errorf("unknown config type: %q", base.Type)
+	}
+	return base.Kind, nil
 }
 
 // parseTypedConfig keeps kind-specific decoding explicit so retired fields

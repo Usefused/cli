@@ -14,6 +14,7 @@ type ConfigAPIVersion string
 const (
 	APIVersionV1  ConfigAPIVersion = "fused/v1"
 	KindWorkspace ConfigKind       = "workspace"
+	KindServices  ConfigKind       = "services"
 	KindSDK       ConfigKind       = "sdk"
 	KindMCP       ConfigKind       = "mcp"
 	KindWebhook   ConfigKind       = "webhook"
@@ -22,7 +23,9 @@ const (
 // BaseConfig represents the fields common to all Fused configs.
 type BaseConfig struct {
 	APIVersion ConfigAPIVersion `yaml:"apiVersion" json:"apiVersion"`
-	Kind       ConfigKind       `yaml:"kind" json:"kind"`
+	Kind       ConfigKind       `yaml:"kind,omitempty" json:"kind,omitempty"`
+	// Type gives scoped service documents a first-class identity distinct from the aggregate workspace file.
+	Type ConfigKind `yaml:"type,omitempty" json:"type,omitempty"`
 }
 
 // WorkspaceConfig represents the desired state for a Fused workspace allowlist.

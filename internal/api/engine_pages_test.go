@@ -198,13 +198,46 @@ func TestAuthConnectionPageSelectsManagedRefreshMetadata(t *testing.T) {
 	defer server.Close()
 
 	client := api.NewClient(server.URL, "fsk_test")
-	page, err := client.ListAuthConnectionPage("bucket-1", "service-1", "user-1", api.PageOptions{Limit: 10})
+	page, err := client.ListAuthConnectionPage("bucket-1", []string{"service-1"}, nil, "user-1", api.PageOptions{Limit: 10})
 	if err != nil || len(page.Items) != 1 {
 		t.Fatalf("ListAuthConnectionPage = %#v, %v", page, err)
 	}
 	connection := page.Items[0]
 	if connection.ServiceVersionID != "version-1" || connection.AuthName != "OAuth2" || connection.LastRefreshedAt != "2026-08-20T09:01:00Z" || connection.RefreshRetryNotBefore != "2026-08-20T10:00:00Z" {
 		t.Fatalf("unexpected managed refresh metadata: %#v", connection)
+	}
+}
+
+// TestAuthConnectionPageSupportsServiceSelectorUnions verifies multi-service and exact-version filters stay server-paginated.
+func TestAuthConnectionPageSupportsServiceSelectorUnions(t *testing.T) {
+	var variables map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Query     string         `json:"query"`
+			Variables map[string]any `json:"variables"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode auth connection request: %v", err)
+		}
+		// Both filter classes must be arguments of the page resolver so offset and total apply to their union.
+		if !strings.Contains(body.Query, "service_ids: $serviceIds") || !strings.Contains(body.Query, "service_version_ids: $serviceVersionIds") {
+			t.Fatalf("auth connection query omitted selector union: %s", body.Query)
+		}
+		variables = body.Variables
+		_, _ = w.Write([]byte(`{"data":{"authConnectionPage":{"total":0,"items":[]}}}`))
+	}))
+	defer server.Close()
+
+	client := api.NewClient(server.URL, "fsk_test")
+	_, err := client.ListAuthConnectionPage("bucket-1", []string{"service-1", "service-2"}, []string{"version-3"}, "user-1", api.PageOptions{Limit: 12, Offset: 4})
+	if err != nil {
+		t.Fatalf("ListAuthConnectionPage: %v", err)
+	}
+	serviceIDs, servicesOK := variables["serviceIds"].([]any)
+	versionIDs, versionsOK := variables["serviceVersionIds"].([]any)
+	// JSON transport must preserve every selector rather than collapsing back to a singular filter.
+	if !servicesOK || len(serviceIDs) != 2 || !versionsOK || len(versionIDs) != 1 {
+		t.Fatalf("unexpected selector variables: %#v", variables)
 	}
 }
 

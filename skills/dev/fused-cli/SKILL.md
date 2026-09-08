@@ -1,6 +1,6 @@
 ---
 name: fused-cli
-description: "Set up and operate fused-cli: install or authenticate it, inspect identity, log out, configure Engine access, discover/import Registry services, manage teams/people/RBAC/workspace access/personal credentials, select an owner team or domain skill, start an Engine, or diagnose connection failures. Trigger on 'fused-cli', 'whoami', 'logout', 'engine-url', 'api-key', 'find a service', 'import discover', 'team access', 'workspace access', 'workspace role', 'add user', 'personal credential', 'owner-team', 'required permissions', 'FUSED_LICENSE_KEY', 'create an MCP', or no running Engine. For an SDK requested inside a coding agent, use fused-sdk and never route through sdk prompt."
+description: "Set up and operate fused-cli: install or authenticate it, inspect identity, log out, configure Engine access, discover/import Registry services, manage teams/people/RBAC/workspace access/personal credentials, select an owner team or domain skill, start an Engine, or diagnose connection failures. Trigger on 'fused-cli', 'whoami', 'logout', 'engine-url', 'api-key', 'find a service', 'import discover', 'team access', 'workspace access', 'workspace role', 'add user', 'personal credential', 'owner-team', 'required permissions', 'FUSED_LICENSE_KEY', 'create an MCP', or no running Engine. For an SDK requested inside a coding agent, use fused-sdk."
 ---
 
 # fused-cli
@@ -212,9 +212,8 @@ installations.
 
 ## Build an SDK or MCP from a business goal
 
-For an SDK requested inside a coding agent, use `fused-sdk`. It performs the
-workflow locally and must never invoke `fused-cli sdk prompt`, which starts a
-separate Fused agent. For MCP, or as a detailed manual reference, read
+For an SDK requested inside a coding agent, use `fused-sdk` to perform the
+workflow locally. For MCP, or as a detailed manual reference, read
 [reference/build-sdk-or-mcp.md](reference/build-sdk-or-mcp.md) and run its
 workspace-first discovery workflow. Do not guess service slugs or operation
 IDs.
@@ -256,12 +255,16 @@ one kind.
 ## Start or extend a config file
 
 Use top-level `init` for a working SDK, central API app, or MCP server; do not
-hand-build the base fields or start `sdk prompt`:
+hand-build the base fields:
+
+Every `--service` flag accepts comma-separated selectors or repeated flags.
+Use canonical `<service>@<version>` when pinning an immutable version; omit the
+suffix where the command permits all versions or its documented default.
 
 ```shell
-fused-cli init <name> --sdk --service '<service>[=<version>]' --operation '<service>=<operationId>'
-fused-cli init <name> --api --service '<service>[=<version>]' --select-all '<service>'
-fused-cli init <name> --mcp --description '<user-facing purpose>' --service '<service>[=<version>]' --select-all '<service>'
+fused-cli init <name> --sdk --service '<service>[@<version>]' --operation '<service>=<operationId>'
+fused-cli init <name> --api --service '<service>[@<version>]' --select-all '<service>'
+fused-cli init <name> --mcp --description '<user-facing purpose>' --service '<service>[@<version>]' --select-all '<service>'
 ```
 
 Result: missing workspace services are enabled, the app file is created under

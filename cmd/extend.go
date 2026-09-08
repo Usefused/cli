@@ -58,7 +58,7 @@ next minor release; pass --version to choose a different immutable successor.`,
 		}),
 	}
 
-	command.Flags().StringSliceVar(&opts.services, "service", nil, "Registry service as <service>[=<version>]; repeatable")
+	command.Flags().StringSliceVar(&opts.services, "service", nil, "Registry service as <service>[@<version>]; comma-separated or repeatable")
 	command.Flags().StringSliceVar(&opts.operations, "operation", nil, "Selected operation as <service>=<operationId>; repeatable")
 	command.Flags().StringSliceVar(&opts.selectAll, "select-all", nil, "Service whose complete operation surface should be selected; repeatable")
 	command.Flags().StringVar(&opts.version, "version", "", "Explicit immutable successor version")

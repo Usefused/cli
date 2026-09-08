@@ -1,13 +1,15 @@
 ---
 name: fused-workspace
-description: "Use when the user wants to configure a Fused workspace's service allowlist using fused-cli -- enabling/disabling or publishing services or versions, distinguishing service visibility from version visibility, listing a service's existing webhook registrations (read-only), or scheduling a deprecation. Trigger on 'workspace config', 'enable a service', 'publish a service', 'service visibility', 'version visibility', 'fused-cli workspace', 'deprecate a service version', or 'kind: workspace' files. For registering a new inbound webhook read fused-webhook instead; for rate limits/retries/pagination/outbound-webhook-verification (execution_policy), connection-profile attachments, or SDK/MCP auth/connect config, read fused-config instead; for bucket credentials read fused-bucket."
+description: "Use when the user wants to configure a Fused workspace's service allowlist using fused-cli -- enabling/disabling or publishing services or versions, distinguishing service visibility from version visibility, listing a service's existing webhook registrations (read-only), or scheduling a deprecation. Trigger on 'workspace config', 'enable a service', 'publish a service', 'service visibility', 'version visibility', 'fused-cli workspace', 'deprecate a service version', 'kind: workspace', or 'type: services' files. For registering a new inbound webhook read fused-webhook instead; for rate limits/retries/pagination/outbound-webhook-verification (execution_policy), connection-profile attachments, or SDK/MCP auth/connect config, read fused-config instead; for bucket credentials read fused-bucket."
 ---
 
 # Workspace config
 
-`kind: workspace`, managed by `fused-cli workspace ...`. This is the service
-allowlist: which services and versions are enabled, plus their deprecation
-schedule and credential-free execution/profile policy.
+Workspace state can be managed entirely in the UI. Local config is optional:
+use one aggregate `kind: workspace` document or independently scoped
+`type: services` documents under `.fused/services/`. Both are managed by
+`fused-cli workspace ...` and can declare enabled services and versions,
+deprecation schedules, and credential-free execution/profile policy.
 
 ```yaml
 apiVersion: fused/v1
@@ -118,8 +120,8 @@ This list may be behind the CLI's actual flags/subcommands -- run
 (see `fused-cli` skill).
 
 ```shell
-fused-cli workspace init [--service '<service>[=<version>]']
-fused-cli workspace init --extend --service '<service>[=<version>]'
+fused-cli workspace init [--service '<service>[@<version>]']
+fused-cli workspace init --extend --service '<service>[@<version>]'
 fused-cli workspace plan
 fused-cli workspace apply
 fused-cli workspace services list [--q "<provider or product>"]
@@ -181,7 +183,7 @@ Without `--apply`, this command authors local intent only. It does not activate
 the Registry service or prove activation permission; run `workspace plan`,
 review the resolved identity and required permissions, then `workspace apply`.
 With `--apply`, it composes Engine's existing scoped additive service mutation
-for only the resolved references; it does not run the full-workspace mirror and
+for only the resolved references; it does not run full workspace reconciliation and
 therefore cannot remove an unrelated active service. If a later activation
 fails, report the command's committed, failed, and unattempted groups plus its
 stable code, failed phase, composite request ID, failed-target commit
@@ -229,20 +231,33 @@ activation. Read the `fused-cli` skill's
 
 ## Production warning
 
-Applying a workspace config can activate or deactivate services
-workspace-wide. The CLI warns when the target Engine reports
+Applying workspace config can activate declared services, publish shared
+policy, and perform separately requested explicit removals. Omission alone is
+non-destructive. The CLI warns when the target Engine reports
 `environment=production` -- surface that warning to the user before running
 `apply`.
 
 ## Sync
 
-`fused-cli workspace sync` overwrites the local `services:` map with
-whatever the Engine reports as actually activated for this workspace --
-it's a full mirror, not a merge of additions only:
+`fused-cli workspace sync` is a non-destructive Engine-to-local pull:
 
-- A service the Engine no longer reports as activated is **dropped from the
-  local file entirely**, not just flagged. An empty remote result empties
-  the whole `services:` map.
+- With no scope flag, it refreshes services already declared in
+  `.fused/workspace.yaml` and `.fused/services/**/*.yaml`.
+- `--file <path>` reads service identities from that file and refreshes only
+  those declarations.
+- `--service <service>[@<version>]` accepts comma-separated values or repeated
+  flags. Omit the version to pull all active versions, or select exact active
+  versions without removing unselected local versions. With `--file`, all
+  selected services share that file, and declarations in another local file
+  transfer with authored policy intact. Without `--file`, each new declaration
+  gets its own `.fused/services/<service-slug>.yaml` with `type: services`; a
+  stable service-identity suffix disambiguates colliding readable slugs.
+- `--all` is the only full import and defaults to `.fused/workspace.yaml`.
+- A declaration the Engine no longer reports is retained and surfaced as
+  inactive remotely. Sync never removes local declarations and never mutates
+  Engine state.
+- Local source paths are process-local routing data. Never send them to the
+  Engine, Registry, UI, logs, or telemetry.
 - `versions` is compared as a set of version names, not an ordered list -- a
   difference in order alone is never reported as a change, and the
   currently-active version always has an entry even if the Engine's
@@ -251,9 +266,8 @@ it's a full mirror, not a merge of additions only:
   entry just to attach one.
 - If a service's local YAML key doesn't match its current canonical slug
   (e.g. it was written under an old display name, or the slug changed),
-  sync recognizes it's the same `service_id` and **rekeys** the block to the
-  current slug -- reported as one `Added` + one `Removed` in the sync
-  summary, not data loss. Each version entry's `execution_policy` and
+  sync recognizes it's the same `service_id` and rekeys the block to the
+  current slug as one update. Each version entry's `execution_policy` and
   `connection_profiles` carry over to the new key intact.
 - Sync only touches the fields it owns (`versions` and, within each entry,
   `public`, `execution_policy`, connection profile attachment) -- any other

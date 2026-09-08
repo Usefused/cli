@@ -991,9 +991,8 @@ services:
 	}
 }
 
-// TestWorkspaceFinalVersionForceDisclosesOwnedRegistryArchive verifies both
-// final-version blockers are approved and their Registry consequence is shown unattended.
-func TestWorkspaceFinalVersionForceDisclosesOwnedRegistryArchive(t *testing.T) {
+// TestWorkspaceFinalVersionForceStaysWorkspaceLocal verifies final-version removal never claims Registry lifecycle effects.
+func TestWorkspaceFinalVersionForceStaysWorkspaceLocal(t *testing.T) {
 	dir := t.TempDir()
 	path := writeSprintConfig(t, dir, ".fused/workspace.yaml", `
 apiVersion: fused/v1
@@ -1020,7 +1019,7 @@ services:
 				t.Fatalf("decode plan body: %v", err)
 			}
 			plannedTargets = body.RemoveTargets
-			_, _ = w.Write([]byte(`{"plan_id":"plan-workspace","config_key":"workspace","source_hash":"hash","base_generation":0,"summary":{"actions":[{"id":"disable_service_version:00000000-0000-4000-8000-000000000001:v1","type":"disable_service_version","service_id":"00000000-0000-4000-8000-000000000001","version":"v1","explicit_removal":true,"requires_decision":true},{"id":"remove_service:00000000-0000-4000-8000-000000000001","type":"remove_service","service_id":"00000000-0000-4000-8000-000000000001","will_archive":true,"requires_decision":true}]}}`))
+			_, _ = w.Write([]byte(`{"plan_id":"plan-workspace","config_key":"workspace","source_hash":"hash","base_generation":0,"summary":{"actions":[{"id":"disable_service_version:00000000-0000-4000-8000-000000000001:v1","type":"disable_service_version","service_id":"00000000-0000-4000-8000-000000000001","version":"v1","explicit_removal":true,"requires_decision":true},{"id":"remove_service:00000000-0000-4000-8000-000000000001","type":"remove_service","service_id":"00000000-0000-4000-8000-000000000001","requires_decision":true}]}}`))
 		case "/config/plans/plan-workspace/actions":
 			// One replacement must carry every approved blocker so apply never observes a partial review.
 			var body struct {
@@ -1040,7 +1039,7 @@ services:
 	defer server.Close()
 
 	oldNoInput := NoInput
-	// The unattended flag must not suppress disclosure of the Registry-side consequence.
+	// The unattended flag must not suppress disclosure of either workspace-local consequence.
 	t.Cleanup(func() { NoInput = oldNoInput })
 	out := runCommandInDirOutput(t, dir, server.URL, []string{"workspace", "service", "version", "delete", "gmail", "v1", "--force", "--no-input"})
 	// The complete governed sequence includes one read, one plan, one full decision replacement, and one apply.
@@ -1055,12 +1054,12 @@ services:
 	if len(patchedActions) != 2 || patchedActions[0]["decision"] != "force_remove" || patchedActions[1]["decision"] != "force_remove" {
 		t.Fatalf("expected both final-removal blockers to be approved, got %#v", patchedActions)
 	}
-	// The exact version effect and owned-service Registry archive must both precede the completion message.
+	// The exact version and resulting service-removal effects must both precede the completion message.
 	versionEffect := "Plan effect: disable version v1 of service gmail in this workspace."
-	archiveEffect := "Plan effect: archive owned service gmail from the Registry and remove it from this workspace."
+	serviceEffect := "Plan effect: remove service gmail from this workspace."
 	completion := "Deleted version v1 from service gmail"
-	if !strings.Contains(out, versionEffect) || !strings.Contains(out, archiveEffect) || strings.Index(out, archiveEffect) > strings.Index(out, completion) {
-		t.Fatalf("force removal output did not disclose archival before completion: %q", out)
+	if !strings.Contains(out, versionEffect) || !strings.Contains(out, serviceEffect) || strings.Index(out, serviceEffect) > strings.Index(out, completion) || strings.Contains(out, "archive") {
+		t.Fatalf("force removal output did not stay workspace-local before completion: %q", out)
 	}
 	after, err := os.ReadFile(path)
 	// The successful remote apply must leave the corresponding local desired state readable.
@@ -1070,6 +1069,16 @@ services:
 	// Removing the final version must leave a valid empty services map on disk.
 	if bytes.Contains(after, []byte("gmail:")) {
 		t.Fatalf("owned final-version removal left gmail in config:\n%s", after)
+	}
+}
+
+// TestPrintForceRemoveWorkspacePlanEffectsRejectsRegistryArchive prevents an older Engine from expanding local removal scope.
+func TestPrintForceRemoveWorkspacePlanEffectsRejectsRegistryArchive(t *testing.T) {
+	actions := []map[string]any{{"type": "remove_service", "service_id": "svc-gmail", "will_archive": true}}
+	err := printForceRemoveWorkspacePlanEffects(io.Discard, actions, "svc-gmail", "gmail")
+	// The CLI must stop before apply whenever a plan includes the retired Registry lifecycle consequence.
+	if err == nil || !strings.Contains(err.Error(), "Registry archival") {
+		t.Fatalf("expected Registry archival rejection, got %v", err)
 	}
 }
 

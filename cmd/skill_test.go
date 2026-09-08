@@ -285,6 +285,7 @@ func TestFusedUnifiedOperationsSkillDocumentsItsAuthoringContract(t *testing.T) 
 	}
 }
 
+// TestFusedSDKSkillKeepsIDEAgentWorkflowLocalAndCompact ensures coding agents receive a direct, bounded workflow.
 func TestFusedSDKSkillKeepsIDEAgentWorkflowLocalAndCompact(t *testing.T) {
 	path := filepath.Join("..", "skills", "dev", "fused-sdk", "SKILL.md")
 	data, err := os.ReadFile(path)
@@ -293,7 +294,7 @@ func TestFusedSDKSkillKeepsIDEAgentWorkflowLocalAndCompact(t *testing.T) {
 	}
 	content := string(data)
 	required := []string{
-		"Never run `fused-cli sdk prompt`",
+		"Run the deterministic CLI workflow directly",
 		"Do not delegate the work to another agent",
 		"working-facts",
 		"load every sibling skill up front",
@@ -931,6 +932,7 @@ func TestSkillListCommand(t *testing.T) {
 	}
 }
 
+// TestSkillInstallCommand_InstallsFusedSDKForCodingAgent verifies offline installs retain the direct workflow guidance.
 func TestSkillInstallCommand_InstallsFusedSDKForCodingAgent(t *testing.T) {
 	oldFor, oldName, oldScope, oldPath := skillInstallFor, skillInstallName, skillInstallScope, skillInstallPath
 	skillInstallFor, skillInstallName, skillInstallScope, skillInstallPath = "", "", "", ""
@@ -949,7 +951,7 @@ func TestSkillInstallCommand_InstallsFusedSDKForCodingAgent(t *testing.T) {
 	// Offline installation is intentionally all-or-nothing, so the fixture must
 	// contain every manifested file rather than silently mixing skill versions.
 	EmbeddedSkillFS = fstest.MapFS{
-		"skills/dev/fused-sdk/SKILL.md":                          &fstest.MapFile{Data: []byte("---\nname: fused-sdk\ndescription: SDK workflow\n---\n\nNever run `fused-cli sdk prompt`.\n")},
+		"skills/dev/fused-sdk/SKILL.md":                          &fstest.MapFile{Data: []byte("---\nname: fused-sdk\ndescription: SDK workflow\n---\n\nRun the deterministic CLI workflow directly.\n")},
 		"skills/dev/fused-sdk/reference/engine-execution-api.md": &fstest.MapFile{Data: []byte("Use the Engine execution token in the Authorization header.")},
 	}
 	t.Cleanup(func() { EmbeddedSkillFS = oldFS })
@@ -973,7 +975,8 @@ func TestSkillInstallCommand_InstallsFusedSDKForCodingAgent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read installed fused-sdk skill: %v", err)
 	}
-	if !strings.Contains(string(installed), "Never run `fused-cli sdk prompt`") {
+	// The installed skill must preserve direct execution rather than suggesting a separate workflow.
+	if !strings.Contains(string(installed), "Run the deterministic CLI workflow directly") {
 		t.Errorf("installed skill lost the coding-agent routing boundary: %q", installed)
 	}
 	reference, err := os.ReadFile(filepath.Join(destination, "reference", "engine-execution-api.md"))

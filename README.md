@@ -210,22 +210,6 @@ The YAML path and stable app family stay the same; apply creates the new
 immutable version. Pass `--version` to override inference. Prerelease and
 non-SemVer versions require an explicit successor.
 
-## Generate an SDK from a goal
-
-`sdk prompt` is the user-invoked Fused agent. Describe the business capability;
-it discovers services and operations, then opens an interactive cart for review.
-
-```bash
-fused-cli sdk prompt \
-  --name onboarding-sdk \
-  --version 1.0.0 \
-  --description "When a new employee joins, create an onboarding ticket in Jira, provision GitHub access, and send a Slack welcome message"
-```
-
-If the goal is already being handled by a coding agent, install and use the
-`fused-sdk` skill instead. The coding agent should perform the deterministic
-workflow directly rather than start a second agent through `sdk prompt`.
-
 ## Control an existing app explicitly
 
 Every initialized app remains ordinary config as code. Edit its YAML, then use

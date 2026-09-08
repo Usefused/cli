@@ -203,7 +203,7 @@ optional credential setup, plan/apply, and package download share one guided
 flow while retaining separate receipts:
 
 ```shell
-fused-cli init <name> --sdk --service '<service>[=<version>]'
+fused-cli init <name> --sdk --service '<service>[@<version>]'
 ```
 
 If this generated SDK plan returns the typed
@@ -224,7 +224,7 @@ Pass it with `--description`; do not enumerate operation IDs or describe the
 server's identity before tool discovery. Then run:
 
 ```shell
-fused-cli init <name> --mcp --description '<LLM-authored capability summary>' --service '<service>[=<version>]' [...selection flags]
+fused-cli init <name> --mcp --description '<LLM-authored capability summary>' --service '<service>[@<version>]' [...selection flags]
 fused-cli mcp list
 ```
 

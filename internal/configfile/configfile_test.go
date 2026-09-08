@@ -1225,3 +1225,103 @@ services:
 		t.Fatalf("SDK description error = %v", err)
 	}
 }
+
+// TestLoadRunComposesServicesDocuments proves default discovery presents one sparse workspace request to plan/apply.
+func TestLoadRunComposesServicesDocuments(t *testing.T) {
+	dir := t.TempDir()
+	writeWorkspaceTestFile(t, dir, ".fused/workspace.yaml", "stripe")
+	writeWorkspaceTestFile(t, dir, ".fused/services/payments/github.yaml", "github")
+	oldWorkingDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// LoadRun discovers relative to the process workspace, matching CLI execution.
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWorkingDir) })
+
+	run, err := configfile.LoadRun("")
+	if err != nil {
+		t.Fatalf("LoadRun() error = %v", err)
+	}
+	if len(run.Configs) != 1 || run.Configs[0].Workspace == nil {
+		t.Fatalf("expected one composed workspace config, got %#v", run.Configs)
+	}
+	if len(run.Configs[0].Workspace.Services) != 2 {
+		t.Fatalf("expected both service documents, got %#v", run.Configs[0].Workspace.Services)
+	}
+	if run.Configs[0].Path != filepath.Join(".fused", "workspace") {
+		t.Fatalf("composed path = %q", run.Configs[0].Path)
+	}
+}
+
+// TestLoadRunRejectsDuplicateServicesDocument keeps document ordering from deciding policy ownership.
+func TestLoadRunRejectsDuplicateServicesDocument(t *testing.T) {
+	dir := t.TempDir()
+	writeWorkspaceTestFile(t, dir, ".fused/workspace.yaml", "stripe")
+	writeWorkspaceTestFile(t, dir, ".fused/services/payments.yaml", "stripe")
+	oldWorkingDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Default discovery must see both documents before duplicate ownership can be diagnosed.
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWorkingDir) })
+
+	_, err = configfile.LoadRun("")
+	if err == nil || !strings.Contains(err.Error(), "declared in both") {
+		t.Fatalf("duplicate services document error = %v", err)
+	}
+}
+
+// writeWorkspaceTestFile creates one minimal independently usable aggregate or services document for discovery tests.
+func writeWorkspaceTestFile(t *testing.T, root, relativePath, service string) {
+	t.Helper()
+	path := filepath.Join(root, relativePath)
+	// Nested services directories must exist before the fixture can be written.
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	discriminator := "type: services"
+	// Only the optional aggregate file retains the legacy kind: workspace discriminator.
+	if filepath.Base(relativePath) == "workspace.yaml" && filepath.Dir(relativePath) == ".fused" {
+		discriminator = "kind: workspace"
+	}
+	body := fmt.Sprintf("apiVersion: fused/v1\n%s\nservices:\n  %s:\n    versions:\n      - version: v1\n", discriminator, service)
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestParseServicesTypeRoutesThroughWorkspace validates the first-class local discriminator without changing Engine routing.
+func TestParseServicesTypeRoutesThroughWorkspace(t *testing.T) {
+	parsed, err := configfile.Parse([]byte("apiVersion: fused/v1\ntype: services\nservices: {}\n"), "github.yaml")
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	// The CLI routes services documents through workspace plan/apply while preserving their local type for rewrite.
+	if parsed.Kind != configfile.KindWorkspace || parsed.Workspace == nil || parsed.Workspace.Type != configfile.KindServices {
+		t.Fatalf("unexpected parsed services document: %#v", parsed)
+	}
+}
+
+// TestLoadRunNormalizesExplicitServicesDocument proves --file sends the established workspace wire contract to the Engine.
+func TestLoadRunNormalizesExplicitServicesDocument(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "payments.yaml")
+	body := []byte("apiVersion: fused/v1\ntype: services\nservices:\n  stripe:\n    versions: [{version: v1}]\n")
+	if err := os.WriteFile(path, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run, err := configfile.LoadRun(path)
+	if err != nil {
+		t.Fatalf("LoadRun() error = %v", err)
+	}
+	// Engine routing receives kind: workspace with no local-only type field, while receipt identity stays tied to this file.
+	if len(run.Configs) != 1 || run.Configs[0].Workspace == nil || run.Configs[0].Workspace.Kind != configfile.KindWorkspace || run.Configs[0].Workspace.Type != "" || run.Configs[0].Path != path {
+		t.Fatalf("unexpected normalized services config: %#v", run.Configs)
+	}
+}

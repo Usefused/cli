@@ -104,24 +104,6 @@ local login for retry; an already-inactive login is cleared locally. The saved
 `engine-url` remains configured. Manually saved API keys are left unchanged
 because they are not managed CLI logins.
 
-## `sdk prompt`
-Generate a brand new SDK using Fused intent AI. Automatically discovers and adds missing services to your workspace.
-
-This is the user-invoked Fused-agent path. Coding agents should use the
-`fused-sdk` skill and execute the deterministic SDK workflow directly,
-without invoking `sdk prompt` and starting a second agent.
-
-| Argument | Short | Description | Default |
-|----------|-------|-------------|---------|
-| `--name` | `-n` | Name of the generated SDK (e.g., 'stripe-sdk') | `""` |
-| `--version` | `-v` | Version of the generated SDK | `"1.0.0"` |
-| `--type` | `-t` | Target type for the SDK (e.g., 'sdk', 'mcp') | `"sdk"` |
-| `--language` | `-l` | Target language for the SDK (e.g., 'typescript', 'python') | `"typescript"` |
-| `--deploy` | | Deploy to Fused Sandbox immediately (MCP TypeScript only) | `false` |
-| `--yes` | `-y` | Skip interactive menu and automatically proceed | `false` |
-| `--description` | `-d` | Description of the SDK to create | `""` |
-| `--output` | `-o` | Directory to save the generated SDK zip | `"."` |
-
 ## `config`
 Manage your local CLI configuration (`set`, `get`, `list`, `reset`). Inherits global flags.
 
@@ -149,8 +131,9 @@ fused-cli init support-agent --mcp \
   --select-all jira
 ```
 
-`--service <key>[=<version>]`, `--operation <service>=<operationId>`, and
-`--select-all <service>` are repeatable. An omitted provider version resolves to
+`--service <service>[@<version>]` accepts comma-separated values or repeated
+flags. `--operation <service>=<operationId>` and `--select-all <service>` are
+repeatable. An omitted provider version resolves to
 the latest enabled workspace version, or the latest public Registry version
 when activation is needed. New SDK/MCP configs default to app version `1.0.0`;
 generated SDKs default to TypeScript. `--bucket` only references an existing
@@ -211,9 +194,27 @@ App scaffolding adds only missing required bucket-backed
 `server_variable` injections. Existing injections remain authoritative, and
 workspace policy or native `x-fused-connect` routing is not duplicated. The
 older `sdk init` and `mcp init` scaffold commands remain callable but hidden for
-compatibility; `workspace init` remains available for an editable workspace
-skeleton. See the `fused-config` OpenAPI/Postman reference for the canonical
+compatibility. See the `fused-config` OpenAPI/Postman reference for the canonical
 Sendbird binding and bucket-value setup.
+
+## `workspace init`
+
+Create an editable aggregate workspace skeleton at `.fused/workspace.yaml`, or
+at the global `--file` path. Creation refuses to replace an existing file;
+`--extend` adds service selections without duplicating existing entries. This
+local authoring command does not activate or remove Engine services.
+
+```bash
+fused-cli workspace init
+fused-cli workspace init --service stripe@v1,github@v3
+fused-cli workspace init --extend --service slack
+```
+
+| Argument | Short | Description | Default |
+|----------|-------|-------------|---------|
+| `--service` | | Service as `<service>[@<version>]`; comma-separated or repeatable | `[]` |
+| `--extend` | | Merge services into an existing workspace config | `false` |
+| `--json` | | Print the scaffold result as JSON | `false` |
 
 ## `extend <app-name>`
 
@@ -239,7 +240,7 @@ confirmation shows that identity, and `--no-input` or `CI=true` uses the same
 deterministic inference. An idempotent repeat keeps the current version. Pass
 `--version` to override inference; prerelease and non-SemVer versions require it.
 
-`--service <key>[=<version>]`, `--operation
+`--service <service>[@<version>]`, `--operation
 <service>=<operationId>`, and `--select-all <service>` retain the same meanings
 as init. Omit operation flags in a terminal to accept all operations or use the
 searchable selector. The command reuses the same activation, plan, apply, SDK
@@ -431,7 +432,7 @@ List connected users in a bucket. Filters are sent to Engine GraphQL.
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
-| `--service` | | Service slug to filter connections | `""` |
+| `--service` | | Service filter as `<service>[@<version>]`; comma-separated or repeatable | `[]` |
 | `--user` | | End-user reference to filter connections | `""` |
 | `--limit` | | Maximum rows to read | `20` |
 | `--offset` | | Rows to skip before reading | `0` |
@@ -808,9 +809,23 @@ Apply a generated plan to activate Workspace changes.
 | `--receipt` | | Read a specific plan receipt | `""` |
 
 ## `workspace sync`
-Full-mirror the local workspace config from the Engine's current activation state. Engine state wins: services activated remotely are added or updated locally, and local services no longer activated remotely are removed.
+Pull selected non-secret service configuration from the Engine into local files. With no scope flag, sync refreshes only services already declared in `.fused/workspace.yaml` and `.fused/services/**/*.yaml`. A local declaration absent from the Engine is retained and reported, never deleted.
 
-Usage: `fused-cli workspace sync -f .fused/workspace.yaml`
+```bash
+fused-cli workspace sync
+fused-cli workspace sync --file .fused/services/payments.yaml
+fused-cli workspace sync --service stripe
+fused-cli workspace sync --service stripe@v1,github@v3 --file .fused/services/payments.yaml
+fused-cli workspace sync --all
+```
+
+`--service <service>[@<version>]` accepts comma-separated values or repeated flags. An omitted version pulls every active version; an exact version pulls only that active version while retaining unselected local versions. With `--file`, every selected service is created or updated in that one file; declarations already owned by another local file are transferred to the requested destination while preserving authored policy. Without `--file`, an undeclared service gets its own `.fused/services/<service-slug>.yaml` `type: services` document; colliding readable slugs receive a stable service-identity suffix. `--all` is the only full import. Sync is Engine-to-local only: it never changes Engine state, and local paths are never sent to the Engine.
+
+| Argument | Short | Description | Default |
+|----------|-------|-------------|---------|
+| `--file` | `-f` | Refresh only services declared in this file, or choose the destination with `--service`/`--all` | `""` |
+| `--service` | | Active service as `<service>[@<version>]`; comma-separated or repeatable | `[]` |
+| `--all` | | Explicitly import every active workspace service | `false` |
 
 ## `workspace access list`
 List buckets and SDK/MCP permission scopes shared for bounded workspace-wide use. The

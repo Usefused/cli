@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -90,6 +92,42 @@ func remoteVersionsWithIDs(values ...string) []api.WorkspaceServiceVersion {
 	return out
 }
 
+// newWorkspaceSyncServer serves the complete bounded snapshot needed by command-level sync regression tests.
+func newWorkspaceSyncServer(t *testing.T, servicesJSON, visibilityJSON string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/engine/graphql":
+			body := decodeTestGraphQLBody(t, r)
+			// Profile snapshots are independent of service membership and remain empty in these ownership tests.
+			if strings.Contains(body.Query, "workspaceConnectionProfiles") {
+				_, _ = w.Write([]byte(`{"data":{"workspaceConnectionProfiles":[]}}`))
+				return
+			}
+			// The caller supplies the exact active service projection for its scenario.
+			if strings.Contains(body.Query, "workspaceServicePage") {
+				_, _ = w.Write([]byte(fmt.Sprintf(`{"data":{"workspaceServicePage":{"data":%s,"total":%d}}}`, servicesJSON, lenJSONItems(servicesJSON))))
+				return
+			}
+			t.Fatalf("unexpected engine graphql query")
+		case "/graphql":
+			_, _ = w.Write([]byte(`{"data":{"servicesByIds":` + visibilityJSON + `}}`))
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+}
+
+// lenJSONItems counts the small fixture arrays used by newWorkspaceSyncServer without coupling tests to production parsing.
+func lenJSONItems(value string) int {
+	var items []json.RawMessage
+	// Static test fixtures are valid JSON; an invalid fixture reports zero and fails through the command response contract.
+	if json.Unmarshal([]byte(value), &items) != nil {
+		return 0
+	}
+	return len(items)
+}
+
 func workspaceSyncVisibility(remote ...api.WorkspaceService) map[string]api.ServiceVisibility {
 	visibility := make(map[string]api.ServiceVisibility, len(remote))
 	for _, svc := range remote {
@@ -125,8 +163,8 @@ func TestMergeWorkspaceServicesFromRemote_AddsNewRemoteService(t *testing.T) {
 	if !reflect.DeepEqual(result.Added, []string{"stripe"}) {
 		t.Errorf("expected Added=[stripe], got %v", result.Added)
 	}
-	if len(result.Updated) != 0 || len(result.Removed) != 0 {
-		t.Errorf("expected no updates/removals, got updated=%v removed=%v", result.Updated, result.Removed)
+	if len(result.Updated) != 0 {
+		t.Errorf("expected no updates, got %v", result.Updated)
 	}
 	got, ok := cfg.Services["stripe"]
 	if !ok {
@@ -363,7 +401,7 @@ func TestRecordWorkspaceSyncWriteEmitsAuditEvent(t *testing.T) {
 	provider := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
 	ctx, span := provider.Tracer("test").Start(context.Background(), "workspace-sync")
 
-	recordWorkspaceSyncWrite(ctx, workspaceSyncResult{Added: []string{"github"}}, 1)
+	recordWorkspaceSyncWrite(ctx, workspaceSyncResult{Added: []string{"github"}}, 1, false)
 	span.End()
 
 	spans := exporter.GetSpans()
@@ -392,7 +430,7 @@ func TestMergeWorkspaceServicesFromRemote_UnchangedServiceNotReportedAsUpdated(t
 
 	result := mustMergeWorkspaceServicesFromRemote(t, cfg, remote, nil)
 
-	if len(result.Added) != 0 || len(result.Updated) != 0 || len(result.Removed) != 0 {
+	if len(result.Added) != 0 || len(result.Updated) != 0 {
 		t.Errorf("expected no changes reported for an already-in-sync service, got %+v", result)
 	}
 }
@@ -415,10 +453,8 @@ func TestMergeWorkspaceServicesFromRemote_UnchangedIgnoresVersionOrder(t *testin
 	}
 }
 
-// TestMergeWorkspaceServicesFromRemote_RemovesLocalEntryNoLongerActivated is
-// the removal AC: a locally-configured service the Engine no longer reports
-// as activated must be dropped, not just flagged.
-func TestMergeWorkspaceServicesFromRemote_RemovesLocalEntryNoLongerActivated(t *testing.T) {
+// TestMergeWorkspaceServicesFromRemote_RetainsLocalEntryNoLongerActivated proves remote absence cannot erase authored intent.
+func TestMergeWorkspaceServicesFromRemote_RetainsLocalEntryNoLongerActivated(t *testing.T) {
 	cfg := &configfile.WorkspaceConfig{Services: map[string]configfile.WorkspaceService{
 		"stripe": {ServiceID: "svc-1", Versions: []configfile.WorkspaceServiceVersion{{Version: "2026-01-01"}}},
 		"stale":  {ServiceID: "svc-2", Versions: []configfile.WorkspaceServiceVersion{{Version: "1.0.0"}}},
@@ -427,13 +463,10 @@ func TestMergeWorkspaceServicesFromRemote_RemovesLocalEntryNoLongerActivated(t *
 		{ServiceName: "stripe", ServiceID: "svc-1", Version: "2026-01-01", EnabledVersions: remoteVersions("2026-01-01")},
 	}
 
-	result := mustMergeWorkspaceServicesFromRemote(t, cfg, remote, nil)
+	mustMergeWorkspaceServicesFromRemote(t, cfg, remote, nil)
 
-	if !reflect.DeepEqual(result.Removed, []string{"stale"}) {
-		t.Errorf("expected Removed=[stale], got %v", result.Removed)
-	}
-	if _, ok := cfg.Services["stale"]; ok {
-		t.Error("expected stale service to be removed from cfg.Services")
+	if _, ok := cfg.Services["stale"]; !ok {
+		t.Error("expected inactive local service to be retained")
 	}
 	if _, ok := cfg.Services["stripe"]; !ok {
 		t.Error("expected stripe to remain")
@@ -454,8 +487,8 @@ func TestMergeWorkspaceServicesFromRemote_LatestVersionIncludedInVersions(t *tes
 	}
 }
 
-// TestWorkspaceSyncCreatesDefaultFusedConfig covers an empty profile export alongside one active service.
-func TestWorkspaceSyncCreatesDefaultFusedConfig(t *testing.T) {
+// TestWorkspaceSyncCreatesDefaultServicesFile covers an empty profile export alongside one active service.
+func TestWorkspaceSyncCreatesDefaultServicesFile(t *testing.T) {
 	dir := t.TempDir()
 	// Serve the bounded membership response while preserving this fixture's command-specific checks.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -480,15 +513,293 @@ func TestWorkspaceSyncCreatesDefaultFusedConfig(t *testing.T) {
 	}))
 	defer server.Close()
 
-	runCommandInDir(t, dir, server.URL, []string{"workspace", "sync"})
+	runCommandInDir(t, dir, server.URL, []string{"workspace", "sync", "--service", "github"})
 
-	data, err := os.ReadFile(filepath.Join(dir, ".fused", "workspace.yaml"))
+	data, err := os.ReadFile(filepath.Join(dir, ".fused", "services", "github-rest-api.yaml"))
 	if err != nil {
-		t.Fatalf("expected default workspace config to be created: %v", err)
+		t.Fatalf("expected default services file to be created: %v", err)
 	}
 	text := string(data)
-	if !strings.Contains(text, "kind: workspace") || !strings.Contains(text, "github-rest-api:") || !strings.Contains(text, "service_id: svc-github") {
-		t.Fatalf("unexpected workspace sync file:\n%s", text)
+	if !strings.Contains(text, "type: services") || strings.Contains(text, "kind: workspace") || !strings.Contains(text, "github-rest-api:") || !strings.Contains(text, "service_id: svc-github") {
+		t.Fatalf("unexpected services sync file:\n%s", text)
+	}
+}
+
+// TestWorkspaceSyncServicesShareExplicitFile proves repeatable selectors intentionally compose into one services document.
+func TestWorkspaceSyncServicesShareExplicitFile(t *testing.T) {
+	dir := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/engine/graphql":
+			body := decodeTestGraphQLBody(t, r)
+			// This fixture needs only the complete membership and empty profile snapshots.
+			if strings.Contains(body.Query, "workspaceConnectionProfiles") {
+				_, _ = w.Write([]byte(`{"data":{"workspaceConnectionProfiles":[]}}`))
+				return
+			}
+			if strings.Contains(body.Query, "workspaceServicePage") {
+				_, _ = w.Write([]byte(`{"data":{"workspaceServicePage":{"data":[{"service_name":"github","service_id":"svc-github","version":"v2","enabled_versions":[{"version":"v1"},{"version":"v2"}]},{"service_name":"stripe","service_id":"svc-stripe","version":"v1","enabled_versions":[{"version":"v1"}]}],"total":2}}}`))
+				return
+			}
+			t.Fatalf("unexpected engine graphql query")
+		case "/graphql":
+			_, _ = w.Write([]byte(`{"data":{"servicesByIds":[{"id":"svc-github","slug":"github-rest-api","provider":null,"is_owner":false,"is_public":true},{"id":"svc-stripe","slug":"stripe","provider":null,"is_owner":false,"is_public":true}]}}`))
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	target := filepath.Join(".fused", "services", "payments.yaml")
+	runCommandInDir(t, dir, server.URL, []string{"workspace", "sync", "--service", "github@v1,stripe@v1", "--file", target})
+	data, err := os.ReadFile(filepath.Join(dir, target))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	// One explicit destination owns both selected services and retains the scoped document discriminator.
+	if !strings.Contains(text, "type: services") || !strings.Contains(text, "github-rest-api:") || !strings.Contains(text, "stripe:") || strings.Contains(text, "version: v2") {
+		t.Fatalf("multi-service sync did not share one file:\n%s", text)
+	}
+}
+
+// TestWorkspaceSyncExplicitFileRegroupsExistingServices proves --file transfers local ownership without touching Engine state.
+func TestWorkspaceSyncExplicitFileRegroupsExistingServices(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, ".fused", "services", "stripe.yaml")
+	target := filepath.Join(".fused", "services", "payments.yaml")
+	// The authored timeout must travel with the declaration rather than being replaced by the remote projection.
+	if err := os.MkdirAll(filepath.Dir(source), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(source, []byte(`apiVersion: fused/v1
+type: services
+services:
+  stripe:
+    service_id: svc-stripe
+    execution_policy:
+      timeout_ms: 1234
+    versions:
+      - version: v1
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	server := newWorkspaceSyncServer(t,
+		`[{"service_name":"Stripe","service_id":"svc-stripe","version":"v1","enabled_versions":[{"version":"v1"}]},{"service_name":"GitHub","service_id":"svc-github","version":"v3","enabled_versions":[{"version":"v3"}]}]`,
+		`[{"id":"svc-stripe","slug":"stripe","provider":null,"is_owner":false,"is_public":true},{"id":"svc-github","slug":"github","provider":null,"is_owner":false,"is_public":true}]`)
+	defer server.Close()
+
+	runCommandInDir(t, dir, server.URL, []string{"workspace", "sync", "--service", "stripe,github", "--file", target})
+	sourceData, err := os.ReadFile(source)
+	// The old owner document must remain valid while releasing only the moved declaration.
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(sourceData), "stripe:") {
+		t.Fatalf("source still owns moved service:\n%s", sourceData)
+	}
+	targetData, err := os.ReadFile(filepath.Join(dir, target))
+	// The requested destination must own both services and retain local policy from the source file.
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(targetData)
+	if !strings.Contains(text, "stripe:") || !strings.Contains(text, "github:") || !strings.Contains(text, "timeout_ms: 1234") {
+		t.Fatalf("destination did not preserve regrouped declarations:\n%s", text)
+	}
+}
+
+// TestWorkspaceSyncRejectsDuplicateOwnershipBeforeWriting proves default sync preflights the complete local document set.
+func TestWorkspaceSyncRejectsDuplicateOwnershipBeforeWriting(t *testing.T) {
+	dir := t.TempDir()
+	servicesDir := filepath.Join(dir, ".fused", "services")
+	// Both individually valid files intentionally claim the same service key.
+	if err := os.MkdirAll(servicesDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	firstPath := filepath.Join(servicesDir, "first.yaml")
+	secondPath := filepath.Join(servicesDir, "second.yaml")
+	first := []byte("apiVersion: fused/v1\ntype: services\nservices:\n  stripe:\n    service_id: svc-stripe\n    versions: [{version: old}]\n")
+	second := []byte("apiVersion: fused/v1\ntype: services\nservices:\n  stripe:\n    service_id: svc-stripe\n    versions: [{version: older}]\n")
+	if err := os.WriteFile(firstPath, first, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(secondPath, second, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	server := newWorkspaceSyncServer(t,
+		`[{"service_name":"Stripe","service_id":"svc-stripe","version":"v1","enabled_versions":[{"version":"v1"}]}]`,
+		`[{"id":"svc-stripe","slug":"stripe","provider":null,"is_owner":false,"is_public":true}]`)
+	defer server.Close()
+
+	errText := runCommandInDirExpectError(t, dir, server.URL, []string{"workspace", "sync"})
+	// Duplicate ownership must be diagnosed instead of letting path order choose a winner.
+	if !strings.Contains(errText, "declared in both") {
+		t.Fatalf("expected duplicate ownership error, got %q", errText)
+	}
+	firstAfter, firstErr := os.ReadFile(firstPath)
+	secondAfter, secondErr := os.ReadFile(secondPath)
+	// No target may change when aggregate ownership validation fails.
+	if firstErr != nil || secondErr != nil || !reflect.DeepEqual(firstAfter, first) || !reflect.DeepEqual(secondAfter, second) {
+		t.Fatalf("duplicate preflight changed local files: first_err=%v second_err=%v", firstErr, secondErr)
+	}
+}
+
+// TestWriteWorkspaceSyncBatchRollsBackEarlierTargets proves a late replacement failure cannot leave a partial local sync.
+func TestWriteWorkspaceSyncBatchRollsBackEarlierTargets(t *testing.T) {
+	dir := t.TempDir()
+	firstPath := filepath.Join(dir, "first.yaml")
+	secondPath := filepath.Join(dir, "second.yaml")
+	firstOriginal := []byte("apiVersion: fused/v1\ntype: services\nservices: {}\n")
+	secondOriginal := []byte("apiVersion: fused/v1\ntype: services\nservices: {}\n")
+	// Both targets exist before the batch so rollback must restore exact bytes rather than merely remove generated files.
+	if err := os.WriteFile(firstPath, firstOriginal, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(secondPath, secondOriginal, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	writes := []preparedWorkspaceSyncWrite{{target: workspaceSyncTarget{Path: firstPath}}, {target: workspaceSyncTarget{Path: secondPath}}}
+	configs := map[string]*configfile.WorkspaceConfig{
+		firstPath:  {BaseConfig: configfile.BaseConfig{APIVersion: configfile.APIVersionV1, Type: configfile.KindServices}, Services: map[string]configfile.WorkspaceService{"stripe": {}}},
+		secondPath: {BaseConfig: configfile.BaseConfig{APIVersion: configfile.APIVersionV1}, Services: map[string]configfile.WorkspaceService{}},
+	}
+	// The invalid second discriminator must fail after exercising restoration of the first successful replacement.
+	if err := writeWorkspaceSyncBatch(writes, configs); err == nil {
+		t.Fatal("expected invalid second target to fail")
+	}
+	firstAfter, err := os.ReadFile(firstPath)
+	// The earlier target must match its exact pre-sync content after rollback.
+	if err != nil || !reflect.DeepEqual(firstAfter, firstOriginal) {
+		t.Fatalf("first target was not restored: err=%v content=%q", err, firstAfter)
+	}
+	info, err := os.Stat(firstPath)
+	// Rollback must preserve the original permission mode as well as content.
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("first target mode was not restored: %v", info.Mode().Perm())
+	}
+}
+
+// TestWorkspaceSyncServiceFilePathDisambiguatesSlugCollisions preserves one default file per immutable service.
+func TestWorkspaceSyncServiceFilePathDisambiguatesSlugCollisions(t *testing.T) {
+	claimed := map[string]string{}
+	foreign, err := workspaceSyncServiceFilePath("@google/drive", "svc-foreign", claimed)
+	// The first readable path should remain concise when it has no competing owner.
+	if err != nil {
+		t.Fatal(err)
+	}
+	owned, err := workspaceSyncServiceFilePath("google-drive", "svc-owned", claimed)
+	// The colliding service must receive an identity-qualified path rather than sharing the first file.
+	if err != nil {
+		t.Fatal(err)
+	}
+	if foreign == owned || !strings.Contains(owned, "svc-owned") {
+		t.Fatalf("colliding service paths were not disambiguated: foreign=%s owned=%s", foreign, owned)
+	}
+}
+
+// TestSameWorkspaceSyncPathTreatsAbsoluteAndRelativePathsAsOneOwner prevents an explicit file from moving into itself.
+func TestSameWorkspaceSyncPathTreatsAbsoluteAndRelativePathsAsOneOwner(t *testing.T) {
+	relative := filepath.Join(".fused", "services", "stripe.yaml")
+	absolute, err := filepath.Abs(relative)
+	// The test requires one canonical spelling before checking equivalence.
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !sameWorkspaceSyncPath(relative, absolute) {
+		t.Fatalf("same target was treated as two owners: relative=%s absolute=%s", relative, absolute)
+	}
+}
+
+// TestWorkspaceSyncExactVersionPreservesLocalSiblings proves a narrow pull cannot erase another authored version.
+func TestWorkspaceSyncExactVersionPreservesLocalSiblings(t *testing.T) {
+	service := api.WorkspaceService{
+		ServiceID: "svc-stripe", ServiceName: "Stripe", ServiceSlug: "stripe", Version: "v2", ServiceVersionID: "ver-v2",
+		EnabledVersions: []api.WorkspaceServiceVersion{{Version: "v1", ServiceVersionID: "ver-v1"}, {Version: "v2", ServiceVersionID: "ver-v2"}},
+	}
+	snapshot := workspaceSyncSnapshot{Services: []api.WorkspaceService{service}, Visibility: map[string]api.ServiceVisibility{"svc-stripe": {ServiceID: "svc-stripe", Slug: "stripe"}}}
+	selected, err := resolveWorkspaceSyncServices([]string{"stripe@v2"}, snapshot)
+	// Exact active version resolution must succeed before testing local merge behavior.
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &configfile.WorkspaceConfig{Services: map[string]configfile.WorkspaceService{"stripe": {
+		ServiceID: "svc-stripe", Versions: []configfile.WorkspaceServiceVersion{{Version: "v1", ServiceVersionID: "ver-v1"}},
+	}}}
+	_, err = mergeWorkspaceServicesFromRemote(cfg, selected, snapshot.Visibility, nil)
+	// A projection merge error would invalidate the sibling-retention assertion below.
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Exact v2 refresh adds that version while retaining the unselected local v1 declaration.
+	if !configWorkspaceServiceHasVersion(cfg.Services["stripe"], "v1") || !configWorkspaceServiceHasVersion(cfg.Services["stripe"], "v2") {
+		t.Fatalf("exact-version sync lost a sibling: %#v", cfg.Services["stripe"].Versions)
+	}
+}
+
+// TestWorkspaceSyncFileScopesAndKeepsPathLocal proves one services file controls selection without leaking its path.
+func TestWorkspaceSyncFileScopesAndKeepsPathLocal(t *testing.T) {
+	dir := t.TempDir()
+	privatePath := filepath.Join(dir, ".fused", "services", "private-team.yaml")
+	// The scoped file contains one active identity and one declaration absent from the Engine.
+	if err := os.MkdirAll(filepath.Dir(privatePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	original := `apiVersion: fused/v1
+type: services
+services:
+  github-rest-api:
+    service_id: svc-github
+    versions: [{version: old}]
+  internal-only:
+    service_id: svc-internal
+    versions: [{version: v1}]
+`
+	if err := os.WriteFile(privatePath, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body := decodeTestGraphQLBody(t, r)
+		encoded, _ := json.Marshal(body)
+		// Local routing information must never cross either Engine or Registry GraphQL boundary.
+		if strings.Contains(string(encoded), privatePath) || strings.Contains(string(encoded), dir) {
+			t.Fatalf("local source path leaked into request: %s", encoded)
+		}
+		switch r.URL.Path {
+		case "/engine/graphql":
+			// Profile and membership reads are the only Engine snapshot queries needed by this fixture.
+			if strings.Contains(body.Query, "workspaceConnectionProfiles") {
+				_, _ = w.Write([]byte(`{"data":{"workspaceConnectionProfiles":[]}}`))
+				return
+			}
+			if strings.Contains(body.Query, "workspaceServicePage") {
+				_, _ = w.Write([]byte(`{"data":{"workspaceServicePage":{"data":[{"service_name":"github","service_id":"svc-github","version":"v2","enabled_versions":[{"version":"v2"}]},{"service_name":"stripe","service_id":"svc-stripe","version":"v1","enabled_versions":[{"version":"v1"}]}],"total":2}}}`))
+				return
+			}
+			t.Fatalf("unexpected engine graphql query")
+		case "/graphql":
+			_, _ = w.Write([]byte(`{"data":{"servicesByIds":[{"id":"svc-github","slug":"github-rest-api","provider":null,"is_owner":false,"is_public":true},{"id":"svc-stripe","slug":"stripe","provider":null,"is_owner":false,"is_public":true}]}}`))
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	out := runCommandInDirOutput(t, dir, server.URL, []string{"workspace", "sync", "--file", privatePath})
+	after, err := os.ReadFile(privatePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(after)
+	// The active local service refreshes, the absent local service remains, and unrelated remote services stay out.
+	if !strings.Contains(text, "version: v2") || !strings.Contains(text, "internal-only:") || strings.Contains(text, "stripe:") {
+		t.Fatalf("file-scoped sync changed the wrong service set:\n%s", text)
+	}
+	if !strings.Contains(out, "inactive remotely; retained internal-only") {
+		t.Fatalf("missing retained-service diagnostic: %q", out)
 	}
 }
 
@@ -518,7 +829,7 @@ func TestWorkspaceSyncDoesNotWriteCredentialMaterial(t *testing.T) {
 	}))
 	defer server.Close()
 
-	runCommandInDir(t, dir, server.URL, []string{"workspace", "sync"})
+	runCommandInDir(t, dir, server.URL, []string{"workspace", "sync", "--all"})
 
 	data, err := os.ReadFile(filepath.Join(dir, ".fused", "workspace.yaml"))
 	if err != nil {
@@ -530,20 +841,16 @@ func TestWorkspaceSyncDoesNotWriteCredentialMaterial(t *testing.T) {
 	}
 }
 
-// TestMergeWorkspaceServicesFromRemote_EmptyRemoteRemovesEverything covers
-// the edge case of a workspace with nothing currently activated.
-func TestMergeWorkspaceServicesFromRemote_EmptyRemoteRemovesEverything(t *testing.T) {
+// TestMergeWorkspaceServicesFromRemote_EmptyRemoteRetainsEverything protects local intent when Engine has no active services.
+func TestMergeWorkspaceServicesFromRemote_EmptyRemoteRetainsEverything(t *testing.T) {
 	cfg := &configfile.WorkspaceConfig{Services: map[string]configfile.WorkspaceService{
 		"stripe": {ServiceID: "svc-1", Versions: []configfile.WorkspaceServiceVersion{{Version: "2026-01-01"}}},
 	}}
 
-	result := mustMergeWorkspaceServicesFromRemote(t, cfg, nil, nil)
+	mustMergeWorkspaceServicesFromRemote(t, cfg, nil, nil)
 
-	if !reflect.DeepEqual(result.Removed, []string{"stripe"}) {
-		t.Errorf("expected Removed=[stripe], got %v", result.Removed)
-	}
-	if len(cfg.Services) != 0 {
-		t.Errorf("expected an empty services map, got %+v", cfg.Services)
+	if len(cfg.Services) != 1 {
+		t.Errorf("expected local services to be retained, got %+v", cfg.Services)
 	}
 }
 
