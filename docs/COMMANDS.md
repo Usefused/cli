@@ -897,17 +897,17 @@ Usage: `fused-cli workspace has <service-name>`
 
 ## `workspace service add <service-query-or-slug> [service-query-or-slug...]`
 Resolve enabled workspace services first, then fall back to Registry search.
-After atomically updating the local config, the command prints each canonical
-service slug and a direct Engine UI link backed by its stable service ID. Review
-the changes with `workspace plan` before applying them, or pass `--apply` to
-activate only these additions through Engine's scoped service boundary.
+Without `--file`, the command immediately activates only the resolved services
+through Engine's scoped additive boundary and does not read, create, or update
+local workspace files. It prints each canonical service slug and a direct
+Engine UI link backed by its stable service ID.
 
-Find and add a service to workspace configuration. The command first checks the
+Find and add a service to the workspace. The command first checks the
 access-filtered workspace service list. If there is no exact name or slug match,
 it uses the Registry's set-based reference resolver with the same lexical
 ranking and provider-identity rules as `service search`. In a terminal, an
 ambiguous match opens service selection and every Registry fallback is confirmed
-before the file is written. In CI or with `--no-input`, a unique or exact match
+before activation or an explicitly requested file write. In CI or with `--no-input`, a unique or exact match
 is added deterministically; ambiguous callers must supply an exact slug or
 service ID.
 
@@ -918,13 +918,13 @@ command remains lexical and may accept incomplete `@` text as a search query.
 
 A workspace lookup permission error is not treated as absence and never falls
 through to Registry search. Registry fallback requires `catalogue.read`.
-Without `--apply`, the command only authors the local YAML; it neither activates
-the service nor proves the caller has activation permission. Run `workspace
-plan`, review the resolved identity and permission checks, and then run
-`workspace apply` to apply the full declarative workspace. With `--apply`, the
-command instead composes the existing scoped additive activation once for each
-resolved service and cannot remove unrelated active services. `service search`
-remains available for explicit read-only browsing, but is not a prerequisite.
+Passing `--file` explicitly opts into local config authoring: the command
+atomically updates that existing `kind: workspace` or `type: services` file and
+performs no activation by default. Review it with `workspace plan` and apply it
+through the normal declarative workflow, or add `--apply` to author the file and
+activate only these additions immediately. The command never implicitly targets
+`.fused/workspace.yaml`. `service search` remains available for explicit
+read-only browsing, but is not a prerequisite.
 If a later scoped activation fails, the error lists committed, failed, and
 unattempted services and prints a stable code, failed phase, composite request
 ID, whether the failed target may have committed, and exact ID-pinned recovery
@@ -938,9 +938,9 @@ commands when the services need different explicit versions.
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
 | `--version` | | Version to enable; omitted resolves latest during plan or scoped activation | `""` |
-| `--service-id` | | Registry service UUID to store in workspace config | `""` |
+| `--service-id` | | Exact Registry service UUID to activate and, with `--file`, persist | `""` |
 | `--interactive` | `-i` | Explicitly require service selection and Registry confirmation (the terminal default) | `false` |
-| `--apply` | | Activate only the services added by this command | `false` |
+| `--apply` | | With `--file`, also activate only the services added by this command | `false` |
 
 ## `workspace service delete <service-slug>`
 Delete a service from your Workspace configuration.
@@ -1049,7 +1049,7 @@ Registry publication may commit before Engine workspace activation fails. In
 that case the command exits non-zero with the structured code
 `import_workspace_activation_failed`, phase `workspace_activation`, commit state
 `committed`, the request and operation IDs, and an exact pinned
-`workspace service add ... --apply` recovery command. The service is already
+file-free `workspace service add ...` recovery command. The service is already
 published; run the recovery command instead of replaying the import.
 
 | Argument | Short | Description | Default |

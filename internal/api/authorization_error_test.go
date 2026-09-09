@@ -334,7 +334,7 @@ func TestGraphQLDecodeClassifiesOnlyKnownOutageCodesAsRetryable(t *testing.T) {
 
 // TestStructuredEnginePartialErrorRendersRecoveryIdentity verifies human output includes the complete commit proof.
 func TestStructuredEnginePartialErrorRendersRecoveryIdentity(t *testing.T) {
-	body := []byte(`{"error":{"code":"import_workspace_activation_failed","message":"Service published; workspace activation failed.","category":"partial","phase":"workspace_activation","operation_id":"11111111-1111-4111-8111-111111111111","request_id":"request-1","commit_state":"committed","recovery":"fused-cli workspace service add chargebee --apply"}}`)
+	body := []byte(`{"error":{"code":"import_workspace_activation_failed","message":"Service published; workspace activation failed.","category":"partial","phase":"workspace_activation","operation_id":"11111111-1111-4111-8111-111111111111","request_id":"request-1","commit_state":"committed","recovery":"fused-cli workspace service add chargebee"}}`)
 	err := newHTTPError(http.StatusFailedDependency, body)
 	message := err.Error()
 	for _, want := range []string{"workspace_activation", "committed", "11111111-1111-4111-8111-111111111111", "request-1", "workspace service add chargebee"} {

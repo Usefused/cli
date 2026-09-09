@@ -175,8 +175,7 @@ func TestDevSkillsDocumentServicePublicationGate(t *testing.T) {
 	}
 }
 
-// TestWorkspaceSkillUsesSingleWorkspaceFirstAddWorkflow keeps config-only and
-// scoped-apply guidance explicit in the one documented composite workflow.
+// TestWorkspaceSkillUsesSingleWorkspaceFirstAddWorkflow keeps direct activation and explicit-file authoring distinct.
 func TestWorkspaceSkillUsesSingleWorkspaceFirstAddWorkflow(t *testing.T) {
 	path := filepath.Join("..", "skills", "dev", "fused-workspace", "SKILL.md")
 	data, err := os.ReadFile(path)
@@ -184,16 +183,17 @@ func TestWorkspaceSkillUsesSingleWorkspaceFirstAddWorkflow(t *testing.T) {
 		t.Fatalf("read %s: %v", path, err)
 	}
 	content := string(data)
-	// These phrases cover discovery, local-only defaults, and the opt-in mutation
-	// boundary without prescribing an extra catalogue command to agents.
+	// These phrases cover discovery, file-free activation, and the explicit config-authoring boundary.
 	for _, token := range []string{
-		"single discovery-and-author",
+		"single discovery-and-activate",
 		"Only when absent",
-		"Registry result is added",
+		"Registry result is activated",
 		"permission error is not a miss",
 		"Do not require a separate `service search` command first",
-		"scoped additive service mutation",
-		"authors local intent only",
+		"Without `--file`",
+		"creates no local config",
+		"Passing `--file` explicitly",
+		"`--file` without `--apply` only authors local intent",
 		"read-only combined view",
 		"available_to_add",
 	} {

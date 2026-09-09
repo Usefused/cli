@@ -107,24 +107,25 @@ and accepts future scope growth.
 ## 4. Add and activate only when needed
 
 Skip this step when the selected search result is already `enabled`. For an
-`available_to_add` result, use the existing workspace config and let one command
-resolve the workspace first, fall back to Registry, and merge the selected
-service without erasing its existing settings:
+`available_to_add` result, let one command resolve the workspace first, fall
+back to Registry, and activate only the selected services:
 
 ```shell
-fused-cli workspace service add <query-or-slug> [query-or-slug...] [--version <version>] [--apply] -f <workspace-config-path>
+fused-cli workspace service add <query-or-slug> [query-or-slug...] [--version <version>]
 ```
 
 A unique or exact result is added non-interactively. Use `--interactive` only
 when a person is present to choose among ambiguous Registry results and confirm
-the write. The command edits local intent; it does not activate the service.
-Preview and apply that workspace change before building an SDK or MCP that
-depends on it:
+the activation. This file-free path does not read or create workspace YAML.
+
+When the user explicitly wants the addition represented as config-as-code,
+name the existing destination and review it before applying:
 
 ```shell
+fused-cli workspace service add <query-or-slug> -f <workspace-config-path>
 fused-cli validate -f <workspace-config-path>
-fused-cli workspace plan
-fused-cli workspace apply
+fused-cli workspace plan -f <workspace-config-path>
+fused-cli workspace apply -f <workspace-config-path>
 ```
 
 Activation is permission-gated. Planning a changed service requires

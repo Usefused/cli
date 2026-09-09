@@ -528,7 +528,7 @@ func TestImportApplyPreservesDeterministicEngineRejectionWithoutRecovery(t *test
 // TestImportApplyPreservesCommittedWorkspaceActivationFailure proves the CLI does not relabel a known partial commit as unknown.
 func TestImportApplyPreservesCommittedWorkspaceActivationFailure(t *testing.T) {
 	operationID := "11111111-1111-4111-8111-111111111111"
-	body := []byte(`{"error":{"code":"import_workspace_activation_failed","message":"The service was published, but workspace activation failed.","category":"partial","phase":"workspace_activation","operation_id":"` + operationID + `","request_id":"request-1","commit_state":"committed","recovery":"fused-cli workspace service add chargebee --apply","details":{"service_id":"22222222-2222-4222-8222-222222222222","service_version_id":"33333333-3333-4333-8333-333333333333","workspace_outcome":"contract_snapshot_failed"}}}`)
+	body := []byte(`{"error":{"code":"import_workspace_activation_failed","message":"The service was published, but workspace activation failed.","category":"partial","phase":"workspace_activation","operation_id":"` + operationID + `","request_id":"request-1","commit_state":"committed","recovery":"fused-cli workspace service add chargebee","details":{"service_id":"22222222-2222-4222-8222-222222222222","service_version_id":"33333333-3333-4333-8333-333333333333","workspace_outcome":"contract_snapshot_failed"}}}`)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusFailedDependency)
 		_, _ = w.Write(body)

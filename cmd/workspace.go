@@ -233,7 +233,7 @@ var workspaceServiceOperationsCmd = newWorkspaceServiceCommand("operations <serv
 var workspaceServiceWebhooksCmd = newWorkspaceServiceCommand("webhooks <service-slug>", "List workspace webhook registrations", "cli.workspace.service.webhooks", runWorkspaceServiceWebhooks)
 var workspaceServiceAddCmd = &cobra.Command{
 	Use:   "add <service-query-or-slug> [service-query-or-slug...]",
-	Short: "Find and add services to workspace configuration",
+	Short: "Find and add services to the workspace",
 	Args:  cobra.MinimumNArgs(1),
 	RunE: WithTelemetry("cli.workspace.service.add", func(cmd *cobra.Command, args []string) error {
 		return runWorkspaceServiceAdd(cmd, args)
@@ -293,8 +293,7 @@ func runWorkspaceServiceDeprecateWithRequiredDate(cmd *cobra.Command, serviceSlu
 	return runWorkspaceServiceDeprecate(cmd, serviceSlug)
 }
 
-// runWorkspaceServiceAdd composes batched resolution, one atomic config edit,
-// and optional scoped activations without invoking full workspace mirroring.
+// runWorkspaceServiceAdd activates services directly unless an explicit file selects declarative authoring.
 func runWorkspaceServiceAdd(cmd *cobra.Command, serviceQueries []string) error {
 	// An explicit compatibility flag still fails closed when automation has
 	// disabled prompts, instead of silently changing the requested interaction.
@@ -309,23 +308,41 @@ func runWorkspaceServiceAdd(cmd *cobra.Command, serviceQueries []string) error {
 		return err
 	}
 	version := strings.TrimSpace(workspaceServiceAddVersion)
+	configPath := strings.TrimSpace(ConfigFile)
+	// Only an explicit file opts into local desired state; ordinary service additions remain Engine-first.
+	authorConfig := configPath != ""
+	// Explicit-file calls retain the reviewable author-only default, while file-free calls are operational commands.
+	activateServices := !authorConfig || workspaceServiceAddApply
 	span := trace.SpanFromContext(cmd.Context())
-	span.SetAttributes(attribute.Int("service_count", len(targets)), attribute.Bool("apply", workspaceServiceAddApply))
+	span.SetAttributes(
+		attribute.Int("service_count", len(targets)),
+		attribute.Bool("config_authored", authorConfig),
+		attribute.Bool("apply", activateServices),
+	)
 	recordWorkspaceServiceResolution(span, targets)
-	if err := addWorkspaceServices(ConfigFile, workspaceServiceConfigAdditions(targets, version)); err != nil {
-		return err
+	// Config authoring is a requested side effect only when the caller named its destination.
+	if authorConfig {
+		if err := addWorkspaceServices(configPath, workspaceServiceConfigAdditions(targets, version)); err != nil {
+			return err
+		}
+		recordAppliedChange(cmd.Context(), cmd.CommandPath(), "workspace_config")
+		printWorkspaceServiceConfigTargets(cmd, targets, version)
 	}
-	recordAppliedChange(cmd.Context(), cmd.CommandPath(), "workspace_config")
-	printWorkspaceServiceAddTargets(cmd, targets, version)
-	// Omitting --apply intentionally preserves the established config-as-code
-	// workflow; only an explicit composite request crosses the mutation boundary.
-	if !workspaceServiceAddApply {
+	// An explicit file without --apply remains a local review step and must not cross the mutation boundary.
+	if !activateServices {
 		return nil
 	}
 	// Reuse the existing production safeguard for the composite's immediate
 	// mutation path, even though the scoped endpoint cannot remove services.
 	warnIfProductionEnvironment(cmd)
-	return applyWorkspaceServiceAddTargets(cmd, targets, version)
+	if err := applyWorkspaceServiceAddTargets(cmd, targets, version); err != nil {
+		return err
+	}
+	// Direct additions still expose stable detail links after every scoped activation succeeds.
+	if !authorConfig {
+		printWorkspaceServiceViewLinks(cmd, targets)
+	}
+	return nil
 }
 
 // workspaceServiceAddUsesInteractiveResolution makes safe catalogue selection
@@ -378,18 +395,24 @@ func recordWorkspaceServiceResolution(span trace.Span, targets []workspaceServic
 	)
 }
 
-// printWorkspaceServiceAddTargets retains the existing per-service result and
-// direct UI link while supporting any number of resolved additions.
-func printWorkspaceServiceAddTargets(cmd *cobra.Command, targets []workspaceServiceAddTarget, version string) {
+// printWorkspaceServiceConfigTargets reports explicit local authoring before any optional activation.
+func printWorkspaceServiceConfigTargets(cmd *cobra.Command, targets []workspaceServiceAddTarget, version string) {
+	for _, target := range targets {
+		fmt.Fprintln(cmd.OutOrStdout(), workspaceServiceAddResult(target, version))
+	}
+	printWorkspaceServiceViewLinks(cmd, targets)
+}
+
+// printWorkspaceServiceViewLinks emits best-effort Engine detail URLs without affecting command success.
+func printWorkspaceServiceViewLinks(cmd *cobra.Command, targets []workspaceServiceAddTarget) {
 	engineURL, engineURLErr := GetEngineURL()
 	for _, target := range targets {
-		fmt.Fprintln(cmd.OutOrStdout(), workspaceServiceAddResult(target, version, workspaceServiceAddApply))
-		// UI links are best-effort output; config authoring remains successful
-		// when the Engine URL is unavailable or cannot produce a safe route.
+		// UI links are best-effort output; the completed config or Engine operation remains successful without one.
 		if engineURLErr != nil {
 			continue
 		}
 		viewURL := workspaceServiceViewURL(engineURL, target.serviceID)
+		// Only a fully validated Engine URL and non-empty service identity produce a safe destination.
 		if viewURL != "" {
 			fmt.Fprintf(cmd.OutOrStdout(), "View %s: %s\n", target.slug, viewURL)
 		}
@@ -1368,9 +1391,9 @@ func init() {
 	addListFlags(workspaceServiceOperationsCmd, &workspaceServiceListFlags)
 
 	workspaceServiceAddCmd.Flags().StringVar(&workspaceServiceAddVersion, "version", "", "Version to enable; omitted resolves latest during plan or scoped activation")
-	workspaceServiceAddCmd.Flags().StringVar(&workspaceServiceAddID, "service-id", "", "Registry service UUID to store in workspace config")
+	workspaceServiceAddCmd.Flags().StringVar(&workspaceServiceAddID, "service-id", "", "Exact Registry service UUID to activate and, with --file, persist")
 	workspaceServiceAddCmd.Flags().BoolVarP(&workspaceServiceAddInteractive, "interactive", "i", false, "Explicitly require interactive service selection (the terminal default)")
-	workspaceServiceAddCmd.Flags().BoolVar(&workspaceServiceAddApply, "apply", false, "Activate only the added services after updating the config")
+	workspaceServiceAddCmd.Flags().BoolVar(&workspaceServiceAddApply, "apply", false, "With --file, also activate only the services added by this command")
 
 	workspaceServiceConnectCmd.Flags().StringVar(&workspaceServiceConnectBucket, "bucket", "", "Workspace bucket name or UUID (required)")
 	workspaceServiceConnectCmd.Flags().StringVar(&workspaceServiceConnectUserRef, "user-ref", "", "Stable user reference (required)")

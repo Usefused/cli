@@ -102,7 +102,10 @@ func workspaceServiceApplyRecoveryCommand(targets []workspaceServiceAddTarget, v
 		if strings.TrimSpace(version) != "" {
 			parts = append(parts, "--version", shellQuoteWorkspaceServiceArg(safeWorkspaceRecoveryValue(version)))
 		}
-		parts = append(parts, "--apply", "-f", shellQuoteWorkspaceServiceArg(safeWorkspaceRecoveryValue(configPath)))
+		// Direct retries need no local artifact; explicit-file retries preserve the original author-and-activate mode.
+		if strings.TrimSpace(configPath) != "" {
+			parts = append(parts, "--apply", "-f", shellQuoteWorkspaceServiceArg(safeWorkspaceRecoveryValue(configPath)))
+		}
 		commands = append(commands, strings.Join(parts, " "))
 	}
 	return strings.Join(commands, " && ")
@@ -639,24 +642,20 @@ func promptWorkspaceRegistryService(results []serviceSearchResult) (serviceSearc
 	return results[selected], nil
 }
 
+// promptWorkspaceRegistryServiceAdd confirms workspace activation without implying that a local config file is involved.
 func promptWorkspaceRegistryServiceAdd(service serviceSearchResult) (bool, error) {
 	confirmed := true
 	err := huh.NewConfirm().
-		Title(fmt.Sprintf("Add %s (%s) to the workspace config?", service.Name, service.Slug)).
+		Title(fmt.Sprintf("Add %s (%s) to this workspace?", service.Name, service.Slug)).
 		Affirmative("Add").Negative("Cancel").Value(&confirmed).Run()
 	return confirmed, err
 }
 
-// workspaceServiceAddResult explains whether Engine or a later declarative plan
-// resolves an omitted version while retaining the established success wording.
-func workspaceServiceAddResult(target workspaceServiceAddTarget, version string, apply bool) string {
+// workspaceServiceAddResult describes an explicit config edit without implying Engine activation.
+func workspaceServiceAddResult(target workspaceServiceAddTarget, version string) string {
 	version = strings.TrimSpace(version)
-	// Immediate activation delegates latest-version resolution to the scoped
-	// Engine endpoint, while config-only authoring leaves it for workspace plan.
+	// Config-only authoring leaves omitted version resolution to the later workspace plan.
 	if version == "" {
-		if apply {
-			return fmt.Sprintf("Added service %s to workspace config; activation will resolve its latest public version", target.slug)
-		}
 		return fmt.Sprintf("Added service %s to workspace config; planning will resolve its latest public version", target.slug)
 	}
 	return fmt.Sprintf("Added service %s with version %s to workspace config", target.slug, version)

@@ -401,7 +401,7 @@ exact `recovery` command instead of inferring safety from the HTTP status.
 If Registry publication commits but Engine workspace activation fails, apply
 returns `import_workspace_activation_failed` with `phase=workspace_activation`
 and `commit_state=committed`. Treat the import as published, run the pinned
-`workspace service add ... --service-id ... --version ... --apply` recovery,
+file-free `workspace service add ... --service-id ... --version ...` recovery,
 and never replay the import merely because the composite command exited non-zero.
 Engine authentication, authorization, and preflight-audit failures on import
 routes use the same shape before Registry is reached. Authentication recovers

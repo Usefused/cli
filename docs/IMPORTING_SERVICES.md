@@ -44,7 +44,7 @@ Registry publication and Engine workspace activation are two phases of the
 composite apply. If publication commits but activation fails, the CLI exits
 non-zero with `phase=workspace_activation` and `commit_state=committed`. The
 service already exists: do not repeat the import. Run the reported
-`fused-cli workspace service add ... --service-id ... --version ... --apply`
+`fused-cli workspace service add ... --service-id ... --version ...`
 command to activate that exact immutable version in the workspace.
 
 ## URLs and other source types
@@ -178,7 +178,7 @@ provider version creates that version.
 The plan reports SDK and workspace usage of a changed version without blocking
 apply. After a successful apply, Engine best-effort registers the service in
 its workspace. If that registration fails, the Registry import remains valid;
-use `fused-cli workspace service add <slug>` explicitly.
+use the file-free `fused-cli workspace service add <slug>` command explicitly.
 
 See the [command reference](COMMANDS.md) for every import flag and receipt
 option.

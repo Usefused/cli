@@ -795,7 +795,7 @@ func TestImportApplyCommittedPartialRecordsMutationEvidence(t *testing.T) {
 		w.WriteHeader(http.StatusFailedDependency)
 		// The Engine owns this reviewed envelope, so the CLI can preserve its
 		// recovery contract without recording the diagnostic text in telemetry.
-		_, _ = w.Write([]byte(`{"error":{"code":"import_workspace_activation_failed","message":"The service was published, but workspace activation failed.","category":"partial","phase":"workspace_activation","operation_id":"` + importApplyTestPlanID + `","request_id":"request-1","commit_state":"committed","recovery":"fused-cli workspace service add chargebee --apply"}}`))
+		_, _ = w.Write([]byte(`{"error":{"code":"import_workspace_activation_failed","message":"The service was published, but workspace activation failed.","category":"partial","phase":"workspace_activation","operation_id":"` + importApplyTestPlanID + `","request_id":"request-1","commit_state":"committed","recovery":"fused-cli workspace service add chargebee"}}`))
 	}))
 	defer server.Close()
 	setImportTestAPI(t, server.URL)

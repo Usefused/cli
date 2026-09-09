@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -27,6 +28,74 @@ func resetWorkspaceServiceAddState(t *testing.T) {
 		workspaceServiceAddVersion, workspaceServiceAddID, workspaceServiceAddInteractive, workspaceServiceAddApply = oldVersion, oldID, oldInteractive, oldApply
 		RequestID = oldRequestID
 	})
+}
+
+// TestWorkspaceAddWithoutFileActivatesDirectly proves ordinary operational use never requires or creates local desired state.
+func TestWorkspaceAddWithoutFileActivatesDirectly(t *testing.T) {
+	resetWorkspaceServiceAddState(t)
+	dir := t.TempDir()
+	serviceID := "00000000-0000-4000-8000-000000000071"
+	activationCalls := 0
+	// The exact-ID path needs only the production warning read and scoped Engine mutation; discovery would be unexpected.
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/health":
+			_, _ = writer.Write([]byte(`{"environment":"development"}`))
+		case "/workspace/services":
+			activationCalls++
+			var activation api.AddWorkspaceServiceRequest
+			// The direct request must retain the resolved identity and requested version without a config round trip.
+			if err := json.NewDecoder(request.Body).Decode(&activation); err != nil {
+				t.Fatalf("decode direct workspace activation: %v", err)
+			}
+			if activation.ServiceID != serviceID || activation.ServiceName != "direct-service" || activation.VersionTag != "v2" {
+				t.Fatalf("direct workspace activation = %#v", activation)
+			}
+			_, _ = writer.Write([]byte(`{"status":"ok"}`))
+		default:
+			t.Fatalf("unexpected direct workspace request %s", request.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	out := runCommandInDirOutput(t, dir, server.URL, []string{
+		"workspace", "service", "add", "direct-service", "--service-id", serviceID, "--version", "v2",
+	})
+	// One service argument maps to exactly one scoped activation mutation.
+	if activationCalls != 1 {
+		t.Fatalf("direct activation calls = %d, want 1", activationCalls)
+	}
+	// File-free operation must not leave either the legacy aggregate or a generated services fragment behind.
+	if _, err := os.Stat(filepath.Join(dir, ".fused")); !os.IsNotExist(err) {
+		t.Fatalf("file-free workspace add created local config state: %v", err)
+	}
+	// Direct output must report Engine state rather than imply a config artifact was written.
+	if !strings.Contains(out, "Activated service direct-service in workspace") || strings.Contains(out, "workspace config") {
+		t.Fatalf("direct activation output = %q", out)
+	}
+}
+
+// TestWorkspaceAddQueriesWithoutFileResolveAndActivate verifies named services keep discovery while dropping implicit config authoring.
+func TestWorkspaceAddQueriesWithoutFileResolveAndActivate(t *testing.T) {
+	resetWorkspaceServiceAddState(t)
+	useNonInteractiveWorkspaceAdd(t)
+	dir := t.TempDir()
+	server, engineReads, registryReads, activations := newCompositeWorkspaceServiceServer(t)
+	defer server.Close()
+
+	out := runCommandInDirOutput(t, dir, server.URL, []string{"workspace", "service", "add", "linear", "square"})
+	// Named references must share bounded discovery and then activate each exact resolved service once.
+	if *engineReads != 1 || *registryReads != 1 || len(*activations) != 2 {
+		t.Fatalf("file-free request counts engine=%d registry=%d activations=%d", *engineReads, *registryReads, len(*activations))
+	}
+	// Resolution and activation alone must not materialize an implicit config directory.
+	if _, err := os.Stat(filepath.Join(dir, ".fused")); !os.IsNotExist(err) {
+		t.Fatalf("file-free named additions created local config state: %v", err)
+	}
+	// Both scoped success lines prove the composite did not stop after resolution.
+	if !strings.Contains(out, "Activated service linear in workspace") || !strings.Contains(out, "Activated service square in workspace") {
+		t.Fatalf("file-free named activation output = %q", out)
+	}
 }
 
 // useNonInteractiveWorkspaceAdd keeps tests that exercise unrelated resolution
@@ -260,6 +329,36 @@ func TestWorkspaceAddApplyReportsPartialOutcomeAndExactRecovery(t *testing.T) {
 	}
 }
 
+// TestWorkspaceAddDirectPartialRecoveryStaysFileFree prevents a failed batch from reviving the removed config prerequisite.
+func TestWorkspaceAddDirectPartialRecoveryStaysFileFree(t *testing.T) {
+	resetWorkspaceServiceAddState(t)
+	useNonInteractiveWorkspaceAdd(t)
+	dir := t.TempDir()
+	server, activationCalls := newPartialWorkspaceServiceApplyServer(t)
+	defer server.Close()
+
+	errText := runCommandInDirExpectError(t, dir, server.URL, []string{
+		"workspace", "service", "add", "linear", "square", "guard", "--request-id", "composite-review-42",
+	})
+	// Exact-ID retry commands can safely replay the failed suffix without any local artifact.
+	for _, expected := range []string{
+		"workspace service add 'square' --service-id '00000000-0000-4000-8000-000000000002'",
+		"workspace service add 'guard' --service-id '00000000-0000-4000-8000-000000000003'",
+	} {
+		if !strings.Contains(errText, expected) {
+			t.Fatalf("direct partial outcome missing %q: %s", expected, errText)
+		}
+	}
+	// Neither legacy apply syntax nor a placeholder file may appear in file-free recovery.
+	if strings.Contains(errText, "--apply") || strings.Contains(errText, " -f ") {
+		t.Fatalf("direct partial recovery retained config flags: %s", errText)
+	}
+	// The known second rejection still bounds the composite after one successful activation.
+	if *activationCalls != 2 {
+		t.Fatalf("direct partial activation calls = %d, want 2", *activationCalls)
+	}
+}
+
 // newPartialWorkspaceServiceApplyServer rejects the second scoped mutation to
 // create one deterministic committed/failed/unattempted boundary.
 func newPartialWorkspaceServiceApplyServer(t *testing.T) (*httptest.Server, *int) {
@@ -362,7 +461,7 @@ func TestClassifyWorkspaceServiceApplyOutcomePreservesRecoveryMetadata(t *testin
 		code: workspaceServiceApplyErrorCode, phase: workspaceServiceApplyPhase,
 		requestID: "11111111-1111-4111-8111-111111111111",
 		committed: []string{"linear"}, failed: "square", failedCommitState: "unknown", failedCommitPossible: true,
-		unattempted: []string{"guard"}, recovery: "fused-cli workspace service add square --apply", cause: errors.New("lost response"),
+		unattempted: []string{"guard"}, recovery: "fused-cli workspace service add square", cause: errors.New("lost response"),
 	}
 	result := classifyCommandError(&cobra.Command{Use: "add"}, err)
 	// Stable top-level fields let agents recover without parsing human prose.

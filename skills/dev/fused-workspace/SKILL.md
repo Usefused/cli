@@ -153,14 +153,14 @@ as provenance on the bucket-owned connection; the standalone command never
 infers one from app identity. The full flow
 (buckets, secrets, connection resources) is documented in `fused-bucket`.
 
-Use `workspace service add <query-or-slug> [query-or-slug...]` as the single discovery-and-author
+Use `workspace service add <query-or-slug> [query-or-slug...]` as the single discovery-and-activate
 action. It checks the access-filtered workspace first by exact name or slug
 (`service.read`) and reuses that result. Only when absent does it call the
 Registry's set-based reference resolver (`catalogue.read`), which shares the
 lexical ranking and provider-identity policy of `service search --q`. In a
 terminal, ambiguous results open selection and every Registry fallback is
-confirmed before the selected Registry result is added. In CI or `--no-input`,
-unique or exact results are added deterministically; ambiguous results fail
+confirmed before the selected Registry result is activated. In CI or `--no-input`,
+unique or exact results are activated deterministically; ambiguous results fail
 until the caller supplies an exact provider-qualified slug or service ID. A permission error is not a miss:
 stop instead of falling through, changing credentials, or guessing another
 service. Do not require a separate `service search` command first.
@@ -171,20 +171,22 @@ whitespace-containing, or nested segment locally before discovery. This is
 intentionally narrower than read-only `service search`, where incomplete `@`
 text remains a lexical catalogue query.
 
-Multiple references share batched workspace and Registry reads and are written
-to the config atomically. `--service-id` remains a single-reference escape hatch;
+Multiple references share batched workspace and Registry reads. `--service-id`
+remains a single-reference escape hatch;
 for multiple exact IDs, pass each UUID as a positional reference. Successful
 adds print the canonical service slug and a direct Engine UI URL
 whose route uses the stable service ID. Use the URL to inspect the resolved
-service. Without `--apply`, this output does not replace the required
-`workspace plan` review and does not activate the local draft.
+service. Without `--file`, the command composes Engine's existing scoped
+additive service mutation for only the resolved references. It reads no local
+workspace file, creates no local config, and cannot remove an unrelated active
+service.
 
-Without `--apply`, this command authors local intent only. It does not activate
-the Registry service or prove activation permission; run `workspace plan`,
-review the resolved identity and required permissions, then `workspace apply`.
-With `--apply`, it composes Engine's existing scoped additive service mutation
-for only the resolved references; it does not run full workspace reconciliation and
-therefore cannot remove an unrelated active service. If a later activation
+Passing `--file` explicitly selects declarative authoring instead: all resolved
+services are merged into that existing `kind: workspace` or `type: services`
+file atomically, and Engine state remains unchanged unless `--apply` is also
+passed. The command never implicitly targets `.fused/workspace.yaml`. Use
+`workspace plan` and `workspace apply` for the reviewable full declarative path.
+If a later scoped activation
 fails, report the command's committed, failed, and unattempted groups plus its
 stable code, failed phase, composite request ID, failed-target commit
 possibility, and exact ID-pinned recovery command; do not describe the whole
@@ -199,9 +201,9 @@ optional rather than a prerequisite to workspace addition.
 
 Finding a Registry service does not imply permission to activate it. The add
 command's workspace lookup requires `service.read`; only its Registry fallback
-requires `catalogue.read`. Writing the local draft without `--apply` does not
-call an activation endpoint; `--apply` immediately calls the scoped additive
-Engine endpoint for each resolved target. Planning a declarative draft requires `workspace.read` and `service.manage`
+requires `catalogue.read`. File-free use and explicit `--file --apply` use call
+the scoped additive Engine endpoint for each resolved target. Explicit
+`--file` without `--apply` only authors local intent. Planning a declarative draft requires `workspace.read` and `service.manage`
 for every changed service; applying it also requires `workspace.update` and the
 same `service.manage`. Bucket changes additionally require `bucket.manage`, and
 credential material can require `credentials.manage`. Built-in Admin and Owner
@@ -209,7 +211,7 @@ workspace roles provide the activation permissions, while Builder and Viewer
 do not.
 
 If lookup or Registry fallback reports a permission denial, stop before writing
-the config. If declarative plan/apply or scoped `--apply` reports a denial,
+the config or activating a service. If declarative plan/apply or scoped activation reports a denial,
 preserve the local draft and report any already-committed sibling activations.
 Report the missing permission and resource; do not describe a local YAML edit as
 successful activation. Never self-grant, switch credentials, broaden
