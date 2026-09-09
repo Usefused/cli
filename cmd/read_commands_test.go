@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/Usefused/cli/internal/api"
 )
 
 func TestBucketListUsesPagedEngineGraphQL(t *testing.T) {
@@ -305,6 +307,69 @@ func TestMCPListJSONRetainsTypedTransportEndpoints(t *testing.T) {
 	if _, exists := item["mcp_url"]; exists {
 		t.Fatalf("MCP list JSON retained ambiguous mcp_url: %#v", item)
 	}
+}
+
+// TestMCPOperationsListsPhysicalAndUnifiedOperations verifies human discovery remains exact-version scoped.
+func TestMCPOperationsListsPhysicalAndUnifiedOperations(t *testing.T) {
+	server := httptest.NewServer(mcpOperationsTestHandler(t))
+	defer server.Close()
+
+	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"mcp", "operations", "support@2.0.0"})
+	// Both runtime operation categories must be visible under their public invocation names.
+	for _, expected := range []string{"OPERATION_ID", "KIND", "tickets.list", "physical", "support.resolve", "unified"} {
+		// Every header and operation value is independently required in the human table.
+		if !strings.Contains(out, expected) {
+			t.Fatalf("MCP operations output %q is missing %q", out, expected)
+		}
+	}
+}
+
+// TestMCPOperationsJSONPreservesExactCatalogue verifies automation receives version identity and physical provenance.
+func TestMCPOperationsJSONPreservesExactCatalogue(t *testing.T) {
+	server := httptest.NewServer(mcpOperationsTestHandler(t))
+	defer server.Close()
+
+	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"mcp", "operations", "support@2.0.0", "--json"})
+	var catalogue api.MCPAppOperationCatalogue
+	// Structured command output must remain valid JSON without human table decoration.
+	if err := json.Unmarshal([]byte(out), &catalogue); err != nil {
+		t.Fatalf("decode MCP operations JSON %q: %v", out, err)
+	}
+	// JSON is the complete Engine response rather than a lossy table projection.
+	if catalogue.VersionID != "mcp-version-1" || catalogue.Total != 2 || len(catalogue.Operations) != 2 || catalogue.Operations[0].ServiceID != "service-1" || catalogue.Operations[1].Kind != "unified" {
+		t.Fatalf("unexpected MCP operations JSON: %#v", catalogue)
+	}
+}
+
+// TestMCPOperationsRequiresExactVersion prevents a family-only name from silently changing its callable set.
+func TestMCPOperationsRequiresExactVersion(t *testing.T) {
+	message := runCommandInDirExpectError(t, t.TempDir(), "http://unused.invalid", []string{"mcp", "operations", "support"})
+	// Validation must fail locally before any Engine lookup can resolve a floating family reference.
+	if !strings.Contains(message, "name@version") {
+		t.Fatalf("unexpected MCP operations validation error: %q", message)
+	}
+}
+
+// mcpOperationsTestHandler enforces the kind-scoped resolution followed by one exact catalogue read.
+func mcpOperationsTestHandler(t *testing.T) http.Handler {
+	t.Helper()
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body := decodeGraphQLTestRequest(t, r)
+		// The query name distinguishes exact resolution from the immutable catalogue lookup.
+		if strings.Contains(body.Query, "appReference") {
+			// Resolution must carry both the exact version and MCP kind fence.
+			if body.Variables["reference"] != "support" || body.Variables["version"] != "2.0.0" || body.Variables["kind"] != "mcp" {
+				t.Fatalf("unexpected MCP operation reference variables: %#v", body.Variables)
+			}
+			_, _ = w.Write([]byte(`{"data":{"appReference":{"id":"mcp-version-1","kind":"app"}}}`))
+			return
+		}
+		// The second read must use only the exact app ID returned by MCP-kind resolution.
+		if !strings.Contains(body.Query, "mcpAppOperations") || body.Variables["appId"] != "mcp-version-1" {
+			t.Fatalf("unexpected MCP operation catalogue request: %#v", body)
+		}
+		_, _ = w.Write([]byte(`{"data":{"mcpAppOperations":{"mcp_id":"mcp-1","version_id":"mcp-version-1","name":"support","version":"2.0.0","total":2,"operations":[{"operation_id":"tickets.list","kind":"physical","service_id":"service-1","service_version_id":"service-version-1"},{"operation_id":"support.resolve","kind":"unified","service_id":"","service_version_id":""}]}}}`))
+	})
 }
 
 // mcpListTestHandler returns one MCP version with distinct stable and pinned transport identities.

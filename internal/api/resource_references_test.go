@@ -14,6 +14,7 @@ func TestResolveResourceReferencesUsesExactEngineFields(t *testing.T) {
 			Query     string                 `json:"query"`
 			Variables map[string]interface{} `json:"variables"`
 		}
+		// The fixture must reject malformed transport before inspecting catalogue semantics.
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Fatalf("decode request: %v", err)
 		}
@@ -176,5 +177,38 @@ func TestListAppServicesUsesExactAppID(t *testing.T) {
 	services, err := client.ListAppServices("app-1")
 	if err != nil || len(services) != 1 || services[0].ServiceSlug != "github" || services[0].EndpointCount != 2 {
 		t.Fatalf("ListAppServices = %#v, %v", services, err)
+	}
+}
+
+// TestListMCPAppOperationsUsesExactAppID verifies the client requests complete operation identity from one immutable MCP version.
+func TestListMCPAppOperationsUsesExactAppID(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Query     string                 `json:"query"`
+			Variables map[string]interface{} `json:"variables"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		// Exact app identity prevents catalogue discovery from floating to another MCP family version.
+		if request.Variables["appId"] != "mcp-version-1" {
+			t.Fatalf("unexpected MCP app ID: %#v", request.Variables)
+		}
+		// Physical provenance and kind let automation distinguish direct operations from Unified Operations.
+		for _, field := range []string{"operation_id", "kind", "service_id", "service_version_id"} {
+			// Omitting any typed field would make the JSON command response lossy.
+			if !strings.Contains(request.Query, field) {
+				t.Fatalf("MCP operation query does not request %s: %s", field, request.Query)
+			}
+		}
+		_, _ = w.Write([]byte(`{"data":{"mcpAppOperations":{"mcp_id":"mcp-1","version_id":"mcp-version-1","name":"support","version":"2.0.0","total":2,"operations":[{"operation_id":"tickets.list","kind":"physical","service_id":"service-1","service_version_id":"service-version-1"},{"operation_id":"support.resolve","kind":"unified","service_id":"","service_version_id":""}]}}}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, "test-key")
+	catalogue, err := client.ListMCPAppOperations("mcp-version-1")
+	// Typed decoding must preserve the exact version and both operation categories.
+	if err != nil || catalogue.VersionID != "mcp-version-1" || catalogue.Total != 2 || len(catalogue.Operations) != 2 || catalogue.Operations[1].Kind != "unified" {
+		t.Fatalf("ListMCPAppOperations = %#v, %v", catalogue, err)
 	}
 }

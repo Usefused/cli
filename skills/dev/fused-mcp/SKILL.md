@@ -209,6 +209,7 @@ fused-cli mcp plan
 fused-cli mcp apply
 fused-cli mcp validate
 fused-cli mcp list
+fused-cli mcp operations <mcp-name@version-or-version-id> [--json]
 fused-cli mcp deactivate <mcp-name@version-or-version-id>
 fused-cli mcp token generate <mcp-name-or-id> <token-name> --allow <operation-id> --expires-in 15m --json
 fused-cli mcp token generate <mcp-name-or-id> <token-name> --expires-in 1h \
@@ -249,6 +250,13 @@ not gated behind the same SDK-config blocker `fused-workspace` describes for
 removing a workspace service. The CLI currently exposes no MCP deprecate or
 undeprecate command; do not invent one.
 
+Use `mcp operations <name@version-or-version-id>` when a user needs every
+public `operationId` callable through one immutable MCP version. It expands
+physical `select_all` selections from Engine-local contract snapshots and adds
+Unified Operations from the exact applied plan. A bare MCP name is invalid;
+use `--json` when another command or agent needs the MCP/Version IDs, operation
+kind, and physical service/version provenance.
+
 The first successful MCP apply may return `execution_token` once. An idempotent
 apply does not reveal it again. Store it immediately. After an Engine database
 reset, Registry cannot restore the MCP or its token; reapply the exact config
@@ -276,7 +284,7 @@ A new MCP plan requires `app.create`, `service.read`, and `bucket.read`.
 Planning an update requires `app.manage` plus the dependency reads. Apply
 requires `app.create` for a new server or `app.manage` for an existing
 one, together with `service.consume` for every selected service and `bucket.use`
-for its bucket. `mcp list` requires `app.read`, removal requires
+for its bucket. `mcp list` and `mcp operations` require `app.read`, removal requires
 `app.manage`, and any execution-token management surface requires
 `app.tokens.manage`.
 

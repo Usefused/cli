@@ -32,6 +32,21 @@ var mcpListCmd = &cobra.Command{
 	}),
 }
 
+var mcpOperationsCmd = &cobra.Command{
+	Use:   "operations <mcp-name@version-or-version-id>",
+	Short: "List every operation allowed by one exact MCP version",
+	Args: func(cmd *cobra.Command, args []string) error {
+		// Operation scope is immutable-version state, so a family name alone must never float to another version.
+		if err := cobra.ExactArgs(1)(cmd, args); err != nil {
+			return err
+		}
+		return validateExactAppReference(args[0], cmd.CommandPath())
+	},
+	RunE: WithTelemetry("cli.mcp.operations", func(cmd *cobra.Command, args []string) error {
+		return runMCPOperations(cmd, args[0])
+	}),
+}
+
 var mcpPlanCmd = &cobra.Command{
 	Use:   "plan",
 	Short: "Plan MCP server configuration",
@@ -108,6 +123,44 @@ func runMCPList(cmd *cobra.Command) error {
 	return nil
 }
 
+// runMCPOperations resolves one immutable MCP version and renders its Engine-authoritative callable catalogue.
+func runMCPOperations(cmd *cobra.Command, target string) error {
+	if err := validateExactAppReference(target, "mcp operations"); err != nil {
+		return err
+	}
+	client, err := getAPIClient()
+	// Local client configuration must be valid before attempting exact MCP resolution.
+	if err != nil {
+		return err
+	}
+	name, version := parseSDKDownloadName(strings.TrimSpace(target))
+	appID, err := client.ResolveMCPAppReference(name, version)
+	// Exact kind-scoped resolution prevents an SDK version UUID from crossing into MCP discovery.
+	if err != nil {
+		return fmt.Errorf("resolve MCP server %q: %w", target, err)
+	}
+	catalogue, err := client.ListMCPAppOperations(appID)
+	// Engine owns select-all expansion and Unified descriptor integrity, so no local fallback is safe.
+	if err != nil {
+		return fmt.Errorf("list MCP operations: %w", err)
+	}
+	// The response must remain bound to the exact version resolved immediately before this read.
+	if strings.TrimSpace(catalogue.VersionID) != appID {
+		return fmt.Errorf("list MCP operations: Engine returned a different MCP version")
+	}
+	// Structured output retains exact identity and provenance for automation consumers.
+	if wantsJSON(cmd) {
+		return writeJSON(cmd, catalogue)
+	}
+	writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 8, 2, ' ', 0)
+	_, _ = fmt.Fprintln(writer, "OPERATION_ID\tKIND")
+	// Human output stays compact while still distinguishing direct and Unified invocation names.
+	for _, operation := range catalogue.Operations {
+		_, _ = fmt.Fprintf(writer, "%s\t%s\n", operation.OperationID, operation.Kind)
+	}
+	return writer.Flush()
+}
+
 var mcpDeactivateCmd = &cobra.Command{
 	Use:   "deactivate <mcp-name@version-or-version-id>",
 	Short: "Permanently deactivate one exact MCP version",
@@ -145,10 +198,11 @@ func runMCPDeactivate(cmd *cobra.Command, target string) error {
 	return nil
 }
 
+// init registers the MCP lifecycle and exact-version inspection commands.
 func init() {
 	RootCmd.AddCommand(mcpCmd)
-	mcpCmd.AddCommand(mcpListCmd, mcpPlanCmd, mcpApplyCmd, mcpValidateCmd, mcpDeactivateCmd)
-	addJSONOutputFlag(mcpListCmd, mcpValidateCmd)
+	mcpCmd.AddCommand(mcpListCmd, mcpOperationsCmd, mcpPlanCmd, mcpApplyCmd, mcpValidateCmd, mcpDeactivateCmd)
+	addJSONOutputFlag(mcpListCmd, mcpOperationsCmd, mcpValidateCmd)
 	addListFlags(mcpListCmd, &mcpListFlags)
 	mcpPlanCmd.Flags().BoolVar(&mcpPlanJSON, "json", false, "Print plan result JSON")
 	mcpPlanCmd.Flags().StringVar(&mcpPlanReceiptOut, "receipt-out", "", "Write the plan receipt to this path")

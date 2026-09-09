@@ -77,6 +77,24 @@ type AppServiceSummary struct {
 	WebhookCount  int    `json:"webhook_count"`
 }
 
+// MCPAppOperation identifies one callable operation in an immutable MCP version.
+type MCPAppOperation struct {
+	OperationID      string `json:"operation_id"`
+	Kind             string `json:"kind"`
+	ServiceID        string `json:"service_id"`
+	ServiceVersionID string `json:"service_version_id"`
+}
+
+// MCPAppOperationCatalogue is the complete exact-version operation allowlist returned by Engine.
+type MCPAppOperationCatalogue struct {
+	MCPID      string            `json:"mcp_id"`
+	VersionID  string            `json:"version_id"`
+	Name       string            `json:"name"`
+	Version    string            `json:"version"`
+	Operations []MCPAppOperation `json:"operations"`
+	Total      int               `json:"total"`
+}
+
 const appSummaryFields = `
 	app_family_id app_id name description version kind status created_at
 	target_language generator_version readme planned_deactivation_at
@@ -128,6 +146,21 @@ func (c *Client) ListAppServices(appID string) ([]AppServiceSummary, error) {
 	}
 	err := c.EngineGraphQL(query, map[string]interface{}{"appId": appID}, &response)
 	return response.Services, err
+}
+
+// ListMCPAppOperations reads the complete physical and Unified operation catalogue for one exact MCP version.
+func (c *Client) ListMCPAppOperations(appID string) (*MCPAppOperationCatalogue, error) {
+	query := `query MCPAppOperations($appId: String!) {
+		mcpAppOperations(app_id: $appId) {
+			mcp_id version_id name version total
+			operations { operation_id kind service_id service_version_id }
+		}
+	}`
+	var response struct {
+		Catalogue MCPAppOperationCatalogue `json:"mcpAppOperations"`
+	}
+	err := c.EngineGraphQL(query, map[string]interface{}{"appId": appID}, &response)
+	return &response.Catalogue, err
 }
 
 func (c *Client) ResolveBucketReference(reference string) (string, error) {

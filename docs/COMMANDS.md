@@ -613,6 +613,15 @@ Show one exact SDK version from the Engine.
 ## `sdk services <sdk-name@version-or-version-id>`
 List services selected by one exact SDK version.
 
+## `mcp operations <mcp-name@version-or-version-id>`
+List every operation ID callable through one exact MCP server version. The
+Engine expands `select_all` from its immutable local service-contract snapshots
+and includes Unified Operations from the integrity-checked applied plan. Human
+output shows `OPERATION_ID` and `KIND` (`physical` or `unified`); `--json`
+returns the MCP and Version IDs plus exact physical service provenance. A bare
+MCP name without `@version` is rejected so the result cannot float to another
+version.
+
 ## `sdk buckets <sdk-name-or-id>`
 List credential buckets shared by all versions of an SDK.
 

@@ -226,6 +226,7 @@ server's identity before tool discovery. Then run:
 ```shell
 fused-cli init <name> --mcp --description '<LLM-authored capability summary>' --service '<service>[@<version>]' [...selection flags]
 fused-cli mcp list
+fused-cli mcp operations <name@version-or-version-id>
 ```
 
 Review plan warnings and required permissions. Respect production warnings and
