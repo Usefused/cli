@@ -612,29 +612,28 @@ one exact immutable version.
 
 ## `sdk list`
 List each SDK or direct API application once by canonical name and stable
-`SDK_ID`, with a version count. `--limit` (default 20) and `--offset` (default 0)
+`SDK_ID`, with a version count and latest published version. `--limit` (default 20) and `--offset` (default 0)
 paginate applications in name order using Engine-owned grouping and authorized totals.
 `--json` returns the usual pagination envelope with `app_family_id`, `name`, and
-`version_count`. No implicit latest version, status, or target language is chosen.
+`version_count`, plus `latest_version` and its exact `latest_version_id`. Latest is catalogue metadata; runtime and lifecycle commands still require an exact version.
 Use `sdk versions [sdk-or-api-name-or-id]` for exact version rows and status;
 `sdk versions --json` provides the previous `sdk list --json` output shape.
 
 ## `mcp list`
 List each MCP application once by its canonical name and stable `MCP_ID`.
-Shows the version count, explicitly promoted stable version, and stable transport
+Shows the version count, latest published version, explicitly promoted stable version, and stable transport
 URLs. Applications without a promoted version remain listed with no stable URL;
 the CLI does not select a newer sibling automatically.
 
 `--limit` (default 20) and `--offset` (default 0) paginate applications in name
 order, using Engine-owned grouping and authorized totals. `--json` uses the
 usual `items`/`total` pagination envelope with application-level fields:
-`app_family_id`, `name`, `version_count`, optional `stable_version`,
+`app_family_id`, `name`, `version_count`, `latest_version`, `latest_version_id`, optional `stable_version`,
 `stable_version_id`, `default_transport`, and stable `transport_urls`.
 For the previous version-level output, use `mcp versions --json`.
 
 Application listing requires Engine support for the `appFamilies` GraphQL query.
-Upgrade Engine alongside this CLI change. The UI continues to use the existing
-version-level `apps`, `app`, and `appVersions` queries.
+Upgrade Engine alongside this CLI change. The UI uses the same family catalogue and keeps `app`/`appVersions` for exact-version details.
 
 ## `sdk show <sdk-name@version-or-version-id>`
 Show one exact SDK version from the Engine.

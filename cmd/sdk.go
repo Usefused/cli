@@ -278,9 +278,9 @@ func runSDKList(cmd *cobra.Command) error {
 		return writeJSONPage(cmd, page.Items, page.Total, sdkListFlags)
 	}
 	writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 8, 2, ' ', 0)
-	fmt.Fprintln(writer, "NAME\tSDK_ID\tVERSIONS")
+	fmt.Fprintln(writer, "NAME\tSDK_ID\tVERSIONS\tLATEST_VERSION")
 	for _, app := range page.Items {
-		fmt.Fprintf(writer, "%s\t%s\t%d\n", app.Name, app.AppFamilyID, app.VersionCount)
+		fmt.Fprintf(writer, "%s\t%s\t%d\t%s\n", app.Name, app.AppFamilyID, app.VersionCount, app.LatestVersion)
 	}
 	// Report write failures before claiming the page was delivered.
 	if err := writer.Flush(); err != nil {

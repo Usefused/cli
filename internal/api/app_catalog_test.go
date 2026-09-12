@@ -31,12 +31,12 @@ func TestApplicationsUseEngineGrouping(t *testing.T) {
 				if !strings.Contains(req.Query, "appFamilies(kind:") || req.Variables["kind"] != kind || req.Variables["limit"] != float64(1) || req.Variables["offset"] != float64(4) {
 					t.Errorf("unexpected request: %#v", req)
 				}
-				_, _ = w.Write([]byte(`{"data":{"appFamilies":{"total":8,"items":[{"app_family_id":"family-a","name":"alpha:tools","version_count":101}]}}}`))
+				_, _ = w.Write([]byte(`{"data":{"appFamilies":{"total":8,"items":[{"app_family_id":"family-a","name":"alpha:tools","version_count":101,"latest_version":"101","latest_version_id":"version-101"}]}}}`))
 			}))
 			defer server.Close()
 			page, err := NewClient(server.URL, "test-key").ListApplications(kind, PageOptions{Limit: 1, Offset: 4})
 			// No additional pages may be fetched or regrouped to compute an application total locally.
-			if err != nil || calls != 1 || page.Total != 8 || len(page.Items) != 1 || page.Items[0].VersionCount != 101 || page.Items[0].Name != "alpha:tools" {
+			if err != nil || calls != 1 || page.Total != 8 || len(page.Items) != 1 || page.Items[0].VersionCount != 101 || page.Items[0].Name != "alpha:tools" || page.Items[0].LatestVersion != "101" || page.Items[0].LatestVersionID != "version-101" {
 				t.Fatalf("page: %#v, calls %d, error %v", page, calls, err)
 			}
 		})

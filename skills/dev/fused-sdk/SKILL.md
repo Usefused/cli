@@ -166,9 +166,9 @@ fused-cli sdk operation add|remove <service-slug> <operation-id...>
 fused-cli sdk webhook add|remove <service-slug> <webhook-id...>
 ```
 
-`sdk list` shows each SDK or direct API application once by canonical name and stable SDK ID, with a version count. Engine owns grouping and `--limit`/`--offset` pagination.
+`sdk list` shows each SDK or direct API application once by canonical name and stable SDK ID, with a version count and latest published version. Engine owns grouping and `--limit`/`--offset` pagination.
 `sdk versions [sdk-or-api-name-or-id]` shows immutable version rows and status; omit the selector for all SDK/API versions. Both commands support `--json`; `sdk versions --json` preserves the previous `sdk list --json` shape.
-Neither command selects an implicit latest version for download, invocation, or lifecycle operations.
+The latest list value is catalogue metadata only; download, invocation, and lifecycle operations still require an exact version.
 
 `sdk token` manages named, revocable API tokens for calling an already
 *generated* SDK's Engine endpoint (distinct from your own `fused-cli config

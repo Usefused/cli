@@ -244,7 +244,7 @@ plan/apply remains the authoritative `bucket.use` check.
 `mcp apply` doesn't just validate config -- it stands up (or updates) a
 persistent, named Engine-hosted server with a stable MCP URL. `mcp list` shows
 each application once by its canonical name and stable MCP ID, with a version
-count and the promoted version's stable transport URLs. Engine groups and paginates applications before returning the page to the CLI.
+count, latest published version, and the promoted version's stable transport URLs. Engine groups and paginates applications before returning the page to the CLI.
 Use `mcp versions [mcp-name-or-id]` for immutable version rows, exact Version
 IDs, status, and stable/version-pinned transport URLs. Omit the selector to list
 all versions. Both commands support `--json`, `--limit`, and `--offset`.

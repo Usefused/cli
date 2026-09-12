@@ -25,12 +25,12 @@ func testApplicationListShowsUniqueApplications(t *testing.T, kind string) {
 		if body.Variables["kind"] != kind {
 			t.Errorf("unexpected kind: %#v", body.Variables)
 		}
-		_, _ = w.Write([]byte(`{"data":{"appFamilies":{"total":1,"items":[{"app_family_id":"family-1","name":"support:tools","version_count":2}]}}}`))
+		_, _ = w.Write([]byte(`{"data":{"appFamilies":{"total":1,"items":[{"app_family_id":"family-1","name":"support:tools","version_count":2,"latest_version":"2","latest_version_id":"version-2"}]}}}`))
 	}))
 	defer server.Close()
 	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{kind, "list"})
 	// The application appears once and all exact version inspection stays in mcp versions.
-	if strings.Count(out, "support:tools") != 1 || strings.Contains(out, "VERSION_ID") || strings.Contains(out, "VERSION-PINNED") || !strings.Contains(out, "VERSIONS") {
+	if strings.Count(out, "support:tools") != 1 || strings.Contains(out, "VERSION_ID") || strings.Contains(out, "VERSION-PINNED") || !strings.Contains(out, "VERSIONS") || !strings.Contains(out, "LATEST_VERSION") {
 		t.Fatalf("list table: %s", out)
 	}
 	out = runCommandInDirOutput(t, t.TempDir(), server.URL, []string{kind, "list", "--json"})
@@ -43,7 +43,7 @@ func testApplicationListShowsUniqueApplications(t *testing.T, kind string) {
 		t.Fatal(err)
 	}
 	// Counts and identities must match the human application listing.
-	if page.Total != 1 || len(page.Items) != 1 || page.Items[0]["version_count"] != float64(2) || page.Items[0]["name"] != "support:tools" {
+	if page.Total != 1 || len(page.Items) != 1 || page.Items[0]["version_count"] != float64(2) || page.Items[0]["name"] != "support:tools" || page.Items[0]["latest_version"] != "2" {
 		t.Fatalf("JSON: %s", out)
 	}
 	// A family row cannot masquerade as a particular immutable app.

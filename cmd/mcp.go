@@ -125,14 +125,14 @@ func runMCPList(cmd *cobra.Command) error {
 		return writeJSONPage(cmd, page.Items, page.Total, mcpListFlags)
 	}
 	writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 8, 2, ' ', 0)
-	fmt.Fprintln(writer, "NAME\tMCP_ID\tVERSIONS\tSTABLE_VERSION\tDEFAULT_TRANSPORT\tSTREAMABLE HTTP (STABLE, RECOMMENDED)\tSSE (STABLE, LEGACY)")
+	fmt.Fprintln(writer, "NAME\tMCP_ID\tVERSIONS\tLATEST_VERSION\tSTABLE_VERSION\tDEFAULT_TRANSPORT\tSTREAMABLE HTTP (STABLE, RECOMMENDED)\tSSE (STABLE, LEGACY)")
 	for _, app := range page.Items {
 		streamableHTTP, sse := "", ""
 		// Unpromoted applications remain visible without inventing a usable endpoint.
 		if app.TransportURLs != nil {
 			streamableHTTP, sse = app.TransportURLs.StreamableHTTP, app.TransportURLs.SSE
 		}
-		fmt.Fprintf(writer, "%s\t%s\t%d\t%s\t%s\t%s\t%s\n", app.Name, app.AppFamilyID, app.VersionCount, app.StableVersion, app.DefaultTransport, streamableHTTP, sse)
+		fmt.Fprintf(writer, "%s\t%s\t%d\t%s\t%s\t%s\t%s\t%s\n", app.Name, app.AppFamilyID, app.VersionCount, app.LatestVersion, app.StableVersion, app.DefaultTransport, streamableHTTP, sse)
 	}
 	// Report output errors rather than claiming the application page was delivered.
 	if err := writer.Flush(); err != nil {
