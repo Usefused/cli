@@ -72,6 +72,12 @@ Three related but distinct things use different owners:
   `auth.oauth2.token_request_media.v1` execution capability; an Engine missing
   it rejects the service contract instead of attempting a differently encoded
   token request.
+  Outbound access-token placement is also imported: the OAuth2 scheme's
+  `x-fused-oauth-token-placement` extension selects a validated header and
+  `raw` or `bearer` format. It requires `auth.oauth2.token_placement.v1` and
+  covers provider calls and resource discovery. Omission keeps the Bearer
+  Authorization default. This is public routing metadata; access-token values
+  remain in Engine connections. See [OpenAPI/Postman](openapi-postman.md).
   The same imported public policy can require PKCE, join requested scopes with
   a comma instead of a space, add reviewed fixed authorization/token
   parameters, and declare refresh-token rotation. Engine always owns and

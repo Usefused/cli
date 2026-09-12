@@ -114,6 +114,25 @@ values are valid. JSON token exchange adds required execution capability
 contract before authorization-code or refresh traffic begins. PKCE remains
 independent and is added only when `x-fused-pkce-required: true`.
 
+OAuth2 access-token delivery defaults to `Authorization: Bearer …`. Standard
+OpenAPI does not express a custom OAuth token header. A reviewed security-scheme
+extension can declare it:
+
+```yaml
+x-fused-oauth-token-placement:
+  location: header
+  name: X-Provider-Access-Token
+  format: raw
+```
+
+`raw` sends the current connected token directly; `bearer` prefixes `Bearer `.
+Use `oauth_token_placement` on the exact overlay `auth_configs` entry for a
+missing source fact. Never include token values or infer placement from a
+header parameter. This requires `auth.oauth2.token_placement.v1`; stop if the
+target Engine lacks it. Placement also applies to connected-resource discovery.
+Only header delivery is supported; reserved protocol and Fused headers are
+rejected. Token exchange and refresh-body encoding remain separate policies.
+
 OpenAPI callbacks retain their runtime expression and parent operation, while
 3.1 top-level webhooks retain the same parameter, request, response, server,
 and security contract as outbound operations. Response links and their runtime
