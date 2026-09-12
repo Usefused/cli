@@ -237,7 +237,8 @@ func TestUnifiedInitPromptsForModeAndMCPDescription(t *testing.T) {
 	})
 	NoInput = false
 	selectUnifiedInitMode = func() (unifiedInitMode, error) { return unifiedInitModeMCP, nil }
-	requestUnifiedInitMCPDescription = func() (string, error) { return " Search and update incidents. ", nil }
+	// The prompt exemplar names the selected service so persisted identity demonstrates the authoring contract.
+	requestUnifiedInitMCPDescription = func() (string, error) { return " Use Linear to search and update incidents. ", nil }
 	var got scaffoldRequest
 	command := newUnifiedInitCommandWithRunner(func(_ *cobra.Command, _ unifiedInitMode, request scaffoldRequest) error {
 		got = request
@@ -248,7 +249,7 @@ func TestUnifiedInitPromptsForModeAndMCPDescription(t *testing.T) {
 		t.Fatalf("execute guided init: %v", err)
 	}
 	// Prompted description is trimmed once and persisted as immutable MCP identity prose.
-	if got.kind != configfile.KindMCP || got.description != "Search and update incidents." || !got.descriptionSet {
+	if got.kind != configfile.KindMCP || got.description != "Use Linear to search and update incidents." || !got.descriptionSet {
 		t.Fatalf("guided request=%#v", got)
 	}
 }

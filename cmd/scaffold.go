@@ -177,7 +177,7 @@ merge services into that file.`
 	}
 	// MCP descriptions are authored by the calling agent and become server identity metadata, not tool documentation.
 	if kind == configfile.KindMCP {
-		command.Flags().StringVar(&opts.description, "description", "", "Human-readable summary of what this MCP server can do")
+		command.Flags().StringVar(&opts.description, "description", "", "Human-readable summary naming selected services and capabilities")
 	}
 	addJSONOutputFlag(command)
 	// Resource-scoped app init remains invokable for scripts, but unified init is the only creation path advertised in help.
@@ -567,8 +567,8 @@ func mergeAppIdentity(config *configfile.AppConfig, request scaffoldRequest) (bo
 	if err != nil {
 		return false, err
 	}
-	descriptionChanged, err := mergeMCPDescription(config, request)
-	// Authored server prose is immutable, so a conflict stops the additive extension.
+	descriptionChanged, err := mergeMCPDescription(config, request, versionChanged)
+	// Authored server prose may change only alongside an explicit successor identity.
 	if err != nil {
 		return false, err
 	}
@@ -642,11 +642,16 @@ func mergeAppLanguage(config *configfile.AppConfig, request scaffoldRequest) (bo
 	return false, nil
 }
 
-// mergeMCPDescription fills missing hosted-server prose without rewriting authored identity.
-func mergeMCPDescription(config *configfile.AppConfig, request scaffoldRequest) (bool, error) {
+// mergeMCPDescription fills initial hosted-server prose or refreshes it only for a new immutable version.
+func mergeMCPDescription(config *configfile.AppConfig, request scaffoldRequest, versionChanged bool) (bool, error) {
 	// SDK configs have no server metadata consumer, so their shared struct field remains untouched.
 	if request.kind != configfile.KindMCP {
 		return false, nil
+	}
+	// A successor may replace inherited prose because the new immutable version owns complete identity metadata.
+	if request.extend && versionChanged && request.descriptionSet {
+		config.Description = request.description
+		return true, nil
 	}
 	return mergeScaffoldField(&config.Description, request.description, request.descriptionSet, "description")
 }

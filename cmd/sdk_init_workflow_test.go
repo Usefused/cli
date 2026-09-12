@@ -506,9 +506,49 @@ func sdkInitExtensionRequest(path string) scaffoldRequest {
 	}
 }
 
-// newSDKInitAppReferenceServer returns an exact Engine app-reference result for extension lifecycle tests.
-func newSDKInitAppReferenceServer(t *testing.T, expectedVersion string, exists bool) *httptest.Server {
+// TestMCPDescriptionOverrideInfersSuccessor proves explicit replacement creates one automatic version transition.
+func TestMCPDescriptionOverrideInfersSuccessor(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "support.yaml")
+	// The original version remains the source for deterministic minor-version inference.
+	if err := os.WriteFile(path, []byte(unifiedExtendMCPFixture("support")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	server := newSDKInitAppReferenceServer(t, "1.1.0", false, "mcp")
+	defer server.Close()
+	request := scaffoldRequest{
+		kind: configfile.KindMCP, name: "support", path: path, extend: true,
+		services: []scaffoldService{{name: "jira", version: "v1"}}, selectAll: []string{"jira"},
+		description: "Use Linear and Jira to search and update support issues.", descriptionSet: true,
+	}
+	resolved, err := completeSDKInitVersionExtension(api.NewClient(server.URL, "test-key"), request, defaultTestScaffoldBucket)
+	// The explicit replacement and expanded contract must advance before any file publication occurs.
+	if err != nil || resolved.version != "1.1.0" || !resolved.versionSet {
+		t.Fatalf("resolved request=%#v err=%v", resolved, err)
+	}
+	result, err := writeScaffold(resolved, noOpScaffoldRequirements, defaultTestScaffoldBucket)
+	// The inferred successor must accept the description replacement during the atomic merge.
+	if err != nil || result.Action != "extended" {
+		t.Fatalf("result=%#v err=%v", result, err)
+	}
+	parsed, err := configfile.ParseFile(path)
+	// Parse failure must be reported before dereferencing hosted-server metadata.
+	if err != nil {
+		t.Fatalf("parse MCP successor: %v", err)
+	}
+	// Persisted metadata must advertise the new service set under the inferred successor.
+	if parsed.MCP.Version != "1.1.0" || parsed.MCP.Description != request.description {
+		t.Fatalf("parsed=%#v", parsed.MCP)
+	}
+}
+
+// newSDKInitAppReferenceServer returns an exact Engine app-reference result for SDK or MCP extension tests.
+func newSDKInitAppReferenceServer(t *testing.T, expectedVersion string, exists bool, requestedKind ...string) *httptest.Server {
 	t.Helper()
+	kind := "sdk"
+	// Existing callers retain SDK behavior while MCP tests can select the hosted app namespace explicitly.
+	if len(requestedKind) > 0 {
+		kind = requestedKind[0]
+	}
 	return httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		var body struct {
 			Query     string         `json:"query"`
@@ -518,7 +558,13 @@ func newSDKInitAppReferenceServer(t *testing.T, expectedVersion string, exists b
 			t.Fatalf("decode app reference request: %v", err)
 		}
 		// Collision detection must resolve the exact proposed name, version, and SDK kind before writing.
-		if !strings.Contains(body.Query, "ResolveAppReference") || body.Variables["reference"] != "support-sdk" || body.Variables["version"] != expectedVersion || body.Variables["kind"] != "sdk" {
+		expectedReference := "support-sdk"
+		// MCP fixtures use their own stable family name while SDK callers retain the historical test identity.
+		if kind == "mcp" {
+			expectedReference = "support"
+		}
+		// Collision detection must query the exact successor identity and app namespace.
+		if !strings.Contains(body.Query, "ResolveAppReference") || body.Variables["reference"] != expectedReference || body.Variables["version"] != expectedVersion || body.Variables["kind"] != kind {
 			t.Fatalf("app reference request=%#v", body)
 		}
 		// Tests can distinguish an existing immutable version from a still-local draft without changing the client contract.

@@ -14,10 +14,11 @@ import (
 )
 
 type unifiedExtendOptions struct {
-	services   []string
-	operations []string
-	selectAll  []string
-	version    string
+	services    []string
+	operations  []string
+	selectAll   []string
+	version     string
+	description string
 }
 
 type unifiedExtendTarget struct {
@@ -62,6 +63,7 @@ next minor release; pass --version to choose a different immutable successor.`,
 	command.Flags().StringSliceVar(&opts.operations, "operation", nil, "Selected operation as <service>=<operationId>; repeatable")
 	command.Flags().StringSliceVar(&opts.selectAll, "select-all", nil, "Service whose complete operation surface should be selected; repeatable")
 	command.Flags().StringVar(&opts.version, "version", "", "Explicit immutable successor version")
+	command.Flags().StringVar(&opts.description, "description", "", "Complete replacement for the MCP description on the successor")
 	return command
 }
 
@@ -226,10 +228,20 @@ func buildUnifiedExtendRequest(cmd *cobra.Command, target unifiedExtendTarget, o
 	if versionSet && strings.TrimSpace(opts.version) == "" {
 		return scaffoldRequest{}, errors.New("--version must not be empty")
 	}
-	selectionProvided := len(services) > 0 || len(operations) > 0 || len(selectAll) > 0 || versionSet
+	descriptionSet := cmd.Flags().Changed("description")
+	description := strings.TrimSpace(opts.description)
+	// Only hosted MCP successors have protocol identity prose to update.
+	if descriptionSet && target.mode != unifiedInitModeMCP {
+		return scaffoldRequest{}, errors.New("--description can only be used when extending an MCP server")
+	}
+	// An explicitly empty replacement cannot serve as complete successor identity.
+	if descriptionSet && description == "" {
+		return scaffoldRequest{}, errors.New("--description must not be empty")
+	}
+	selectionProvided := len(services) > 0 || len(operations) > 0 || len(selectAll) > 0 || versionSet || descriptionSet
 	// Automation cannot open the operation selector, so it must name one deterministic change.
 	if !selectionProvided && nonInteractive() {
-		return scaffoldRequest{}, errors.New("--no-input extend requires --service, --operation, --select-all, or --version")
+		return scaffoldRequest{}, errors.New("--no-input extend requires --service, --operation, --select-all, --version, or an MCP --description")
 	}
 	// A bare terminal command searches operations across already selected services.
 	if !selectionProvided {
@@ -252,6 +264,7 @@ func buildUnifiedExtendRequest(cmd *cobra.Command, target unifiedExtendTarget, o
 		kind: kind, name: name, path: target.path, extend: true,
 		services: services, operations: operations, selectAll: selectAll,
 		version: version, versionSet: versionSet,
+		description: description, descriptionSet: descriptionSet,
 	}
 	// Generated SDK and direct API declarations must preserve their distinct generation invariant during merge validation.
 	if target.mode == unifiedInitModeSDK || target.mode == unifiedInitModeAPI {

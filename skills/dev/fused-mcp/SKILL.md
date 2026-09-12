@@ -30,11 +30,11 @@ kind: mcp
 name: customer-support
 version: "1.0.0"
 description: >-
-  Help support teams find customer context, manage issues, and coordinate
-  follow-up work through the connected services.
+  Use Jira to find customer context, manage support issues, and coordinate
+  follow-up work.
 bucket: default
 services:
-  <service-slug>:
+  jira:
     version: "v1"
     operations: ["getIssue", "createIssue"]   # or select_all: true
     auth:                                     # see fused-config
@@ -50,14 +50,19 @@ services:
 
 Author the top-level `description` with the LLM before planning. Summarize the
 user-facing work this MCP server enables in one to three concise sentences,
-using the business goal and selected services as evidence. Make the concrete
-capabilities obvious enough that an MCP host can choose this server before it
-lists tools. Do not include operation IDs, schema fields, `search_docs`,
-`execute`, setup instructions, credentials, or claims beyond the selected
-services. Pass the same prose to `fused-cli init <name> --mcp --description` when scaffolding; it
+using the business goal and selected services as evidence. Name every selected
+service when the list is concise and pair each name with its user-facing work;
+for a large set, name the task-defining services and summarize the rest by
+capability instead of dumping an inventory. Make the concrete capabilities
+obvious enough that an MCP host can choose this server before it lists tools.
+Do not include operation IDs, schema fields, `search_docs`, `execute`, setup
+instructions, credentials, or claims beyond the selected services. Pass the
+same prose to `fused-cli init <name> --mcp --description` when scaffolding; it
 is immutable version metadata and is returned as MCP `serverInfo.description`.
 Every runnable MCP version requires complete authored server metadata; never
 substitute generic compatibility prose when it is absent.
+On extension, omitted `--description` preserves the YAML value. An explicit
+value replaces the complete description on the successor; never append fragments.
 
 Keep OAuth/OIDC selection to the target `auth.type`/`auth.name`, an optional
 complete-pair `auth.ref`, and sibling service-specific `connect.scopes`. The ref
@@ -92,8 +97,9 @@ private mappings, internal UUIDs, selectors, or values.
 
 Treat a non-empty `search_docs` query as a concise capability intent, such as
 `send email attachment`, rather than forwarding the conversation. Intent search
-returns the three best matches by default and accepts at most five, including
-enough callable detail for an immediate `execute` when that detail fits. Prefer
+returns the three best matches by default and accepts at most five. Ranked
+results pack only call construction: physical `params_schema` or Unified `input`
+and `targets`; exact or section lookup supplies other detail. Prefer
 a complete Unified Operation when it covers the whole goal. If no returned
 operation safely supports the request, retry at most once with more specific
 service and action terms; never guess an operation ID.
@@ -102,11 +108,12 @@ An empty or whitespace-only query is the browsing fallback: it returns a bounded
 schema-free catalogue with `total` and `truncated` metadata. An exact
 `operationId` remains the deterministic detail lookup and takes precedence over
 query text. Every `search_docs` result is bounded to 64 KiB of UTF-8 JSON. Check
-`schema_status.complete`, then compare `included_sections` with
-`available_sections` before writing a call: never infer fields omitted from an
-outline or truncated result. When a chosen operation is incomplete, retrieve
-only its missing physical `parameters`, `request`, or `response:<status>`
-section, or its Unified `input`, `targets`, or `output` section. Use
+`execution_ready`; when false, run the exact `next_action` before `execute`.
+Physical `params_schema` is the flat `call(operationId, params)` object. For
+extra documentation, compare `schema_status.included_sections` with
+`available_sections` and retrieve only the needed physical `params_schema`,
+`parameters`, `request`, or `response:<status>` section, or Unified `input`,
+`targets`, or `output` section. Use
 `schemaPath` JSON Pointer retrieval only when a smaller nested schema is needed.
 Do not pre-emptively load every response schema because the actual provider
 response arrives through `execute`.
@@ -204,7 +211,7 @@ use canonical `<service>@<version>` to name their exact immutable version.
 
 ```shell
 fused-cli init <name> --mcp --description '<LLM-authored capability summary>' --service '<service>[@<version>]' [--operation '<service>=<operationId>']
-fused-cli extend <name> [--version <new>] --service '<service>[@<version>]' --select-all '<service>'
+fused-cli extend <name> [--version <new>] [--description '<replacement capability summary>'] --service '<service>[@<version>]' --select-all '<service>'
 fused-cli mcp plan
 fused-cli mcp apply
 fused-cli mcp validate

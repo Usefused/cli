@@ -220,15 +220,20 @@ and prints a request template; API is not a separate resource kind.
 
 For MCP, use the same top-level lifecycle. Before scaffolding, have the LLM write a concise one-to-three
 sentence summary of the user-facing work enabled by the selected services.
-Pass it with `--description`; do not enumerate operation IDs or describe the
-`search_docs`/`execute` mechanics because the prose is advertised as the MCP
-server's identity before tool discovery. Then run:
+Name every selected service when the list is concise and pair it with its
+capabilities; for a large set, name the task-defining services and summarize the
+rest by capability. Pass it with `--description`; do not enumerate operation IDs
+or describe the `search_docs`/`execute` mechanics because the prose is advertised
+as the MCP server's identity before tool discovery. Then run:
 
 ```shell
 fused-cli init <name> --mcp --description '<LLM-authored capability summary>' --service '<service>[@<version>]' [...selection flags]
 fused-cli mcp list
 fused-cli mcp operations <name@version-or-version-id>
 ```
+
+On MCP extension, omit `--description` to preserve the YAML value or provide a
+complete replacement for the successor. Never append fragments automatically.
 
 Review plan warnings and required permissions. Respect production warnings and
 any approval/owner-team requirements; do not bypass them. After apply, confirm

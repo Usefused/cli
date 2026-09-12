@@ -124,7 +124,7 @@ retain available plan receipts without applying Engine state.`,
 	command.Flags().StringVar(&opts.version, "version", defaultScaffoldVersion, "App version")
 	command.Flags().StringVar(&opts.language, "language", defaultScaffoldLanguage, "Generated SDK target language")
 	command.Flags().StringVar(&opts.bucket, "bucket", "", "Existing bucket to bind to this app")
-	command.Flags().StringVar(&opts.description, "description", "", "User-facing MCP server description")
+	command.Flags().StringVar(&opts.description, "description", "", "User-facing summary naming selected services and capabilities")
 	command.Flags().BoolVar(&opts.noApply, "no-apply", false, "Plan initialization without applying, generating, or downloading")
 	return command
 }
@@ -215,7 +215,7 @@ func completeUnifiedInitDescription(mode unifiedInitMode, opts *unifiedInitOptio
 func promptUnifiedInitMCPDescription() (string, error) {
 	var description string
 	err := huh.NewInput().
-		Title("Describe what this MCP server should help users do").
+		Title("Name the services and describe what this MCP server should help users do").
 		CharLimit(500).
 		Validate(func(value string) error {
 			// Whitespace-only prose cannot serve as useful model routing context.

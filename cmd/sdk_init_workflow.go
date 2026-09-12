@@ -206,11 +206,16 @@ func completeSDKInitVersionExtension(client *api.Client, request scaffoldRequest
 	if err := decodeScaffoldDraft(data, request.path, request.kind, current); err != nil {
 		return scaffoldRequest{}, err
 	}
-	_, changed, _, err := extendAppScaffoldData(request, data, deferScaffoldRequirements, bucketResolver)
+	probeRequest := request
+	probeRequest.description = ""
+	probeRequest.descriptionSet = false
+	_, changed, _, err := extendAppScaffoldData(probeRequest, data, deferScaffoldRequirements, bucketResolver)
 	// Structural conflicts must stop before workspace apply, while runtime enrichment waits until newly enabled contracts can be refreshed.
 	if err != nil {
 		return scaffoldRequest{}, err
 	}
+	// Authored prose can independently require a successor even when its selected operation surface is unchanged.
+	changed = changed || (request.kind == configfile.KindMCP && request.descriptionSet && strings.TrimSpace(request.description) != strings.TrimSpace(current.Description))
 	// An idempotent extension can safely plan the current version without manufacturing a successor.
 	if !changed {
 		return request, nil

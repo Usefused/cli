@@ -102,6 +102,36 @@ func TestUnifiedExtendCommandBuildsSuccessorRequest(t *testing.T) {
 	}
 }
 
+// TestUnifiedExtendCommandCarriesMCPDescription proves successor prose reaches the shared lifecycle request.
+func TestUnifiedExtendCommandCarriesMCPDescription(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "support.yaml")
+	// The authored fixture provides the immutable description that the successor must replace.
+	if err := os.WriteFile(path, []byte(unifiedExtendMCPFixture("support")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	originalConfigFile, originalNoInput := ConfigFile, NoInput
+	ConfigFile, NoInput = path, true
+	// Global CLI test state must be restored after the focused command invocation.
+	t.Cleanup(func() {
+		ConfigFile, NoInput = originalConfigFile, originalNoInput
+	})
+	var gotRequest scaffoldRequest
+	// The captured request isolates CLI flag plumbing from remote lifecycle work.
+	command := newUnifiedExtendCommandWithRunner(func(_ *cobra.Command, _ unifiedInitMode, request scaffoldRequest) error {
+		gotRequest = request
+		return nil
+	})
+	command.SetArgs([]string{"support", "--service", "jira@v1", "--select-all", "jira", "--description", "Use Linear and Jira to manage support work."})
+	// Local command parsing must complete without invoking an Engine lifecycle.
+	if err := command.Execute(); err != nil {
+		t.Fatalf("execute MCP extend: %v", err)
+	}
+	// Updated prose must remain explicit until service resolution verifies that the provider set expanded.
+	if gotRequest.description != "Use Linear and Jira to manage support work." || !gotRequest.descriptionSet {
+		t.Fatalf("MCP extension request=%#v", gotRequest)
+	}
+}
+
 // TestUnifiedExtendBareTerminalUsesExistingServices proves operation search opens without requiring users to repeat service flags.
 func TestUnifiedExtendBareTerminalUsesExistingServices(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "support.yaml")
@@ -158,7 +188,7 @@ func TestUnifiedExtendNoInputRequiresExactChange(t *testing.T) {
 	command := newUnifiedExtendCommandWithRunner(nil)
 	_, err = buildUnifiedExtendRequest(command, target, &unifiedExtendOptions{})
 	// The remediation lists every deterministic selection or successor flag accepted by the wrapper.
-	if err == nil || !strings.Contains(err.Error(), "--no-input extend requires --service, --operation, --select-all, or --version") {
+	if err == nil || !strings.Contains(err.Error(), "--no-input extend requires --service, --operation, --select-all, --version, or an MCP --description") {
 		t.Fatalf("no-input error=%v", err)
 	}
 }

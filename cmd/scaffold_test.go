@@ -301,6 +301,64 @@ services:
 	}
 }
 
+// TestExtendMCPScaffoldRefreshesSuccessorDescription proves new immutable versions can advertise added services.
+func TestExtendMCPScaffoldRefreshesSuccessorDescription(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "mcp.yaml")
+	// The accepted version must remain readable until the successor update is validated atomically.
+	if err := os.WriteFile(path, []byte(unifiedExtendMCPFixture("support")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	request := scaffoldRequest{
+		kind: configfile.KindMCP, name: "support", path: path, extend: true,
+		services:  []scaffoldService{{name: "jira", version: "v1"}},
+		selectAll: []string{"jira"},
+		version:   "1.1.0", versionSet: true,
+		description: "Use Linear and Jira to search and update support issues.", descriptionSet: true,
+	}
+	result, err := writeScaffold(request, noOpScaffoldRequirements, defaultTestScaffoldBucket)
+	// A valid successor should accept both the new selection and refreshed server identity.
+	if err != nil {
+		t.Fatalf("extend MCP successor: %v", err)
+	}
+	parsed, err := configfile.ParseFile(path)
+	// Parsing the published file proves the atomic update retained a valid MCP contract.
+	if err != nil {
+		t.Fatalf("parse MCP successor: %v", err)
+	}
+	// The new service and its refreshed routing prose must publish atomically under the successor version.
+	if result.Action != "extended" || parsed.MCP.Version != "1.1.0" || parsed.MCP.Description != request.description || parsed.MCP.Services["jira"].Version != "v1" {
+		t.Fatalf("result=%#v MCP=%#v", result, parsed.MCP)
+	}
+}
+
+// TestExtendMCPScaffoldPreservesOmittedDescription proves YAML remains authoritative without an override flag.
+func TestExtendMCPScaffoldPreservesOmittedDescription(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "mcp.yaml")
+	// The existing description is the value omission must retain through the successor merge.
+	if err := os.WriteFile(path, []byte(unifiedExtendMCPFixture("support")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	request := scaffoldRequest{
+		kind: configfile.KindMCP, name: "support", path: path, extend: true,
+		services: []scaffoldService{{name: "jira", version: "v1"}}, selectAll: []string{"jira"},
+		version: "1.1.0", versionSet: true,
+	}
+	result, err := writeScaffold(request, noOpScaffoldRequirements, defaultTestScaffoldBucket)
+	// Service extension without an override should remain a valid atomic successor update.
+	if err != nil || result.Action != "extended" {
+		t.Fatalf("result=%#v err=%v", result, err)
+	}
+	parsed, err := configfile.ParseFile(path)
+	// Parse failure must be reported before checking the retained YAML field.
+	if err != nil {
+		t.Fatalf("parse MCP successor: %v", err)
+	}
+	// Omission preserves the complete existing description rather than appending generated text.
+	if parsed.MCP.Description != "Search and update support issues." {
+		t.Fatalf("description=%q", parsed.MCP.Description)
+	}
+}
+
 // TestExtendAppScaffoldSemanticFailuresPreserveOriginalBytes proves validation precedes every atomic replacement.
 func TestExtendAppScaffoldSemanticFailuresPreserveOriginalBytes(t *testing.T) {
 	tests := []struct {
