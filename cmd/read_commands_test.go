@@ -139,12 +139,13 @@ func TestSecretListUsesBucketScopedPagination(t *testing.T) {
 	}
 }
 
-func TestSDKListUsesEnginePaginationAndFixedKind(t *testing.T) {
+// TestSDKVersionsUsesEnginePaginationAndFixedKind preserves the prior version-level catalogue contract.
+func TestSDKVersionsUsesEnginePaginationAndFixedKind(t *testing.T) {
 	var sawVariables map[string]any
 	server := httptest.NewServer(sdkListTestHandler(t, &sawVariables))
 	defer server.Close()
 
-	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"sdk", "list", "--limit", "10", "--offset", "20"})
+	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"sdk", "versions", "--limit", "10", "--offset", "20"})
 	if sawVariables["limit"] != float64(10) || sawVariables["offset"] != float64(20) || sawVariables["kind"] != "sdk" {
 		t.Fatalf("unexpected variables: %#v", sawVariables)
 	}
@@ -242,27 +243,27 @@ func TestSDKShowUsesPublicIDLabels(t *testing.T) {
 	}
 }
 
-// TestMCPListUsesEnginePaginationAndFixedKind verifies human output labels stable and pinned URLs.
-func TestMCPListUsesEnginePaginationAndFixedKind(t *testing.T) {
+// TestMCPVersionsUsesEnginePaginationAndFixedKind verifies human output labels stable and pinned URLs.
+func TestMCPVersionsUsesEnginePaginationAndFixedKind(t *testing.T) {
 	var sawVariables map[string]any
-	server := httptest.NewServer(mcpListTestHandler(t, &sawVariables))
+	server := httptest.NewServer(mcpVersionsTestHandler(t, &sawVariables))
 	defer server.Close()
 
-	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"mcp", "list", "--limit", "5", "--offset", "10"})
-	assertMCPListVariables(t, sawVariables)
-	assertMCPListOutput(t, out)
+	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"mcp", "versions", "--limit", "5", "--offset", "10"})
+	assertMCPVersionsVariables(t, sawVariables)
+	assertMCPVersionsOutput(t, out)
 }
 
-// assertMCPListVariables keeps MCP catalogue filtering scoped and bounded.
-func assertMCPListVariables(t *testing.T, variables map[string]any) {
+// assertMCPVersionsVariables keeps MCP catalogue filtering scoped and bounded.
+func assertMCPVersionsVariables(t *testing.T, variables map[string]any) {
 	t.Helper()
 	if variables["kind"] != "mcp" || variables["limit"] != float64(5) || variables["offset"] != float64(10) {
 		t.Fatalf("unexpected MCP list variables: %#v", variables)
 	}
 }
 
-// assertMCPListOutput verifies upgrade-safe discovery remains the recommendation.
-func assertMCPListOutput(t *testing.T, out string) {
+// assertMCPVersionsOutput verifies upgrade-safe discovery remains the recommendation.
+func assertMCPVersionsOutput(t *testing.T, out string) {
 	t.Helper()
 	if !strings.Contains(out, "support") || !strings.Contains(out, "mcp-1") || !strings.Contains(out, "family-1") ||
 		!strings.Contains(out, "MCP_ID") || !strings.Contains(out, "VERSION_ID") ||
@@ -276,12 +277,12 @@ func assertMCPListOutput(t *testing.T, out string) {
 	}
 }
 
-// TestMCPListJSONRetainsTypedTransportEndpoints verifies automation receives all route choices without prose parsing.
-func TestMCPListJSONRetainsTypedTransportEndpoints(t *testing.T) {
-	server := httptest.NewServer(mcpListTestHandler(t, new(map[string]any)))
+// TestMCPVersionsJSONRetainsTypedTransportEndpoints verifies automation receives all route choices without prose parsing.
+func TestMCPVersionsJSONRetainsTypedTransportEndpoints(t *testing.T) {
+	server := httptest.NewServer(mcpVersionsTestHandler(t, new(map[string]any)))
 	defer server.Close()
 
-	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"mcp", "list", "--json"})
+	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"mcp", "versions", "--json"})
 	var page struct {
 		Items []map[string]any `json:"items"`
 	}
@@ -372,8 +373,8 @@ func mcpOperationsTestHandler(t *testing.T) http.Handler {
 	})
 }
 
-// mcpListTestHandler returns one MCP version with distinct stable and pinned transport identities.
-func mcpListTestHandler(t *testing.T, sawVariables *map[string]any) http.Handler {
+// mcpVersionsTestHandler returns one MCP version with distinct stable and pinned transport identities.
+func mcpVersionsTestHandler(t *testing.T, sawVariables *map[string]any) http.Handler {
 	t.Helper()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body := decodeGraphQLTestRequest(t, r)

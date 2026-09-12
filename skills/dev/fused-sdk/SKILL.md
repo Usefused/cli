@@ -112,10 +112,7 @@ operation without it returns the all-settled `{results, rollbacks}` envelope.
 
 ## Identity, versions, and authentication
 
-One SDK name has one stable SDK ID shared by all its versions. Each explicit
-`version` also has an immutable Version ID. There is no implicit latest or
-default. Name normalization preserves punctuation, including colons, so never
-derive identity by splitting a composite config key.
+One SDK name has one stable SDK ID shared by all its versions. Each explicit `version` also has an immutable Version ID. There is no implicit latest or default. Name normalization preserves punctuation, including colons, so never derive identity by splitting a composite config key.
 
 Applying the same canonical content to the same version is a no-op: it does not
 regenerate the package or rotate tokens. Changing services, operations, auth,
@@ -123,11 +120,7 @@ injections, language, or other scope under an existing version returns
 `app_version_immutable`; publish a new version. `fused-cli extend <name>` infers SDK or API mode from the existing YAML and updates that same file. A real change infers the next minor stable SemVer successor, including under `--no-input`, while an idempotent extension keeps the current version. An explicit `--version` overrides inference and is required for prerelease or non-SemVer versions. Do not edit a generated package to impersonate another
 version: Engine authorizes the embedded opaque `app_id`, not a client-reported semantic version.
 
-SDK execution tokens belong to the SDK, not one version. A token therefore
-works with every active or deprecated version of that SDK, while each version
-still enforces its own operation scope. A plan that expands capability in a new
-version should report the existing tokens affected. Teams that must not share
-capability should use different SDK names.
+SDK execution tokens belong to the SDK, not one version. A token therefore works with every active or deprecated version of that SDK, while each version still enforces its own operation scope. A plan that expands capability in a new version should report the existing tokens affected. Teams that must not share capability should use different SDK names.
 
 Keep these credentials distinct:
 
@@ -152,6 +145,8 @@ fused-cli extend <name> [--version <new>] --service '<service>[@<version>]' [--o
 fused-cli sdk plan [--no-input]
 fused-cli sdk apply
 fused-cli sdk validate
+fused-cli sdk list
+fused-cli sdk versions [sdk-or-api-name-or-id]
 fused-cli sdk download <sdk-name@version-or-version-id>
 fused-cli sdk openapi <sdk-name@version-or-version-id> [--operation <exact-operation-id>] [-o <path>] [--format yaml|json]
 fused-cli api openapi <api-name@version-or-version-id> [--operation <exact-operation-id>] [-o <path>] [--format yaml|json]
@@ -170,6 +165,10 @@ fused-cli sdk service remove <service-slug>
 fused-cli sdk operation add|remove <service-slug> <operation-id...>
 fused-cli sdk webhook add|remove <service-slug> <webhook-id...>
 ```
+
+`sdk list` shows each SDK or direct API application once by canonical name and stable SDK ID, with a version count. Engine owns grouping and `--limit`/`--offset` pagination.
+`sdk versions [sdk-or-api-name-or-id]` shows immutable version rows and status; omit the selector for all SDK/API versions. Both commands support `--json`; `sdk versions --json` preserves the previous `sdk list --json` shape.
+Neither command selects an implicit latest version for download, invocation, or lifecycle operations.
 
 `sdk token` manages named, revocable API tokens for calling an already
 *generated* SDK's Engine endpoint (distinct from your own `fused-cli config

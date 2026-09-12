@@ -23,6 +23,7 @@ var sdkInput io.Reader = os.Stdin
 
 var sdkDownloadOutDir string
 var sdkListFlags listFlags
+var sdkVersionsFlags listFlags
 var sdkPlanJSON bool
 var sdkPlanReceiptOut string
 var sdkPlanOwnerTeam string
@@ -41,10 +42,26 @@ var sdkCmd = &cobra.Command{
 
 var sdkListCmd = &cobra.Command{
 	Use:   "list",
-	Short: "List SDK and direct API app versions",
+	Short: "List SDK and direct API applications once per unique name",
 	Args:  cobra.NoArgs,
+	// Application discovery deliberately omits immutable version rows.
 	RunE: WithTelemetry("cli.sdk.list", func(cmd *cobra.Command, _ []string) error {
 		return runSDKList(cmd)
+	}),
+}
+
+var sdkVersionsCmd = &cobra.Command{
+	Use:   "versions [sdk-or-api-name-or-id]",
+	Short: "List SDK and direct API versions, optionally for one application",
+	Args:  cobra.MaximumNArgs(1),
+	// An omitted selector discovers all versions; a supplied selector is resolved by Engine.
+	RunE: WithTelemetry("cli.sdk.versions", func(cmd *cobra.Command, args []string) error {
+		target := ""
+		// Preserve canonical names rather than filtering the catalogue by substring.
+		if len(args) == 1 {
+			target = strings.TrimSpace(args[0])
+		}
+		return runSDKVersions(cmd, target)
 	}),
 }
 
@@ -244,17 +261,50 @@ func parseSDKDownloadName(raw string) (string, string) {
 	return strings.TrimSpace(name), strings.TrimSpace(version)
 }
 
+// runSDKList lists stable application identities without selecting an implicit latest SDK version.
 func runSDKList(cmd *cobra.Command) error {
 	client, err := getAPIClient()
+	// Validate the control credential configuration before reading the application catalogue.
 	if err != nil {
 		return err
 	}
-	page, err := client.ListApps("sdk", sdkListFlags.pageOptions())
+	page, err := client.ListApplications("sdk", sdkListFlags.pageOptions())
+	// A partial read must not produce incorrect application counts.
 	if err != nil {
 		return err
 	}
+	// Human and structured output share application-level pagination.
 	if wantsJSON(cmd) {
 		return writeJSONPage(cmd, page.Items, page.Total, sdkListFlags)
+	}
+	writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 8, 2, ' ', 0)
+	fmt.Fprintln(writer, "NAME\tSDK_ID\tVERSIONS")
+	for _, app := range page.Items {
+		fmt.Fprintf(writer, "%s\t%s\t%d\n", app.Name, app.AppFamilyID, app.VersionCount)
+	}
+	// Report write failures before claiming the page was delivered.
+	if err := writer.Flush(); err != nil {
+		return err
+	}
+	printPageSummary(cmd.OutOrStdout(), page.Total, sdkListFlags)
+	return nil
+}
+
+// runSDKVersions preserves exact SDK and direct API version discovery under a dedicated command.
+func runSDKVersions(cmd *cobra.Command, target string) error {
+	client, err := getAPIClient()
+	// An invalid client or failed catalogue read cannot yield reliable version output.
+	if err != nil {
+		return err
+	}
+	page, err := client.ListAppVersions("sdk", target, sdkVersionsFlags.pageOptions())
+	// An invalid client or failed catalogue read cannot yield reliable version output.
+	if err != nil {
+		return err
+	}
+	// Automation retains the complete immutable-version response shape.
+	if wantsJSON(cmd) {
+		return writeJSONPage(cmd, page.Items, page.Total, sdkVersionsFlags)
 	}
 	writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 8, 2, ' ', 0)
 	fmt.Fprintln(writer, "NAME\tVERSION\tSTATUS\tSDK_ID\tVERSION_ID")
@@ -262,7 +312,7 @@ func runSDKList(cmd *cobra.Command) error {
 		fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\n", sdk.Name, sdk.Version, sdk.Status, sdk.AppFamilyID, sdk.AppID)
 	}
 	_ = writer.Flush()
-	printPageSummary(cmd.OutOrStdout(), page.Total, sdkListFlags)
+	printPageSummary(cmd.OutOrStdout(), page.Total, sdkVersionsFlags)
 	return nil
 }
 
@@ -953,11 +1003,13 @@ func selectedIndex(rawChoice string, size int) (int, error) {
 	return choice - 1, nil
 }
 
+// init registers SDK application discovery separately from exact-version lifecycle commands.
 func init() {
 	RootCmd.AddCommand(sdkCmd)
-	sdkCmd.AddCommand(sdkListCmd, sdkPlanCmd, sdkApplyCmd, sdkValidateCmd, sdkDownloadCmd, sdkShowCmd, sdkServicesCmd, sdkBucketsCmd, sdkDeactivateCmd)
-	addJSONOutputFlag(sdkListCmd, sdkValidateCmd, sdkShowCmd, sdkServicesCmd, sdkBucketsCmd)
+	sdkCmd.AddCommand(sdkListCmd, sdkVersionsCmd, sdkPlanCmd, sdkApplyCmd, sdkValidateCmd, sdkDownloadCmd, sdkShowCmd, sdkServicesCmd, sdkBucketsCmd, sdkDeactivateCmd)
+	addJSONOutputFlag(sdkListCmd, sdkVersionsCmd, sdkValidateCmd, sdkShowCmd, sdkServicesCmd, sdkBucketsCmd)
 	addListFlags(sdkListCmd, &sdkListFlags)
+	addListFlags(sdkVersionsCmd, &sdkVersionsFlags)
 	sdkPlanCmd.Flags().BoolVar(&sdkPlanJSON, "json", false, "Print plan result JSON")
 	sdkPlanCmd.Flags().StringVar(&sdkPlanReceiptOut, "receipt-out", "", "Write the plan receipt to this path")
 	sdkPlanCmd.Flags().StringVar(&sdkPlanOwnerTeam, "owner-team", "", "Optional owning team slug; defaults to the authenticated person")

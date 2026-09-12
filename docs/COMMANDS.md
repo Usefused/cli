@@ -597,8 +597,11 @@ Validate only the matching SDK or MCP configuration files without an Engine
 request. This remains useful for offline checks; `plan` already performs this
 validation first. Inherits global flags.
 
-## `sdk list` / `mcp list`
-List generated SDKs or deployed MCP servers. The kind is fixed by the command.
+## `sdk versions [sdk-or-api-name-or-id]` / `mcp versions [mcp-name-or-id]`
+List generated SDK versions or deployed MCP versions. The kind is fixed by the command.
+Use `sdk versions <name-or-id>` or `mcp versions <name-or-id>` to inspect one application, or omit the selector
+to list all versions of that kind, including exact version IDs. MCP output also
+includes stable and pinned transport URLs.
 `SDK_ID` or `MCP_ID` remains stable across versions; `VERSION_ID` identifies
 one exact immutable version.
 
@@ -606,6 +609,32 @@ one exact immutable version.
 |----------|-------|-------------|---------|
 | `--limit` | | Maximum rows to read | `20` |
 | `--offset` | | Rows to skip before reading | `0` |
+
+## `sdk list`
+List each SDK or direct API application once by canonical name and stable
+`SDK_ID`, with a version count. `--limit` (default 20) and `--offset` (default 0)
+paginate applications in name order using Engine-owned grouping and authorized totals.
+`--json` returns the usual pagination envelope with `app_family_id`, `name`, and
+`version_count`. No implicit latest version, status, or target language is chosen.
+Use `sdk versions [sdk-or-api-name-or-id]` for exact version rows and status;
+`sdk versions --json` provides the previous `sdk list --json` output shape.
+
+## `mcp list`
+List each MCP application once by its canonical name and stable `MCP_ID`.
+Shows the version count, explicitly promoted stable version, and stable transport
+URLs. Applications without a promoted version remain listed with no stable URL;
+the CLI does not select a newer sibling automatically.
+
+`--limit` (default 20) and `--offset` (default 0) paginate applications in name
+order, using Engine-owned grouping and authorized totals. `--json` uses the
+usual `items`/`total` pagination envelope with application-level fields:
+`app_family_id`, `name`, `version_count`, optional `stable_version`,
+`stable_version_id`, `default_transport`, and stable `transport_urls`.
+For the previous version-level output, use `mcp versions --json`.
+
+Application listing requires Engine support for the `appFamilies` GraphQL query.
+Upgrade Engine alongside this CLI change. The UI continues to use the existing
+version-level `apps`, `app`, and `appVersions` queries.
 
 ## `sdk show <sdk-name@version-or-version-id>`
 Show one exact SDK version from the Engine.

@@ -17,6 +17,7 @@ var mcpCmd = &cobra.Command{
 }
 
 var mcpListFlags listFlags
+var mcpVersionsFlags listFlags
 var mcpPlanJSON bool
 var mcpPlanReceiptOut string
 var mcpPlanOwnerTeam string
@@ -25,10 +26,26 @@ var mcpApplyReceiptPath string
 
 var mcpListCmd = &cobra.Command{
 	Use:   "list",
-	Short: "List deployed MCP servers",
+	Short: "List MCP applications once per unique name",
 	Args:  cobra.NoArgs,
+	// Keep application discovery separate from immutable version inspection.
 	RunE: WithTelemetry("cli.mcp.list", func(cmd *cobra.Command, _ []string) error {
 		return runMCPList(cmd)
+	}),
+}
+
+var mcpVersionsCmd = &cobra.Command{
+	Use:   "versions [mcp-name-or-id]",
+	Short: "List MCP versions, optionally for one application",
+	Args:  cobra.MaximumNArgs(1),
+	// An omitted selector preserves discovery of all exact MCP versions.
+	RunE: WithTelemetry("cli.mcp.versions", func(cmd *cobra.Command, args []string) error {
+		target := ""
+		// Resolve an explicitly supplied application rather than filtering names by substring.
+		if len(args) == 1 {
+			target = strings.TrimSpace(args[0])
+		}
+		return runMCPVersions(cmd, target)
 	}),
 }
 
@@ -91,18 +108,55 @@ var mcpValidateCmd = &cobra.Command{
 	}),
 }
 
-// runMCPList renders Engine-owned stable and pinned routes without deriving public URLs locally.
+// runMCPList presents one application row without implying that the newest version is promoted.
 func runMCPList(cmd *cobra.Command) error {
 	client, err := getAPIClient()
+	// Authentication configuration must be valid before discovery.
 	if err != nil {
 		return err
 	}
-	page, err := client.ListApps("mcp", mcpListFlags.pageOptions())
+	page, err := client.ListApplications("mcp", mcpListFlags.pageOptions())
+	// Never render a partial grouping when any Engine catalogue page failed.
 	if err != nil {
 		return err
 	}
+	// Both output formats paginate applications rather than immutable versions.
 	if wantsJSON(cmd) {
 		return writeJSONPage(cmd, page.Items, page.Total, mcpListFlags)
+	}
+	writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 8, 2, ' ', 0)
+	fmt.Fprintln(writer, "NAME\tMCP_ID\tVERSIONS\tSTABLE_VERSION\tDEFAULT_TRANSPORT\tSTREAMABLE HTTP (STABLE, RECOMMENDED)\tSSE (STABLE, LEGACY)")
+	for _, app := range page.Items {
+		streamableHTTP, sse := "", ""
+		// Unpromoted applications remain visible without inventing a usable endpoint.
+		if app.TransportURLs != nil {
+			streamableHTTP, sse = app.TransportURLs.StreamableHTTP, app.TransportURLs.SSE
+		}
+		fmt.Fprintf(writer, "%s\t%s\t%d\t%s\t%s\t%s\t%s\n", app.Name, app.AppFamilyID, app.VersionCount, app.StableVersion, app.DefaultTransport, streamableHTTP, sse)
+	}
+	// Report output errors rather than claiming the application page was delivered.
+	if err := writer.Flush(); err != nil {
+		return err
+	}
+	printPageSummary(cmd.OutOrStdout(), page.Total, mcpListFlags)
+	return nil
+}
+
+// runMCPVersions renders Engine-owned stable and pinned routes for exact immutable versions.
+func runMCPVersions(cmd *cobra.Command, target string) error {
+	client, err := getAPIClient()
+	// Failed reads must not render an incomplete version catalogue.
+	if err != nil {
+		return err
+	}
+	page, err := client.ListAppVersions("mcp", target, mcpVersionsFlags.pageOptions())
+	// Failed reads must not render an incomplete version catalogue.
+	if err != nil {
+		return err
+	}
+	// Preserve exact version fields for automation callers.
+	if wantsJSON(cmd) {
+		return writeJSONPage(cmd, page.Items, page.Total, mcpVersionsFlags)
 	}
 	writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 8, 2, ' ', 0)
 	fmt.Fprintln(writer, "NAME\tVERSION\tMCP_ID\tVERSION_ID\tSTABLE\tSTABLE_VERSION_ID\tSTATUS\tCREATED\tDEFAULT_TRANSPORT\tSTREAMABLE HTTP (STABLE, RECOMMENDED)\tSTREAMABLE HTTP (VERSION-PINNED)\tSSE (STABLE, LEGACY)\tSSE (VERSION-PINNED, LEGACY)")
@@ -119,7 +173,7 @@ func runMCPList(cmd *cobra.Command) error {
 			app.DefaultTransport, streamableHTTP, versionedStreamableHTTP, sse, versionedSSE)
 	}
 	_ = writer.Flush()
-	printPageSummary(cmd.OutOrStdout(), page.Total, mcpListFlags)
+	printPageSummary(cmd.OutOrStdout(), page.Total, mcpVersionsFlags)
 	return nil
 }
 
@@ -201,9 +255,10 @@ func runMCPDeactivate(cmd *cobra.Command, target string) error {
 // init registers the MCP lifecycle and exact-version inspection commands.
 func init() {
 	RootCmd.AddCommand(mcpCmd)
-	mcpCmd.AddCommand(mcpListCmd, mcpOperationsCmd, mcpPlanCmd, mcpApplyCmd, mcpValidateCmd, mcpDeactivateCmd)
-	addJSONOutputFlag(mcpListCmd, mcpOperationsCmd, mcpValidateCmd)
+	mcpCmd.AddCommand(mcpListCmd, mcpVersionsCmd, mcpOperationsCmd, mcpPlanCmd, mcpApplyCmd, mcpValidateCmd, mcpDeactivateCmd)
+	addJSONOutputFlag(mcpListCmd, mcpVersionsCmd, mcpOperationsCmd, mcpValidateCmd)
 	addListFlags(mcpListCmd, &mcpListFlags)
+	addListFlags(mcpVersionsCmd, &mcpVersionsFlags)
 	mcpPlanCmd.Flags().BoolVar(&mcpPlanJSON, "json", false, "Print plan result JSON")
 	mcpPlanCmd.Flags().StringVar(&mcpPlanReceiptOut, "receipt-out", "", "Write the plan receipt to this path")
 	mcpPlanCmd.Flags().StringVar(&mcpPlanOwnerTeam, "owner-team", "", "Optional owning team slug; defaults to the authenticated person")

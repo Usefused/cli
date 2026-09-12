@@ -216,6 +216,7 @@ fused-cli mcp plan
 fused-cli mcp apply
 fused-cli mcp validate
 fused-cli mcp list
+fused-cli mcp versions [mcp-name-or-id]
 fused-cli mcp operations <mcp-name@version-or-version-id> [--json]
 fused-cli mcp deactivate <mcp-name@version-or-version-id>
 fused-cli mcp token generate <mcp-name-or-id> <token-name> --allow <operation-id> --expires-in 15m --json
@@ -242,11 +243,13 @@ plan/apply remains the authoritative `bucket.use` check.
 
 `mcp apply` doesn't just validate config -- it stands up (or updates) a
 persistent, named Engine-hosted server with a stable MCP URL. `mcp list` shows
-each immutable version's name, version, IDs, active state, whether it is the
-promoted target, the stable target Version ID, and stable plus pinned transport
-URLs. Give new clients the stable Streamable HTTP URL. Use the pinned URL only
-when a client deliberately must remain on one immutable version, and use SSE
-only when the client explicitly requires the older transport (see below).
+each application once by its canonical name and stable MCP ID, with a version
+count and the promoted version's stable transport URLs. Engine groups and paginates applications before returning the page to the CLI.
+Use `mcp versions [mcp-name-or-id]` for immutable version rows, exact Version
+IDs, status, and stable/version-pinned transport URLs. Omit the selector to list
+all versions. Both commands support `--json`, `--limit`, and `--offset`.
+Give new clients the recommended stable Streamable HTTP URL. Use the SSE URL
+only when a client explicitly requires the older transport (see below).
 Deactivating one is
 an irreversible hard deactivation of that exact version: Engine writes a
 tombstone, stops its runtime, and will not allow that MCP/version to be
