@@ -54,6 +54,7 @@ type scaffoldRequest struct {
 	languageSet    bool
 	bucketSet      bool
 	generateSet    bool
+	webhookSecrets map[string]string
 }
 
 type scaffoldService struct {
@@ -287,20 +288,29 @@ func validateScaffoldArgs(kind configfile.ConfigKind, name string, extend bool) 
 	return nil
 }
 
+// scaffoldTargetPath separates resource files while respecting an explicit destination.
 func scaffoldTargetPath(kind configfile.ConfigKind, name, explicit string) (string, error) {
+	// An explicit path always wins over resource directory defaults.
 	if strings.TrimSpace(explicit) != "" {
 		return explicit, nil
 	}
+	// The aggregate workspace keeps its single conventional file.
 	if kind == configfile.KindWorkspace {
 		return filepath.Join(".fused", "workspace.yaml"), nil
 	}
 	fileName := safeConfigFileName(name)
+	// A missing safe name cannot select an implicit output file.
 	if fileName == "" {
 		return "", fmt.Errorf("%s --extend without a name requires -f", kind)
 	}
 	directory := "sdks"
+	// Each hosted resource uses the directory already read by config discovery.
 	if kind == configfile.KindMCP {
 		directory = "mcps"
+	}
+	// Ingress bundles must be discovered as webhooks rather than app configs.
+	if kind == configfile.KindWebhook {
+		directory = "webhooks"
 	}
 	return filepath.Join(".fused", directory, fileName+".yaml"), nil
 }
@@ -421,6 +431,11 @@ func extendScaffold(request scaffoldRequest, resolver scaffoldRequirementsResolv
 
 // newScaffoldData builds one complete create document before any filesystem mutation occurs.
 func newScaffoldData(request scaffoldRequest, resolver scaffoldRequirementsResolver, bucketResolver scaffoldBucketResolver) ([]byte, int, error) {
+	// Webhook registration owns only service signing references, never app selections or bucket defaults.
+	if request.kind == configfile.KindWebhook {
+		data, err := newWebhookScaffoldData(request)
+		return data, 0, err
+	}
 	// Workspace scaffolds own bucket declarations separately and must not acquire app-only defaults.
 	if request.kind == configfile.KindWorkspace {
 		config := &configfile.WorkspaceConfig{
@@ -910,9 +925,14 @@ func mergeAppSelectAll(config *configfile.AppConfig, services []string) (bool, e
 	return changed, nil
 }
 
-// scaffoldValidator applies full semantic validation to unified app outcomes and every existing app extension.
+// scaffoldValidator validates ingress with its own schema and preserves existing app scaffold compatibility.
 func scaffoldValidator(request scaffoldRequest) contentValidator {
 	return func(data []byte) error {
+		// Ingress has secret references rather than app operation selections.
+		if request.kind == configfile.KindWebhook {
+			_, err := configfile.Parse(data, request.path)
+			return err
+		}
 		// Compatibility scaffolds retain structural validation, while unified modes signal their complete outcome through immutable mode fields.
 		if request.kind == configfile.KindWorkspace || (!request.extend && !request.generateSet && !request.descriptionSet) {
 			if request.kind == configfile.KindWorkspace {

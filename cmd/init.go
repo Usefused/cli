@@ -19,15 +19,18 @@ import (
 type unifiedInitMode string
 
 const (
-	unifiedInitModeSDK unifiedInitMode = "sdk"
-	unifiedInitModeMCP unifiedInitMode = "mcp"
-	unifiedInitModeAPI unifiedInitMode = "api"
+	unifiedInitModeSDK     unifiedInitMode = "sdk"
+	unifiedInitModeMCP     unifiedInitMode = "mcp"
+	unifiedInitModeAPI     unifiedInitMode = "api"
+	unifiedInitModeWebhook unifiedInitMode = "webhook"
 )
 
 type unifiedInitOptions struct {
 	sdk         bool
 	mcp         bool
 	api         bool
+	webhook     bool
+	secrets     []string
 	extend      bool
 	services    []string
 	operations  []string
@@ -79,17 +82,17 @@ func newUnifiedInitCommand() *cobra.Command {
 	return newUnifiedInitCommandWithRunner(runUnifiedInitLifecycle)
 }
 
-// newUnifiedInitCommandWithRunner binds the common app-selection flags before delegating the resolved intent to one lifecycle runner.
+// newUnifiedInitCommandWithRunner binds resource-selection flags before delegating the resolved intent to one lifecycle runner.
 func newUnifiedInitCommandWithRunner(runner unifiedInitRunner) *cobra.Command {
 	opts := &unifiedInitOptions{version: defaultScaffoldVersion, language: defaultScaffoldLanguage}
 	command := &cobra.Command{
 		Use:   "init <app-name>",
-		Short: "Create and start an SDK, direct API app, or MCP server",
-		Long: `Create one working Fused app from Registry services.
+		Short: "Create an SDK, direct API, MCP server, or webhook registration",
+		Long: `Create an app or inbound webhook registration from Registry services.
 
-Choose --sdk, --api, or --mcp. In a terminal, omitting the mode opens a short
-selector. The command resolves services and operations, enables missing
-workspace services, writes the durable config, plans, applies, and returns the
+Choose --sdk, --api, --mcp, or --webhook. In a terminal, omitting the mode opens a short
+selector. App modes select operations; webhook mode registers inbound delivery.
+The command enables missing services, writes the config, plans, applies, and returns the
 runtime outcome. Pass --no-apply to write validated local desired state and
 retain available plan receipts without applying Engine state.`,
 		Args: cobra.ExactArgs(1),
@@ -115,6 +118,8 @@ retain available plan receipts without applying Engine state.`,
 	command.Flags().BoolVar(&opts.sdk, "sdk", false, "Create a generated typed SDK and download its package")
 	command.Flags().BoolVar(&opts.api, "api", false, "Create a direct REST execution app without generating a package")
 	command.Flags().BoolVar(&opts.mcp, "mcp", false, "Create and deploy an Engine-hosted MCP server")
+	command.Flags().BoolVar(&opts.webhook, "webhook", false, "Create and apply an inbound webhook registration")
+	command.Flags().StringArrayVar(&opts.secrets, "secret", nil, "Webhook signing reference as <service>=${bucket.<name>.secret.<key>}; repeatable")
 	command.Flags().BoolVar(&opts.extend, "extend", false, "Compatibility alias for 'fused-cli extend'; use --version for an applied successor")
 	// Existing scripts retain --extend, while help directs new additive workflows to the root extend command.
 	_ = command.Flags().MarkHidden("extend")
@@ -129,9 +134,9 @@ retain available plan receipts without applying Engine state.`,
 	return command
 }
 
-// resolveUnifiedInitMode enforces one app outcome and prompts only when terminal input is available.
+// resolveUnifiedInitMode enforces one resource outcome and prompts only when terminal input is available.
 func resolveUnifiedInitMode(opts *unifiedInitOptions) (unifiedInitMode, error) {
-	selected := make([]unifiedInitMode, 0, 3)
+	selected := make([]unifiedInitMode, 0, 4)
 	// Each explicit flag is a complete mode choice; collecting them first produces one stable conflict error.
 	if opts.sdk {
 		selected = append(selected, unifiedInitModeSDK)
@@ -144,9 +149,13 @@ func resolveUnifiedInitMode(opts *unifiedInitOptions) (unifiedInitMode, error) {
 	if opts.mcp {
 		selected = append(selected, unifiedInitModeMCP)
 	}
+	// Webhook ingress has its own registration lifecycle and cannot share an app mode.
+	if opts.webhook {
+		selected = append(selected, unifiedInitModeWebhook)
+	}
 	// Competing outcome flags would make package and runtime behavior ambiguous.
 	if len(selected) > 1 {
-		return "", errors.New("choose exactly one of --sdk, --api, or --mcp")
+		return "", errors.New("choose exactly one of --sdk, --api, --mcp, or --webhook")
 	}
 	// One explicit mode is deterministic for both terminals and automation.
 	if len(selected) == 1 {
@@ -154,12 +163,12 @@ func resolveUnifiedInitMode(opts *unifiedInitOptions) (unifiedInitMode, error) {
 	}
 	// Automation must declare its output because it cannot answer the mode selector.
 	if nonInteractive() {
-		return "", errors.New("--no-input requires exactly one of --sdk, --api, or --mcp")
+		return "", errors.New("--no-input requires exactly one of --sdk, --api, --mcp, or --webhook")
 	}
 	return selectUnifiedInitMode()
 }
 
-// promptUnifiedInitMode presents the three user outcomes without exposing their shared internal config shape.
+// promptUnifiedInitMode presents the supported user outcomes without exposing their shared internal config shape.
 func promptUnifiedInitMode() (unifiedInitMode, error) {
 	selected := unifiedInitModeSDK
 	err := huh.NewSelect[unifiedInitMode]().
@@ -168,6 +177,7 @@ func promptUnifiedInitMode() (unifiedInitMode, error) {
 			huh.NewOption("Typed SDK", unifiedInitModeSDK),
 			huh.NewOption("MCP server", unifiedInitModeMCP),
 			huh.NewOption("Direct API", unifiedInitModeAPI),
+			huh.NewOption("Webhook registration", unifiedInitModeWebhook),
 		).
 		Value(&selected).
 		Run()
@@ -229,8 +239,16 @@ func promptUnifiedInitMCPDescription() (string, error) {
 	return strings.TrimSpace(description), err
 }
 
-// buildUnifiedInitRequest maps every public mode onto the existing SDK/MCP scaffold contract without introducing an API resource kind.
+// buildUnifiedInitRequest preserves each resource kind while keeping direct API apps on the SDK contract.
 func buildUnifiedInitRequest(cmd *cobra.Command, mode unifiedInitMode, name string, opts *unifiedInitOptions) (scaffoldRequest, error) {
+	// Webhook flags and references must validate before any remote resolution.
+	if mode == unifiedInitModeWebhook {
+		return buildWebhookInitRequest(cmd, name, opts)
+	}
+	// Signing references have no meaning on an app initialization request.
+	if len(opts.secrets) > 0 {
+		return scaffoldRequest{}, errors.New("--secret can only be used with --webhook")
+	}
 	kind := configfile.KindSDK
 	// MCP is the only mode whose durable config and target directory differ from SDK.
 	if mode == unifiedInitModeMCP {
@@ -290,14 +308,14 @@ func runUnifiedInitLifecycle(cmd *cobra.Command, mode unifiedInitMode, request s
 	}
 	// Deferred initialization preserves plan receipts but must stop before either apply boundary.
 	if request.noApply {
-		lifecycle, err := prepareSDKInitLifecycle(cmd, request, resolveScaffoldBucket)
+		lifecycle, err := prepareUnifiedInitLifecycle(cmd, mode, request)
 		// Failed resolution or workspace planning cannot publish deferred app intent.
 		if err != nil {
 			return err
 		}
 		return createUnifiedInitWithoutApply(cmd, mode, lifecycle, resolveScaffoldRequirements, resolveScaffoldBucket)
 	}
-	lifecycle, err := prepareSDKInitLifecycle(cmd, request, resolveScaffoldBucket)
+	lifecycle, err := prepareUnifiedInitLifecycle(cmd, mode, request)
 	// Resolution and read-only workspace planning must succeed before the combined review.
 	if err != nil {
 		return err
@@ -927,6 +945,8 @@ func unifiedInitModeLabel(mode unifiedInitMode) string {
 		return "API initialization"
 	case unifiedInitModeMCP:
 		return "MCP initialization"
+	case unifiedInitModeWebhook:
+		return "webhook initialization"
 	default:
 		return "app initialization"
 	}
@@ -942,6 +962,8 @@ func unifiedInitModeShortLabel(mode unifiedInitMode) string {
 		return "API"
 	case unifiedInitModeMCP:
 		return "MCP"
+	case unifiedInitModeWebhook:
+		return "webhook"
 	default:
 		return "app"
 	}

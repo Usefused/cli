@@ -167,7 +167,7 @@ Fused detects the supported source format. See
 GraphQL, AsyncAPI, Postman, WSDL, Google Discovery, overlays, strict mode, and
 diagnostics.
 
-## Create an SDK, API app, or MCP server
+## Create an SDK, API app, MCP server, or webhook registration
 
 Start from the service you want to use. The CLI defaults its version, lets you
 accept all operations with Enter or search a narrower set, enables the service
@@ -184,8 +184,8 @@ fused-cli init support-agent --mcp \
 SDK mode downloads a typed package, API mode prints a central Engine REST
 request template without generating a package, and MCP mode reports the hosted
 server connection details. Omit the mode in a terminal to choose it. For
-automation, pass `--no-input`, one explicit mode, and `--operation` or
-`--select-all` for every service.
+automation, pass `--no-input` and one explicit mode. SDK, API, and MCP modes
+also require `--operation` or `--select-all` for every service.
 
 Pass `--no-apply` to plan without applying. Fused writes the app config and any
 required workspace service additions, saves every plan receipt whose
@@ -194,6 +194,23 @@ generation or download job. When a service still needs activation, its
 workspace receipt is saved and app planning waits until that receipt is
 applied. The output prints the exact remaining commands; SDK completion
 includes `sdk apply --download`.
+
+Create an inbound webhook registration with `--webhook`. It requires services,
+but no operation selection or app version:
+
+```bash
+fused-cli init alerts --webhook --service github \
+  --secret 'github=${bucket.default.secret.github_signing}'
+```
+
+This writes `.fused/webhooks/alerts.yaml`, enables missing workspace services,
+then plans and applies the webhook registration and prints its ingress URL.
+Omit `--secret` only when the provider does not require a signing secret.
+`--secret` accepts bucket references, never literal credentials. Use `--no-apply`
+to retain validated desired state and available receipts for later apply.
+To receive events in an SDK, set `webhook_attachment: alerts` and explicitly
+select that SDK's webhook events. To update the registration later, edit its
+file and use `webhook plan` / `webhook apply`.
 
 To extend an existing app without creating another file, use `extend`. It reads
 the existing YAML to infer SDK, API, or MCP mode. A real change advances a

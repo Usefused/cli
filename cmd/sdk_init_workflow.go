@@ -601,7 +601,7 @@ func confirmSDKInitIfNeeded(request scaffoldRequest, services []sdkInitResolvedS
 	return confirmSDKInit(sdkInitConfirmationMessage(request, services, workspaceChange))
 }
 
-// sdkInitConfirmationMessage summarizes the one common service/operation case without hiding broader selections.
+// sdkInitConfirmationMessage describes app operation scope or webhook registrations alongside any required workspace activation.
 func sdkInitConfirmationMessage(request scaffoldRequest, services []sdkInitResolvedService, workspaceChange bool) string {
 	action := "Create"
 	actionInSentence := "create"
@@ -611,6 +611,10 @@ func sdkInitConfirmationMessage(request scaffoldRequest, services []sdkInitResol
 		actionInSentence = "extend"
 	}
 	selection := "the selected operations"
+	// Ingress registration is service-scoped; event allowlists belong to a later SDK attachment.
+	if request.kind == configfile.KindWebhook {
+		selection = "webhook registrations for the selected services"
+	}
 	// A single operation is more useful than a count in the common init path.
 	if len(request.operations) == 1 && len(request.selectAll) == 0 {
 		selection = request.operations[0].operation
