@@ -20,6 +20,7 @@ func TestCanonicalCommandParentsRequireAction(t *testing.T) {
 		args []string
 	}{
 		{name: "bucket", args: []string{"bucket"}},
+		{name: "bucket secret", args: []string{"bucket", "secret"}},
 		{name: "secret", args: []string{"secret"}},
 		{name: "service", args: []string{"service"}},
 		{name: "value", args: []string{"value"}},

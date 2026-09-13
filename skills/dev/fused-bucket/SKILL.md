@@ -117,6 +117,7 @@ fused-cli bucket delete <bucket-name>
 fused-cli bucket show <bucket-name-or-id>             # + created_at
 fused-cli bucket services <bucket-name-or-id>         # per-service breakdown: secrets/values/OAuth application families/connected-user counts
 fused-cli bucket secrets <bucket-name-or-id>          # metadata only; never values
+fused-cli bucket secret set <bucket-name-or-id> [secret-name] # generic SDK/MCP/webhook secret; masked prompts by default
 fused-cli bucket values <bucket-name-or-id>
 fused-cli bucket connections <bucket-name-or-id> [--service <service>[@<version>][,<service>[@<version>]...]] [--service ...] [--user <end-user-reference>]
 fused-cli bucket sdks <bucket-name-or-id>
@@ -170,6 +171,7 @@ skill's `reference/access-management.md` for the complete role matrix.
 ## Static secrets and values
 
 ```shell
+printf '%s' "$WEBHOOK_SECRET" | fused-cli --no-input bucket secret set <bucket-name-or-id> webhook_signing --value-stdin
 fused-cli secret list --bucket <bucket-name-or-id>
 # single-value scheme (api_key, bearer):
 printf '%s' "$TOKEN" | fused-cli secret set <service-slug> --value-stdin [--bucket <bucket-name-or-id>] [--type <auth-type>] [--auth-name <scheme>] [--expires-at <RFC3339>]
@@ -184,6 +186,10 @@ fused-cli value set <bucket-name-or-id> <service-slug> <location> <key-name> <va
 fused-cli value list <bucket-name-or-id>
 fused-cli value delete <bucket-name-or-id> <service-slug> <key-name>
 ```
+
+`bucket secret set` stores a generic, service-independent secret. Its bucket is
+always explicit; automation must also pass the secret name and use
+`--value-stdin`. Keep `secret set <service-slug>` for provider authentication.
 
 **There is no `--username`/`--password`/`--cert`/`--key` flag, and paired
 schemes are not entered through separate commands.** The stdin value is itself

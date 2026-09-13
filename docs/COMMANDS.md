@@ -419,6 +419,24 @@ List secret metadata in a bucket without reading secret values.
 | `--limit` | | Maximum rows to read | `20` |
 | `--offset` | | Rows to skip before reading | `0` |
 
+## `bucket secret set <bucket-name-or-id> [secret-name]`
+Set a service-independent secret for SDK/MCP injection or webhook references.
+The bucket is always required. In a terminal, the secret name may be omitted
+and the value is collected through a masked prompt. Automation must pass the
+name and pipe the value with `--value-stdin`; values are never accepted in
+argv. `--json` returns only bucket ID, secret name, and optional expiry.
+
+```shell
+printf '%s' "$WEBHOOK_SECRET" | fused-cli --no-input bucket secret set default webhook_signing --value-stdin
+```
+
+| Argument | Short | Description | Default |
+|----------|-------|-------------|---------|
+| `--interactive` | `-i` | Explicitly require prompts (the terminal default) | `false` |
+| `--value-stdin` | | Read the secret value from stdin | `false` |
+| `--expires-at` | | Optional RFC3339 expiry timestamp | `""` |
+| `--json` | | Print non-sensitive mutation metadata as JSON | `false` |
+
 ## `bucket values <bucket-name-or-id>`
 List non-secret values in a bucket.
 

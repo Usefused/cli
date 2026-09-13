@@ -127,6 +127,43 @@ func (c *Client) UpsertSecret(serviceID, keyName, credentialType, value string, 
 	return nil
 }
 
+// UpsertBucketSecret stores one service-independent secret in an explicitly
+// selected bucket without exposing the value in the URL.
+func (c *Client) UpsertBucketSecret(bucketID, keyName, value string, expiresAt *time.Time) error {
+	reqBody := struct {
+		KeyName   string     `json:"key_name"`
+		Value     string     `json:"value"`
+		ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	}{KeyName: keyName, Value: value, ExpiresAt: expiresAt}
+	body, err := json.Marshal(reqBody)
+	// Serialization must finish before a credential-bearing request is constructed.
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequest("PUT", c.BaseURL+"/workspace/buckets/"+url.PathEscape(bucketID)+"/secrets", bytes.NewBuffer(body))
+	// Invalid client configuration must fail before any secret material is transmitted.
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	// Authentication is omitted only for deliberately unauthenticated test clients.
+	if c.APIKey != "" {
+		req.Header.Set("x-api-key", c.APIKey)
+	}
+	resp, err := c.doRequest(req)
+	// Shared transport handling bounds connection failures and response reads.
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	// Engine failures are bounded before becoming terminal or agent output.
+	if resp.StatusCode >= 400 {
+		respBody := readBoundedHTTPErrorBody(resp.Body)
+		return fmt.Errorf("upsert bucket secret failed (HTTP %d): %w", resp.StatusCode, newHTTPError(resp.StatusCode, respBody))
+	}
+	return nil
+}
+
 type SecretUpsertRequest struct {
 	ServiceID      string     `json:"service_id"`
 	KeyName        string     `json:"key_name"`
