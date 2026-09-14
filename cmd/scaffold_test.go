@@ -89,6 +89,98 @@ func TestWorkspaceScaffoldHelpOmitsAppVersionFlags(t *testing.T) {
 	}
 }
 
+// TestSDKScaffoldWebhookFlagsReachWorkflow proves SDK init preserves one attachment and comma-expanded event groups.
+func TestSDKScaffoldWebhookFlagsReachWorkflow(t *testing.T) {
+	var got scaffoldRequest
+	command := newScaffoldCommandWithWorkflow(configfile.KindSDK, nil, nil, func(_ *cobra.Command, request scaffoldRequest, _ scaffoldRequirementsResolver, _ scaffoldBucketResolver) error {
+		got = request
+		return nil
+	})
+	command.SetArgs([]string{
+		"payments-sdk", "--service", "stripe@v1", "--select-all", "stripe",
+		"--webhook-attachment", "payments-events",
+		"--events", "stripe=payment.succeeded,payment.failed",
+		"--events", "stripe=charge.refunded",
+	})
+	// The injected workflow keeps this test at the local flag-admission boundary.
+	if err := command.Execute(); err != nil {
+		t.Fatalf("execute SDK init flags: %v", err)
+	}
+	// The request keeps exact event order so YAML generation and confirmation remain deterministic.
+	if got.webhookAttachment != "payments-events" || !got.webhookAttachmentSet || len(got.events) != 3 || got.events[0] != (scaffoldEvent{service: "stripe", event: "payment.succeeded"}) || got.events[2] != (scaffoldEvent{service: "stripe", event: "charge.refunded"}) {
+		t.Fatalf("SDK webhook request=%#v", got)
+	}
+}
+
+// TestParseScaffoldEventsRejectsIncompleteGroups keeps comma convenience from hiding missing service or event identities.
+func TestParseScaffoldEventsRejectsIncompleteGroups(t *testing.T) {
+	for _, value := range []string{"stripe", "=payment.succeeded", "stripe=", "stripe=payment.succeeded,"} {
+		// Each malformed group must fail before SDK init performs service discovery.
+		if _, err := parseScaffoldEvents([]string{value}); err == nil {
+			t.Fatalf("parseScaffoldEvents(%q) unexpectedly succeeded", value)
+		}
+	}
+}
+
+// TestSDKScaffoldWritesWebhookAttachmentAndEvents proves init serializes the public flags into the existing SDK schema.
+func TestSDKScaffoldWritesWebhookAttachmentAndEvents(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "payments-sdk.yaml")
+	request := scaffoldRequest{
+		kind: configfile.KindSDK, name: "payments-sdk", path: path,
+		services:             []scaffoldService{{name: "stripe", version: "v1"}},
+		operations:           []scaffoldOperation{{service: "stripe", operation: "createPayment"}},
+		events:               []scaffoldEvent{{service: "stripe", event: "payment.succeeded"}, {service: "stripe", event: "payment.failed"}},
+		version:              defaultScaffoldVersion,
+		language:             defaultScaffoldLanguage,
+		webhookAttachment:    "payments-events",
+		webhookAttachmentSet: true,
+	}
+	result, err := writeScaffold(request, noOpScaffoldRequirements, defaultTestScaffoldBucket)
+	// A valid SDK candidate must pass the same strict parser used by plan/apply.
+	if err != nil {
+		t.Fatalf("write SDK webhook scaffold: %v", err)
+	}
+	parsed, err := configfile.ParseFile(path)
+	// Parsing before assertions protects the test from accepting merely well-shaped YAML.
+	if err != nil {
+		t.Fatalf("parse SDK webhook scaffold: %v", err)
+	}
+	service := parsed.SDK.Services["stripe"]
+	// The top-level attachment and per-service allowlist must publish atomically in one SDK file.
+	if result.Action != "created" || parsed.SDK.WebhookAttachment != "payments-events" || len(service.Webhooks) != 2 || service.Webhooks[0] != "payment.succeeded" || service.Webhooks[1] != "payment.failed" {
+		t.Fatalf("result=%#v SDK=%#v", result, parsed.SDK)
+	}
+}
+
+// TestMCPScaffoldWritesWebhookAttachmentAndEvents proves MCP init serializes its finite resource selections.
+func TestMCPScaffoldWritesWebhookAttachmentAndEvents(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "payments-mcp.yaml")
+	request := scaffoldRequest{
+		kind: configfile.KindMCP, name: "payments-mcp", path: path,
+		services:             []scaffoldService{{name: "stripe", version: "v1"}},
+		events:               []scaffoldEvent{{service: "stripe", event: "payment.succeeded"}, {service: "stripe", event: "payment.failed"}},
+		version:              defaultScaffoldVersion,
+		description:          "Receive and act on Stripe payment events.",
+		webhookAttachment:    "payments-events",
+		webhookAttachmentSet: true,
+	}
+	result, err := writeScaffold(request, noOpScaffoldRequirements, defaultTestScaffoldBucket)
+	// An event-only MCP candidate must pass the same strict parser used by plan and apply.
+	if err != nil {
+		t.Fatalf("write MCP webhook scaffold: %v", err)
+	}
+	parsed, err := configfile.ParseFile(path)
+	// Parsing verifies that the emitted YAML uses the shared app schema rather than request-only state.
+	if err != nil {
+		t.Fatalf("parse MCP webhook scaffold: %v", err)
+	}
+	service := parsed.MCP.Services["stripe"]
+	// Attachment and comma-expanded events must land in one valid MCP document without an invented operation grant.
+	if result.Action != "created" || parsed.MCP.WebhookAttachment != "payments-events" || len(service.Operations) != 0 || len(service.Webhooks) != 2 {
+		t.Fatalf("result=%#v MCP=%#v", result, parsed.MCP)
+	}
+}
+
 // TestParseServiceSelectorSupportsCanonicalProviderForms locks one grammar across init, extend, sync, and bucket filtering.
 func TestParseServiceSelectorSupportsCanonicalProviderForms(t *testing.T) {
 	tests := []struct {

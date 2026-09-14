@@ -40,8 +40,8 @@ var stableAppVersionPattern = regexp.MustCompile(`^(v?)(0|[1-9][0-9]*)\.(0|[1-9]
 
 // runSDKInitWorkflow composes the existing workspace and SDK lifecycle helpers while retaining local-only empty scaffolds.
 func runSDKInitWorkflow(cmd *cobra.Command, request scaffoldRequest, resolver scaffoldRequirementsResolver, bucketResolver scaffoldBucketResolver) error {
-	// An empty SDK skeleton remains editable offline because it has no service lifecycle to coordinate.
-	if len(request.services) == 0 {
+	// Only a truly selection-free SDK skeleton remains local; extension flags may inherit service pins from the accepted file.
+	if len(request.services) == 0 && len(request.operations) == 0 && len(request.selectAll) == 0 && len(request.events) == 0 {
 		return runLocalScaffold(cmd, request, resolver, bucketResolver)
 	}
 	// Existing lifecycle printers are human-oriented, so refuse structured output before any remote or local mutation.
@@ -92,6 +92,10 @@ func prepareSDKInitLifecycle(cmd *cobra.Command, request scaffoldRequest, bucket
 	if err != nil {
 		return sdkInitLifecycle{}, err
 	}
+	// Explicit webhook scope is verified against the same immutable Registry versions before workspace activation.
+	if err := validateSDKInitWebhookSelections(client, resolvedRequest, resolvedServices); err != nil {
+		return sdkInitLifecycle{}, err
+	}
 	resolvedRequest, err = completeSDKInitCreateBucket(resolvedRequest, bucketResolver)
 	// Missing bucket access is knowable before workspace activation and must not leave a partial onboarding receipt.
 	if err != nil {
@@ -114,10 +118,10 @@ func prepareSDKInitLifecycle(cmd *cobra.Command, request scaffoldRequest, bucket
 	return sdkInitLifecycle{client: client, request: resolvedRequest, services: resolvedServices, draft: draft}, nil
 }
 
-// hydrateSDKInitExtendServiceReferences adds existing exact service pins needed to validate operation-only extension flags.
+// hydrateSDKInitExtendServiceReferences adds existing service pins and operation scope needed to validate selection-only extensions.
 func hydrateSDKInitExtendServiceReferences(request scaffoldRequest) (scaffoldRequest, error) {
-	// Creation already carries every service through --service, while version-only extension has no operation scope to hydrate.
-	if !request.extend || (len(request.operations) == 0 && len(request.selectAll) == 0) {
+	// Creation already carries every service through --service, while version-only extension has no operation or event scope to hydrate.
+	if !request.extend || (len(request.operations) == 0 && len(request.selectAll) == 0 && len(request.events) == 0) {
 		return request, nil
 	}
 	data, err := os.ReadFile(request.path)
@@ -130,11 +134,15 @@ func hydrateSDKInitExtendServiceReferences(request scaffoldRequest) (scaffoldReq
 	if err := decodeScaffoldDraft(data, request.path, request.kind, current); err != nil {
 		return scaffoldRequest{}, err
 	}
+	// Event-only extension may rely on the attachment already declared by the accepted SDK file.
+	if len(request.events) > 0 && strings.TrimSpace(request.webhookAttachment) == "" {
+		request.webhookAttachment = strings.TrimSpace(current.WebhookAttachment)
+	}
 	explicit := make(map[string]struct{}, len(request.services))
 	for _, service := range request.services {
 		explicit[service.name] = struct{}{}
 	}
-	referenced := make([]string, 0, len(request.operations)+len(request.selectAll))
+	referenced := make([]string, 0, len(request.operations)+len(request.selectAll)+len(request.events))
 	seen := make(map[string]struct{}, cap(referenced))
 	for _, operation := range request.operations {
 		// Preserve first-reference order so Registry resolution and user-facing diagnostics remain deterministic.
@@ -150,6 +158,13 @@ func hydrateSDKInitExtendServiceReferences(request scaffoldRequest) (scaffoldReq
 			referenced = append(referenced, serviceName)
 		}
 	}
+	for _, event := range request.events {
+		// An event-qualified service needs its existing immutable pin even when no operation flag accompanies the extension.
+		if _, exists := seen[event.service]; !exists {
+			seen[event.service] = struct{}{}
+			referenced = append(referenced, event.service)
+		}
+	}
 	for _, serviceName := range referenced {
 		// Explicit --service input remains authoritative and will be canonicalized by normal workspace-first resolution.
 		if _, exists := explicit[serviceName]; exists {
@@ -162,6 +177,25 @@ func hydrateSDKInitExtendServiceReferences(request scaffoldRequest) (scaffoldReq
 		}
 		request.services = append(request.services, scaffoldService{name: serviceName, version: service.Version})
 		explicit[serviceName] = struct{}{}
+	}
+	for _, event := range request.events {
+		// Event-only extension inherits the existing operation boundary instead of prompting to re-author unrelated SDK scope.
+		if sdkInitServiceHasOperationSelection(request, event.service) {
+			continue
+		}
+		service, exists := current.Services[event.service]
+		// Unknown aliases remain for canonical resolution and its existing missing-operation diagnostic.
+		if !exists {
+			continue
+		}
+		// The accepted complete-surface policy stays compact rather than expanding into Registry operation names.
+		if service.SelectAll {
+			request.selectAll = append(request.selectAll, event.service)
+			continue
+		}
+		for _, operation := range service.Operations {
+			request.operations = append(request.operations, scaffoldOperation{service: event.service, operation: operation})
+		}
 	}
 	return request, nil
 }
@@ -354,6 +388,7 @@ func resolveSDKInitServices(request scaffoldRequest, client *api.Client) (scaffo
 	}
 	request.operations = rewriteSDKInitOperations(request.operations, aliases)
 	request.selectAll = rewriteSDKInitNames(request.selectAll, aliases)
+	request.events = rewriteSDKInitEvents(request.events, aliases)
 	return request, resolved, nil
 }
 
@@ -375,6 +410,10 @@ func completeSDKInitOperationSelections(cmd *cobra.Command, client *api.Client, 
 		}
 		// Explicit --operation and --select-all selections remain authoritative and bypass discovery prompts.
 		if sdkInitServiceHasOperationSelection(request, service.target.slug) {
+			continue
+		}
+		// SDK and MCP apps may expose only inbound events, so event scope must not imply every callable operation.
+		if (request.kind == configfile.KindSDK || request.kind == configfile.KindMCP) && sdkInitServiceHasEventSelection(request, service.target.slug) {
 			continue
 		}
 		// Automation must declare its capability boundary rather than silently accepting a Registry-wide operation set.
@@ -430,6 +469,55 @@ func validateSDKInitExplicitOperations(client *api.Client, service sdkInitResolv
 	return nil
 }
 
+// validateSDKInitWebhookSelections proves the attachment and every exact event name before workspace state can change.
+func validateSDKInitWebhookSelections(client *api.Client, request scaffoldRequest, services []sdkInitResolvedService) error {
+	// An attachment without selected events is valid preparatory SDK state and remains subject to Engine plan validation.
+	if len(request.events) == 0 {
+		return nil
+	}
+	// Event delivery has no registration identity unless the SDK names one attachment.
+	if strings.TrimSpace(request.webhookAttachment) == "" {
+		return errors.New("--events requires --webhook-attachment")
+	}
+	resolvedByName := make(map[string]sdkInitResolvedService, len(services))
+	for _, service := range services {
+		resolvedByName[service.target.slug] = service
+	}
+	eventsByService := make(map[string][]string)
+	serviceOrder := make([]string, 0, len(services))
+	for _, event := range request.events {
+		service, exists := resolvedByName[event.service]
+		// Event flags cannot silently introduce a service without an immutable version selection.
+		if !exists {
+			return fmt.Errorf("event service %q is not declared; add --service %s@<version>", event.service, event.service)
+		}
+		// First occurrence order keeps Registry reads and diagnostics deterministic across repeated flags.
+		if _, seen := eventsByService[service.target.slug]; !seen {
+			serviceOrder = append(serviceOrder, service.target.slug)
+		}
+		eventsByService[service.target.slug] = append(eventsByService[service.target.slug], event.event)
+	}
+	for _, serviceName := range serviceOrder {
+		service := resolvedByName[serviceName]
+		available, err := client.FetchWebhooks(service.target.serviceID, service.version)
+		// Registry transport or visibility failures cannot be interpreted as an empty event catalogue.
+		if err != nil {
+			return fmt.Errorf("validate webhook events for %s@%s: %w", serviceName, service.version, err)
+		}
+		availableNames := make(map[string]struct{}, len(available))
+		for _, webhook := range available {
+			availableNames[webhook.Name] = struct{}{}
+		}
+		for _, eventName := range eventsByService[serviceName] {
+			// Exact matching preserves the imported event identity used by generation and runtime subscription filtering.
+			if _, exists := availableNames[eventName]; !exists {
+				return fmt.Errorf("webhook event %s is not available for service %s version %s; run 'fused-cli service webhooks %s --version %s' to list available events", eventName, serviceName, service.version, serviceName, service.version)
+			}
+		}
+	}
+	return nil
+}
+
 // sdkInitServiceHasOperationSelection reports whether one resolved service already has an explicit capability boundary.
 func sdkInitServiceHasOperationSelection(request scaffoldRequest, serviceName string) bool {
 	for _, operation := range request.operations {
@@ -441,6 +529,17 @@ func sdkInitServiceHasOperationSelection(request scaffoldRequest, serviceName st
 	for _, selected := range request.selectAll {
 		// Explicit select-all is a complete alternative to enumerating operation IDs.
 		if selected == serviceName {
+			return true
+		}
+	}
+	return false
+}
+
+// sdkInitServiceHasEventSelection reports whether one SDK service has an explicit inbound-event capability boundary.
+func sdkInitServiceHasEventSelection(request scaffoldRequest, serviceName string) bool {
+	for _, event := range request.events {
+		// One exact event is sufficient to keep operation discovery from broadening an event-only SDK.
+		if event.service == serviceName {
 			return true
 		}
 	}
@@ -523,6 +622,19 @@ func rewriteSDKInitNames(names []string, aliases map[string]string) []string {
 	return rewritten
 }
 
+// rewriteSDKInitEvents maps event service aliases onto the canonical keys persisted in the SDK config.
+func rewriteSDKInitEvents(events []scaffoldEvent, aliases map[string]string) []scaffoldEvent {
+	rewritten := make([]scaffoldEvent, 0, len(events))
+	for _, event := range events {
+		// Unknown keys remain unchanged so pre-activation event validation can produce an actionable declaration error.
+		if canonical, ok := aliases[event.service]; ok {
+			event.service = canonical
+		}
+		rewritten = append(rewritten, event)
+	}
+	return rewritten
+}
+
 // planSDKInitWorkspace prepares and plans only service versions that are not already enabled.
 func planSDKInitWorkspace(client *api.Client, services []sdkInitResolvedService) (*sdkInitWorkspaceDraft, error) {
 	additions := sdkInitWorkspaceAdditions(services)
@@ -594,6 +706,10 @@ func printSDKInitWorkspacePlan(cmd *cobra.Command, draft *sdkInitWorkspaceDraft)
 
 // confirmSDKInitIfNeeded asks once for the combined workspace and SDK intent while automation proceeds from exact flags.
 func confirmSDKInitIfNeeded(request scaffoldRequest, services []sdkInitResolvedService, workspaceChange bool) (bool, error) {
+	// Prompt has already reviewed the complete composed intent, so nested lifecycle confirmations would split one authorization into two.
+	if request.skipConfirmation {
+		return true, nil
+	}
 	// --no-input and CI require exact resolvable flags and authorize no terminal interaction.
 	if nonInteractive() {
 		return true, nil
@@ -621,6 +737,10 @@ func sdkInitConfirmationMessage(request scaffoldRequest, services []sdkInitResol
 	} else if len(request.selectAll) > 0 {
 		// Preserve the user's explicit complete-surface choice in the final confirmation language.
 		selection = "all operations for the selected services"
+	}
+	// Webhook delivery is independent of operation scope, so the review names both capabilities when events were requested.
+	if len(request.events) > 0 {
+		selection = fmt.Sprintf("%s and %d webhook event(s) from %s", selection, len(request.events), request.webhookAttachment)
 	}
 	appIdentity := request.name
 	// An explicit or prompted successor must remain visible in the same final authorization as its expanded scope.

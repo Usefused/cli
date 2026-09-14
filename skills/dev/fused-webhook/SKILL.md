@@ -1,6 +1,6 @@
 ---
 name: fused-webhook
-description: "Use when the user wants to register inbound provider webhook ingress using fused-cli -- creating a kind: webhook config, attaching it to an SDK via webhook_attachment, or running webhook plan/apply/validate. Trigger on 'register a webhook', 'kind: webhook', 'webhook_attachment', 'provider events in my SDK', or 'fused-cli webhook'. Fused-owned connected-auth lifecycle events need no ingress registration; read fused-sdk for that generated receiver behavior. For the read-only workspace service webhooks command read fused-workspace instead."
+description: "Use when the user wants to register inbound provider webhook ingress using fused-cli -- creating a kind: webhook config, attaching it to an SDK or MCP app via webhook_attachment, or running webhook plan/apply/validate. Trigger on 'register a webhook', 'kind: webhook', 'webhook_attachment', 'provider events in my SDK or MCP', or 'fused-cli webhook'. Fused-owned connected-auth lifecycle events need no ingress registration; read fused-sdk for generated receiver behavior. For the read-only workspace service webhooks command read fused-workspace instead."
 ---
 
 # Webhook registration config
@@ -49,17 +49,17 @@ duplicate names. Only when a `signature_header` list is absent does OpenAPI
 import infer it from required header parameters on webhook operations. Do not
 add guessed provider headers or put header values in the Registry contract.
 
-## Attaching provider events to an SDK
+## Attaching provider events to an SDK or MCP app
 
 Registering a webhook here only makes Fused *accept* the inbound delivery --
-it does not, by itself, route that event to an SDK. A `kind: sdk` config opts
+it does not, by itself, route that event to an app. A `kind: sdk` or `kind: mcp` config opts
 into provider delivery with `webhook_attachment` (top-level, sibling to
 `name`/`bucket` -- not nested under `services`, since one `kind: webhook`
 config can span services the attaching config also uses) plus a per-service
 explicit event allowlist:
 
 The ordinary attachment example chooses visible `default` as its candidate.
-SDK plan/apply must pass `bucket.use` for that exact bucket, or the action stops
+App plan/apply must pass `bucket.use` for that exact bucket, or the action stops
 without creating a fallback.
 
 ```yaml
@@ -78,7 +78,7 @@ services:
 ```
 
 - `webhook_attachment` names exactly one `kind: webhook` config -- one
-  attachment per SDK today (a list isn't supported yet).
+  attachment per SDK or MCP app today (a list isn't supported yet).
   Required as soon as any service below sets `webhooks` or
   `webhooks_select_all: true`; omitting it while selecting webhooks is
   rejected at plan time, both locally and by the Engine.
@@ -93,16 +93,20 @@ services:
   still only checks that `webhook_attachment` is non-empty when a service
   selects webhooks (it has no store access to look the config up); the
   coverage check is Engine-only.
-- `webhooks_select_all: true` is the webhook-only counterpart to the
+- For SDKs, `webhooks_select_all: true` is the webhook-only counterpart to the
   operations `select_all: true` you already know from `fused-sdk`/
-  `fused-mcp` -- either can be set independent of the other. `kind: mcp`
-  cannot select provider webhooks at all (neither field is valid on an MCP
-  service).
+  `fused-mcp` -- either can be set independent of the other. The initial MCP
+  event-resource surface requires finite `webhooks` names and rejects
+  `webhooks_select_all: true`.
 - Delivery is scoped to exactly this attachment: the WS bridge resolves
   which `kind: webhook` config a connecting SDK attached
   server-side (from its own applied config), so two different registrations
-  for the same service+event never cross-deliver to an SDK that only
+  for the same service+event never cross-deliver to an app that only
   attached to one of them.
+- SDK receivers retain durable at-least-once delivery and explicit ack/nack.
+  MCP delivery currently emits live, best-effort
+  `notifications/resources/updated` on the open Streamable HTTP SSE connection;
+  `resources/read` returns occurrence metadata, not the provider payload.
 
 ## Fused-owned auth lifecycle events
 

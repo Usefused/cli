@@ -26,20 +26,22 @@ const (
 )
 
 type unifiedInitOptions struct {
-	sdk         bool
-	mcp         bool
-	api         bool
-	webhook     bool
-	secrets     []string
-	extend      bool
-	services    []string
-	operations  []string
-	selectAll   []string
-	version     string
-	description string
-	language    string
-	bucket      string
-	noApply     bool
+	sdk               bool
+	mcp               bool
+	api               bool
+	webhook           bool
+	secrets           []string
+	extend            bool
+	services          []string
+	operations        []string
+	selectAll         []string
+	events            []string
+	version           string
+	description       string
+	language          string
+	bucket            string
+	webhookAttachment string
+	noApply           bool
 }
 
 type unifiedInitRunner func(*cobra.Command, unifiedInitMode, scaffoldRequest) error
@@ -126,6 +128,8 @@ retain available plan receipts without applying Engine state.`,
 	command.Flags().StringSliceVar(&opts.services, "service", nil, "Registry service as <service>[@<version>]; comma-separated or repeatable")
 	command.Flags().StringSliceVar(&opts.operations, "operation", nil, "Selected operation as <service>=<operationId>; repeatable")
 	command.Flags().StringSliceVar(&opts.selectAll, "select-all", nil, "Service whose complete operation surface should be selected; repeatable")
+	command.Flags().StringVar(&opts.webhookAttachment, "webhook-attachment", "", "Existing webhook registration bundle to attach to an SDK or MCP app")
+	command.Flags().StringArrayVar(&opts.events, "events", nil, "Webhook events as <service>=<event>[,<event>...]; repeatable")
 	command.Flags().StringVar(&opts.version, "version", defaultScaffoldVersion, "App version")
 	command.Flags().StringVar(&opts.language, "language", defaultScaffoldLanguage, "Generated SDK target language")
 	command.Flags().StringVar(&opts.bucket, "bucket", "", "Existing bucket to bind to this app")
@@ -241,6 +245,10 @@ func promptUnifiedInitMCPDescription() (string, error) {
 
 // buildUnifiedInitRequest preserves each resource kind while keeping direct API apps on the SDK contract.
 func buildUnifiedInitRequest(cmd *cobra.Command, mode unifiedInitMode, name string, opts *unifiedInitOptions) (scaffoldRequest, error) {
+	// Direct REST apps and registration configs have no long-lived event receiver; SDK and MCP apps do.
+	if mode != unifiedInitModeSDK && mode != unifiedInitModeMCP && (cmd.Flags().Changed("webhook-attachment") || len(opts.events) > 0) {
+		return scaffoldRequest{}, errors.New("--webhook-attachment and --events can only be used with --sdk or --mcp")
+	}
 	// Webhook flags and references must validate before any remote resolution.
 	if mode == unifiedInitModeWebhook {
 		return buildWebhookInitRequest(cmd, name, opts)
@@ -273,6 +281,20 @@ func buildUnifiedInitRequest(cmd *cobra.Command, mode unifiedInitMode, name stri
 	if err != nil {
 		return scaffoldRequest{}, err
 	}
+	events, err := parseScaffoldEvents(opts.events)
+	// Event groups are parsed before service resolution so malformed local input cannot enable workspace state.
+	if err != nil {
+		return scaffoldRequest{}, err
+	}
+	webhookAttachment := strings.TrimSpace(opts.webhookAttachment)
+	// An explicitly supplied attachment must name one applied registration bundle.
+	if cmd.Flags().Changed("webhook-attachment") && webhookAttachment == "" {
+		return scaffoldRequest{}, errors.New("--webhook-attachment requires a name")
+	}
+	// New SDKs cannot derive an ingress identity from anywhere except the explicit attachment flag.
+	if !opts.extend && len(events) > 0 && webhookAttachment == "" {
+		return scaffoldRequest{}, errors.New("--events requires --webhook-attachment")
+	}
 	path, err := scaffoldTargetPath(kind, strings.TrimSpace(name), ConfigFile)
 	// Target validation prevents unsafe or ambiguous config writes.
 	if err != nil {
@@ -289,10 +311,10 @@ func buildUnifiedInitRequest(cmd *cobra.Command, mode unifiedInitMode, name stri
 	}
 	return scaffoldRequest{
 		kind: kind, name: strings.TrimSpace(name), path: path, extend: opts.extend,
-		services: services, operations: operations, selectAll: selectAll,
-		version: opts.version, description: opts.description, language: language, bucket: strings.TrimSpace(opts.bucket),
+		services: services, operations: operations, selectAll: selectAll, events: events,
+		version: opts.version, description: opts.description, language: language, bucket: strings.TrimSpace(opts.bucket), webhookAttachment: webhookAttachment,
 		versionSet: cmd.Flags().Changed("version"), languageSet: cmd.Flags().Changed("language"),
-		descriptionSet: mode == unifiedInitModeMCP && strings.TrimSpace(opts.description) != "", bucketSet: cmd.Flags().Changed("bucket"),
+		descriptionSet: mode == unifiedInitModeMCP && strings.TrimSpace(opts.description) != "", bucketSet: cmd.Flags().Changed("bucket"), webhookAttachmentSet: cmd.Flags().Changed("webhook-attachment"),
 		generate: mode == unifiedInitModeSDK, generateSet: mode == unifiedInitModeSDK || mode == unifiedInitModeAPI,
 		noApply: opts.noApply,
 	}, nil

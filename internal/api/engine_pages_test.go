@@ -82,6 +82,35 @@ func TestSearchEndpointsPageSendsLimitOffset(t *testing.T) {
 	}
 }
 
+// TestParsePromptIntentRequestsAppAndWebhookFields verifies the CLI consumes the Registry's complete prompt projection.
+func TestParsePromptIntentRequestsAppAndWebhookFields(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		var body struct {
+			Query string `json:"query"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			t.Fatalf("decode GraphQL request: %v", err)
+		}
+		for _, field := range []string{"kind", "webhook_requested", "endpoint_queries", "select_all_operations", "event_queries"} {
+			// The request must include every field needed to reject incompatible output kinds before mutation.
+			if !strings.Contains(body.Query, field) {
+				t.Fatalf("query does not contain %q: %s", field, body.Query)
+			}
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"data":{"parseSDKIntent":{"kind":"sdk","name":"payments-sdk","language":"typescript","description":"Receive payments","webhook_requested":true,"services":[{"name":"stripe","endpoint_query":"","endpoint_queries":["createPayment","refund payment"],"select_all_operations":false,"event_queries":["payment succeeded","payment failed"]}]}}}`))
+	}))
+	defer server.Close()
+
+	intent, err := api.NewClient(server.URL, "fsk_test").ParsePromptIntent("create an SDK for Stripe payment events")
+	if err != nil {
+		t.Fatalf("ParsePromptIntent: %v", err)
+	}
+	if intent.Kind != "sdk" || !intent.WebhookRequested || len(intent.Services) != 1 || len(intent.Services[0].EndpointQueries) != 2 || intent.Services[0].SelectAllOperations || len(intent.Services[0].EventQueries) != 2 {
+		t.Fatalf("unexpected prompt intent: %#v", intent)
+	}
+}
+
 // TestWorkspaceWebhooksAndAppTokensUseEngineGraphQL verifies both reads share the Engine endpoint.
 func TestWorkspaceWebhooksAndAppTokensUseEngineGraphQL(t *testing.T) {
 	var paths []string

@@ -25,36 +25,42 @@ const (
 var scaffoldKeyCleaner = regexp.MustCompile(`[^A-Za-z0-9]+`)
 
 type scaffoldOptions struct {
-	extend      bool
-	services    []string
-	operations  []string
-	selectAll   []string
-	version     string
-	description string
-	language    string
-	bucket      string
+	extend            bool
+	services          []string
+	operations        []string
+	selectAll         []string
+	events            []string
+	version           string
+	description       string
+	language          string
+	bucket            string
+	webhookAttachment string
 }
 
 type scaffoldRequest struct {
-	kind           configfile.ConfigKind
-	name           string
-	path           string
-	extend         bool
-	services       []scaffoldService
-	operations     []scaffoldOperation
-	selectAll      []string
-	version        string
-	description    string
-	language       string
-	bucket         string
-	generate       bool
-	noApply        bool
-	versionSet     bool
-	descriptionSet bool
-	languageSet    bool
-	bucketSet      bool
-	generateSet    bool
-	webhookSecrets map[string]string
+	kind                 configfile.ConfigKind
+	name                 string
+	path                 string
+	extend               bool
+	services             []scaffoldService
+	operations           []scaffoldOperation
+	selectAll            []string
+	events               []scaffoldEvent
+	version              string
+	description          string
+	language             string
+	bucket               string
+	webhookAttachment    string
+	generate             bool
+	noApply              bool
+	versionSet           bool
+	descriptionSet       bool
+	languageSet          bool
+	bucketSet            bool
+	webhookAttachmentSet bool
+	generateSet          bool
+	skipConfirmation     bool
+	webhookSecrets       map[string]string
 }
 
 type scaffoldService struct {
@@ -65,6 +71,11 @@ type scaffoldService struct {
 type scaffoldOperation struct {
 	service   string
 	operation string
+}
+
+type scaffoldEvent struct {
+	service string
+	event   string
 }
 
 type scaffoldResult struct {
@@ -176,6 +187,11 @@ merge services into that file.`
 	if kind == configfile.KindSDK {
 		command.Flags().StringVar(&opts.language, "language", defaultScaffoldLanguage, "SDK target language")
 	}
+	// SDK and MCP apps share explicit inbound-event selection while retaining different delivery transports.
+	if kind == configfile.KindSDK || kind == configfile.KindMCP {
+		command.Flags().StringVar(&opts.webhookAttachment, "webhook-attachment", "", "Existing webhook registration bundle to attach to this app")
+		command.Flags().StringArrayVar(&opts.events, "events", nil, "Webhook events as <service>=<event>[,<event>...]; repeatable")
+	}
 	// MCP descriptions are authored by the calling agent and become server identity metadata, not tool documentation.
 	if kind == configfile.KindMCP {
 		command.Flags().StringVar(&opts.description, "description", "", "Human-readable summary naming selected services and capabilities")
@@ -260,6 +276,20 @@ func buildScaffoldRequest(cmd *cobra.Command, kind configfile.ConfigKind, args [
 	if err != nil {
 		return scaffoldRequest{}, err
 	}
+	events, err := parseScaffoldEvents(opts.events)
+	// Event syntax must be fully normalized before any target path or remote dependency is considered.
+	if err != nil {
+		return scaffoldRequest{}, err
+	}
+	webhookAttachment := strings.TrimSpace(opts.webhookAttachment)
+	// A present flag must identify one concrete registration bundle rather than defer failure to Engine plan.
+	if (kind == configfile.KindSDK || kind == configfile.KindMCP) && cmd.Flags().Changed("webhook-attachment") && webhookAttachment == "" {
+		return scaffoldRequest{}, errors.New("--webhook-attachment requires a name")
+	}
+	// New apps cannot inherit an attachment, while extensions may use the one already present in the accepted file.
+	if (kind == configfile.KindSDK || kind == configfile.KindMCP) && !opts.extend && len(events) > 0 && webhookAttachment == "" {
+		return scaffoldRequest{}, errors.New("--events requires --webhook-attachment")
+	}
 	path, err := scaffoldTargetPath(kind, name, ConfigFile)
 	if err != nil {
 		return scaffoldRequest{}, err
@@ -271,10 +301,10 @@ func buildScaffoldRequest(cmd *cobra.Command, kind configfile.ConfigKind, args [
 	}
 	return scaffoldRequest{
 		kind: kind, name: name, path: path, extend: opts.extend,
-		services: services, operations: operations, selectAll: selectAll,
-		version: opts.version, description: strings.TrimSpace(opts.description), language: opts.language, bucket: strings.TrimSpace(opts.bucket),
+		services: services, operations: operations, selectAll: selectAll, events: events,
+		version: opts.version, description: strings.TrimSpace(opts.description), language: opts.language, bucket: strings.TrimSpace(opts.bucket), webhookAttachment: webhookAttachment,
 		versionSet: cmd.Flags().Changed("version"), languageSet: cmd.Flags().Changed("language"),
-		descriptionSet: descriptionSet, bucketSet: cmd.Flags().Changed("bucket"),
+		descriptionSet: descriptionSet, bucketSet: cmd.Flags().Changed("bucket"), webhookAttachmentSet: (kind == configfile.KindSDK || kind == configfile.KindMCP) && cmd.Flags().Changed("webhook-attachment"),
 	}, nil
 }
 
@@ -377,6 +407,28 @@ func parseScaffoldOperations(values []string) ([]scaffoldOperation, error) {
 	return operations, nil
 }
 
+// parseScaffoldEvents expands each service-qualified flag into exact event names while preserving repeat order.
+func parseScaffoldEvents(values []string) ([]scaffoldEvent, error) {
+	events := make([]scaffoldEvent, 0, len(values))
+	for _, value := range values {
+		service, rawEvents, found := strings.Cut(strings.TrimSpace(value), "=")
+		service, rawEvents = strings.TrimSpace(service), strings.TrimSpace(rawEvents)
+		// One service prefix scopes the complete comma-separated event group and cannot be omitted.
+		if !found || service == "" || rawEvents == "" {
+			return nil, fmt.Errorf("--events requires <service>=<event>[,<event>...]")
+		}
+		for _, rawEvent := range strings.Split(rawEvents, ",") {
+			event := strings.TrimSpace(rawEvent)
+			// Empty members usually indicate a trailing comma or a missing name and must not disappear silently.
+			if event == "" {
+				return nil, fmt.Errorf("--events %q contains an empty event name", value)
+			}
+			events = append(events, scaffoldEvent{service: service, event: event})
+		}
+	}
+	return events, nil
+}
+
 func parseScaffoldNames(flag string, values []string) ([]string, error) {
 	names := make([]string, 0, len(values))
 	for _, value := range values {
@@ -463,6 +515,10 @@ func newScaffoldData(request scaffoldRequest, resolver scaffoldRequirementsResol
 			generate := request.generate
 			config.Generate = &generate
 		}
+	}
+	// SDK and MCP attachments are app-wide while event allowlists remain scoped to individual services below.
+	if (request.kind == configfile.KindSDK || request.kind == configfile.KindMCP) && request.webhookAttachmentSet {
+		config.WebhookAttachment = request.webhookAttachment
 	}
 	// An explicit flag remains authoritative and is verified later by plan's exact bucket.use check.
 	if request.bucketSet {
@@ -593,7 +649,21 @@ func mergeAppIdentity(config *configfile.AppConfig, request scaffoldRequest) (bo
 		return false, err
 	}
 	bucketChanged, err := mergeScaffoldField(&config.Bucket, request.bucket, request.bucketSet, "bucket")
-	return changed || languageChanged || descriptionChanged || generateChanged || bucketChanged, err
+	// A conflicting attachment must stop the extension before any event allowlist is merged into the draft.
+	if err != nil {
+		return false, err
+	}
+	webhookAttachmentChanged, err := mergeSDKWebhookAttachment(config, request)
+	return changed || languageChanged || descriptionChanged || generateChanged || bucketChanged || webhookAttachmentChanged, err
+}
+
+// mergeSDKWebhookAttachment adds one app-wide ingress registration reference without retargeting an existing draft.
+func mergeSDKWebhookAttachment(config *configfile.AppConfig, request scaffoldRequest) (bool, error) {
+	// Workspace configs have no receiver attachment, while SDK and MCP app drafts share this field.
+	if request.kind != configfile.KindSDK && request.kind != configfile.KindMCP {
+		return false, nil
+	}
+	return mergeScaffoldField(&config.WebhookAttachment, request.webhookAttachment, request.webhookAttachmentSet, "webhook_attachment")
 }
 
 // mergeAppVersion treats an explicit version on --extend as a deliberate new immutable app version in the same file.
@@ -697,7 +767,12 @@ func mergeAppSelections(config *configfile.AppConfig, request scaffoldRequest) (
 		return false, err
 	}
 	selectAllChanged, err := mergeAppSelectAll(config, request.selectAll)
-	return changed || operationsChanged || selectAllChanged, err
+	// Operation selection errors must stop before independent webhook scope is added to the same service map.
+	if err != nil {
+		return false, err
+	}
+	eventsChanged, err := mergeAppEvents(config, request.events)
+	return changed || operationsChanged || selectAllChanged || eventsChanged, err
 }
 
 // enrichAppScaffold adds only missing routing bindings after all create or
@@ -921,6 +996,29 @@ func mergeAppSelectAll(config *configfile.AppConfig, services []string) (bool, e
 			changed = true
 		}
 		config.Services[serviceName] = service
+	}
+	return changed, nil
+}
+
+// mergeAppEvents adds exact per-service webhook names while preserving authored ordering and existing selections.
+func mergeAppEvents(config *configfile.AppConfig, events []scaffoldEvent) (bool, error) {
+	changed := false
+	for _, requested := range events {
+		service, exists := config.Services[requested.service]
+		// Event scope cannot implicitly add a service because it would lack an immutable version and operation boundary.
+		if !exists {
+			return false, fmt.Errorf("event service %q is not declared; add --service %s@<version>", requested.service, requested.service)
+		}
+		// A complete webhook selection already includes every exact event and should not acquire a redundant list.
+		if service.WebhooksSelectAll {
+			return false, fmt.Errorf("service %q already uses webhooks_select_all and cannot list events", requested.service)
+		}
+		// Repeated flags and comma groups remain idempotent in the generated YAML.
+		if !containsString(service.Webhooks, requested.event) {
+			service.Webhooks = append(service.Webhooks, requested.event)
+			config.Services[requested.service] = service
+			changed = true
+		}
 	}
 	return changed, nil
 }

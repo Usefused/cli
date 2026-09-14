@@ -853,8 +853,8 @@ workspace/bucket/connect steps above do not change.
 | `fused-workspace` | The service allowlist: enabling services/versions, execution policy, deprecations |
 | `fused-sdk` | Generating a typed SDK package and constructing physical or Unified Engine execution API calls |
 | `fused-unified-operations` | Defining one generated SDK operation across multiple services: mappings, dependencies, rollback, outputs, call-time targets, and connected-auth selectors |
-| `fused-mcp` | Generating an Engine-hosted MCP server from selected operations (MCP cannot select webhooks) |
-| `fused-webhook` | Registering inbound webhook ingress (`kind: webhook`) and attaching it to an SDK via `webhook_attachment` so that SDK receives delivery |
+| `fused-mcp` | Generating an Engine-hosted MCP server from selected operations and explicit provider event resources |
+| `fused-webhook` | Registering inbound webhook ingress (`kind: webhook`) and attaching it to an SDK or MCP app via `webhook_attachment` |
 | `fused-bucket` | Credential containers: secrets, static values, registering a service's OAuth/OIDC app, starting an OAuth connect session, managing a connected user's resources |
 | `fused-config` | Cross-cutting config owned by no single concept above: execution policy (rate limits/retries/pagination/outbound webhook verification, local-workspace-effect vs. Registry-publish), connection profiles (auth + dynamic request routing), and the OpenAPI/Postman `x-fused-connect` equivalent |
 | `fused-notifications` | Reading, not authoring: what a `plan`/`apply` notification block means, `registry_*` vs. `workspace_*` types, severity, and how/where one gets marked read or dismissed (UI only, not `fused-cli`) |

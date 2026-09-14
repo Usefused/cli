@@ -63,6 +63,45 @@ func TestUnifiedInitNoApplyFlagReachesLifecycleRequest(t *testing.T) {
 	}
 }
 
+// TestUnifiedAppInitAcceptsWebhookAttachmentAndEvents exposes deterministic event flags for SDK and MCP receivers.
+func TestUnifiedAppInitAcceptsWebhookAttachmentAndEvents(t *testing.T) {
+	for _, mode := range []string{"--sdk", "--mcp"} {
+		t.Run(mode, func(t *testing.T) {
+			var got scaffoldRequest
+			args := []string{"payments", mode, "--service", "stripe@v1", "--select-all", "stripe", "--webhook-attachment", "payments-events", "--events", "stripe=payment.succeeded,payment.failed"}
+			// MCP initialization also requires authored server identity metadata.
+			if mode == "--mcp" {
+				args = append(args, "--description", "Receive and act on payment events.")
+			}
+			executeUnifiedInitForTest(t, func(_ *cobra.Command, _ unifiedInitMode, request scaffoldRequest) error {
+				got = request
+				return nil
+			}, args...)
+			// Public init must preserve the exact attachment and comma-separated event request for either receiver.
+			if got.webhookAttachment != "payments-events" || !got.webhookAttachmentSet || len(got.events) != 2 || got.events[1].event != "payment.failed" {
+				t.Fatalf("unified app webhook request=%#v", got)
+			}
+		})
+	}
+}
+
+// TestUnifiedInitRejectsWebhookReceiverFlagsWithoutReceiverTransport keeps REST and ingress registration modes receiver-free.
+func TestUnifiedInitRejectsWebhookReceiverFlagsWithoutReceiverTransport(t *testing.T) {
+	tests := [][]string{
+		{"support-api", "--api", "--service", "linear@v1", "--select-all", "linear", "--webhook-attachment", "events"},
+		{"events", "--webhook", "--service", "linear", "--events", "linear=issue.created"},
+	}
+	for _, args := range tests {
+		err := executeUnifiedInitForTestWithError(t, func(*cobra.Command, unifiedInitMode, scaffoldRequest) error {
+			return errors.New("runner must not be reached")
+		}, args...)
+		// Modes without a receiver must reject event flags before any lifecycle runner can mutate state.
+		if err == nil || !strings.Contains(err.Error(), "can only be used with --sdk or --mcp") {
+			t.Fatalf("args=%v error=%v", args, err)
+		}
+	}
+}
+
 // TestUnifiedInitNoApplyPlansWorkspaceWithoutApplying proves missing services retain a workspace receipt while app planning waits for activation.
 func TestUnifiedInitNoApplyPlansWorkspaceWithoutApplying(t *testing.T) {
 	directory := t.TempDir()

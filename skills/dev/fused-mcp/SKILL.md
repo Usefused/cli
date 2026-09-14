@@ -1,6 +1,6 @@
 ---
 name: fused-mcp
-description: "Use when the user wants to deploy or manage an Engine-hosted MCP server using fused-cli mcp and a kind: mcp config. Trigger on 'MCP server', 'fused-cli mcp', or 'kind: mcp' files. An MCP service cannot select webhooks; for generated SDK packages read fused-sdk instead."
+description: "Use when the user wants to deploy or manage an Engine-hosted MCP server using fused-cli mcp and a kind: mcp config, including subscribing to explicitly selected provider webhook events as MCP resources. Trigger on 'MCP server', 'fused-cli mcp', 'kind: mcp', or 'MCP event notification'. For generated SDK packages read fused-sdk instead."
 ---
 
 # MCP server config
@@ -156,13 +156,30 @@ visibility never grants execution scope.
 Physical-target pagination inside a Unified operation must stay target-keyed in
 that documented Unified `pagination` parameter. Never move it into the separate
 third argument used only by direct physical calls.
-A service's `webhooks`/`webhooks_select_all` are rejected outright on an MCP
-config (both CLI-side and Engine-side) -- this predates `webhook_attachment`
-and hasn't been revisited since (see the doc comment on
-`validateAppServices` in `cli/internal/configfile/parser.go` if you need
-to check whether that's changed). Setting top-level `webhook_attachment`
-alone, with no service selecting webhooks, is accepted but has no effect.
-Treat webhook delivery as an SDK-only surface today (see `fused-webhook`).
+An MCP config may attach one applied `kind: webhook` registration and select
+explicit provider event names. The first event surface intentionally rejects
+`webhooks_select_all: true`: every selected event must have a finite resource
+URI and exact broker subject. A service may be event-only or combine events
+with operations:
+
+```yaml
+webhook_attachment: payments-events
+services:
+  stripe:
+    version: "v1"
+    webhooks: ["payment.succeeded", "payment.failed"]
+```
+
+Engine advertises `resources.subscribe: true` during Streamable HTTP
+initialization when the MCP version selects events. Use `resources/list` to
+discover its `fused://events/<service-id>/<event-name>` resources, then send
+`resources/subscribe` with the exact URI. A matching delivery is emitted on
+the session's open GET/SSE stream as
+`notifications/resources/updated`; call `resources/read` for the latest
+credential-free occurrence ID and receipt time. This first slice is live and
+best-effort: it does not replay missed events, expose the provider payload, or
+provide durable acknowledgement. Legacy MCP SSE does not advertise this
+resource notification surface. See `fused-webhook` for ingress registration.
 
 ## Identity, versions, and authentication
 
@@ -210,7 +227,7 @@ This list may be behind the CLI's actual flags/subcommands -- run
 use canonical `<service>@<version>` to name their exact immutable version.
 
 ```shell
-fused-cli init <name> --mcp --description '<LLM-authored capability summary>' --service '<service>[@<version>]' [--operation '<service>=<operationId>']
+fused-cli init <name> --mcp --description '<LLM-authored capability summary>' --service '<service>[@<version>]' [--operation '<service>=<operationId>'] [--webhook-attachment <name> --events '<service>=<event>[,<event>...]']
 fused-cli extend <name> [--version <new>] [--description '<replacement capability summary>'] --service '<service>[@<version>]' --select-all '<service>'
 fused-cli mcp plan
 fused-cli mcp apply
@@ -234,8 +251,8 @@ scaffold-only scripts. Prefer top-level init for new onboarding.
 
 Use `init` to create `.fused/mcps/<name>.yaml` without overwriting an existing
 file. Use top-level `extend` to infer MCP mode and add selections in that same file. A changed stable SemVer version advances to its next minor, including under `--no-input`; an idempotent extension keeps the current version. Explicit `--version` overrides inference and is required for prerelease or non-SemVer versions. Other conflicts stop before writing. An empty skeleton is intentionally incomplete
-until each service lists operations or uses
-`--select-all`. For a service-bearing config without `--bucket`, init lists
+until each service lists operations, uses `select_all`, or selects explicit
+webhook events. For a service-bearing config without `--bucket`, init lists
 read-visible buckets once, writes the visible bucket named `default` or the
 first visible candidate, and fails without writing when none is visible. An
 explicit `--bucket` remains authoritative. Init never creates a bucket, and
@@ -357,6 +374,10 @@ acknowledges it with HTTP 202 and no JSON-RPC response body. Send both headers
 on subsequent POST, GET, and DELETE requests. The MCP client owns that
 transport identity: never expose it to the model, ask the model to invent it,
 or add it to `execute` arguments.
+When initialization advertises `resources.subscribe`, open the authenticated
+GET/SSE stream with those same headers before subscribing to an event resource;
+that stream carries `notifications/resources/updated` messages independently
+of POST responses.
 The `execute` tool description and `com.usefused/session` tool metadata tell
 capable hosts that `session.get`, `session.set`, and `session.page` are already
 attached inside each script and share state only across execute calls on the

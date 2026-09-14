@@ -1057,6 +1057,50 @@ services:
 	}
 }
 
+// TestParseAllowsSDKServiceWithOnlyWebhookEvents verifies inbound-only SDKs need no unrelated operation grant.
+func TestParseAllowsSDKServiceWithOnlyWebhookEvents(t *testing.T) {
+	data := []byte(`
+apiVersion: fused/v1
+kind: sdk
+name: payments
+version: "1.0.0"
+language: typescript
+webhook_attachment: payments-webhooks
+services:
+  stripe:
+    version: "2026-09-01"
+    webhooks: [payment.succeeded, payment.failed]
+`)
+	parsed, err := configfile.Parse(data, "payments.yaml")
+	if err != nil {
+		t.Fatalf("Parse event-only SDK: %v", err)
+	}
+	if parsed.SDK == nil || len(parsed.SDK.Services["stripe"].Operations) != 0 {
+		t.Fatalf("unexpected event-only SDK: %#v", parsed.SDK)
+	}
+}
+
+// TestParseAllowsMCPServiceWithOnlyExplicitWebhookEvents proves an MCP can expose a finite event-resource surface.
+func TestParseAllowsMCPServiceWithOnlyExplicitWebhookEvents(t *testing.T) {
+	data := []byte(`
+apiVersion: fused/v1
+kind: mcp
+name: payments
+version: "1.0.0"
+description: Receive payment events.
+webhook_attachment: payments-events
+services:
+  stripe:
+    version: "2026-09-01"
+    webhooks: [payment.succeeded]
+`)
+	parsed, err := configfile.Parse(data, "payments.yaml")
+	// Explicit events and their attachment are sufficient even without callable operations.
+	if err != nil || parsed.MCP == nil || parsed.MCP.Services["stripe"].Webhooks[0] != "payment.succeeded" {
+		t.Fatalf("unexpected event-only MCP parse: parsed=%#v err=%v", parsed.MCP, err)
+	}
+}
+
 func writeSDK(t *testing.T, dir, rel, name string) {
 	t.Helper()
 	writeFile(t, dir, rel, `

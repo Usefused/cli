@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/Usefused/cli/internal/api"
@@ -538,6 +539,10 @@ func TestFetchWebhooksProjectsAndDecodesInboundContract(t *testing.T) {
 	fixture := readExecutionContract(t, "v2_inbound_documentation.json")
 	server := newGraphQLContractServer(t, func(query string) any {
 		assertGraphQLFields(t, query, []string{"webhooks", "contract"})
+		// Webhook discovery must stay bound to the caller's immutable service version.
+		if !strings.Contains(query, "service(id: $id, version: $version)") {
+			t.Fatalf("webhook query is not version-scoped: %s", query)
+		}
 		return map[string]any{"service": map[string]any{"webhooks": fixture.Webhooks}}
 	})
 	defer server.Close()

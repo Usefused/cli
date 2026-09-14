@@ -738,7 +738,82 @@ func TestRewriteSDKInitSelectionsUsesCanonicalServiceKeys(t *testing.T) {
 	aliases := map[string]string{"linear": "@acme/linear"}
 	operations := rewriteSDKInitOperations([]scaffoldOperation{{service: "linear", operation: "issueUpdate"}}, aliases)
 	selectAll := rewriteSDKInitNames([]string{"linear"}, aliases)
-	if operations[0].service != "@acme/linear" || selectAll[0] != "@acme/linear" {
-		t.Fatalf("canonical selections = %#v / %#v", operations, selectAll)
+	events := rewriteSDKInitEvents([]scaffoldEvent{{service: "linear", event: "issue.created"}}, aliases)
+	// Every service-qualified selection must persist under the same resolved Registry identity.
+	if operations[0].service != "@acme/linear" || selectAll[0] != "@acme/linear" || events[0].service != "@acme/linear" {
+		t.Fatalf("canonical selections = %#v / %#v / %#v", operations, selectAll, events)
+	}
+}
+
+// TestValidateSDKInitWebhookSelectionsChecksPinnedVersion proves invalid event names fail before workspace planning.
+func TestValidateSDKInitWebhookSelectionsChecksPinnedVersion(t *testing.T) {
+	var gotVersion any
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		var body struct {
+			Query     string         `json:"query"`
+			Variables map[string]any `json:"variables"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			t.Fatalf("decode webhook catalogue request: %v", err)
+		}
+		// Version must be bound into the service lookup so sibling immutable contracts cannot leak events.
+		if request.URL.Path != "/graphql" || !strings.Contains(body.Query, "version: $version") {
+			t.Fatalf("unexpected webhook catalogue request: %s %s", request.URL.Path, body.Query)
+		}
+		gotVersion = body.Variables["version"]
+		_, _ = writer.Write([]byte(`{"data":{"service":{"webhooks":[{"id":"hook-1","name":"payment.succeeded","description":""}]}}}`))
+	}))
+	defer server.Close()
+	client := api.NewClient(server.URL, "test-key")
+	services := []sdkInitResolvedService{{target: workspaceServiceAddTarget{slug: "stripe", serviceID: "service-stripe"}, version: "v2"}}
+	request := scaffoldRequest{webhookAttachment: "payments-events", events: []scaffoldEvent{{service: "stripe", event: "payment.failed"}}}
+	err := validateSDKInitWebhookSelections(client, request, services)
+	// An exact missing event must fail locally while proving the requested immutable version reached Registry.
+	if err == nil || !strings.Contains(err.Error(), "payment.failed is not available") || gotVersion != "v2" {
+		t.Fatalf("error=%v version=%#v", err, gotVersion)
+	}
+}
+
+// TestValidateSDKInitWebhookSelectionsRequiresAttachment rejects an event allowlist with no ingress identity.
+func TestValidateSDKInitWebhookSelectionsRequiresAttachment(t *testing.T) {
+	request := scaffoldRequest{events: []scaffoldEvent{{service: "stripe", event: "payment.succeeded"}}}
+	err := validateSDKInitWebhookSelections(nil, request, nil)
+	// Local validation must stop before dereferencing a client or reaching workspace planning.
+	if err == nil || !strings.Contains(err.Error(), "--events requires --webhook-attachment") {
+		t.Fatalf("error=%v", err)
+	}
+}
+
+// TestHydrateSDKInitEventOnlyExtensionInheritsAttachmentAndOperations keeps webhook additions independent from operation re-authoring.
+func TestHydrateSDKInitEventOnlyExtensionInheritsAttachmentAndOperations(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "payments-sdk.yaml")
+	data := `apiVersion: fused/v1
+kind: sdk
+name: payments-sdk
+version: 1.0.0
+language: typescript
+bucket: default
+webhook_attachment: payments-events
+services:
+  stripe:
+    version: v1
+    operations: [createPayment]
+`
+	// The existing file is the authority for scope omitted from the additive event-only command.
+	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	request := scaffoldRequest{
+		kind: configfile.KindSDK, path: path, extend: true,
+		events: []scaffoldEvent{{service: "stripe", event: "payment.succeeded"}},
+	}
+	hydrated, err := hydrateSDKInitExtendServiceReferences(request)
+	// Hydration must remain read-only while recovering enough immutable scope for later Registry validation.
+	if err != nil {
+		t.Fatalf("hydrate event-only extension: %v", err)
+	}
+	// The prior attachment, service version, and operation selection are retained without marking them as explicit replacements.
+	if hydrated.webhookAttachment != "payments-events" || hydrated.webhookAttachmentSet || len(hydrated.services) != 1 || hydrated.services[0].version != "v1" || len(hydrated.operations) != 1 || hydrated.operations[0].operation != "createPayment" {
+		t.Fatalf("hydrated request=%#v", hydrated)
 	}
 }

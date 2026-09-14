@@ -1816,10 +1816,11 @@ type Webhook struct {
 	Contract    *InboundOperationContract `json:"contract,omitempty"`
 }
 
+// FetchWebhooks reads the webhook catalogue from one exact immutable service version.
 func (c *Client) FetchWebhooks(serviceID, version string) ([]Webhook, error) {
 	query := `
-		query FetchWebhooks($id: String!) {
-			service(id: $id) {
+		query FetchWebhooks($id: String!, $version: String) {
+			service(id: $id, version: $version) {
 				webhooks {
 					id
 					name
@@ -1834,19 +1835,28 @@ func (c *Client) FetchWebhooks(serviceID, version string) ([]Webhook, error) {
 			Webhooks []Webhook `json:"webhooks"`
 		} `json:"service"`
 	}
-	err := c.GraphQL(query, map[string]any{"id": serviceID}, &resp)
+	err := c.GraphQL(query, map[string]any{"id": serviceID, "version": version}, &resp)
 	return resp.Service.Webhooks, err
 }
 
 type IntentService struct {
-	Name          string `json:"name"`
-	EndpointQuery string `json:"endpoint_query"`
+	Name                string   `json:"name"`
+	EndpointQuery       string   `json:"endpoint_query"`
+	EndpointQueries     []string `json:"endpoint_queries"`
+	SelectAllOperations bool     `json:"select_all_operations"`
+	EventQueries        []string `json:"event_queries"`
 }
 
 type IntentPayload struct {
-	Services []IntentService `json:"services"`
+	Kind             string          `json:"kind"`
+	Name             string          `json:"name"`
+	Language         string          `json:"language"`
+	Description      string          `json:"description"`
+	WebhookRequested bool            `json:"webhook_requested"`
+	Services         []IntentService `json:"services"`
 }
 
+// ParseSDKIntent retains the original SDK-only projection for compatibility with the dormant cart workflow.
 func (c *Client) ParseSDKIntent(q string) (*IntentPayload, error) {
 	query := `
 		query ParseSDKIntent($q: String!) {
@@ -1866,6 +1876,37 @@ func (c *Client) ParseSDKIntent(q string) (*IntentPayload, error) {
 		return nil, err
 	}
 	return &resp.ParseSDKIntent, nil
+}
+
+// ParsePromptIntent asks Registry to classify one natural-language app goal and its operation or event searches.
+func (c *Client) ParsePromptIntent(q string) (*IntentPayload, error) {
+	query := `
+		query ParsePromptIntent($q: String!) {
+			parseSDKIntent(q: $q) {
+				kind
+				name
+				language
+				description
+				webhook_requested
+				services {
+					name
+					endpoint_query
+					endpoint_queries
+					select_all_operations
+					event_queries
+				}
+			}
+		}
+	`
+	var resp struct {
+		ParsePromptIntent IntentPayload `json:"parseSDKIntent"`
+	}
+	err := c.GraphQL(query, map[string]any{"q": q}, &resp)
+	// Registry parsing failures must remain distinguishable from a valid empty intent.
+	if err != nil {
+		return nil, err
+	}
+	return &resp.ParsePromptIntent, nil
 }
 
 // DownloadSDK leaves successful package bytes uncapped while bounding only an

@@ -535,24 +535,16 @@ func validateMCPKindFields(cfg *AppConfig) error {
 	return nil
 }
 
-// validateAppServices keeps per-service rules separate from app
-// identity rules because MCP and SDK share services but diverge on webhooks.
-//
-// The existing "mcp service cannot select webhooks" restriction predates
-// webhook_attachment/kind: webhook and its rationale isn't recorded here --
-// preserved as-is rather than assumed lifted, since MCP's generated surface
-// (Engine-hosted tools, not callback-based typed SDK methods) may not have
-// an equivalent place to deliver webhook events at all. Confirm with the
-// original author's intent before allowing kind: mcp to set
-// webhook_attachment or per-service Webhooks/WebhooksSelectAll.
+// validateAppServices keeps shared operation and event selection rules at the app boundary.
 func validateAppServices(services map[string]SDKService, kind ConfigKind, webhookAttachment string) error {
 	for svcName, svc := range services {
 		// Kind-specific diagnostics keep shared validation actionable for both app kinds.
 		if err := validateAppService(svcName, svc, kind); err != nil {
 			return err
 		}
-		if kind == KindMCP && (len(svc.Webhooks) > 0 || svc.WebhooksSelectAll) {
-			return fmt.Errorf("mcp service %q cannot select webhooks", svcName)
+		// The first MCP notification surface uses exact event resources; an unbounded selector cannot be represented safely yet.
+		if kind == KindMCP && svc.WebhooksSelectAll {
+			return fmt.Errorf("mcp service %q must select explicit webhook events instead of webhooks_select_all", svcName)
 		}
 		if (len(svc.Webhooks) > 0 || svc.WebhooksSelectAll) && strings.TrimSpace(webhookAttachment) == "" {
 			return fmt.Errorf("%s service %q selects webhook events but the app has no webhook_attachment", kind, svcName)
@@ -584,11 +576,11 @@ func strictUnmarshal(data []byte, target any) error {
 	return decoder.Decode(target)
 }
 
-// validateAppService checks operation selection and exact auth intent shared by SDK and MCP configs.
+// validateAppService checks capability selection and exact auth intent shared by SDK and MCP configs.
 func validateAppService(name string, svc SDKService, kind ConfigKind) error {
-	// Every selected service must expose at least one physical operation.
-	if len(svc.Operations) == 0 && !svc.SelectAll {
-		return fmt.Errorf("%s service %q requires at least one operation", kind, name)
+	// An event-only service is a complete receive capability for both SDK and MCP apps.
+	if len(svc.Operations) == 0 && !svc.SelectAll && len(svc.Webhooks) == 0 && !svc.WebhooksSelectAll {
+		return fmt.Errorf("%s service %q requires at least one operation or webhook", kind, name)
 	}
 	// Explicit operation IDs and select-all are competing authorities, so accepting
 	// both would make the generated surface depend on downstream precedence.
