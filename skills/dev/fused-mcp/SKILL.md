@@ -170,7 +170,8 @@ services:
     webhooks: ["payment.succeeded", "payment.failed"]
 ```
 
-For event resources, use MCP `2026-07-28`. Call `server/discover`, then
+For the unified tool and event-resource surface, use MCP `2026-07-28`. Call
+`server/discover`, then `tools/list` for `search_docs` and `execute`, and
 `resources/list` to discover the selected
 `fused://events/<service-id>/<event-name>` URIs. Open a long-lived POST response
 stream with `subscriptions/listen` and place the exact URIs in
@@ -374,18 +375,29 @@ Non-loopback transport discovery always returns HTTPS. Plain HTTP is reserved
 for explicit localhost or loopback development origins; clients must not rely
 on redirects preserving the execution token.
 
-For event discovery and subscriptions, use the stateless MCP `2026-07-28`
-request envelope. Every POST includes `Authorization`, `Content-Type:
+Use the stateless MCP `2026-07-28` request envelope for discovery, tools,
+resources, and subscriptions. Every POST includes `Authorization`, `Content-Type:
 application/json`, an `Accept` value containing both `application/json` and
 `text/event-stream`, `MCP-Protocol-Version: 2026-07-28`, and an exact
-`Mcp-Method` header. `resources/read` also includes `Mcp-Name` equal to its
-`params.uri`. Repeat the protocol version and an object-valued
+`Mcp-Method` header. `resources/read` includes `Mcp-Name` equal to its
+`params.uri`; `tools/call` includes `Mcp-Name` equal to its `params.name`.
+Repeat the protocol version and an object-valued
 `io.modelcontextprotocol/clientCapabilities` inside `params._meta` on every
 request. There is no initialize handshake or `Mcp-Session-Id` on this path.
 
-The existing tool runtime remains on the 2025 sessionful transport while its
-implicit cross-request result state is migrated to explicit modern handles.
-For that tool path, POST a JSON-RPC `initialize` request with
+On the 2026 path, call `tools/list` and then `tools/call` as ordinary stateless
+requests. A successful `execute` result returns `structuredContent.stateHandle`
+and the same opaque value under `_meta["com.usefused/state"]`. Omit
+`stateHandle` for independent work. Supply that exact value as
+`arguments.stateHandle` only when continuing `session.get`, `session.set`,
+`session.page`, or a retained-result `next_request`; Engine binds it to the
+immutable app version, execution-token identity, route, and connected-resource
+selectors. State expires with the advertised TTL. An unavailable handle returns
+`MCP_STATE_HANDLE_UNAVAILABLE` with `provider_execution: not_started`; create
+new state and reformat any script that depended on the expired values.
+
+The 2025 sessionful tool transport remains a compatibility path. For that path,
+POST a JSON-RPC `initialize` request with
 `Authorization: Bearer <token>`.
 Engine returns `Mcp-Session-Id` and the negotiated `MCP-Protocol-Version`.
 Before `tools/list` or any tool call, POST a JSON-RPC
