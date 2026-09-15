@@ -170,16 +170,24 @@ services:
     webhooks: ["payment.succeeded", "payment.failed"]
 ```
 
-Engine advertises `resources.subscribe: true` during Streamable HTTP
-initialization when the MCP version selects events. Use `resources/list` to
-discover its `fused://events/<service-id>/<event-name>` resources, then send
-`resources/subscribe` with the exact URI. A matching delivery is emitted on
-the session's open GET/SSE stream as
-`notifications/resources/updated`; call `resources/read` for the latest
-credential-free occurrence ID and receipt time. This first slice is live and
-best-effort: it does not replay missed events, expose the provider payload, or
-provide durable acknowledgement. Legacy MCP SSE does not advertise this
-resource notification surface. See `fused-webhook` for ingress registration.
+For event resources, use MCP `2026-07-28`. Call `server/discover`, then
+`resources/list` to discover the selected
+`fused://events/<service-id>/<event-name>` URIs. Open a long-lived POST response
+stream with `subscriptions/listen` and place the exact URIs in
+`notifications.resourceSubscriptions`. Engine first emits
+`notifications/subscriptions/acknowledged` with the supported subset, then
+emits `notifications/resources/updated` for matching webhook deliveries. Every
+notification carries the listen request ID in
+`params._meta["io.modelcontextprotocol/subscriptionId"]`.
+
+Call `resources/read` after an update to retrieve the latest retained occurrence,
+including its payload and receipt metadata. A disconnected listen stream does
+not replay missed notifications; reconnect, listen again, and read the resource
+to recover current state. The webhook remains in the shared JetStream retention
+path and an independent generated SDK durable consumer can still receive and
+explicitly acknowledge it. Do not use the removed `resources/subscribe`,
+`resources/unsubscribe`, or GET listener for event delivery. See
+`fused-webhook` for ingress registration.
 
 ## Identity, versions, and authentication
 
@@ -366,18 +374,26 @@ Non-loopback transport discovery always returns HTTPS. Plain HTTP is reserved
 for explicit localhost or loopback development origins; clients must not rely
 on redirects preserving the execution token.
 
-POST a JSON-RPC `initialize` request with `Authorization: Bearer <token>`.
+For event discovery and subscriptions, use the stateless MCP `2026-07-28`
+request envelope. Every POST includes `Authorization`, `Content-Type:
+application/json`, an `Accept` value containing both `application/json` and
+`text/event-stream`, `MCP-Protocol-Version: 2026-07-28`, and an exact
+`Mcp-Method` header. `resources/read` also includes `Mcp-Name` equal to its
+`params.uri`. Repeat the protocol version and an object-valued
+`io.modelcontextprotocol/clientCapabilities` inside `params._meta` on every
+request. There is no initialize handshake or `Mcp-Session-Id` on this path.
+
+The existing tool runtime remains on the 2025 sessionful transport while its
+implicit cross-request result state is migrated to explicit modern handles.
+For that tool path, POST a JSON-RPC `initialize` request with
+`Authorization: Bearer <token>`.
 Engine returns `Mcp-Session-Id` and the negotiated `MCP-Protocol-Version`.
 Before `tools/list` or any tool call, POST a JSON-RPC
 `notifications/initialized` notification with both returned headers; Engine
 acknowledges it with HTTP 202 and no JSON-RPC response body. Send both headers
-on subsequent POST, GET, and DELETE requests. The MCP client owns that
+on subsequent POST, GET, and DELETE requests. The 2025 MCP client owns that
 transport identity: never expose it to the model, ask the model to invent it,
 or add it to `execute` arguments.
-When initialization advertises `resources.subscribe`, open the authenticated
-GET/SSE stream with those same headers before subscribing to an event resource;
-that stream carries `notifications/resources/updated` messages independently
-of POST responses.
 The `execute` tool description and `com.usefused/session` tool metadata tell
 capable hosts that `session.get`, `session.set`, and `session.page` are already
 attached inside each script and share state only across execute calls on the
