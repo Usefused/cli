@@ -61,10 +61,10 @@ type AppExecutionEventOptions struct {
 	PageOptions
 }
 
-// ListSDKExecutionEvents reads the canonical Engine activity page for SDK transport.
+// ListSDKExecutionEvents reads every canonical receipt for one SDK app, including REST ingress.
 func (c *Client) ListSDKExecutionEvents(appID string, opts AppExecutionEventOptions) (*AppExecutionEventPage, error) {
 	query := `query SDKExecutionActivity($appId: String!, $includeAllVersions: Boolean!, $status: String, $limit: Int!, $offset: Int!, $startDate: String, $endDate: String) {
-		appExecutionEvents(app_id: $appId, include_all_versions: $includeAllVersions, transport: "sdk", status: $status, limit: $limit, offset: $offset, start_date: $startDate, end_date: $endDate) {
+		appExecutionEvents(app_id: $appId, include_all_versions: $includeAllVersions, status: $status, limit: $limit, offset: $offset, start_date: $startDate, end_date: $endDate) {
 			total
 			items {
 				id trace_id span_id app_family_id app_id app_version app_kind
