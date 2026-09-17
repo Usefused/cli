@@ -38,6 +38,23 @@ func TestWebhookInitFlagsProduceIngressConfig(t *testing.T) {
 	}
 }
 
+// TestWebhookInitIgnoresNoTokenFlag proves --no-token is accepted rather than
+// rejected for --webhook: a webhook registration never issues an execution
+// token, so the flag is simply irrelevant here instead of an error.
+func TestWebhookInitIgnoresNoTokenFlag(t *testing.T) {
+	var reached bool
+	executeUnifiedInitForTest(t, func(_ *cobra.Command, mode unifiedInitMode, _ scaffoldRequest) error {
+		reached = true
+		if mode != unifiedInitModeWebhook {
+			t.Fatalf("mode=%s", mode)
+		}
+		return nil
+	}, "alerts", "--webhook", "--no-token", "--service", "linear", "--secret", "linear=${bucket.default.secret.signing}")
+	if !reached {
+		t.Fatal("--no-token with --webhook must reach the lifecycle runner, not fail validation")
+	}
+}
+
 // TestWebhookInitRejectsAppFlagsAndLiteralSecrets keeps invalid ingress intent entirely local.
 func TestWebhookInitRejectsAppFlagsAndLiteralSecrets(t *testing.T) {
 	tests := [][]string{{"--sdk"}, {"--operation", "linear=issueUpdate"}, {"--select-all", "linear"}, {"--version", "2.0.0"}, {"--language", "python"}, {"--bucket", "default"}, {"--extend"}, {"--secret", "linear=literal-do-not-echo"}, {"--secret", "other=${bucket.default.secret.signing}"}}

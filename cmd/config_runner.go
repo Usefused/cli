@@ -28,6 +28,12 @@ type planReceipt struct {
 	SourceHash string `json:"source_hash"`
 	EngineURL  string `json:"engine_url,omitempty"`
 	CreatedAt  string `json:"created_at,omitempty"`
+	// NoToken carries init's --no-token intent through to apply (and survives
+	// a --no-apply receipt file, so a later `fused-cli apply` still honors
+	// it): Engine must not auto-issue this app family's first execution
+	// token, because the caller intends to mint their own separately via
+	// `fused-cli sdk|mcp token generate`.
+	NoToken bool `json:"no_token,omitempty"`
 }
 
 type plannedConfig struct {
@@ -609,7 +615,7 @@ func applySDKConfigsJSON(client *api.Client, prepared []preparedConfigApply, opt
 
 // applyPreparedSDKJSON preserves apply identity and one-time token data across later stages.
 func applyPreparedSDKJSON(client *api.Client, cfg *configfile.ParsedConfig, receipt planReceipt, download bool) (sdkApplyOutput, error) {
-	resp, err := client.ApplySDKConfig(receipt.PlanID, receipt.SourceHash)
+	resp, err := client.ApplySDKConfig(receipt.PlanID, receipt.SourceHash, receipt.NoToken)
 	// SDK/API apply is a one-shot mutation boundary, so ambiguous failures need read-only recovery rather than generic retry guidance.
 	if err != nil {
 		classified := classifySDKApplyFailure(err, cfg, receipt)
@@ -856,7 +862,7 @@ func applyPreparedSDK(client *api.Client, cfg *configfile.ParsedConfig, receipt 
 
 // applyPreparedSDKWithResult publishes one immutable SDK/API version while retaining apply-returned identity for composed workflows.
 func applyPreparedSDKWithResult(client *api.Client, cfg *configfile.ParsedConfig, receipt planReceipt, download bool) (sdkApplyOutput, error) {
-	resp, err := client.ApplySDKConfig(receipt.PlanID, receipt.SourceHash)
+	resp, err := client.ApplySDKConfig(receipt.PlanID, receipt.SourceHash, receipt.NoToken)
 	// Human apply output shares the same ambiguity classifier as structured automation.
 	if err != nil {
 		return sdkApplyOutput{}, fmt.Errorf("failed to apply %s %s: %w", sdkApplyResourceLabel(cfg.SDK), cfg.SDK.Name, classifySDKApplyFailure(err, cfg, receipt))
@@ -874,6 +880,8 @@ func applyPreparedSDKWithResult(client *api.Client, cfg *configfile.ParsedConfig
 	// successful response path without copying it into CLI state or logs.
 	if resp.ExecutionToken != "" {
 		fmt.Printf("  %s token (shown once): %s\n", label, resp.ExecutionToken)
+	} else if receipt.NoToken {
+		fmt.Printf("  Token creation skipped (--no-token); run 'fused-cli sdk token generate %s <token-name>' to create one.\n", cfg.SDK.Name)
 	}
 	// A direct API has no package job or download stage, but its exact identity remains useful to unified init.
 	if !sdkGeneratesPackage(cfg.SDK) {
@@ -962,7 +970,7 @@ func sdkApplyGenerationStageStatus(resp *api.SDKConfigApplyResponse, generatesPa
 
 // applyPreparedMCP publishes one immutable version and surfaces its stable and pinned connection routes.
 func applyPreparedMCP(client *api.Client, cfg *configfile.ParsedConfig, receipt planReceipt) error {
-	resp, err := client.ApplyMCPConfig(receipt.PlanID, receipt.SourceHash)
+	resp, err := client.ApplyMCPConfig(receipt.PlanID, receipt.SourceHash, receipt.NoToken)
 	if err != nil {
 		return fmt.Errorf("failed to apply MCP %s: %w", cfg.MCP.Name, err)
 	}
@@ -975,6 +983,8 @@ func applyPreparedMCP(client *api.Client, cfg *configfile.ParsedConfig, receipt 
 	fmt.Printf("  SSE (stable, legacy): %s\n  SSE (version-pinned, legacy): %s\n", resp.TransportURLs.SSE, resp.TransportURLs.VersionedSSE)
 	if resp.ExecutionToken != "" {
 		fmt.Printf("  Token (shown once): %s\n", resp.ExecutionToken)
+	} else if receipt.NoToken {
+		fmt.Printf("  Token creation skipped (--no-token); run 'fused-cli mcp token generate %s <token-name>' to create one.\n", cfg.MCP.Name)
 	}
 	return nil
 }

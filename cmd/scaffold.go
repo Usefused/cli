@@ -53,6 +53,7 @@ type scaffoldRequest struct {
 	webhookAttachment    string
 	generate             bool
 	noApply              bool
+	noToken              bool
 	versionSet           bool
 	descriptionSet       bool
 	languageSet          bool

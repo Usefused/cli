@@ -42,6 +42,7 @@ type unifiedInitOptions struct {
 	bucket            string
 	webhookAttachment string
 	noApply           bool
+	noToken           bool
 }
 
 type unifiedInitRunner func(*cobra.Command, unifiedInitMode, scaffoldRequest) error
@@ -135,6 +136,7 @@ retain available plan receipts without applying Engine state.`,
 	command.Flags().StringVar(&opts.bucket, "bucket", "", "Existing bucket to bind to this app")
 	command.Flags().StringVar(&opts.description, "description", "", "User-facing summary naming selected services and capabilities")
 	command.Flags().BoolVar(&opts.noApply, "no-apply", false, "Plan initialization without applying, generating, or downloading")
+	command.Flags().BoolVar(&opts.noToken, "no-token", false, "Apply without an auto-issued execution token; create one yourself later with 'sdk|mcp token generate'")
 	return command
 }
 
@@ -250,6 +252,8 @@ func buildUnifiedInitRequest(cmd *cobra.Command, mode unifiedInitMode, name stri
 		return scaffoldRequest{}, errors.New("--webhook-attachment and --events can only be used with --sdk or --mcp")
 	}
 	// Webhook flags and references must validate before any remote resolution.
+	// --no-token is silently irrelevant here: a webhook registration never
+	// issues an execution token, so buildWebhookInitRequest doesn't read it.
 	if mode == unifiedInitModeWebhook {
 		return buildWebhookInitRequest(cmd, name, opts)
 	}
@@ -316,7 +320,7 @@ func buildUnifiedInitRequest(cmd *cobra.Command, mode unifiedInitMode, name stri
 		versionSet: cmd.Flags().Changed("version"), languageSet: cmd.Flags().Changed("language"),
 		descriptionSet: mode == unifiedInitModeMCP && strings.TrimSpace(opts.description) != "", bucketSet: cmd.Flags().Changed("bucket"), webhookAttachmentSet: cmd.Flags().Changed("webhook-attachment"),
 		generate: mode == unifiedInitModeSDK, generateSet: mode == unifiedInitModeSDK || mode == unifiedInitModeAPI,
-		noApply: opts.noApply,
+		noApply: opts.noApply, noToken: opts.noToken,
 	}, nil
 }
 
@@ -566,6 +570,12 @@ func stageUnifiedInitLocalApply(cmd *cobra.Command, client *api.Client, mode uni
 	if err := printScaffoldResult(cmd, unifiedInitDisplayScaffoldResult(mode, result)); err != nil {
 		return state, rollbackUnifiedInitConfigFailure(err, publication)
 	}
+	// --no-token is init-local intent, not part of the planned desired state,
+	// so it's layered onto the receipt after planning rather than sent to
+	// Engine at plan time. Setting it here (before the receipt is written to
+	// disk) keeps a later `fused-cli apply` retry from this same receipt file
+	// honoring the original intent too.
+	plan.receipt.NoToken = request.noToken
 	receiptPublication, err := publishUnifiedInitReceipt(parsed, plan.receipt)
 	// Receipt publication precedes apply but remains part of the local transaction until Engine supplies commit proof.
 	if err != nil {

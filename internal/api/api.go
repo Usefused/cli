@@ -2232,10 +2232,15 @@ type WebhookConfigRegistration struct {
 
 // ApplySDKConfig may return a plaintext execution token only when Engine first
 // creates the SDK/API family. Callers must surface it without retaining it.
-func (c *Client) ApplySDKConfig(planID, sourceHash string) (*SDKConfigApplyResponse, error) {
+// skipToken tells Engine not to auto-issue that first token at all, for
+// callers who intend to mint their own via GenerateAppToken.
+func (c *Client) ApplySDKConfig(planID, sourceHash string, skipToken bool) (*SDKConfigApplyResponse, error) {
 	reqBody := map[string]any{
 		"plan_id":     planID,
 		"source_hash": sourceHash,
+	}
+	if skipToken {
+		reqBody["skip_token"] = true
 	}
 	body, err := json.Marshal(reqBody)
 	if err != nil {
@@ -2275,9 +2280,14 @@ func (c *Client) ApplySDKConfig(planID, sourceHash string) (*SDKConfigApplyRespo
 }
 
 // ApplyMCPConfig activates the resolved Engine scope and returns its plaintext
-// execution token only when the runtime is first created.
-func (c *Client) ApplyMCPConfig(planID, sourceHash string) (*MCPConfigApplyResponse, error) {
+// execution token only when the runtime is first created. skipToken tells
+// Engine not to auto-issue that first token at all, for callers who intend
+// to mint their own via GenerateAppToken.
+func (c *Client) ApplyMCPConfig(planID, sourceHash string, skipToken bool) (*MCPConfigApplyResponse, error) {
 	reqBody := map[string]any{"plan_id": planID, "source_hash": sourceHash}
+	if skipToken {
+		reqBody["skip_token"] = true
+	}
 	body, err := json.Marshal(reqBody)
 	if err != nil {
 		return nil, err

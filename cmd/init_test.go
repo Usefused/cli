@@ -63,6 +63,18 @@ func TestUnifiedInitNoApplyFlagReachesLifecycleRequest(t *testing.T) {
 	}
 }
 
+// TestUnifiedInitNoTokenFlagReachesLifecycleRequest proves --no-token is an explicit root-command intent, not just an apply-time default.
+func TestUnifiedInitNoTokenFlagReachesLifecycleRequest(t *testing.T) {
+	var got scaffoldRequest
+	executeUnifiedInitForTest(t, func(_ *cobra.Command, _ unifiedInitMode, request scaffoldRequest) error {
+		got = request
+		return nil
+	}, "support", "--sdk", "--service", "linear", "--select-all", "linear", "--no-token")
+	if !got.noToken {
+		t.Fatal("--no-token was not preserved in the lifecycle request")
+	}
+}
+
 // TestUnifiedAppInitAcceptsWebhookAttachmentAndEvents exposes deterministic event flags for SDK and MCP receivers.
 func TestUnifiedAppInitAcceptsWebhookAttachmentAndEvents(t *testing.T) {
 	for _, mode := range []string{"--sdk", "--mcp"} {

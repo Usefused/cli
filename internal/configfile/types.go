@@ -252,14 +252,19 @@ type MCPConfig = AppConfig
 // field rather than overloading SelectAll since Operations/Webhooks are
 // independent selections.
 type AppService struct {
-	Version           string            `yaml:"version" json:"version"`
-	Operations        []string          `yaml:"operations" json:"operations"`
-	Webhooks          []string          `yaml:"webhooks,omitempty" json:"webhooks,omitempty"`
-	WebhooksSelectAll bool              `yaml:"webhooks_select_all,omitempty" json:"webhooks_select_all,omitempty"`
-	SelectAll         bool              `yaml:"select_all,omitempty" json:"select_all,omitempty"`
-	Auth              *AppAuth          `yaml:"auth,omitempty" json:"auth,omitempty"`
-	Connect           *AppConnect       `yaml:"connect,omitempty" json:"connect,omitempty"`
-	Injections        []InjectionConfig `yaml:"injections,omitempty" json:"injections,omitempty"`
+	Version           string      `yaml:"version" json:"version"`
+	Operations        []string    `yaml:"operations" json:"operations"`
+	Webhooks          []string    `yaml:"webhooks,omitempty" json:"webhooks,omitempty"`
+	WebhooksSelectAll bool        `yaml:"webhooks_select_all,omitempty" json:"webhooks_select_all,omitempty"`
+	SelectAll         bool        `yaml:"select_all,omitempty" json:"select_all,omitempty"`
+	Auth              *AppAuth    `yaml:"auth,omitempty" json:"auth,omitempty"`
+	Connect           *AppConnect `yaml:"connect,omitempty" json:"connect,omitempty"`
+	// Bucket overrides the app-level default AppConfig.Bucket for this
+	// service only, letting one app route different services' credentials
+	// through different buckets. Omitted means this service resolves
+	// through the app-level default bucket, matching today's behavior.
+	Bucket     string            `yaml:"bucket,omitempty" json:"bucket,omitempty"`
+	Injections []InjectionConfig `yaml:"injections,omitempty" json:"injections,omitempty"`
 }
 
 // InjectionConfig injects a value into a specific location of a request at

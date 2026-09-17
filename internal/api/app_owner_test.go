@@ -30,9 +30,9 @@ func TestAppPlansSendOwnerTeamOnlyAtPlanTime(t *testing.T) {
 	requireAppTestNoError(t, err)
 	_, err = client.PlanWebhookConfig(intent)
 	requireAppTestNoError(t, err)
-	_, err = client.ApplySDKConfig("plan-1", "hash")
+	_, err = client.ApplySDKConfig("plan-1", "hash", false)
 	requireAppTestNoError(t, err)
-	_, err = client.ApplyMCPConfig("plan-1", "hash")
+	_, err = client.ApplyMCPConfig("plan-1", "hash", false)
 	requireAppTestNoError(t, err)
 	_, err = client.ApplyWebhookConfig("plan-1", "hash")
 	requireAppTestNoError(t, err)
@@ -57,10 +57,47 @@ func TestApplySDKConfigDecodesOneTimeExecutionToken(t *testing.T) {
 	}))
 	defer server.Close()
 
-	response, err := NewClient(server.URL, "fsk_test").ApplySDKConfig("plan-1", "hash")
+	response, err := NewClient(server.URL, "fsk_test").ApplySDKConfig("plan-1", "hash", false)
 	requireAppTestNoError(t, err)
 	if response.ExecutionToken != "shown-once" {
 		t.Fatalf("execution token = %q, want shown-once", response.ExecutionToken)
+	}
+}
+
+// TestApplyConfigSkipTokenReachesRequestBody proves --no-token's intent
+// actually crosses the wire as skip_token for both SDK and MCP apply, rather
+// than being silently swallowed client-side.
+func TestApplyConfigSkipTokenReachesRequestBody(t *testing.T) {
+	var bodies []map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode %s: %v", r.URL.Path, err)
+		}
+		bodies = append(bodies, body)
+		_, _ = w.Write([]byte(`{"status":"applied","plan_id":"plan-1"}`))
+	}))
+	defer server.Close()
+	client := NewClient(server.URL, "fsk_test")
+
+	if _, err := client.ApplySDKConfig("plan-1", "hash", true); err != nil {
+		t.Fatalf("ApplySDKConfig: %v", err)
+	}
+	if _, err := client.ApplyMCPConfig("plan-1", "hash", true); err != nil {
+		t.Fatalf("ApplyMCPConfig: %v", err)
+	}
+	for _, body := range bodies {
+		if skip, ok := body["skip_token"].(bool); !ok || !skip {
+			t.Fatalf("expected skip_token: true in request body, got %#v", body)
+		}
+	}
+
+	bodies = nil
+	if _, err := client.ApplySDKConfig("plan-1", "hash", false); err != nil {
+		t.Fatalf("ApplySDKConfig: %v", err)
+	}
+	if _, ok := bodies[0]["skip_token"]; ok {
+		t.Fatalf("default apply must not send skip_token at all, got %#v", bodies[0])
 	}
 }
 
@@ -77,7 +114,7 @@ func TestSDKConfigTransportErrorsUseAppLabels(t *testing.T) {
 	client := NewClient(server.URL, "fsk_test")
 	_, planErr := client.PlanSDKConfig(DesiredConfigPlanIntent{SourceHash: "hash", ConfigKey: "sdk:test:1", Config: json.RawMessage(`{"kind":"sdk"}`)})
 	requireAppConfigTransportError(t, planErr, "plan")
-	_, applyErr := client.ApplySDKConfig("plan-1", "hash")
+	_, applyErr := client.ApplySDKConfig("plan-1", "hash", false)
 	requireAppConfigTransportError(t, applyErr, "apply")
 }
 
@@ -104,7 +141,7 @@ func TestApplySDKConfigInvalidResponseUsesAppLabel(t *testing.T) {
 		_, _ = w.Write([]byte(`{"status":`))
 	}))
 	defer server.Close()
-	_, err := NewClient(server.URL, "fsk_test").ApplySDKConfig("plan-1", "hash")
+	_, err := NewClient(server.URL, "fsk_test").ApplySDKConfig("plan-1", "hash", false)
 	// Decode failures must retain the stable code while avoiding SDK-only prose.
 	if err == nil || !strings.Contains(err.Error(), "invalid app apply response") || strings.Contains(err.Error(), "invalid SDK apply response") {
 		t.Fatalf("invalid response error=%v", err)
