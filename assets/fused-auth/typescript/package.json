@@ -1,0 +1,15 @@
+{
+  "name": "fused-auth",
+  "version": "1.0.0",
+  "description": "OAuth 2.0 client for Fused's authorization server",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "dependencies": {},
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "@types/node": "^20.0.0"
+  },
+  "scripts": {
+    "build": "tsc"
+  }
+}

@@ -1,0 +1,11 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "fused-auth"
+version = "1.0.0"
+description = "OAuth 2.0 client for Fused's authorization server"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []

@@ -16,10 +16,18 @@ var readmeContent string
 //go:embed skills
 var skillFS embed.FS
 
+// The built-in Fused Auth OAuth client is fixed and identical for every
+// workspace, so it is embedded rather than generated. `fused-cli auth-client`
+// materializes it under the fixed "fused-auth" package name.
+//
+//go:embed assets/fused-auth
+var fusedAuthAssetFS embed.FS
+
 func main() {
 	// Keep --readme aligned with the intentionally short onboarding document;
 	// detailed command help remains available through --help and docs/.
 	cmd.ReadmeContent = readmeContent
 	cmd.EmbeddedSkillFS = skillFS
+	cmd.FusedAuthAssets = fusedAuthAssetFS
 	cmd.Execute()
 }
