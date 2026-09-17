@@ -1,0 +1,15 @@
+{
+  "name": "fused-admin",
+  "version": "1.0.0",
+  "description": "Management client for Fused Engine (MCP servers + app tokens)",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "dependencies": {},
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "@types/node": "^20.0.0"
+  },
+  "scripts": {
+    "build": "tsc"
+  }
+}

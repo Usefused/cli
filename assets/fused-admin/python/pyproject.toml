@@ -1,0 +1,11 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "fused-admin"
+version = "1.0.0"
+description = "Management client for Fused Engine (MCP servers + tokens)"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []

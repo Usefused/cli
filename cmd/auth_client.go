@@ -10,9 +10,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// FusedAuthAssets is the embedded fixed Fused Auth client tree (see main.go's
-// go:embed). It lets `auth-client` materialize the client without a server or
-// code generation, because the client is identical for every workspace.
+// FusedAuthAssets is the embedded fixed Fused Auth client tree (the embedding
+// lives in main.go's go:embed directive). It lets `auth-client` materialize the
+// client without a server or code generation, because the client is identical
+// for every workspace.
 var FusedAuthAssets fs.FS
 
 var authClientCmd = &cobra.Command{
@@ -45,7 +46,7 @@ func runAuthClient(cmd *cobra.Command, _ []string) error {
 	}
 	root := "assets/fused-auth/" + dir
 	dest := filepath.Join(authClientOut, "fused-auth")
-	written, err := copyFusedAuthTree(FusedAuthAssets, root, dest)
+	written, err := copyEmbeddedClientTree(FusedAuthAssets, root, dest)
 	if err != nil {
 		return err
 	}
@@ -53,10 +54,11 @@ func runAuthClient(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
-// copyFusedAuthTree writes every embedded file under root into dest, preserving
-// relative paths. The Python `init.py` asset is renamed to `__init__.py` on
-// write because go:embed excludes files whose names start with an underscore.
-func copyFusedAuthTree(efs fs.FS, root, dest string) (int, error) {
+// copyEmbeddedClientTree writes every embedded file under root into dest,
+// preserving relative paths. The Python `init.py` asset is renamed to
+// `__init__.py` on write because go:embed excludes files whose names start with
+// an underscore. It is shared by the auth and admin built-in clients.
+func copyEmbeddedClientTree(efs fs.FS, root, dest string) (int, error) {
 	written := 0
 	err := fs.WalkDir(efs, root, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {

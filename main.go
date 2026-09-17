@@ -23,11 +23,19 @@ var skillFS embed.FS
 //go:embed assets/fused-auth
 var fusedAuthAssetFS embed.FS
 
+// The built-in Fused Admin management client mirrors the auth client: fixed and
+// embedded rather than generated. `fused-cli admin-client` materializes it
+// under the fixed "fused-admin" package name.
+//
+//go:embed assets/fused-admin
+var fusedAdminAssetFS embed.FS
+
 func main() {
 	// Keep --readme aligned with the intentionally short onboarding document;
 	// detailed command help remains available through --help and docs/.
 	cmd.ReadmeContent = readmeContent
 	cmd.EmbeddedSkillFS = skillFS
 	cmd.FusedAuthAssets = fusedAuthAssetFS
+	cmd.FusedAdminAssets = fusedAdminAssetFS
 	cmd.Execute()
 }
