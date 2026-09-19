@@ -304,7 +304,7 @@ automation and store the token immediately. Omit `--expires-in` for
 no expiry; omit `--allow` for the full-access `*` default. Repeat `--allow` or
 pass a comma-separated list for multiple exact operation IDs. Applications
 that need dynamic agent sessions can use Engine's equivalent app-token API;
-the caller still needs `app.tokens.manage`. Repeat `--fixed-binding` for each
+the caller still needs `app.mcp.tokens.manage`. Repeat `--fixed-binding` for each
 service/auth tuple that token may use; each tuple starts with the public service
 slug (bare `service` or provider-qualified `@provider/service`), never its
 internal UUID. Every repeat independently selects its auth name, end-user
@@ -316,13 +316,13 @@ counts from retained history; it never reveals token plaintext or hashes.
 
 ## Permissions and team access
 
-A new MCP plan requires `app.create`, `service.read`, and `bucket.read`.
-Planning an update requires `app.manage` plus the dependency reads. Apply
-requires `app.create` for a new server or `app.manage` for an existing
+A new MCP plan requires `app.mcp.create`, `service.read`, and `bucket.read`.
+Planning an update requires `app.mcp.manage` plus the dependency reads. Apply
+requires `app.mcp.create` for a new server or `app.mcp.manage` for an existing
 one, together with `service.consume` for every selected service and `bucket.use`
-for its bucket. `mcp list` and `mcp operations` require `app.read`, removal requires
-`app.manage`, and any execution-token management surface requires
-`app.tokens.manage`.
+for its bucket. `mcp list` and `mcp operations` require `app.mcp.read`, removal requires
+`app.mcp.manage`, and any execution-token management surface requires
+`app.mcp.tokens.manage`.
 
 For team ownership, preflight the owner and dependencies before planning:
 

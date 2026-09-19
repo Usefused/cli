@@ -203,6 +203,7 @@ func TestWorkspaceSkillUsesSingleWorkspaceFirstAddWorkflow(t *testing.T) {
 	}
 }
 
+// TestDevSkillsIncludePermissionAndDenialGuidance keeps bundled guidance aligned with the scopes the Engine actually accepts.
 func TestDevSkillsIncludePermissionAndDenialGuidance(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -210,11 +211,11 @@ func TestDevSkillsIncludePermissionAndDenialGuidance(t *testing.T) {
 	}{
 		{name: "fused-cli", required: []string{"catalogue.read", "catalogue.import", "access.read", "access.manage", "team access service", "team access workspace"}},
 		{name: "fused-workspace", required: []string{"service.read", "service.manage", "workspace.update", "team access service", "team access bucket", "team access workspace"}},
-		{name: "fused-sdk", required: []string{"app.create", "app.manage", "app.read", "app.tokens.manage", "service.consume", "bucket.use", "team eligible-owners", "team build-access", "team access app"}},
-		{name: "fused-unified-operations", required: []string{"app.create", "app.manage", "app.read", "app.tokens.manage", "service.consume", "bucket.use", "team eligible-owners", "team build-access", "team access app"}},
-		{name: "fused-mcp", required: []string{"app.create", "app.manage", "app.read", "app.tokens.manage", "service.consume", "bucket.use", "team eligible-owners", "team build-access", "team access app"}},
+		{name: "fused-sdk", required: []string{"app.sdk.create", "app.sdk.manage", "app.sdk.read", "app.sdk.tokens.manage", "service.consume", "bucket.use", "team eligible-owners", "team build-access", "team access app"}},
+		{name: "fused-unified-operations", required: []string{"app.<type>.create", "app.<type>.manage", "app.<type>.read", "app.<type>.tokens.manage", "service.consume", "bucket.use", "team eligible-owners", "team build-access", "team access app"}},
+		{name: "fused-mcp", required: []string{"app.mcp.create", "app.mcp.manage", "app.mcp.read", "app.mcp.tokens.manage", "service.consume", "bucket.use", "team eligible-owners", "team build-access", "team access app"}},
 		{name: "fused-bucket", required: []string{"bucket.read", "bucket.manage", "credentials.manage", "connection.manage", "service.consume", "team access bucket", "team access service"}},
-		{name: "fused-webhook", required: []string{"app.create", "app.manage", "service.consume", "bucket.use", "team eligible-owners", "team build-access", "team access service", "team access bucket"}},
+		{name: "fused-webhook", required: []string{"app.webhook.create", "app.webhook.manage", "service.consume", "bucket.use", "team eligible-owners", "team build-access", "team access service", "team access bucket"}},
 		{name: "fused-config", required: []string{"service.manage", "credentials.manage", "catalogue.import", "connection.manage", "team access service", "team access bucket", "team access workspace"}},
 		{name: "fused-notifications", required: []string{"workspace.read", "notification.update", "team access workspace"}},
 	}
@@ -355,15 +356,15 @@ func TestAppOpenAPIExportIsDiscoverableAcrossCLIReferenceAndSkills(t *testing.T)
 		required []string
 	}{
 		{path: filepath.Join("..", "docs", "COMMANDS.md"), required: []string{
-			"## `sdk openapi <sdk-name@version-or-version-id>`", "GET /apps/{app_id}/openapi", "`app.read`",
+			"## `sdk openapi <sdk-name@version-or-version-id>`", "GET /apps/{app_id}/openapi", "`app.sdk.read`",
 			"POST /v1/apps/{app_id}/executions", "execution token", "atomically writes", "16 MiB", "`--operation`", "`--format`", "`--out`", "metadata only", "`operation_count`", "`sha256:<64 lowercase hex>`",
 		}},
 		{path: filepath.Join("..", "skills", "dev", "fused-sdk", "SKILL.md"), required: []string{
-			"sdk openapi <sdk-name@version-or-version-id>", "GETs `/apps/{app_id}/openapi`", "`app.read`",
+			"sdk openapi <sdk-name@version-or-version-id>", "GETs `/apps/{app_id}/openapi`", "`app.sdk.read`",
 			"POST /v1/apps/{app_id}/executions", "metadata only", "execution-token Bearer", "`operation_count`", "`sha256:<64 lowercase hex>`",
 		}},
 		{path: filepath.Join("..", "skills", "dev", "fused-cli", "SKILL.md"), required: []string{
-			"sdk openapi <sdk-name@version-or-version-id>", "GETs `/apps/{app_id}/openapi`", "`app.read`",
+			"sdk openapi <sdk-name@version-or-version-id>", "GETs `/apps/{app_id}/openapi`", "`app.sdk.read`",
 			"POST /v1/apps/{app_id}/executions", "metadata rather than the document", "SDK-wide execution token", "`operation_count`", "`sha256:<64 lowercase hex>`",
 		}},
 	}

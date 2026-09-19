@@ -700,7 +700,7 @@ skills share one discovery root.
 Export an OpenAPI 3.1 document for one exact immutable **generated SDK**
 version. Use `api openapi` for an app created with `init --api` or any SDK
 configuration whose `generate` field is `false`. The CLI
-resolves the Version ID with its ordinary control credential and `app.read`,
+resolves the Version ID with its ordinary control credential and `app.sdk.read`,
 then calls `GET /apps/{app_id}/openapi`; an SDK execution token does not
 authorize this export. The document describes the real
 `POST /v1/apps/{app_id}/executions` route, pins that path to the resolved
@@ -732,7 +732,7 @@ with `generate: false`.
 fused-cli api openapi billing-api@1.2.0 --out billing-api.openapi.yaml
 ```
 
-The export has the same immutable-version resolution, `app.read` control
+The export has the same immutable-version resolution, `app.api.read` control
 credential, operation filtering, atomic file writing, size bound, and document
 validation described for `sdk openapi`. It describes the same Engine execution
 route and runtime Bearer token contract. Its generated filename and `--json`
@@ -771,7 +771,7 @@ Unified aggregate response at 17 MiB.
 
 List canonical Engine execution receipts. Use `--all-versions` for the entire
 SDK and `--status`, `--start`, or `--end` to narrow the page. Requires both
-`app.read` and `audit.read`.
+`app.sdk.read` and `audit.read`.
 
 ## `sdk service add <service-slug>`
 Add a service to an SDK configuration.

@@ -670,8 +670,20 @@ func (requirement PermissionRequirement) ProductDescription() string {
 	return permissionAction(requirement.Permission) + " " + requirement.productResource()
 }
 
+// productResource identifies the app type without exposing resource IDs in normal CLI errors.
 func (requirement PermissionRequirement) productResource() string {
 	resourceType := safeAuthorizationValue(requirement.ResourceType)
+	// Type-specific permissions give shared app resources their user-facing name.
+	if resourceType == "app" {
+		parts := strings.Split(requirement.Permission, ".")
+		// Unknown legacy values keep a generic resource label instead of guessing a type.
+		if len(parts) >= 3 {
+			// Only supported app namespaces receive product labels.
+			if label, ok := map[string]string{"sdk": "SDK", "mcp": "MCP server", "api": "REST API", "webhook": "webhook"}[parts[1]]; ok {
+				resourceType = label
+			}
+		}
+	}
 	displayName := safeAuthorizationValue(requirement.DisplayName)
 	if displayName != "" {
 		return resourceType + " " + fmt.Sprintf("%q", displayName)
@@ -679,7 +691,7 @@ func (requirement PermissionRequirement) productResource() string {
 	switch resourceType {
 	case "workspace":
 		return "this workspace"
-	case "service", "bucket", "app":
+	case "service", "bucket", "app", "SDK", "MCP server", "REST API", "webhook":
 		return "the selected " + resourceType
 	default:
 		return "the requested resource"
@@ -687,24 +699,38 @@ func (requirement PermissionRequirement) productResource() string {
 }
 
 var productPermissionActions = map[string]string{
-	"workspace.read":     "view",
-	"workspace.update":   "change",
-	"service.read":       "view",
-	"service.consume":    "use",
-	"service.manage":     "manage",
-	"bucket.read":        "view",
-	"bucket.values.read": "view",
-	"bucket.use":         "use",
-	"bucket.manage":      "manage",
-	"app.read":           "view",
-	"app.create":         "create an SDK, MCP server, or webhook in",
-	"app.manage":         "manage",
-	"app.tokens.manage":  "manage",
-	"connection.read":    "view connections in",
-	"connection.manage":  "manage connections in",
-	"access.read":        "view access activity for",
-	"audit.read":         "view access activity for",
-	"access.manage":      "manage team access for",
+	"workspace.read":        "view",
+	"workspace.update":      "change",
+	"service.read":          "view",
+	"service.consume":       "use",
+	"service.manage":        "manage",
+	"bucket.read":           "view",
+	"bucket.values.read":    "view",
+	"bucket.use":            "use",
+	"bucket.manage":         "manage",
+	"app.sdk.read":          "view",
+	"app.sdk.use":           "use",
+	"app.sdk.create":        "create SDKs in",
+	"app.sdk.manage":        "manage",
+	"app.sdk.tokens.manage": "manage execution tokens for",
+	"app.mcp.read":          "view",
+	"app.mcp.use":           "use",
+	"app.mcp.create":        "create MCP servers in",
+	"app.mcp.manage":        "manage",
+	"app.mcp.tokens.manage": "manage execution tokens for",
+	"app.api.read":          "view",
+	"app.api.use":           "use",
+	"app.api.create":        "create REST APIs in",
+	"app.api.manage":        "manage",
+	"app.api.tokens.manage": "manage execution tokens for",
+	"app.webhook.read":      "view",
+	"app.webhook.create":    "create webhooks in",
+	"app.webhook.manage":    "manage",
+	"connection.read":       "view connections in",
+	"connection.manage":     "manage connections in",
+	"access.read":           "view access activity for",
+	"audit.read":            "view access activity for",
+	"access.manage":         "manage team access for",
 }
 
 func permissionAction(permission string) string {

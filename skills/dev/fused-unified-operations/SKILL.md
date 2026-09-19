@@ -237,11 +237,13 @@ console.log(result.primary_id, result.title, result.provider_ids);
 
 ## Permissions and team access
 
-Unified Operations use `app.create`, `app.manage`, `service.consume`, `bucket.use`, and `app.tokens.manage` as
+Unified Operations use `app.<type>.create`, `app.<type>.manage`, `service.consume`, `bucket.use`, and `app.<type>.tokens.manage` as
 described by `fused-sdk`. A generated call needs the SDK identity plus execution
 token authorized for every selected forward and active rollback operation; it
-does not need a separate Unified scope. CLI lookup needs `app.read`; Activity
+does not need a separate Unified scope. CLI lookup needs `app.<type>.read`; Activity
 also needs `audit.read`. For team ownership, use `team eligible-owners`,
 `team build-access`, and `team access app` per `fused-cli`'s `reference/access-management.md`.
 On denial, report the missing permission and resource. Never self-grant, switch
 credentials, or broaden access.
+
+App permission identifiers include an explicit type: replace `<type>` with `sdk`, `mcp`, `api`, or `webhook`. REST APIs use `api` even though their configuration uses `kind: sdk` with `generate: false`. Webhook permissions support `create`, `read`, and `manage`; execution-token permissions apply to SDK, MCP, and API apps. OAuth clients must request each concrete scope explicitly; there is no broad app scope.

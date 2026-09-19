@@ -359,6 +359,7 @@ func TestSDKApplyGenerationStageStatusDistinguishesQueueAndCacheHit(t *testing.T
 	}
 }
 
+// TestPrintPlanResultJSONIncludesSummaryAndNotifications preserves exact typed permissions in machine-readable plan results.
 func TestPrintPlanResultJSONIncludesSummaryAndNotifications(t *testing.T) {
 	planned := []plannedConfig{{
 		receipt: planReceipt{
@@ -370,7 +371,7 @@ func TestPrintPlanResultJSONIncludesSummaryAndNotifications(t *testing.T) {
 			ID: "note-1", Type: "registry_version_changed", Severity: "breaking",
 		}}},
 		requiredPermissions: []api.PermissionRequirement{{
-			Permission: "app.create", ResourceType: "workspace",
+			Permission: "app.sdk.create", ResourceType: "workspace",
 			ResourceID: "33333333-3333-3333-3333-333333333333", DisplayName: "workspace",
 		}},
 	}}
@@ -390,7 +391,7 @@ func TestPrintPlanResultJSONIncludesSummaryAndNotifications(t *testing.T) {
 	if len(decoded[0].Notifications.Items) != 1 || decoded[0].Notifications.Items[0].ID != "note-1" {
 		t.Fatalf("expected notifications in JSON output, got %#v", decoded[0].Notifications)
 	}
-	if len(decoded[0].RequiredPermissions) != 1 || decoded[0].RequiredPermissions[0].Permission != "app.create" {
+	if len(decoded[0].RequiredPermissions) != 1 || decoded[0].RequiredPermissions[0].Permission != "app.sdk.create" {
 		t.Fatalf("expected required permissions in JSON output, got %#v", decoded[0].RequiredPermissions)
 	}
 }

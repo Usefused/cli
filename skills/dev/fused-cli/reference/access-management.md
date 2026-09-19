@@ -24,7 +24,7 @@ Built-in workspace roles are broad defaults:
 - Owner has every permission.
 - Admin has every operational permission except `account.manage` and
   `billing.manage`.
-- Builder has `workspace.read`, `app.create`, `catalogue.read`,
+- Builder has `workspace.read`, `app.<type>.create`, `catalogue.read`,
   `account.read`, `billing.read`, and `notification.update`.
 - Viewer has `workspace.read`, `catalogue.read`, `account.read`, and
   `billing.read`.
@@ -37,7 +37,7 @@ Resource roles add narrower access:
   `bucket.manage`, `bucket.values.read`, `credentials.metadata.read`,
   `credentials.manage`, `connection.read`, and `connection.manage`.
 - SDK/MCP roles are cumulative: `read`, `use`, then `manage`; `manage` also
-  includes `app.tokens.manage`.
+  includes `app.<type>.tokens.manage`.
 
 Workspace service lists and searches are access-filtered. If a service is
 absent, do not claim it is disabled until an authorised caller confirms that;
@@ -56,12 +56,12 @@ most 20 ranked matches and has no next-page flag.
 | Workspace service list/search | `service.read` for each returned service |
 | Workspace service plan | `workspace.read` and `service.manage` for every changed service; `bucket.manage` for bucket changes |
 | Workspace service apply | `workspace.update` plus the plan's `service.manage`/`bucket.manage` requirements; credential material can also require `credentials.manage` |
-| New SDK/MCP/webhook plan | `app.create`, `service.read`, and `bucket.read` for selected dependencies |
-| Existing SDK/MCP/webhook plan | `app.manage`, `service.read`, and `bucket.read` |
-| SDK/MCP/webhook apply | `app.create` for new or `app.manage` for existing resources, plus `service.consume` and `bucket.use` for selected/referenced dependencies |
-| SDK download / MCP list | `app.read` |
-| SDK/MCP execution-token management | `app.tokens.manage` |
-| MCP remove | `app.manage` |
+| New SDK/MCP/webhook plan | `app.<type>.create`, `service.read`, and `bucket.read` for selected dependencies |
+| Existing SDK/MCP/webhook plan | `app.<type>.manage`, `service.read`, and `bucket.read` |
+| SDK/MCP/webhook apply | `app.<type>.create` for new or `app.<type>.manage` for existing resources, plus `service.consume` and `bucket.use` for selected/referenced dependencies |
+| SDK download / MCP list | `app.<type>.read` |
+| SDK/MCP execution-token management | `app.<type>.tokens.manage` |
+| MCP remove | `app.<type>.manage` |
 | Bucket queries | `bucket.read`; values need `bucket.values.read`; secret metadata needs `credentials.metadata.read`; connections need `connection.read` |
 | Bucket/value/secret mutations | Workspace `bucket.manage` to create; `bucket.manage` for values; `credentials.manage` for secrets |
 | Connect app registration | `credentials.manage` and `service.consume` |
@@ -243,3 +243,5 @@ Never self-grant, switch credentials, broaden a team to Admin/Owner, or retry
 with guessed authority. Access changes are a separate user-authorised action;
 if no resource-scoped grant exists (for example `workspace.update` or
 `notification.update`), say that a suitable workspace role is required.
+
+App permission identifiers include an explicit type: replace `<type>` with `sdk`, `mcp`, `api`, or `webhook`. REST APIs use `api` even though their configuration uses `kind: sdk` with `generate: false`. Webhook permissions support `create`, `read`, and `manage`; execution-token permissions apply to SDK, MCP, and API apps. OAuth clients must request each concrete scope explicitly; there is no broad app scope.

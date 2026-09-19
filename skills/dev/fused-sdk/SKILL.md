@@ -133,7 +133,7 @@ Pass the one-time SDK execution token to the generated client and store it in a
 local secret manager. The first successful `sdk apply` prints that token once;
 capture it immediately because an idempotent apply or later lookup will not
 return it. Never log it or persist it in the SDK config, plan receipt, or CLI
-state. `sdk deactivate <sdk-name@version-or-version-id>` permanently removes one exact immutable version through the same Engine lifecycle as the App UI; it requires `app.manage`, never accepts a bare SDK name or infers latest, and leaves sibling versions and SDK-wide tokens intact. There is no SDK deprecate command; use the App UI/API for advisory deprecation and restoration.
+state. `sdk deactivate <sdk-name@version-or-version-id>` permanently removes one exact immutable version through the same Engine lifecycle as the App UI; it requires `app.sdk.manage`, never accepts a bare SDK name or infers latest, and leaves sibling versions and SDK-wide tokens intact. There is no SDK deprecate command; use the App UI/API for advisory deprecation and restoration.
 
 ## Commands
 Confirm current flags with `fused-cli sdk <subcommand> --help`; the `fused-cli` skill documents init's batched enrichment.
@@ -192,7 +192,7 @@ apply. Structured failures identify the failed stage and retain SDK/Version IDs
 when apply succeeded before generation waiting or download failed.
 
 `sdk openapi` resolves one exact Version ID with the control credential and
-`app.read`, then GETs `/apps/{app_id}/openapi`; the execution token cannot authorize it.
+`app.sdk.read`, then GETs `/apps/{app_id}/openapi`; the execution token cannot authorize it.
 Use it for generated SDK versions. For direct REST APIs created with `init
 --api`, including `kind: sdk` configurations with `generate: false`, use `api
 openapi` with the exact API version reference instead. The two commands share
@@ -247,14 +247,14 @@ is elsewhere.
 
 ## Permissions and team access
 
-A new SDK plan requires `app.create`, `service.read`, and `bucket.read`.
-Planning an update requires `app.manage` plus the dependency reads. Apply
-requires `app.create` for a new SDK or `app.manage` for an existing
+A new SDK plan requires `app.sdk.create`, `service.read`, and `bucket.read`.
+Planning an update requires `app.sdk.manage` plus the dependency reads. Apply
+requires `app.sdk.create` for a new SDK or `app.sdk.manage` for an existing
 one, together with `service.consume` for every selected service and `bucket.use`
 for the selected bucket. Download, OpenAPI export, invoke target resolution,
-and activity require `app.read`; activity also requires `audit.read`. Runtime invocation
+and activity require `app.sdk.read`; activity also requires `audit.read`. Runtime invocation
 additionally requires a valid SDK-scoped execution token. `sdk token`
-generate/list/revoke requires `app.tokens.manage`.
+generate/list/revoke requires `app.sdk.tokens.manage`.
 
 For team ownership, preflight the owner and every dependency before planning:
 
@@ -315,3 +315,5 @@ Structured webhook verification, post-auth discovery, media-upload workflows, ca
 ## Runtime behavior
 
 For generated-client timeouts, SSE lifetime controls, the shared gRPC channel, and Engine endpoint precedence, read `reference/runtime.md` only when configuring or diagnosing SDK runtime behavior.
+
+Direct REST API apps (`generate: false`) use `app.api.create`, `app.api.manage`, `app.api.read`, and `app.api.tokens.manage` instead of the SDK permission namespace.

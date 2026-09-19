@@ -148,10 +148,10 @@ secret value.
 
 ## Permissions and team access
 
-A new webhook plan requires `app.create` and `service.read`; an update
-requires `app.manage` and `service.read`. It also needs `bucket.read` for
-each bucket named by a secret reference. Apply requires `app.create` for a
-new registration bundle or `app.manage` for an existing one, plus
+A new webhook plan requires `app.webhook.create` and `service.read`; an update
+requires `app.webhook.manage` and `service.read`. It also needs `bucket.read` for
+each bucket named by a secret reference. Apply requires `app.webhook.create` for a
+new registration bundle or `app.webhook.manage` for an existing one, plus
 `service.consume` for every registered service and `bucket.use` for each
 referenced secret bucket. A webhook without a secret reference has no bucket
 permission requirement.

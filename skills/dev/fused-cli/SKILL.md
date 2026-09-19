@@ -185,7 +185,7 @@ without `--json` must be treated as a human-only mutation unless its domain
 skill documents a stable alternative.
 
 `fused-cli sdk openapi <sdk-name@version-or-version-id>` resolves one exact
-immutable SDK version with the ordinary control credential and `app.read`, then
+immutable SDK version with the ordinary control credential and `app.sdk.read`, then
 GETs `/apps/{app_id}/openapi`. It always atomically writes YAML (or JSON with
 `--format json`); `--operation` filters one exact physical or Unified name,
 `--out` selects the file, and `--json` prints metadata rather than the document.

@@ -240,9 +240,9 @@ any approval/owner-team requirements; do not bypass them. After apply, confirm
 the created version is active.
 
 SDK/MCP creation and use have separate permissions from workspace activation.
-A new plan requires `app.create`, `service.read`, and `bucket.read`; an
-existing app plan requires `app.manage` plus the dependency reads.
-Apply requires `app.create` for a new resource or `app.manage` for an
+A new plan requires `app.<type>.create`, `service.read`, and `bucket.read`; an
+existing app plan requires `app.<type>.manage` plus the dependency reads.
+Apply requires `app.<type>.create` for a new resource or `app.<type>.manage` for an
 existing one, together with `service.consume` and `bucket.use` for every
 selected dependency. Use the human-readable denial or `required_permissions`
 in JSON plan output to identify the exact resource. An authorised administrator
@@ -264,3 +264,5 @@ used. For SDK, provide the downloaded package path plus the shortest relevant
 usage/auth next step. For MCP, provide the deployed server URL and token/client
 connection next step. Clearly identify any remaining user action, especially
 OAuth consent or secret entry.
+
+App permission identifiers include an explicit type: replace `<type>` with `sdk`, `mcp`, `api`, or `webhook`. REST APIs use `api` even though their configuration uses `kind: sdk` with `generate: false`. Webhook permissions support `create`, `read`, and `manage`; execution-token permissions apply to SDK, MCP, and API apps. OAuth clients must request each concrete scope explicitly; there is no broad app scope.
