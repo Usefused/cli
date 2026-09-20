@@ -24,10 +24,11 @@ type Config struct {
 // Rule order is transported exactly because Registry assigns first-match
 // semantics to keep challenge traffic out of event verification recipes.
 type Rule struct {
-	Name         string       `json:"name" yaml:"name"`
-	Kind         RuleKind     `json:"kind" yaml:"kind"`
-	Predicates   []Predicate  `json:"predicates" yaml:"predicates"`
-	Verification Verification `json:"verification" yaml:"verification"`
+	Name         string             `json:"name" yaml:"name"`
+	Kind         RuleKind           `json:"kind" yaml:"kind"`
+	Predicates   []Predicate        `json:"predicates" yaml:"predicates"`
+	Verification Verification       `json:"verification" yaml:"verification"`
+	Response     *ChallengeResponse `json:"response,omitempty" yaml:"response,omitempty"`
 }
 
 type Predicate struct {
@@ -50,19 +51,21 @@ type Verification struct {
 }
 
 type SignatureVerification struct {
-	SecretRef  string           `json:"secret_ref" yaml:"secret_ref"`
-	Signature  ValueSource      `json:"signature" yaml:"signature"`
-	Components []InputComponent `json:"components" yaml:"components"`
-	Algorithm  Algorithm        `json:"algorithm" yaml:"algorithm"`
-	Encoding   Encoding         `json:"encoding" yaml:"encoding"`
-	Comparison Comparison       `json:"comparison" yaml:"comparison"`
-	Prefix     string           `json:"prefix,omitempty" yaml:"prefix,omitempty"`
+	Timestamp  *SignatureTimestamp `json:"timestamp,omitempty" yaml:"timestamp,omitempty"`
+	SecretRef  string              `json:"secret_ref" yaml:"secret_ref"`
+	Signature  ValueSource         `json:"signature" yaml:"signature"`
+	Components []InputComponent    `json:"components" yaml:"components"`
+	Algorithm  Algorithm           `json:"algorithm" yaml:"algorithm"`
+	Encoding   Encoding            `json:"encoding" yaml:"encoding"`
+	Comparison Comparison          `json:"comparison" yaml:"comparison"`
+	Prefix     string              `json:"prefix,omitempty" yaml:"prefix,omitempty"`
 	// Separator is explicit because concatenation is provider contract data;
 	// neither CLI nor Engine may infer it from a provider identity.
 	ComponentSeparator string `json:"component_separator" yaml:"component_separator"`
 }
 
 type InputComponent struct {
+	Value     string        `json:"value,omitempty" yaml:"value,omitempty"`
 	Kind      ComponentKind `json:"kind" yaml:"kind"`
 	Names     []string      `json:"names" yaml:"names"`
 	Join      ComponentJoin `json:"join,omitempty" yaml:"join,omitempty"`
@@ -93,4 +96,11 @@ func (config *Config) UnmarshalJSON(payload []byte) error {
 	}
 	*config = Config(decoded)
 	return nil
+}
+
+// SignatureTimestamp transports the Engine-owned signed timestamp freshness policy.
+type SignatureTimestamp struct {
+	Header      string `json:"header" yaml:"header"`
+	MaxAgeMs    int64  `json:"max_age_ms" yaml:"max_age_ms"`
+	MaxFutureMs int64  `json:"max_future_ms" yaml:"max_future_ms"`
 }

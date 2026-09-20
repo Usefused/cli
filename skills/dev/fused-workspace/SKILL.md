@@ -135,6 +135,9 @@ fused-cli workspace service version add <slug> <v|latest>
 fused-cli workspace service version delete <slug> <v> [--force]
 fused-cli workspace service version deprecate <slug> <v> --at <date> [--reason "..."]
 fused-cli workspace service connect <service-slug> --bucket <bucket-name-or-id> --user-ref <end-user-reference> [--type oauth|oidc --auth-name <scheme>] [--auth-ref '${bucket.auth.<source-service>.<source-auth-name>}'] [--scope ...]
+fused-cli workspace managed-auth status   # ready | disabled | enrollment_required | temporarily_unavailable
+fused-cli workspace managed-auth enable   # explicitly enroll, repair, or re-enable managed auth
+fused-cli workspace managed-auth disable  # persist opt-out and withdraw broker authority; keep local connections
 ```
 
 Use the first command to create `.fused/workspace.yaml` without replacing an
@@ -146,7 +149,12 @@ apply.
 
 `connect` starts an OAuth/OIDC session for one user against a bucket. Select
 the target scheme directly and use `--auth-ref` when standalone consent reuses
-another service's registration. This initialization/debug command has no SDK or
+another service's registration, or `--auth-ref '${fused.bucket.auth.<service>.<authName>}'`
+for a **Managed service** using a Fused Managed App. Check managed-auth status;
+Engine normally enrolls when Registry announces a broker. Use explicit enable
+for repair or re-enabling a saved opt-out, not as an unconditional prerequisite.
+An enabled Registry service does not prove a managed offering exists; verify
+the exact scheme and callback support. See `fused-bucket`. This initialization/debug command has no SDK or
 MCP identity selector and sends no synthetic app ID. Generated SDK consent uses
 the reference pinned in app configuration and attaches only its embedded app ID
 as provenance on the bucket-owned connection; the standalone command never

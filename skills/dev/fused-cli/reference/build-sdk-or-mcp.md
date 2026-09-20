@@ -164,8 +164,21 @@ states an enterprise, tenant, or environment isolation requirement and the
 caller has workspace `bucket.manage`. Creation does not grant `bucket.use`;
 never self-grant. Follow `fused-bucket` for the complete policy. Add secret
 material through stdin or an interactive prompt, never a command argument. For
-OAuth/OIDC, configure the app and start the connect flow; pause for the user's
-browser consent when required.
+OAuth/OIDC, offer two paths before requesting client credentials: use a **Managed
+service** where Fused publishes the exact service/auth scheme, or configure the
+user's own provider app. Managed auth requires explicit
+`${fused.bucket.auth.<service>.<authName>}` selection, usable Engine enrollment,
+and a supported callback URL; it does not follow automatically from a Registry
+search result. Use `fused-bucket` for the setup and keep the user connection in
+the chosen consumer bucket. Add the reference before publishing or use a new
+immutable app version. Start the connect flow and pause for browser consent when
+required. Never request a Fused-owned client or signing secret from a consumer.
+
+If the user also needs events, read `fused-webhook`. Both SDKs and MCP apps can
+attach provider events, including a managed `relay.source` receiver. SDK handlers
+use durable ack/nack; capable MCP clients use explicit event resources and live
+notifications with latest-occurrence reads. Choose based on whether every event
+must be processed, and never promise durable notification replay to MCP clients.
 
 If the output will be team-owned, verify that team before planning. The team
 must appear in `eligible-owners` and have build access to every selected service

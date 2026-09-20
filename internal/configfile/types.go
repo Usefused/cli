@@ -183,7 +183,8 @@ type WebhookConfig struct {
 // own Name (not a per-service label) is the registration's
 // identity now.
 type WebhookService struct {
-	Secret string `yaml:"secret,omitempty" json:"secret,omitempty"`
+	Relay  *WebhookRelay `yaml:"relay,omitempty" json:"relay,omitempty"`
+	Secret string        `yaml:"secret,omitempty" json:"secret,omitempty"`
 }
 
 // WorkspaceDeprecationDirective keeps deprecation as explicit config intent,
@@ -345,4 +346,27 @@ type ParsedConfig struct {
 // Run represents a set of parsed configs loaded for a CLI execution.
 type Run struct {
 	Configs []*ParsedConfig
+}
+
+// WebhookRelay selects broker-verified export or an explicit local receiver; Engine validates all ownership.
+type WebhookRelay struct {
+	Publish *WebhookRelayRouting `yaml:"publish,omitempty" json:"publish,omitempty"`
+	Source  *WebhookRelaySource  `yaml:"source,omitempty" json:"source,omitempty"`
+}
+
+// WebhookRelayRouting carries reviewed provider paths without any signing secret value.
+type WebhookRelayRouting struct {
+	AuthName          string `yaml:"auth_name" json:"auth_name"`
+	TokenResourcePath string `yaml:"token_resource_path" json:"token_resource_path"`
+	TokenAppPath      string `yaml:"token_app_path" json:"token_app_path"`
+	EventResourcePath string `yaml:"event_resource_path" json:"event_resource_path"`
+	EventAppPath      string `yaml:"event_app_path" json:"event_app_path"`
+	EventIDPath       string `yaml:"event_id_path" json:"event_id_path"`
+}
+
+// WebhookRelaySource requires a bucket-owned connection instead of a claimed provider workspace ID.
+type WebhookRelaySource struct {
+	Bucket         string `yaml:"bucket" json:"bucket"`
+	ConnectionID   string `yaml:"connection_id" json:"connection_id"`
+	RegistrationID string `yaml:"registration_id" json:"registration_id"`
 }

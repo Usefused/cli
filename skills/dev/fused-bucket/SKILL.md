@@ -1,6 +1,6 @@
 ---
 name: fused-bucket
-description: "Use when the user wants to manage Fused bucket credentials using fused-cli -- storing static secrets or values, storing a service's OAuth/OIDC application client pair, starting an OAuth/OIDC connect session for a user, or listing/selecting a connected user's provider resources. Trigger on 'bucket', 'secret', 'fused-cli secret', 'fused-cli value', 'OAuth connect', 'register OAuth app', 'connection resources', or 'connected resource'. For auth field shapes or how a resource's fields get bound into a request, read fused-config."
+description: "Manage Fused bucket credentials and user connections with fused-cli, including choosing a Managed service instead of storing your own OAuth application pair. Use for buckets, secrets, values, OAuth connect, managed auth, and connected resources. For auth field shapes and request bindings, read fused-config."
 ---
 
 # Buckets, secrets, and connections
@@ -63,6 +63,7 @@ rules -- easy to conflate since they look alike:
 |---|---|---|---|
 | Ordinary SDK/MCP `injections[].value` (`fused-sdk`/`fused-mcp`) | `${bucket.env\|values\|secrets.<key>}` | Always that SDK or MCP server's own `bucket:` -- cannot name another | Yes (e.g. `"Bearer ${bucket.secrets.KEY}"`) |
 | SDK/MCP service `auth.ref` | `${bucket.auth.<service>.<authName>}` | Always that app's selected `bucket:` | No -- must be the entire `ref` value |
+| SDK/MCP service `auth.ref`, Fused Managed App | `${fused.bucket.auth.<service>.<authName>}` | N/A -- resolves against Fused's managed-auth broker, not any bucket | No -- must be the entire `ref` value |
 | `kind: webhook` `services.<slug>.secret` (`fused-webhook`) | `${bucket.<name>.env\|secret.<key>}` or `${bucket.env\|secret.<key>}` (default bucket) | Explicit (or defaults to `default`) -- webhook verification has no app/dispatch context to fall back on | No -- must be the entire field value |
 | Connection profile `${resource.*}` (`fused-config`) | `${resource.provider_resource_id\|base_url\|metadata.<key>}` | N/A -- not a bucket reference at all, resolves against the selected connection's resource | No -- must be the entire field value |
 
@@ -107,6 +108,60 @@ Using the wrong form in the wrong place is rejected with an explicit error
 naming the unsupported reference -- e.g. a webhook-style named-bucket
 reference (`${bucket.<name>.secrets.<key>}`) inside an SDK/MCP injection
 value at dispatch time.
+
+## Managed service or your own provider app
+
+Before asking a user to create an OAuth app or supply a client secret, offer a
+**Managed service** where Fused publishes an application for that exact service
+and auth scheme. This is an auth choice, not automatic Registry availability or
+a replacement for service activation, bucket permissions, consent, or other
+required credential schemes. Preserve an explicit choice to use their own app.
+
+A managed service selects a **Fused Managed App** through the reserved reference
+`${fused.bucket.auth.<service>.<authName>}`. For an available Slack offering whose
+scheme is named `oauth2`, the app fragment is:
+
+```yaml
+services:
+  slack:
+    auth:
+      type: oauth
+      name: oauth2
+      ref: "${fused.bucket.auth.slack.oauth2}"
+```
+
+This is explicit-only: it activates *only* when `auth.ref` names this exact
+form. A missing local credential never falls back to it, and a normal
+`${bucket.auth...}` reference never resolves against the broker. The `service`
+segment identifies the connecting service itself. Keep its real enabled version,
+operation IDs, exact auth name, and scopes. No local client pair is required;
+the application's client secret stays on Fused's broker. The consumer Engine
+stores encrypted user tokens and delegates exchange/refresh to the broker,
+which processes those tokens transiently. This is not arbitrary bucket access:
+regular Fused API keys and signing secrets cannot be read through the reference.
+
+Check `fused-cli workspace managed-auth status`. Registry announces the broker
+and Engine enrolls in the background when available. `ready` permits use;
+`enrollment_required` can be repaired with `workspace managed-auth enable`.
+`disabled` is a saved opt-out: enable only within the user's requested setup.
+`temporarily_unavailable` calls for connectivity/retry diagnosis, not fallback
+credentials. Enrollment does not guarantee a provider offering. If Registry
+announces no broker, operator configuration is required; do not invent a
+consumer broker-URL setting. `workspace managed-auth disable` saves opt-out,
+retries remote revocation if needed, and preserves local provider connections.
+
+SDK/MCP consent uses the applied app reference; standalone CLI consent needs
+`--auth-ref '${fused.bucket.auth.<service>.<authName>}'` explicitly. The current
+callback is the consumer's canonical public URL plus `/workspace/connect/callback`;
+the managed provider app must allow it, including for self-hosted deployments.
+Add the reference before publishing (use `init --no-apply` while preparing it),
+or publish a new immutable version when changing an existing app. There is no
+implicit managed selection or `--managed` flag to suggest.
+
+For managed provider events, read `fused-webhook`: the consumer uses an explicit
+`relay.source` with its connection and the operator-supplied broker registration.
+OAuth availability alone does not guarantee webhook support. Never ask consumers
+to copy Fused's signing secret into their bucket.
 
 ## Bucket commands
 

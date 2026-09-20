@@ -73,8 +73,8 @@ declared OR branch at runtime. `connect.scopes` narrows OAuth/OIDC consent
 -- an application can request fewer scopes per user but never more than
 declared here. Credential material itself never lives in this file -- it's
 resolved from `bucket` when a connection starts or an operation dispatches (see `fused-bucket`).
-For OAuth/OIDC, use target `auth.type`/`auth.name`, optional `auth.ref`, and sibling `connect.scopes`.
-The source need not be selected by the SDK, but must be enabled with that named pair in its bucket; one Engine resolver owns readiness, consent, callback, execution, and refresh.
+Before collecting OAuth application credentials, offer a **Managed service** if Fused provides the exact service and scheme. Follow `fused-bucket` for enrollment, callback availability, and the reserved managed reference. User tokens stay in the consumer Engine; SDK calls and connected-user selectors stay the same. Select it before publishing, or publish a new immutable version when changing an existing auth reference.
+For OAuth/OIDC, use target `auth.type`/`auth.name`, optional `auth.ref`, and sibling `connect.scopes`. The source need not be selected by the SDK, but must be enabled with that named pair in its bucket; one Engine resolver owns readiness, consent, callback, execution, and refresh. `ref` may instead name `${fused.bucket.auth...}` for a Fused Managed App -- see `fused-bucket`.
 In a terminal, `sdk plan` may return `credential_readiness`: show the exact YAML-resolved bucket, offer to securely store the reported static secret or OAuth/OIDC application credential fields, and retry once after a confirmed write. Declining, `--json`, `--no-input`, and `CI=true` leave credentials unchanged while the valid plan remains usable. Never collect an end-user provider token, create/substitute a bucket, or self-grant access (see `fused-bucket`).
 
 The selected operation's imported `security_requirements` is authoritative:

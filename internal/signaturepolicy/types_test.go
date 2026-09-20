@@ -95,3 +95,24 @@ func assertSemanticJSON(t *testing.T, gotPayload, wantPayload []byte) {
 		t.Fatalf("signature transport changed JSON\ngot:  %s\nwant: %s", gotPayload, wantPayload)
 	}
 }
+
+// TestAuthenticatedSignatureRoundTrip preserves v2 freshness and authenticated-response fields through both supported config formats.
+func TestAuthenticatedSignatureRoundTrip(t *testing.T) {
+	payload, err := os.ReadFile(filepath.Join("..", "..", "..", "contract-fixtures", "signature", "v2_authenticated_challenge.json"))
+	// This exact fixture makes loss of the new security fields visible rather than skipping an empty glob.
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config signaturepolicy.Config
+	// Strict decoding must admit the complete negotiated v2 contract.
+	if err := json.Unmarshal(payload, &config); err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(config)
+	// Re-encoding must retain every signed-message and response field.
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertSemanticJSON(t, encoded, payload)
+	assertYAMLRoundTrip(t, config)
+}

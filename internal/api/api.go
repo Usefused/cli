@@ -979,13 +979,15 @@ const serviceSignaturePolicyGraphQLFields = `
 	version
 	rules {
 		name kind
+		response { value { location name path } body_field status_code }
 		predicates { source { location name path } operator value }
 		verification {
 			kind
 			signature {
 				secret_ref
 				signature { location name path }
-				components { kind names join algorithm encoding }
+				components { value kind names join algorithm encoding }
+				timestamp { header max_age_ms max_future_ms }
 				algorithm encoding comparison prefix component_separator
 			}
 			jwt { secret_ref token { location name path } algorithms issuer audience clock_skew_ms }

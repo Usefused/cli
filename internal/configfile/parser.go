@@ -619,12 +619,16 @@ func validateAppAuth(serviceName string, auth *AppAuth, kind ConfigKind) error {
 	return validateAppAuthRef(serviceName, auth.Ref, kind)
 }
 
-// validateAppAuthRef enforces the credential-family reference grammar while Engine owns source lookup and compatibility.
+// validateAppAuthRef admits local and managed application references while Engine owns source availability and compatibility.
 func validateAppAuthRef(serviceName, value string, kind ConfigKind) error {
-	const prefix = "${bucket.auth."
+	prefix := "${bucket.auth."
+	// Only the reserved managed auth namespace may select a broker-owned application.
+	if strings.HasPrefix(value, "${fused.bucket.auth.") {
+		prefix = "${fused.bucket.auth."
+	}
 	// The reference must be the complete field value so interpolation cannot alter source identity.
 	if value != strings.TrimSpace(value) || !strings.HasPrefix(value, prefix) || !strings.HasSuffix(value, "}") {
-		return fmt.Errorf("%s service %q auth ref must use ${bucket.auth.<source-service>.<source-authName>}", kind, serviceName)
+		return fmt.Errorf("%s service %q auth ref must use ${bucket.auth.<source-service>.<source-authName>} or ${fused.bucket.auth.<service>.<authName>}", kind, serviceName)
 	}
 	parts := strings.Split(strings.TrimSuffix(strings.TrimPrefix(value, prefix), "}"), ".")
 	// Exact arity keeps the source service and auth name unambiguous across plan and runtime.

@@ -1007,7 +1007,7 @@ func applyPreparedWebhook(client *api.Client, cfg *configfile.ParsedConfig, rece
 // Label since the whole webhook configuration is one label -- resp.Name).
 func printAppliedWebhookRegistrations(baseURL, label string, registrations []api.WebhookConfigRegistration) {
 	for _, reg := range registrations {
-		fmt.Printf("  webhook %q service %q -> %s\n", label, reg.Service, strings.TrimRight(baseURL, "/")+"/webhook/"+reg.Slug+"-"+reg.Service)
+		fmt.Printf("  webhook %q service %q -> %s\n", label, reg.Service, webhookRegistrationURL(baseURL, label, reg.Service, reg.Slug))
 	}
 }
 
@@ -1077,7 +1077,17 @@ func printAppliedWebhooks(baseURL string, webhooks []api.AppliedWebhookConfig) {
 }
 
 func appliedWebhookURL(baseURL string, w api.AppliedWebhookConfig) string {
-	return strings.TrimRight(baseURL, "/") + "/webhook/" + w.Slug + "-" + w.ServiceKey
+	return webhookRegistrationURL(baseURL, w.Label, w.ServiceKey, w.Slug)
+}
+
+// webhookRegistrationURL reconstructs the full display URL from the opaque slug
+// and label. The reserved default label maps to the predictable
+// /webhook/svc/{service} URL; every other label keeps the opaque token form.
+func webhookRegistrationURL(baseURL, label, service, slug string) string {
+	if label == defaultWebhookName {
+		return strings.TrimRight(baseURL, "/") + "/webhook/svc/" + service
+	}
+	return strings.TrimRight(baseURL, "/") + "/webhook/" + slug + "-" + service
 }
 
 // waitForSDKGeneration follows Engine-owned generation state for one immutable SDK version.

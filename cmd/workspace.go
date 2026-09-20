@@ -1399,7 +1399,7 @@ func init() {
 	workspaceServiceConnectCmd.Flags().StringVar(&workspaceServiceConnectUserRef, "user-ref", "", "Stable user reference (required)")
 	workspaceServiceConnectCmd.Flags().StringVar(&workspaceServiceConnectAuthType, "type", "", "OAuth/OIDC type when the service has multiple schemes")
 	workspaceServiceConnectCmd.Flags().StringVar(&workspaceServiceConnectAuthName, "auth-name", "", "Exact OAuth/OIDC scheme name when the service has multiple schemes")
-	workspaceServiceConnectCmd.Flags().StringVar(&workspaceServiceConnectAuthRef, "auth-ref", "", "Source application registration as ${bucket.auth.<service>.<auth-name>}")
+	workspaceServiceConnectCmd.Flags().StringVar(&workspaceServiceConnectAuthRef, "auth-ref", "", "Source application registration as ${bucket.auth.<service>.<auth-name>}, or ${fused.bucket.auth.<service>.<auth-name>} for a Fused Managed App")
 	workspaceServiceConnectCmd.Flags().StringSliceVar(&workspaceServiceConnectResourceInput, "resource-input", nil, "Tenant input as key=value; repeat for multiple declared fields")
 	workspaceServiceConnectCmd.Flags().StringArrayVar(&workspaceServiceConnectScopes, "scope", nil, "OAuth/OIDC scope to request; repeat to reduce provider consent")
 

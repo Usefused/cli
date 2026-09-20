@@ -119,8 +119,16 @@ with the pair stored in the selected bucket. Target `connect.scopes` and
 connected-user grants remain service-specific. The canonical syntax and
 constraints live in `fused-bucket`.
 
-OAuth/OIDC application `client_id`/`client_secret` pairs follow the bucket-secret
-path. Store the pair with `fused-cli secret set <service-slug> --bucket
+For supported OAuth services, offer **Managed service** setup as an alternative:
+`auth.ref: "${fused.bucket.auth.<service>.<authName>}"` selects Fused's published
+application without storing its client pair locally. User tokens remain in the
+consumer bucket; activation, scopes, consent, and callback requirements still
+apply. Use `fused-bucket` for availability and enrollment. A managed reference
+does not make private Fused bucket values readable or silently fill missing
+credentials. Managed webhook sources use `relay.source`; see `fused-webhook`.
+
+For your own OAuth/OIDC application, `client_id`/`client_secret` pairs follow the
+bucket-secret path. Store the pair with `fused-cli secret set <service-slug> --bucket
 <bucket> --type oauth|oidc --auth-name <scheme>
 --interactive|--value-stdin`; never
 supply a redirect URI. Engine derives the callback from its canonical public

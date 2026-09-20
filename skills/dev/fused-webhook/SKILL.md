@@ -40,6 +40,40 @@ services:
   apply-time diff, same as any other kind -- no separate imperative delete
   command.
 
+## Managed service event receivers
+
+For an available managed event offering, use a local receiver instead of asking
+the consumer for the provider application's signing secret. Managed OAuth setup
+is in `fused-bucket`; it does not automatically subscribe an app to events.
+
+```yaml
+apiVersion: fused/v1
+kind: webhook
+name: managed-slack-events
+services:
+  slack:
+    relay:
+      source:
+        bucket: connections
+        connection_id: "<consumer-connection-uuid>"
+        registration_id: "<broker-webhook-registration-uuid>"
+```
+
+Use the existing managed connection in that exact bucket and service. Obtain its
+ID from `bucket connections`; the registration ID comes from the managed service
+operator, not a guessed customer workspace or destination URL. Broker proof of
+the provider app/account comes from its own OAuth response; older connections
+may need fresh consent after event routing is configured. Registration identity
+alone never grants access.
+
+Plan/apply this ordinary webhook config, then attach its name to the SDK or MCP
+app below. Do not combine `relay.source` with `secret` or `relay.publish`, and
+do not give its local ingress URL to the provider. Fused's broker receives and
+verifies the signed provider request; the consumer pulls authorized events into
+its existing stream. Self-hosted consumers need outbound broker access, not a
+public event endpoint. OAuth callback requirements are separate. Defining broker
+exports is an operator task, not part of ordinary consumer credential setup.
+
 ## Imported verification headers
 
 For a service whose imported signed-webhook contract declares
@@ -98,15 +132,19 @@ services:
   `fused-mcp` -- either can be set independent of the other. The initial MCP
   event-resource surface requires finite `webhooks` names and rejects
   `webhooks_select_all: true`.
-- Delivery is scoped to exactly this attachment: the WS bridge resolves
-  which `kind: webhook` config a connecting SDK attached
-  server-side (from its own applied config), so two different registrations
+- Delivery is scoped to exactly this attachment: SDK gRPC subscriptions and MCP
+  event-resource reads resolve the applied app's named registration server-side,
+  so two different registrations
   for the same service+event never cross-deliver to an app that only
   attached to one of them.
 - SDK receivers retain durable at-least-once delivery and explicit ack/nack.
-  MCP delivery currently emits live, best-effort
-  `notifications/resources/updated` on the open Streamable HTTP SSE connection;
-  `resources/read` returns occurrence metadata, not the provider payload.
+  MCP `2026-07-28` uses POST `subscriptions/listen`: first check the
+  `notifications/subscriptions/acknowledged` subset, then handle live
+  `notifications/resources/updated`. `resources/read` returns the latest retained
+  occurrence, including its payload and metadata. Reconnect and re-read after
+  a disconnect; missed notifications are not replayed and a latest-value read
+  does not recover every missed occurrence. Reading does not ack the SDK's copy.
+  Use `fused-mcp` for protocol headers and client requirements.
 
 ## Fused-owned auth lifecycle events
 

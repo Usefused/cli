@@ -28,6 +28,7 @@ var secretSetBucketID string
 var secretSetExpiresAt string
 var secretSetType string
 var secretSetAuthName string
+var secretSetWebhook inboundWebhookFlag
 var secretListBucketID string
 var secretRemoveBucketID string
 var secretListFlags listFlags
@@ -74,7 +75,12 @@ var secretSetCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		return runSecretSet(cmd, args[0], value)
+		// Store the credential first; the inbound webhook offer runs after a
+		// successful write so it can never roll back committed OAuth/OIDC state.
+		if err := runSecretSet(cmd, args[0], value); err != nil {
+			return err
+		}
+		return offerWebhookAfterSecretSet(cmd, args[0])
 	}),
 }
 
@@ -689,6 +695,7 @@ func init() {
 	secretSetCmd.Flags().StringVar(&secretSetAuthName, "auth-name", "", "Exact provider auth scheme name; required when --type matches multiple schemes")
 	secretSetCmd.Flags().BoolVarP(&secretSetInteractive, "interactive", "i", false, "Explicitly require authentication prompts (the terminal default)")
 	secretSetCmd.Flags().BoolVar(&secretSetValueStdin, "value-stdin", false, "Read the credential value from stdin")
+	secretSetWebhook.addFlag(secretSetCmd)
 	secretListCmd.Flags().StringVar(&secretListBucketID, "bucket", "", "Bucket name or UUID (required)")
 	addListFlags(secretListCmd, &secretListFlags)
 	secretDeleteCmd.Flags().StringVar(&secretRemoveBucketID, "bucket", "", "Bucket name or UUID; omit to use the default bucket")

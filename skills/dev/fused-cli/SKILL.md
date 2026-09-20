@@ -791,7 +791,14 @@ fused-cli workspace service connect jira --bucket default \
 
 For a standalone target that reuses another enabled service's application
 registration, pass the independent selector
-`--auth-ref '${bucket.auth.<source-service>.<source-auth-name>}'`. The standalone
+`--auth-ref '${bucket.auth.<source-service>.<source-auth-name>}'`, or
+`--auth-ref '${fused.bucket.auth.<service>.<authName>}'` to use a Fused Managed
+App as a **Managed service** alternative to the user's own OAuth app. Check
+`workspace managed-auth status`; Engine enrolls automatically when Registry
+announces a broker, while explicit enable repairs enrollment or reverses opt-out.
+Availability is per service/auth scheme and callback deployment, not implied by
+Registry visibility. Offer this choice before asking for a client secret; see
+`fused-bucket` for the complete flow. The standalone
 initialization/debug command has no SDK or MCP identity selector and never
 impersonates a generated runtime. Generated runtimes use the `auth.ref` in
 their SDK/MCP app config.
