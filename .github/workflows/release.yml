@@ -36,7 +36,10 @@ jobs:
 
       - name: Resolve Go toolchain
         id: go-toolchain
-        run: echo "version=$(./scripts/go-toolchain-version.sh)" >> "$GITHUB_OUTPUT"
+        run: |
+          # Resolve separately so a failing script cannot be hidden by a successful echo.
+          VERSION=$(./scripts/go-toolchain-version.sh)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Set up Go
         uses: actions/setup-go@v5

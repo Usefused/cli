@@ -10,12 +10,17 @@ if [[ ! -f "$mod_file" ]]; then
   exit 1
 fi
 
-version="$(awk '$1 == "toolchain" && $2 ~ /^go[0-9]+\.[0-9]+\.[0-9]+$/ { sub(/^go/, "", $2); print $2; exit }' "$mod_file")"
+selector="$(awk '$1 == "toolchain" { print $2; exit }' "$mod_file")"
 
-# Requiring a strict toolchain directive keeps local, CI, and release builds on one explicit compiler.
-if [[ -z "$version" ]]; then
-  printf '%s must declare toolchain goMAJOR.MINOR.PATCH\n' "$mod_file" >&2
+# Go removes a redundant toolchain directive when the go directive already names that exact patched compiler.
+if [[ -z "$selector" ]]; then
+  selector="go$(awk '$1 == "go" { print $2; exit }' "$mod_file")"
+fi
+
+# Both supported declarations must pin a complete compiler version; malformed explicit toolchains never fall back.
+if [[ ! "$selector" =~ ^go[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  printf '%s must declare an exact toolchain or go version (MAJOR.MINOR.PATCH)\n' "$mod_file" >&2
   exit 1
 fi
 
-printf '%s\n' "$version"
+printf '%s\n' "${selector#go}"

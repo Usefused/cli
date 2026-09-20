@@ -14,10 +14,18 @@ if [[ "$actual" != "9.8.7" ]]; then
   exit 1
 fi
 
-printf 'module example.com/test\n\ngo 1.25.0\n' > "$test_root/missing.mod"
-# Missing declarations must fail instead of silently falling back to the runner toolchain.
+printf 'module example.com/test\n\ngo 1.26.6\n' > "$test_root/go-only.mod"
+actual="$("$script_dir/go-toolchain-version.sh" "$test_root/go-only.mod")"
+# A patched go directive remains reproducible after Go normalizes away an identical toolchain directive.
+if [[ "$actual" != "1.26.6" ]]; then
+  printf 'expected exact go directive 1.26.6, got %s\n' "$actual" >&2
+  exit 1
+fi
+
+printf 'module example.com/test\n\ngo 1.25\n' > "$test_root/missing.mod"
+# An incomplete version must fail instead of silently choosing the runner's latest patch.
 if "$script_dir/go-toolchain-version.sh" "$test_root/missing.mod" >/dev/null 2>&1; then
-  printf 'expected a missing toolchain directive to fail\n' >&2
+  printf 'expected an incomplete compiler version to fail\n' >&2
   exit 1
 fi
 
