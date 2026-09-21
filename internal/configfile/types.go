@@ -281,8 +281,9 @@ type InjectionConfig struct {
 // AppAuth selects a Registry-declared scheme; credential material stays
 // in the bucket or user connection and is never accepted in app config.
 type AppAuth struct {
-	Type string `yaml:"type" json:"type"`
-	Name string `yaml:"name,omitempty" json:"name,omitempty"`
+	ManagedApplicationID string `yaml:"managed_application_id,omitempty" json:"managed_application_id,omitempty"`
+	Type                 string `yaml:"type" json:"type"`
+	Name                 string `yaml:"name,omitempty" json:"name,omitempty"`
 	// Ref reuses one exact OAuth/OIDC application credential family from the
 	// selected bucket without copying secrets into app config or plan state.
 	Ref string `yaml:"ref,omitempty" json:"ref,omitempty"`
@@ -356,12 +357,13 @@ type WebhookRelay struct {
 
 // WebhookRelayRouting carries reviewed provider paths without any signing secret value.
 type WebhookRelayRouting struct {
-	AuthName          string `yaml:"auth_name" json:"auth_name"`
-	TokenResourcePath string `yaml:"token_resource_path" json:"token_resource_path"`
-	TokenAppPath      string `yaml:"token_app_path" json:"token_app_path"`
-	EventResourcePath string `yaml:"event_resource_path" json:"event_resource_path"`
-	EventAppPath      string `yaml:"event_app_path" json:"event_app_path"`
-	EventIDPath       string `yaml:"event_id_path" json:"event_id_path"`
+	ManagedApplicationID string `yaml:"managed_application_id,omitempty" json:"managed_application_id,omitempty"`
+	AuthName             string `yaml:"auth_name" json:"auth_name"`
+	TokenResourcePath    string `yaml:"token_resource_path" json:"token_resource_path"`
+	TokenAppPath         string `yaml:"token_app_path" json:"token_app_path"`
+	EventResourcePath    string `yaml:"event_resource_path" json:"event_resource_path"`
+	EventAppPath         string `yaml:"event_app_path" json:"event_app_path"`
+	EventIDPath          string `yaml:"event_id_path" json:"event_id_path"`
 }
 
 // WebhookRelaySource requires a bucket-owned connection instead of a claimed provider workspace ID.

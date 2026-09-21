@@ -1277,10 +1277,10 @@ func (c *Client) RediscoverConnectionResources(connectionID string) ([]Connectio
 }
 
 // StartConnectSession sends app-agnostic bucket routing separately from optional audit attribution.
-func (c *Client) StartConnectSession(bucketID, serviceID, endUserRef, createdByAppID, authType, authName, authRef string, resourceInput map[string]string, scopes []string) (*ConnectSessionStartResponse, error) {
+func (c *Client) StartConnectSession(bucketID, serviceID, endUserRef, createdByAppID, authType, authName, authRef string, resourceInput map[string]string, scopes []string, applicationIDs ...string) (*ConnectSessionStartResponse, error) {
 	query := `
-		mutation StartConnectSession($bucketId: String!, $serviceId: String!, $endUserRef: String!, $createdByAppId: String, $authType: String, $authName: String, $authRef: String, $resourceInput: EngineJSON, $scopes: [String!]) {
-			startConnectSession(bucket_id: $bucketId, service_id: $serviceId, end_user_ref: $endUserRef, created_by_app_id: $createdByAppId, auth_type: $authType, auth_name: $authName, auth_ref: $authRef, resource_input: $resourceInput, scopes: $scopes) {
+		mutation StartConnectSession($bucketId: String!, $serviceId: String!, $endUserRef: String!, $createdByAppId: String, $authType: String, $authName: String, $authRef: String, $managedApplicationID: String, $resourceInput: EngineJSON, $scopes: [String!]) {
+			startConnectSession(bucket_id: $bucketId, service_id: $serviceId, end_user_ref: $endUserRef, created_by_app_id: $createdByAppId, auth_type: $authType, auth_name: $authName, auth_ref: $authRef, managed_application_id: $managedApplicationID, resource_input: $resourceInput, scopes: $scopes) {
 				authorize_url
 				expires_at
 			}
@@ -1291,6 +1291,15 @@ func (c *Client) StartConnectSession(bucketID, serviceID, endUserRef, createdByA
 		"serviceId":  serviceID,
 		"endUserRef": endUserRef,
 	}
+	// The CLI carries one exact application selection independently of auth_name.
+	if len(applicationIDs) > 1 {
+		return nil, fmt.Errorf("only one managed application may be selected")
+	}
+	// Omission preserves the legacy default; a supplied selector remains explicit.
+	if len(applicationIDs) == 1 {
+		vars["managedApplicationID"] = applicationIDs[0]
+	}
+	// SDK attribution does not change credential ownership.
 	if strings.TrimSpace(createdByAppID) != "" {
 		vars["createdByAppId"] = createdByAppID
 	}

@@ -959,6 +959,7 @@ var workspaceServiceConnectUserRef string
 var workspaceServiceConnectAuthType string
 var workspaceServiceConnectAuthName string
 var workspaceServiceConnectAuthRef string
+var workspaceServiceConnectManagedApplicationID string
 var workspaceServiceConnectResourceInput []string
 var workspaceServiceConnectScopes []string
 
@@ -994,7 +995,7 @@ func runWorkspaceServiceConnect(cmd *cobra.Command, serviceSlug string) error {
 	if invalidConnectAuthSelector(workspaceServiceConnectAuthType, workspaceServiceConnectAuthName) {
 		return errors.New("--type and --auth-name must be provided together")
 	}
-	session, err := client.StartConnectSession(bucketID, serviceID, workspaceServiceConnectUserRef, "", workspaceServiceConnectAuthType, workspaceServiceConnectAuthName, workspaceServiceConnectAuthRef, resourceInput, workspaceServiceConnectScopes)
+	session, err := client.StartConnectSession(bucketID, serviceID, workspaceServiceConnectUserRef, "", workspaceServiceConnectAuthType, workspaceServiceConnectAuthName, workspaceServiceConnectAuthRef, resourceInput, workspaceServiceConnectScopes, workspaceServiceConnectManagedApplicationID)
 	if err != nil {
 		return err
 	}
@@ -1399,6 +1400,7 @@ func init() {
 	workspaceServiceConnectCmd.Flags().StringVar(&workspaceServiceConnectUserRef, "user-ref", "", "Stable user reference (required)")
 	workspaceServiceConnectCmd.Flags().StringVar(&workspaceServiceConnectAuthType, "type", "", "OAuth/OIDC type when the service has multiple schemes")
 	workspaceServiceConnectCmd.Flags().StringVar(&workspaceServiceConnectAuthName, "auth-name", "", "Exact OAuth/OIDC scheme name when the service has multiple schemes")
+	workspaceServiceConnectCmd.Flags().StringVar(&workspaceServiceConnectManagedApplicationID, "managed-application-id", "", "Exact operator-published managed application UUID (requires a managed --auth-ref)")
 	workspaceServiceConnectCmd.Flags().StringVar(&workspaceServiceConnectAuthRef, "auth-ref", "", "Source application registration as ${bucket.auth.<service>.<auth-name>}, or ${fused.bucket.auth.<service>.<auth-name>} for a Fused Managed App")
 	workspaceServiceConnectCmd.Flags().StringSliceVar(&workspaceServiceConnectResourceInput, "resource-input", nil, "Tenant input as key=value; repeat for multiple declared fields")
 	workspaceServiceConnectCmd.Flags().StringArrayVar(&workspaceServiceConnectScopes, "scope", nil, "OAuth/OIDC scope to request; repeat to reduce provider consent")

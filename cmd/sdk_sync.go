@@ -254,7 +254,7 @@ func sdkSyncAuth(selection api.AppSelection) *configfile.AppAuth {
 	if strings.TrimSpace(selection.AuthType) == "" {
 		return nil
 	}
-	return &configfile.AppAuth{Type: selection.AuthType, Name: selection.AuthName, Ref: selection.AuthRef}
+	return &configfile.AppAuth{Type: selection.AuthType, Name: selection.AuthName, Ref: selection.AuthRef, ManagedApplicationID: selection.ManagedApplicationID}
 }
 
 func sdkSyncConnect(selection api.AppSelection) *configfile.AppConnect {
