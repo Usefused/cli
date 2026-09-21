@@ -8,22 +8,21 @@ type ResolvedResourceReference struct {
 const AppSelectionSchemaVersion = 3
 
 type AppSelection struct {
-	ServiceID            string            `json:"service_id"`
-	ServiceVersionID     string            `json:"service_version_id"`
-	SchemaVersion        int               `json:"schema_version"`
-	EndpointIDs          []string          `json:"endpoint_ids"`
-	OperationNames       []string          `json:"operation_names"`
-	WebhookIDs           []string          `json:"webhook_ids"`
-	WebhookNames         []string          `json:"webhook_names"`
-	SelectAll            bool              `json:"select_all"`
-	WebhookSelectAll     bool              `json:"webhook_select_all"`
-	AuthType             string            `json:"auth_type"`
-	AuthName             string            `json:"auth_name"`
-	ManagedApplicationID string            `json:"managed_application_id"`
-	AuthRef              string            `json:"auth_ref"`
-	RequiredAuth         []AppRequiredAuth `json:"required_auth"`
-	ConnectScopes        []string          `json:"connect_scopes"`
-	Injections           []InjectionConfig `json:"injections"`
+	ServiceID        string            `json:"service_id"`
+	ServiceVersionID string            `json:"service_version_id"`
+	SchemaVersion    int               `json:"schema_version"`
+	EndpointIDs      []string          `json:"endpoint_ids"`
+	OperationNames   []string          `json:"operation_names"`
+	WebhookIDs       []string          `json:"webhook_ids"`
+	WebhookNames     []string          `json:"webhook_names"`
+	SelectAll        bool              `json:"select_all"`
+	WebhookSelectAll bool              `json:"webhook_select_all"`
+	AuthType         string            `json:"auth_type"`
+	AuthName         string            `json:"auth_name"`
+	AuthRef          string            `json:"auth_ref"`
+	RequiredAuth     []AppRequiredAuth `json:"required_auth"`
+	ConnectScopes    []string          `json:"connect_scopes"`
+	Injections       []InjectionConfig `json:"injections"`
 }
 
 // MCPTransportURLs keeps the upgrade-safe family routes distinct from exact
@@ -104,7 +103,7 @@ const appSummaryFields = `
 	selections {
 		service_id service_version_id schema_version
 		endpoint_ids operation_names webhook_ids webhook_names
-		select_all webhook_select_all auth_type auth_name auth_ref managed_application_id connect_scopes
+		select_all webhook_select_all auth_type auth_name auth_ref connect_scopes
 		required_auth { auth_type auth_name basic_password_mode }
 		injections { location name value mode }
 	}`

@@ -57,34 +57,3 @@ func TestManagedAuthReferenceAdmission(t *testing.T) {
 		}
 	}
 }
-
-// TestNamedManagedApplicationConfig retains the selector on the public YAML/JSON path and rejects local-source ambiguity.
-func TestNamedManagedApplicationConfig(t *testing.T) {
-	for _, kind := range []string{"sdk", "mcp"} {
-		for _, ref := range []string{"${fused.bucket.auth.slack.oauth2}", "${bucket.auth.slack.oauth2}", ""} {
-			fields := "language: typescript"
-			// MCP uses its existing metadata schema while sharing auth admission.
-			if kind == "mcp" {
-				fields = "description: Check connected account."
-			}
-			body := fmt.Sprintf("apiVersion: fused/v1\nkind: %s\nname: named\nversion: 1.0.0\n%s\nservices:\n  slack:\n    operations: [auth.test]\n    auth: {type: oauth, name: oauth2, ref: %q, managed_application_id: 729ea172-5512-4f37-b202-31084e2d2766}\n", kind, fields, ref)
-			parsed, err := configfile.Parse([]byte(body), kind+".yaml")
-			// Named selections must never be silently accepted with local or absent references.
-			if !strings.HasPrefix(ref, "${fused.") {
-				if err == nil {
-					t.Fatal("named application admitted without managed ref")
-				}
-				continue
-			}
-			// Valid managed identity survives the payload sent to Engine plan/apply.
-			if err != nil {
-				t.Fatal(err)
-			}
-			payload, err := json.Marshal(parsed)
-			// A successful parse is insufficient if serialization drops the selector.
-			if err != nil || !strings.Contains(string(payload), `"managed_application_id":"729ea172-5512-4f37-b202-31084e2d2766"`) {
-				t.Fatal("managed application identity lost")
-			}
-		}
-	}
-}

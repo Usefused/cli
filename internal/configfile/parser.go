@@ -604,10 +604,6 @@ func validateAppAuth(serviceName string, auth *AppAuth, kind ConfigKind) error {
 	if !isAppAuthType(authType) {
 		return fmt.Errorf("%s service %q auth type must be one of basic, bearer, api_key, oauth, oidc, or mtls", kind, serviceName)
 	}
-	// A named application must accompany a managed source; it cannot silently select local credentials.
-	if err := validateManagedApplicationID(auth.Ref, auth.ManagedApplicationID); err != nil {
-		return err
-	}
 	// Ordinary direct selectors need no credential-family reference validation.
 	if auth.Ref == "" {
 		return nil
