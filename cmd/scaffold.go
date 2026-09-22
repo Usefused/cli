@@ -25,43 +25,46 @@ const (
 var scaffoldKeyCleaner = regexp.MustCompile(`[^A-Za-z0-9]+`)
 
 type scaffoldOptions struct {
-	extend            bool
-	services          []string
-	operations        []string
-	selectAll         []string
-	events            []string
-	version           string
-	description       string
-	language          string
-	bucket            string
-	webhookAttachment string
+	extend                     bool
+	services                   []string
+	operations                 []string
+	selectAll                  []string
+	events                     []string
+	version                    string
+	description                string
+	fusedIntelligentClassifier bool
+	language                   string
+	bucket                     string
+	webhookAttachment          string
 }
 
 type scaffoldRequest struct {
-	kind                 configfile.ConfigKind
-	name                 string
-	path                 string
-	extend               bool
-	services             []scaffoldService
-	operations           []scaffoldOperation
-	selectAll            []string
-	events               []scaffoldEvent
-	version              string
-	description          string
-	language             string
-	bucket               string
-	webhookAttachment    string
-	generate             bool
-	noApply              bool
-	noToken              bool
-	versionSet           bool
-	descriptionSet       bool
-	languageSet          bool
-	bucketSet            bool
-	webhookAttachmentSet bool
-	generateSet          bool
-	skipConfirmation     bool
-	webhookSecrets       map[string]string
+	kind                       configfile.ConfigKind
+	name                       string
+	path                       string
+	extend                     bool
+	services                   []scaffoldService
+	operations                 []scaffoldOperation
+	selectAll                  []string
+	events                     []scaffoldEvent
+	version                    string
+	description                string
+	fusedIntelligentClassifier bool
+	classifierSet              bool
+	language                   string
+	bucket                     string
+	webhookAttachment          string
+	generate                   bool
+	noApply                    bool
+	noToken                    bool
+	versionSet                 bool
+	descriptionSet             bool
+	languageSet                bool
+	bucketSet                  bool
+	webhookAttachmentSet       bool
+	generateSet                bool
+	skipConfirmation           bool
+	webhookSecrets             map[string]string
 }
 
 type scaffoldService struct {
@@ -195,6 +198,7 @@ merge services into that file.`
 	}
 	// MCP descriptions are authored by the calling agent and become server identity metadata, not tool documentation.
 	if kind == configfile.KindMCP {
+		command.Flags().BoolVar(&opts.fusedIntelligentClassifier, "fused-intelligent-classifier", false, "Enable MCP intelligent search using Jev via Fused Registry")
 		command.Flags().StringVar(&opts.description, "description", "", "Human-readable summary naming selected services and capabilities")
 	}
 	addJSONOutputFlag(command)
@@ -303,7 +307,7 @@ func buildScaffoldRequest(cmd *cobra.Command, kind configfile.ConfigKind, args [
 	return scaffoldRequest{
 		kind: kind, name: name, path: path, extend: opts.extend,
 		services: services, operations: operations, selectAll: selectAll, events: events,
-		version: opts.version, description: strings.TrimSpace(opts.description), language: opts.language, bucket: strings.TrimSpace(opts.bucket), webhookAttachment: webhookAttachment,
+		version: opts.version, description: strings.TrimSpace(opts.description), fusedIntelligentClassifier: opts.fusedIntelligentClassifier, classifierSet: cmd.Flags().Changed("fused-intelligent-classifier"), language: opts.language, bucket: strings.TrimSpace(opts.bucket), webhookAttachment: webhookAttachment,
 		versionSet: cmd.Flags().Changed("version"), languageSet: cmd.Flags().Changed("language"),
 		descriptionSet: descriptionSet, bucketSet: cmd.Flags().Changed("bucket"), webhookAttachmentSet: (kind == configfile.KindSDK || kind == configfile.KindMCP) && cmd.Flags().Changed("webhook-attachment"),
 	}, nil
@@ -508,6 +512,7 @@ func newScaffoldData(request scaffoldRequest, resolver scaffoldRequirementsResol
 	// Only MCP uses the authored summary as protocol-level server identity.
 	if request.kind == configfile.KindMCP {
 		config.Description = request.description
+		config.FusedIntelligentClassifier = request.fusedIntelligentClassifier
 	}
 	if request.kind == configfile.KindSDK {
 		config.Language = request.language
@@ -639,6 +644,11 @@ func mergeAppIdentity(config *configfile.AppConfig, request scaffoldRequest) (bo
 	if err != nil {
 		return false, err
 	}
+	// Search processing is immutable; retain the prior setting unless an explicit successor opts in.
+	searchChanged, err := mergeMCPFusedIntelligentClassifier(config, request, versionChanged)
+	if err != nil {
+		return false, err
+	}
 	descriptionChanged, err := mergeMCPDescription(config, request, versionChanged)
 	// Authored server prose may change only alongside an explicit successor identity.
 	if err != nil {
@@ -655,7 +665,7 @@ func mergeAppIdentity(config *configfile.AppConfig, request scaffoldRequest) (bo
 		return false, err
 	}
 	webhookAttachmentChanged, err := mergeSDKWebhookAttachment(config, request)
-	return changed || languageChanged || descriptionChanged || generateChanged || bucketChanged || webhookAttachmentChanged, err
+	return changed || searchChanged || languageChanged || descriptionChanged || generateChanged || bucketChanged || webhookAttachmentChanged, err
 }
 
 // mergeSDKWebhookAttachment adds one app-wide ingress registration reference without retargeting an existing draft.
@@ -1107,4 +1117,18 @@ func init() {
 	workspaceCmd.AddCommand(newScaffoldCommand(configfile.KindWorkspace))
 	sdkCmd.AddCommand(newScaffoldCommand(configfile.KindSDK))
 	mcpCmd.AddCommand(newScaffoldCommand(configfile.KindMCP))
+}
+
+// mergeMCPFusedIntelligentClassifier prevents extensions from silently changing remote-processing consent.
+func mergeMCPFusedIntelligentClassifier(config *configfile.AppConfig, request scaffoldRequest, versionChanged bool) (bool, error) {
+	// Omission preserves the existing immutable setting.
+	if !request.classifierSet || request.fusedIntelligentClassifier == config.FusedIntelligentClassifier {
+		return false, nil
+	}
+	// Only an explicit MCP successor can change the search provider.
+	if request.kind != configfile.KindMCP || !versionChanged {
+		return false, fmt.Errorf("changing fused-intelligent-classifier requires an MCP successor version")
+	}
+	config.FusedIntelligentClassifier = request.fusedIntelligentClassifier
+	return true, nil
 }

@@ -106,37 +106,6 @@ func TestMatchPromptWebhookEventsRejectsAmbiguity(t *testing.T) {
 	}
 }
 
-// TestMatchPromptOperationRequiresOneGroundedResult verifies ranked semantic search cannot silently broaden app scope.
-func TestMatchPromptOperationRequiresOneGroundedResult(t *testing.T) {
-	tests := []struct {
-		name      string
-		query     string
-		endpoints []api.Integration
-		want      string
-		wantErr   string
-	}{
-		{name: "exact id wins", query: "listTasks", endpoints: []api.Integration{{Name: "createTask"}, {Name: "listTasks"}}, want: "listTasks"},
-		{name: "one semantic result", query: "list tasks", endpoints: []api.Integration{{Name: "listTasks"}}, want: "listTasks"},
-		{name: "ambiguous semantic results", query: "tasks", endpoints: []api.Integration{{Name: "listTasks"}, {Name: "createTask"}}, wantErr: "ambiguous"},
-		{name: "empty results", query: "delete tasks", wantErr: "no operation matched"},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			got, err := matchPromptOperation(test.query, test.endpoints)
-			// Expected ambiguity or absence must fail closed with a stable explanation.
-			if test.wantErr != "" {
-				if err == nil || !strings.Contains(err.Error(), test.wantErr) {
-					t.Fatalf("matchPromptOperation error = %v, want %q", err, test.wantErr)
-				}
-				return
-			}
-			if err != nil || got != test.want {
-				t.Fatalf("matchPromptOperation = %q, %v; want %q", got, err, test.want)
-			}
-		})
-	}
-}
-
 // TestPromptOperationQueriesPreservesDistinctRequests verifies plural intent remains separate and supports older Registry output.
 func TestPromptOperationQueriesPreservesDistinctRequests(t *testing.T) {
 	intent := api.IntentService{EndpointQuery: "legacyQuery", EndpointQueries: []string{"listTasks", "createTask", "listTasks", " "}}
@@ -165,22 +134,31 @@ func TestPromptIntentAliasesMergesDuplicateServiceMentions(t *testing.T) {
 
 // TestResolvePromptSelectionsResolvesEachOperationQuery verifies one model list entry becomes one exact app operation.
 func TestResolvePromptSelectionsResolvesEachOperationQuery(t *testing.T) {
-	// The fake Registry returns one grounded operation for each independent semantic query.
+	// The fake Engine returns one grounded Registry classifier result for each independent intent.
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		// Prompt must call the native Engine bridge with an exact service version.
+		if request.URL.Path != "/engine/graphql" {
+			t.Error("wrong classifier route")
+		}
 		var body struct {
 			Variables map[string]any `json:"variables"`
 		}
+		// Invalid test requests must fail before inspecting classifier inputs.
 		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
 			t.Fatalf("decode request: %v", err)
 		}
-		query, _ := body.Variables["q"].(string)
+		// Version identity must survive the CLI transport without caller-supplied candidates.
+		if body.Variables["service_id"] != "svc-1" || body.Variables["version"] != "v1" || len(body.Variables) != 3 {
+			t.Error("wrong classifier inputs")
+		}
+		query, _ := body.Variables["query"].(string)
 		operation := map[string]string{"list tasks": "listTasks", "create tasks": "createTask"}[query]
 		// An unexpected merged query recreates the hallucination-prone behavior this test prevents.
 		if operation == "" {
 			t.Fatalf("unexpected operation query %q", query)
 		}
 		writer.Header().Set("Content-Type", "application/json")
-		_, _ = writer.Write([]byte(`{"data":{"searchEndpoints":[{"name":"` + operation + `"}]}}`))
+		_, _ = writer.Write([]byte(`{"data":{"classifyPromptOperation":"` + operation + `"}}`))
 	}))
 	defer server.Close()
 
@@ -265,4 +243,74 @@ func TestPrintPromptInitPlanNamesWebhookComposition(t *testing.T) {
 			t.Fatalf("proposal %q does not contain %q", output.String(), fragment)
 		}
 	}
+}
+
+// TestPromptMissingOperationsNeverMeansAll rejects parser omissions both alone and alongside another service's events.
+func TestPromptMissingOperationsNeverMeansAll(t *testing.T) {
+	for _, events := range []bool{false, true} {
+		resolved := []sdkInitResolvedService{{target: workspaceServiceAddTarget{slug: "ledger"}, version: "v1"}}
+		intents := []api.IntentService{{Name: "ledger"}}
+		// A separate event intent must not accidentally turn the unqualified service into complete operation scope.
+		if events {
+			intents = append(intents, api.IntentService{Name: "events", EventQueries: []string{"created"}})
+			resolved = append(resolved, sdkInitResolvedService{target: workspaceServiceAddTarget{slug: "events"}, version: "v1"})
+		}
+		_, _, err := resolvePromptSelections(nil, scaffoldRequest{}, resolved, intents, events)
+		if err == nil || !strings.Contains(err.Error(), "explicitly request all operations") {
+			t.Fatalf("missing scope: %v", err)
+		} // No client call or select-all proposal is permitted.
+	}
+}
+
+// TestPromptClassifierFailureStopsProposal distinguishes no-match and provider failure without falling back to catalogue search.
+func TestPromptClassifierFailureStopsProposal(t *testing.T) {
+	for _, payload := range []string{`{"data":{"classifyPromptOperation":""}}`, `{"errors":[{"message":"Jev unavailable"}]}`} {
+		// Only the classifier bridge is available; any lexical fallback fails the test.
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/engine/graphql" {
+				t.Error("unexpected fallback")
+			}
+			_, _ = w.Write([]byte(payload))
+		}))
+		_, _, err := resolvePromptSelections(api.NewClient(server.URL, "test"), scaffoldRequest{}, []sdkInitResolvedService{{target: workspaceServiceAddTarget{slug: "ledger", serviceID: "svc"}, version: "v1"}}, []api.IntentService{{Name: "ledger", EndpointQueries: []string{"show bills"}}}, false)
+		server.Close()
+		if err == nil {
+			t.Fatal("failed classifier produced a proposal")
+		} // Neither outage nor absence can broaden scope.
+	}
+}
+
+// TestPromptDisclosesJevBeforeResolution makes data sharing visible before the first network request.
+func TestPromptDisclosesJevBeforeResolution(t *testing.T) {
+	var output bytes.Buffer
+	// Observe the disclosure at request time rather than merely after the command finishes.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(output.String(), "Jev") || !strings.Contains(output.String(), "operation names") {
+			t.Error("missing pre-request disclosure")
+		}
+		_, _ = w.Write([]byte(`{"data":{"parseSDKIntent":{"services":[]}}}`))
+	}))
+	defer server.Close()
+	command := &cobra.Command{}
+	command.SetErr(&output)
+	_, err := buildPromptInitPlan(command, api.NewClient(server.URL, "test"), "show bills", &promptInitOptions{})
+	if err == nil {
+		t.Fatal("empty parsed intent unexpectedly succeeded")
+	} // This test stops before any proposal mutation.
+}
+
+// TestPromptClassifierPreservesEventOnlyScope ensures absent operation queries do not reject a valid event-only service or grant operations.
+func TestPromptClassifierPreservesEventOnlyScope(t *testing.T) {
+	// Event discovery uses only the existing webhook catalogue and must never call Jev.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/graphql" {
+			t.Error("event-only service reached classifier")
+		}
+		_, _ = w.Write([]byte(`{"data":{"service":{"webhooks":[{"name":"invoice.paid"}]}}}`))
+	}))
+	defer server.Close()
+	got, events, err := resolvePromptSelections(api.NewClient(server.URL, "test"), scaffoldRequest{}, []sdkInitResolvedService{{target: workspaceServiceAddTarget{slug: "ledger", serviceID: "svc"}, version: "v1"}}, []api.IntentService{{Name: "ledger", EventQueries: []string{"invoice.paid"}}}, true)
+	if err != nil || len(got.selectAll) != 0 || len(got.operations) != 0 || len(got.events) != 1 || !events["ledger"] {
+		t.Fatalf("event-only scope=%+v services=%v err=%v", got, events, err)
+	} // Exact event consent grants no callable operation surface.
 }

@@ -500,6 +500,10 @@ func validateAppKindFields(cfg *AppConfig, kind ConfigKind) error {
 
 // validateSDKKindFields admits only fields that influence generated SDK output.
 func validateSDKKindFields(cfg *AppConfig) error {
+	// Remote discovery is meaningful only for hosted MCP versions.
+	if cfg.FusedIntelligentClassifier {
+		return fmt.Errorf("sdk config must not set fused-intelligent-classifier")
+	}
 	// SDK generation supports only Registry-owned emitters.
 	if !isSDKLanguage(cfg.Language) {
 		return fmt.Errorf("invalid language %q", cfg.Language)

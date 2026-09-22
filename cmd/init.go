@@ -26,23 +26,24 @@ const (
 )
 
 type unifiedInitOptions struct {
-	sdk               bool
-	mcp               bool
-	api               bool
-	webhook           bool
-	secrets           []string
-	extend            bool
-	services          []string
-	operations        []string
-	selectAll         []string
-	events            []string
-	version           string
-	description       string
-	language          string
-	bucket            string
-	webhookAttachment string
-	noApply           bool
-	noToken           bool
+	sdk                        bool
+	mcp                        bool
+	api                        bool
+	webhook                    bool
+	secrets                    []string
+	extend                     bool
+	services                   []string
+	operations                 []string
+	selectAll                  []string
+	events                     []string
+	version                    string
+	description                string
+	fusedIntelligentClassifier bool
+	language                   string
+	bucket                     string
+	webhookAttachment          string
+	noApply                    bool
+	noToken                    bool
 }
 
 type unifiedInitRunner func(*cobra.Command, unifiedInitMode, scaffoldRequest) error
@@ -134,6 +135,7 @@ retain available plan receipts without applying Engine state.`,
 	command.Flags().StringVar(&opts.version, "version", defaultScaffoldVersion, "App version")
 	command.Flags().StringVar(&opts.language, "language", defaultScaffoldLanguage, "Generated SDK target language")
 	command.Flags().StringVar(&opts.bucket, "bucket", "", "Existing bucket to bind to this app")
+	command.Flags().BoolVar(&opts.fusedIntelligentClassifier, "fused-intelligent-classifier", false, "Enable MCP intelligent search using Jev via Fused Registry")
 	command.Flags().StringVar(&opts.description, "description", "", "User-facing summary naming selected services and capabilities")
 	command.Flags().BoolVar(&opts.noApply, "no-apply", false, "Plan initialization without applying, generating, or downloading")
 	command.Flags().BoolVar(&opts.noToken, "no-token", false, "Apply without an auto-issued execution token; create one yourself later with 'sdk|mcp token generate'")
@@ -251,7 +253,10 @@ func buildUnifiedInitRequest(cmd *cobra.Command, mode unifiedInitMode, name stri
 	if mode != unifiedInitModeSDK && mode != unifiedInitModeMCP && (cmd.Flags().Changed("webhook-attachment") || len(opts.events) > 0) {
 		return scaffoldRequest{}, errors.New("--webhook-attachment and --events can only be used with --sdk or --mcp")
 	}
-	// Webhook flags and references must validate before any remote resolution.
+	// Classifier consent is MCP-only and must never be silently ignored for another kind.
+	if cmd.Flags().Changed("fused-intelligent-classifier") && mode != unifiedInitModeMCP {
+		return scaffoldRequest{}, errors.New("--fused-intelligent-classifier requires --mcp")
+	}
 	// --no-token is silently irrelevant here: a webhook registration never
 	// issues an execution token, so buildWebhookInitRequest doesn't read it.
 	if mode == unifiedInitModeWebhook {
@@ -316,7 +321,7 @@ func buildUnifiedInitRequest(cmd *cobra.Command, mode unifiedInitMode, name stri
 	return scaffoldRequest{
 		kind: kind, name: strings.TrimSpace(name), path: path, extend: opts.extend,
 		services: services, operations: operations, selectAll: selectAll, events: events,
-		version: opts.version, description: opts.description, language: language, bucket: strings.TrimSpace(opts.bucket), webhookAttachment: webhookAttachment,
+		version: opts.version, description: opts.description, fusedIntelligentClassifier: opts.fusedIntelligentClassifier, classifierSet: cmd.Flags().Changed("fused-intelligent-classifier"), language: language, bucket: strings.TrimSpace(opts.bucket), webhookAttachment: webhookAttachment,
 		versionSet: cmd.Flags().Changed("version"), languageSet: cmd.Flags().Changed("language"),
 		descriptionSet: mode == unifiedInitModeMCP && strings.TrimSpace(opts.description) != "", bucketSet: cmd.Flags().Changed("bucket"), webhookAttachmentSet: cmd.Flags().Changed("webhook-attachment"),
 		generate: mode == unifiedInitModeSDK, generateSet: mode == unifiedInitModeSDK || mode == unifiedInitModeAPI,

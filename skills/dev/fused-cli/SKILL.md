@@ -868,3 +868,14 @@ workspace/bucket/connect steps above do not change.
 
 Read only the skill(s) relevant to the task at hand -- don't load all eight
 for a single-domain question.
+
+## Natural-language app proposals
+
+`fused-cli prompt '<goal>'` parses the goal with Registry's configured chat model
+and uses Jev through the licensed Fused Registry classifier to resolve operation
+intents. The CLI discloses that search intent, operation names, and descriptions
+are sent to Jev; customers need no additional key. Exact operation IDs bypass
+Jev. Missing or unmatched operation intent must be clarified, never interpreted
+as selecting all operations. Use explicit complete-catalogue language when that
+scope is intended. Each proposal still requires interactive review before apply.
+This creation-time selection does not enable an MCP's runtime intelligent search.

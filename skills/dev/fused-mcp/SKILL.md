@@ -97,6 +97,18 @@ exposes only `search_docs` and `execute`; an exact physical/Unified name collisi
 fails closed. Discovery returns public schemas and graph names only, never
 private mappings, internal UUIDs, selectors, or values.
 
+MCP creation may opt into `fused-intelligent-classifier: true`, or
+`fused-cli init --mcp --fused-intelligent-classifier`. Omission
+keeps local search. This is immutable version metadata: changing or removing it
+requires a successor version. Disclose that intelligent search uses Jev through
+Fused Registry and sends search intent plus authorized operation names and
+descriptions to Jev; Fused manages the Jev API key, so no additional user key is
+needed. Exact/section lookups and empty-query browsing stay local. Intelligent
+intent search returns one best operation or no match, supports up to 2048
+authorized operations and 4096 query bytes, and reports classifier outages
+explicitly without silently falling back to lexical ranking. Never put a Jev key
+in an MCP config or bucket.
+
 Treat a non-empty `search_docs` query as a concise capability intent, such as
 `send email attachment`, rather than forwarding the conversation. Intent search
 returns the three best matches by default and accepts at most five. Ranked

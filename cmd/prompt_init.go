@@ -41,7 +41,8 @@ func newPromptInitCommand() *cobra.Command {
 		Short: "Create an SDK, MCP server, or REST app from a natural-language goal",
 		Long: `Create an SDK, MCP server, or direct REST app from a natural-language goal.
 
-Prompt resolves Registry services and exact operations before showing its proposal. If an
+Prompt uses Jev through Fused Registry to select operations from search intent and operation names/descriptions.
+No additional API key is required. Prompt resolves exact selections before showing its proposal.
 If an SDK or MCP goal asks to receive provider events, prompt also creates or reuses a webhook
 registration and attaches it to the app. Direct REST apps cannot receive webhook events.
 Every proposal requires interactive terminal confirmation before changes are applied.`,
@@ -86,12 +87,13 @@ Every proposal requires interactive terminal confirmation before changes are app
 	return command
 }
 
-// buildPromptInitPlan converts Registry intent into exact init requests without changing local or remote state.
+// buildPromptInitPlan discloses Jev processing before resolving a goal into exact, reviewable init requests.
 func buildPromptInitPlan(cmd *cobra.Command, client *api.Client, goal string, opts *promptInitOptions) (promptInitPlan, error) {
 	// Empty whitespace cannot be classified into a safe app capability boundary.
 	if goal == "" {
 		return promptInitPlan{}, errors.New("prompt requires a non-empty goal")
 	}
+	fmt.Fprintln(cmd.ErrOrStderr(), "Prompt operation selection uses Jev via Fused Registry. Search intent, operation names, and descriptions are sent to Jev. No extra API key is needed.")
 	intent, err := client.ParsePromptIntent(goal)
 	// Registry model failures must remain upstream of service activation and config publication.
 	if err != nil {
@@ -297,7 +299,7 @@ func promptIntentHasEvents(intents []api.IntentService) bool {
 	return false
 }
 
-// resolvePromptSelections resolves natural-language operation and event searches into exact immutable names.
+// resolvePromptSelections uses licensed Jev discovery for operations and preserves explicit operation/event boundaries.
 func resolvePromptSelections(client *api.Client, request scaffoldRequest, resolved []sdkInitResolvedService, intents []api.IntentService, webhookRequested bool) (scaffoldRequest, map[string]bool, error) {
 	intentByAlias := promptIntentAliases(intents)
 	explicitEventServices := make(map[string]bool)
@@ -313,16 +315,15 @@ func resolvePromptSelections(client *api.Client, request scaffoldRequest, resolv
 			request.selectAll = appendUniquePromptString(request.selectAll, service.target.slug)
 		}
 		for _, query := range queries {
-			// Each distinct operation intent is resolved independently so one fuzzy query cannot silently merge capabilities.
-			endpoints, err := client.SearchEndpoints(service.target.serviceID, service.version, query)
-			// Search transport or Registry failures cannot be collapsed into an empty operation result.
+			// Each intent uses the licensed classifier over this exact service version's complete catalogue.
+			operation, err := client.ClassifyPromptOperation(service.target.serviceID, service.version, query)
+			// Provider failures must stop proposal creation rather than fall back to ranked text results.
 			if err != nil {
-				return scaffoldRequest{}, nil, fmt.Errorf("search operations for %s@%s: %w", service.target.slug, service.version, err)
+				return scaffoldRequest{}, nil, fmt.Errorf("classify operation for %s@%s: %w", service.target.slug, service.version, err)
 			}
-			operation, err := matchPromptOperation(query, endpoints)
-			// Missing or ambiguous matches need a clearer goal instead of broadening the app from ranked search results.
-			if err != nil {
-				return scaffoldRequest{}, nil, fmt.Errorf("resolve operation for %s@%s: %w", service.target.slug, service.version, err)
+			// A no-match is actionable input feedback, never permission to select every operation.
+			if strings.TrimSpace(operation) == "" {
+				return scaffoldRequest{}, nil, fmt.Errorf("no operation matched %q for %s@%s", query, service.target.slug, service.version)
 			}
 			request.operations = appendUniquePromptOperation(request.operations, scaffoldOperation{service: service.target.slug, operation: operation})
 		}
@@ -332,13 +333,13 @@ func resolvePromptSelections(client *api.Client, request scaffoldRequest, resolv
 		}
 	}
 	webhookServices := make(map[string]bool)
-	// Operation-only apps can finalize empty endpoint queries as complete operation scope without webhook catalogue reads.
+	// Operation-only apps require explicit capabilities; missing parser output must not widen scope.
 	if !webhookRequested {
 		for _, service := range resolved {
 			intent := promptIntentForResolvedService(service, intentByAlias)
-			// A service without a narrowed operation query intentionally selects its complete operation catalogue.
+			// Missing operation intent requires clarification instead of assuming complete access.
 			if !promptIntentHasOperationSelection(intent) {
-				request.selectAll = appendUniquePromptString(request.selectAll, service.target.slug)
+				return scaffoldRequest{}, nil, fmt.Errorf("no operations specified for %s@%s; name the operations or explicitly request all operations", service.target.slug, service.version)
 			}
 		}
 		return request, webhookServices, nil
@@ -352,9 +353,9 @@ func resolvePromptSelections(client *api.Client, request scaffoldRequest, resolv
 		}
 		// Services outside explicit event intent retain operation behavior but need no registration coverage.
 		if !includeEvents {
-			// An otherwise unqualified operation service retains the complete callable surface.
+			// Services outside event scope need their own explicit operation request.
 			if !promptIntentHasOperationSelection(intent) {
-				request.selectAll = appendUniquePromptString(request.selectAll, service.target.slug)
+				return scaffoldRequest{}, nil, fmt.Errorf("no operations specified for %s@%s; name the operations or explicitly request all operations", service.target.slug, service.version)
 			}
 			continue
 		}
@@ -426,32 +427,6 @@ func promptEventQueries(intent api.IntentService) []string {
 // promptIntentHasOperationSelection distinguishes explicit narrow or complete scope from an unqualified service request.
 func promptIntentHasOperationSelection(intent api.IntentService) bool {
 	return intent.SelectAllOperations || len(promptOperationQueries(intent)) > 0
-}
-
-// matchPromptOperation accepts an exact operation ID or one unambiguous ranked result and rejects every broader search set.
-func matchPromptOperation(query string, endpoints []api.Integration) (string, error) {
-	names := make([]string, 0, len(endpoints))
-	for _, endpoint := range endpoints {
-		name := strings.TrimSpace(endpoint.Name)
-		// Malformed and duplicate Registry results do not create extra candidates.
-		if name == "" {
-			continue
-		}
-		names = appendUniquePromptString(names, name)
-		// An exact imported operation ID is stronger evidence than semantic ranking.
-		if strings.EqualFold(strings.TrimSpace(query), name) {
-			return name, nil
-		}
-	}
-	// A single usable semantic result is unambiguous enough to propose for review.
-	if len(names) == 1 {
-		return names[0], nil
-	}
-	// An empty result proves Registry could not ground the requested capability.
-	if len(names) == 0 {
-		return "", fmt.Errorf("no operation matched %q", query)
-	}
-	return "", fmt.Errorf("operation %q is ambiguous; matches %s", query, strings.Join(names, ", "))
 }
 
 // appendUniquePromptStrings trims blank model values and preserves first-seen order across repeated intent entries.
