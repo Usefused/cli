@@ -14,6 +14,7 @@ import (
 )
 
 type promptInitOptions struct {
+	update   string
 	kind     string
 	name     string
 	version  string
@@ -28,18 +29,25 @@ type promptInitPlan struct {
 	webhook       *scaffoldRequest
 	reusesWebhook bool
 	resolved      []sdkInitResolvedService
+	baseHash      string
+	baseVersion   string
 }
 
 var selectPromptWebhookAttachment = promptWebhookAttachment
 var confirmPromptPlan = promptInitConfirmation
 
-// newPromptInitCommand creates apps from natural-language intent while delegating all mutations to init lifecycles.
+// newPromptInitCommand creates or extends apps while retaining the reviewed deterministic lifecycle.
 func newPromptInitCommand() *cobra.Command {
 	opts := &promptInitOptions{version: defaultScaffoldVersion}
 	command := &cobra.Command{
 		Use:   "prompt <goal>",
-		Short: "Create an SDK, MCP server, or REST app from a natural-language goal",
-		Long: `Create an SDK, MCP server, or direct REST app from a natural-language goal.
+		Short: "Create or update an SDK, MCP server, or REST app from a natural-language goal",
+		Long: `Create or update an SDK, MCP server, or direct REST app from a natural-language goal.
+
+Use --update <app-name> or name an existing app in an update goal. Updates resolve a local
+config (use -f to disambiguate), preserve its settings, and publish an immutable successor.
+Sequential runtime intent can produce a Unified Operation for TypeScript/Python SDKs or MCP.
+Composition uses exact operation contracts and the Registry's configured drafting model.
 
 Prompt uses Jev through Fused Registry to select operations from search intent and operation names/descriptions.
 No additional API key is required. Prompt resolves exact selections before showing its proposal.
@@ -67,7 +75,7 @@ Every proposal requires interactive terminal confirmation before changes are app
 			if err := printPromptInitPlan(cmd, plan); err != nil {
 				return err
 			}
-			confirmed, err := confirmPromptPlan("Create and apply this Fused configuration?")
+			confirmed, err := confirmPromptPlan("Apply this proposed Fused configuration?")
 			// Terminal failures cannot be interpreted as affirmative authorization.
 			if err != nil {
 				return err
@@ -80,6 +88,7 @@ Every proposal requires interactive terminal confirmation before changes are app
 		}),
 	}
 	command.Flags().StringVar(&opts.kind, "kind", "", "Constrain the primary output to sdk, mcp, or rest")
+	command.Flags().StringVar(&opts.update, "update", "", "Update an existing app by name, preserving its local config")
 	command.Flags().StringVarP(&opts.name, "name", "n", "", "Override the suggested app name")
 	command.Flags().StringVarP(&opts.version, "version", "v", defaultScaffoldVersion, "App version")
 	command.Flags().StringVarP(&opts.language, "language", "l", "", "Override the generated SDK language")
@@ -87,23 +96,54 @@ Every proposal requires interactive terminal confirmation before changes are app
 	return command
 }
 
-// buildPromptInitPlan discloses Jev processing before resolving a goal into exact, reviewable init requests.
+// buildPromptInitPlan discloses model processing and grounds creation or additive updates before any mutation.
 func buildPromptInitPlan(cmd *cobra.Command, client *api.Client, goal string, opts *promptInitOptions) (promptInitPlan, error) {
 	// Empty whitespace cannot be classified into a safe app capability boundary.
 	if goal == "" {
 		return promptInitPlan{}, errors.New("prompt requires a non-empty goal")
 	}
+	// An explicitly empty update flag must never fall through to app creation.
+	if cmd.Flags().Changed("update") && strings.TrimSpace(opts.update) == "" {
+		return promptInitPlan{}, errors.New("--update requires an existing app name")
+	}
 	fmt.Fprintln(cmd.ErrOrStderr(), "Prompt operation selection uses Jev via Fused Registry. Search intent, operation names, and descriptions are sent to Jev. No extra API key is needed.")
-	intent, err := client.ParsePromptIntent(goal)
+	fmt.Fprintln(cmd.ErrOrStderr(), "Intent parsing uses Registry's configured language model with your goal and, for updates, the app name, kind, and service names.")
+	target, err := promptExplicitUpdateTarget(opts)
+	// Explicit update targets must exist before intent parsing can interpret their service context.
+	if err != nil {
+		return promptInitPlan{}, err
+	}
+	intent, err := client.ParsePromptIntentWithContext(goal, promptUpdateContext(target))
 	// Registry model failures must remain upstream of service activation and config publication.
 	if err != nil {
 		return promptInitPlan{}, fmt.Errorf("parse prompt intent: %w", err)
+	}
+	hadContext := target != nil
+	target, err = promptIntentUpdateTarget(target, intent)
+	// A missing or ambiguous update target cannot silently become a newly created app.
+	if err != nil {
+		return promptInitPlan{}, err
+	}
+	// A naturally named update gets the same service context as --update before capability resolution.
+	if target != nil && !hadContext {
+		intent, err = client.ParsePromptIntentWithContext(goal, promptUpdateContext(target))
+		if err != nil {
+			return promptInitPlan{}, fmt.Errorf("parse update intent: %w", err)
+		}
+		target, err = promptIntentUpdateTarget(target, intent)
+		if err != nil {
+			return promptInitPlan{}, err
+		}
 	}
 	// An intent without services cannot produce an executable app and must not become an empty local skeleton.
 	if len(intent.Services) == 0 {
 		return promptInitPlan{}, errors.New("prompt did not identify a Registry service; name at least one service")
 	}
 	mode, err := resolvePromptInitMode(opts.kind, intent.Kind)
+	// Existing authored kind takes precedence over an inferred output kind.
+	if target != nil {
+		mode, err = promptUpdateMode(target, opts.kind)
+	}
 	// Unknown or forbidden primary outcomes must fail before webhook compatibility is evaluated.
 	if err != nil {
 		return promptInitPlan{}, err
@@ -114,6 +154,10 @@ func buildPromptInitPlan(cmd *cobra.Command, client *api.Client, goal string, op
 		return promptInitPlan{}, fmt.Errorf("%s apps cannot receive webhook events; request an SDK or MCP app", promptModeLabel(mode))
 	}
 	name := resolvePromptInitName(opts.name, intent.Name, intent.Services, mode)
+	// An update retains the stable family name, never the parser's suggested new name.
+	if target != nil {
+		name, _ = unifiedExtendConfigName(target.config)
+	}
 	path, err := scaffoldTargetPath(promptConfigKind(mode), name, ConfigFile)
 	// The primary path must be safe before any Registry selection or secondary webhook path is prepared.
 	if err != nil {
@@ -131,6 +175,13 @@ func buildPromptInitPlan(cmd *cobra.Command, client *api.Client, goal string, op
 		generate: mode == unifiedInitModeSDK, generateSet: mode == unifiedInitModeSDK || mode == unifiedInitModeAPI,
 		skipConfirmation: true,
 	}
+	// Update identity, service pins, and omitted settings come from the existing authored document.
+	if target != nil {
+		request, err = promptUpdateRequest(cmd, request, target, opts)
+		if err != nil {
+			return promptInitPlan{}, err
+		}
+	}
 	// Blank model service names cannot be resolved and must not degrade into an empty app scaffold.
 	if len(request.services) == 0 {
 		return promptInitPlan{}, errors.New("prompt did not identify a valid Registry service name")
@@ -139,22 +190,36 @@ func buildPromptInitPlan(cmd *cobra.Command, client *api.Client, goal string, op
 	if mode == unifiedInitModeMCP && request.description == "" {
 		request.description = goal
 	}
-	request.descriptionSet = mode == unifiedInitModeMCP
-	request.languageSet = mode == unifiedInitModeSDK
+	request.descriptionSet = mode == unifiedInitModeMCP && target == nil
+	request.languageSet = mode == unifiedInitModeSDK && target == nil
 	resolvedRequest, resolved, err := resolveSDKInitServices(request, client)
 	// Ambiguous services and immutable-version failures must stop before endpoint or event expansion.
 	if err != nil {
 		return promptInitPlan{}, err
 	}
+	// Canonical service aliases must inherit the app's existing immutable pin before operation classification.
+	resolvedRequest, resolved = pinPromptUpdateServices(resolvedRequest, resolved, target)
 	resolvedRequest, webhookServices, err := resolvePromptSelections(client, resolvedRequest, resolved, intent.Services, webhookRequested)
 	// Exact operation and event resolution is required for a reviewable proposal.
 	if err != nil {
 		return promptInitPlan{}, err
 	}
 	plan := promptInitPlan{goal: goal, mode: mode, primary: resolvedRequest, resolved: resolved}
+	// Retain an exact baseline so a changed local file requires a fresh human review.
+	if target != nil {
+		plan.baseHash = target.config.SourceHash
+		_, plan.baseVersion, _, _ = unifiedExtendIdentity(target.config)
+	}
+	// A plain capability list keeps independent methods; only explicit ordered intent enters composition.
+	if intent.Sequential {
+		plan.primary.unifiedOperations, err = draftPromptUnifiedOperation(cmd, client, plan)
+		if err != nil {
+			return promptInitPlan{}, err
+		}
+	}
 	// An app without inbound events needs no registration or attachment orchestration.
 	if !webhookRequested {
-		return plan, nil
+		return finalizePromptPlan(client, plan)
 	}
 	attachment, reuse, err := resolvePromptWebhookAttachment(client, name, resolved, webhookServices)
 	// Registration lookup failures cannot be treated as proof that a new webhook should be created.
@@ -166,7 +231,7 @@ func buildPromptInitPlan(cmd *cobra.Command, client *api.Client, goal string, op
 	plan.reusesWebhook = reuse
 	// Existing coverage is attached directly; only a missing common registration needs its own init lifecycle.
 	if reuse {
-		return plan, nil
+		return finalizePromptPlan(client, plan)
 	}
 	webhookPath, err := scaffoldTargetPath(configfile.KindWebhook, attachment, "")
 	// The secondary config always uses webhook discovery paths, even when -f overrides the primary app path.
@@ -178,7 +243,7 @@ func buildPromptInitPlan(cmd *cobra.Command, client *api.Client, goal string, op
 		services: promptWebhookScaffoldServices(resolved, webhookServices), webhookSecrets: map[string]string{}, skipConfirmation: true,
 	}
 	plan.webhook = &webhookRequest
-	return plan, nil
+	return finalizePromptPlan(client, plan)
 }
 
 // resolvePromptInitMode applies an explicit constraint or validates the Registry's primary output classification.
@@ -700,6 +765,14 @@ func appendUniquePromptString(values []string, candidate string) []string {
 func printPromptInitPlan(cmd *cobra.Command, plan promptInitPlan) error {
 	out := cmd.OutOrStdout()
 	fmt.Fprintf(out, "Prompt proposal: %s %s version %s\n", promptModeLabel(plan.mode), plan.primary.name, plan.primary.version)
+	// The version transition and retained settings distinguish an additive update from app creation.
+	if plan.primary.extend {
+		fmt.Fprintf(out, "Update %s: %s -> %s (existing settings and selections preserved)\n", plan.primary.path, plan.baseVersion, plan.primary.version)
+	}
+	// Full mappings are part of the approval surface, not hidden model-generated implementation details.
+	if err := printPromptUnifiedOperations(out, plan.primary.unifiedOperations); err != nil {
+		return err
+	}
 	for _, service := range plan.resolved {
 		operations := sdkInitExplicitOperations(plan.primary, service.target.slug)
 		selection := strings.Join(operations, ", ")
@@ -734,14 +807,14 @@ func printPromptInitPlan(cmd *cobra.Command, plan promptInitPlan) error {
 // promptInitConfirmation presents one authorization for the composed webhook and primary app lifecycle.
 func promptInitConfirmation(message string) (bool, error) {
 	confirmed := true
-	err := huh.NewConfirm().Title(message).Affirmative("Create and apply").Negative("Cancel").Value(&confirmed).Run()
+	err := huh.NewConfirm().Title(message).Affirmative("Apply proposal").Negative("Cancel").Value(&confirmed).Run()
 	return confirmed, err
 }
 
 // executePromptInitPlan applies a missing webhook registration before the SDK that references it.
 func executePromptInitPlan(cmd *cobra.Command, plan promptInitPlan) error {
-	// Both create-only paths are checked before the first mutation to avoid a predictable composite partial result.
-	if err := ensureUnifiedInitTargetAbsent(plan.primary.path); err != nil {
+	// Creation requires absence; updates require the exact local baseline the user reviewed.
+	if err := validatePromptPlanBaseline(plan); err != nil {
 		return err
 	}
 	// A missing attachment is the only case that introduces the registration lifecycle.

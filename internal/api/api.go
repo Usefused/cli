@@ -1876,6 +1876,10 @@ type IntentService struct {
 }
 
 type IntentPayload struct {
+	Clarification    string          `json:"clarification"`
+	Action           string          `json:"action"`
+	Target           string          `json:"target"`
+	Sequential       bool            `json:"sequential"`
 	Kind             string          `json:"kind"`
 	Name             string          `json:"name"`
 	Language         string          `json:"language"`
@@ -1906,11 +1910,20 @@ func (c *Client) ParseSDKIntent(q string) (*IntentPayload, error) {
 	return &resp.ParseSDKIntent, nil
 }
 
-// ParsePromptIntent asks Registry to classify one natural-language app goal and its operation or event searches.
+// ParsePromptIntent preserves the context-free entry point for app discovery.
 func (c *Client) ParsePromptIntent(q string) (*IntentPayload, error) {
+	return c.ParsePromptIntentWithContext(q, "")
+}
+
+// ParsePromptIntentWithContext supplies only app identity and service names when interpreting an existing app update.
+func (c *Client) ParsePromptIntentWithContext(q, appContext string) (*IntentPayload, error) {
 	query := `
-		query ParsePromptIntent($q: String!) {
-			parseSDKIntent(q: $q) {
+		query ParsePromptIntent($q: String!, $appContext: String!) {
+			parseSDKIntent(q: $q, appContext: $appContext) {
+				clarification
+				action
+				target
+				sequential
 				kind
 				name
 				language
@@ -1929,7 +1942,7 @@ func (c *Client) ParsePromptIntent(q string) (*IntentPayload, error) {
 	var resp struct {
 		ParsePromptIntent IntentPayload `json:"parseSDKIntent"`
 	}
-	err := c.GraphQL(query, map[string]any{"q": q}, &resp)
+	err := c.GraphQL(query, map[string]any{"q": q, "appContext": appContext}, &resp)
 	// Registry parsing failures must remain distinguishable from a valid empty intent.
 	if err != nil {
 		return nil, err

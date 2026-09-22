@@ -227,6 +227,39 @@ The YAML path and stable app family stay the same; apply creates the new
 immutable version. Pass `--version` to override inference. Prerelease and
 non-SemVer versions require an explicit successor.
 
+## Create or update from a goal
+
+Use `prompt` in an interactive terminal to review and apply a natural-language request:
+
+```bash
+fused-cli prompt "Create a TypeScript SDK for Stripe customer lookup"
+fused-cli prompt --update billing-sdk "Add Stripe invoice lookup"
+fused-cli prompt --update billing-sdk \
+  "Add one operation that creates a Stripe customer, then creates an invoice for that customer"
+```
+
+You can also name the existing app in the goal: `Update billing-sdk to add Stripe invoice lookup`.
+Updates resolve an existing local config; pass `-f <path>` when names are ambiguous.
+They preserve existing selections, language, bucket, auth, and service versions.
+A changed config receives the next minor version, or the version you provide with
+`--version`. An unchanged proposal keeps its current version. Missing update targets
+never fall back to creating an app.
+
+Explicit sequential runtime intent produces one Unified Operation for a TypeScript
+or Python SDK, or an MCP server. A list of independent capabilities joined by “and”
+does not imply a sequence. The proposal shows the exact operation order, typed
+inputs, dependency mappings, and output before confirmation. Unsupported or ambiguous
+mappings require a clearer goal; Fused does not invent intermediate decisions,
+loops, or rollback calls. Existing Unified Operations are preserved; a different
+definition needs a new operation name.
+
+Jev selects operation names through the licensed Fused Registry endpoint. Intent
+parsing and composition use Registry's configured language model. Composition reads
+the selected immutable operation contracts; it does not send provider credentials or
+execution payloads. These processing disclosures appear before the corresponding
+requests. Applying the proposal publishes configuration; it does not execute the
+composed provider calls. SDK consumers still need to use the new package version.
+
 ## Control an existing app explicitly
 
 Every initialized app remains ordinary config as code. Edit its YAML, then use

@@ -65,6 +65,7 @@ type scaffoldRequest struct {
 	generateSet                bool
 	skipConfirmation           bool
 	webhookSecrets             map[string]string
+	unifiedOperations          map[string]configfile.UnifiedOperation
 }
 
 type scaffoldService struct {
@@ -768,12 +769,15 @@ func mergeScaffoldField(current *string, requested string, provided bool, field 
 	return false, fmt.Errorf("cannot extend config: existing %s %q conflicts with %q", field, *current, requested)
 }
 
+// mergeAppSelections adds explicit capabilities and compositions without replacing authored selections.
 func mergeAppSelections(config *configfile.AppConfig, request scaffoldRequest) (bool, error) {
 	changed, err := mergeAppServices(config, request.services)
+	// Service conflicts invalidate all dependent operation additions.
 	if err != nil {
 		return false, err
 	}
 	operationsChanged, err := mergeAppOperations(config, request.operations)
+	// Invalid operation scope must stop before adding composition references.
 	if err != nil {
 		return false, err
 	}
@@ -783,7 +787,12 @@ func mergeAppSelections(config *configfile.AppConfig, request scaffoldRequest) (
 		return false, err
 	}
 	eventsChanged, err := mergeAppEvents(config, request.events)
-	return changed || operationsChanged || selectAllChanged || eventsChanged, err
+	// An invalid event selection must not produce a partially composed config.
+	if err != nil {
+		return false, err
+	}
+	unifiedChanged, err := mergePromptUnifiedOperations(config, request.unifiedOperations)
+	return changed || operationsChanged || selectAllChanged || eventsChanged || unifiedChanged, err
 }
 
 // enrichAppScaffold adds only missing routing bindings after all create or
