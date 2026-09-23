@@ -66,6 +66,9 @@ type scaffoldRequest struct {
 	skipConfirmation           bool
 	webhookSecrets             map[string]string
 	unifiedOperations          map[string]configfile.UnifiedOperation
+	workflowIDs                []string
+	workflowSources            []configfile.WorkflowSource
+	workflowPins               map[string]workflowServicePin
 }
 
 type scaffoldService struct {
@@ -792,7 +795,12 @@ func mergeAppSelections(config *configfile.AppConfig, request scaffoldRequest) (
 		return false, err
 	}
 	unifiedChanged, err := mergePromptUnifiedOperations(config, request.unifiedOperations)
-	return changed || operationsChanged || selectAllChanged || eventsChanged || unifiedChanged, err
+	// Provenance is merged only after executable definitions have passed conflict checks.
+	if err != nil {
+		return false, err
+	}
+	sourcesChanged, err := mergeWorkflowSources(config, request.workflowSources)
+	return anyScaffoldChange(changed, operationsChanged, selectAllChanged, eventsChanged, unifiedChanged, sourcesChanged), err
 }
 
 // enrichAppScaffold adds only missing routing bindings after all create or
@@ -1140,4 +1148,15 @@ func mergeMCPFusedIntelligentClassifier(config *configfile.AppConfig, request sc
 	}
 	config.FusedIntelligentClassifier = request.fusedIntelligentClassifier
 	return true, nil
+}
+
+// anyScaffoldChange combines independent additive changes without giving any one selection type precedence.
+func anyScaffoldChange(changes ...bool) bool {
+	for _, changed := range changes {
+		// One changed component requires a new immutable desired state.
+		if changed {
+			return true
+		}
+	}
+	return false
 }

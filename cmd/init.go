@@ -26,6 +26,7 @@ const (
 )
 
 type unifiedInitOptions struct {
+	workflowIDs                []string
 	sdk                        bool
 	mcp                        bool
 	api                        bool
@@ -119,6 +120,7 @@ retain available plan receipts without applying Engine state.`,
 		}),
 	}
 
+	command.Flags().StringSliceVar(&opts.workflowIDs, "workflow", nil, "Exact Registry workflow release UUID; repeat to bundle workflows")
 	command.Flags().BoolVar(&opts.sdk, "sdk", false, "Create a generated typed SDK and download its package")
 	command.Flags().BoolVar(&opts.api, "api", false, "Create a direct REST execution app without generating a package")
 	command.Flags().BoolVar(&opts.mcp, "mcp", false, "Create and deploy an Engine-hosted MCP server")
@@ -249,88 +251,153 @@ func promptUnifiedInitMCPDescription() (string, error) {
 
 // buildUnifiedInitRequest preserves each resource kind while keeping direct API apps on the SDK contract.
 func buildUnifiedInitRequest(cmd *cobra.Command, mode unifiedInitMode, name string, opts *unifiedInitOptions) (scaffoldRequest, error) {
-	// Direct REST apps and registration configs have no long-lived event receiver; SDK and MCP apps do.
-	if mode != unifiedInitModeSDK && mode != unifiedInitModeMCP && (cmd.Flags().Changed("webhook-attachment") || len(opts.events) > 0) {
-		return scaffoldRequest{}, errors.New("--webhook-attachment and --events can only be used with --sdk or --mcp")
+	// Reject mode-specific flags before resolving or creating any resource.
+	if err := validateWorkflowInitModeFlags(cmd, mode, opts); err != nil {
+		return scaffoldRequest{}, err
 	}
-	// Classifier consent is MCP-only and must never be silently ignored for another kind.
-	if cmd.Flags().Changed("fused-intelligent-classifier") && mode != unifiedInitModeMCP {
-		return scaffoldRequest{}, errors.New("--fused-intelligent-classifier requires --mcp")
-	}
-	// --no-token is silently irrelevant here: a webhook registration never
-	// issues an execution token, so buildWebhookInitRequest doesn't read it.
+	// Webhook registrations retain their own configuration contract.
 	if mode == unifiedInitModeWebhook {
 		return buildWebhookInitRequest(cmd, name, opts)
 	}
-	// Signing references have no meaning on an app initialization request.
+	request, err := parseUnifiedInitSelections(opts)
+	// Malformed local flags must fail before any provider lookup.
+	if err != nil {
+		return request, err
+	}
+	// Attachment checks are local and must precede service activation.
+	if err := validateUnifiedInitAttachment(cmd, opts); err != nil {
+		return request, err
+	}
+	request = unifiedInitIdentityRequest(cmd, mode, name, opts, request)
+	request.path, err = scaffoldTargetPath(request.kind, request.name, ConfigFile)
+	// An invalid destination must not enter the mutation lifecycle.
+	if err != nil {
+		return request, err
+	}
+	request.language, err = unifiedInitLanguage(cmd, mode, opts)
+	return request, err
+}
+
+// validateWorkflowInitModeFlags prevents irrelevant flags from silently changing another resource kind.
+func validateWorkflowInitModeFlags(cmd *cobra.Command, mode unifiedInitMode, opts *unifiedInitOptions) error {
+	// Only SDK and MCP apps receive provider events and reusable workflows.
+	if mode != unifiedInitModeSDK && mode != unifiedInitModeMCP {
+		return validateNonReceiverInitFlags(cmd, mode, opts)
+	}
+	// Classifier consent is meaningful only on hosted MCP apps.
+	if cmd.Flags().Changed("fused-intelligent-classifier") && mode != unifiedInitModeMCP {
+		return errors.New("--fused-intelligent-classifier requires --mcp")
+	}
+	// Signing-secret declarations belong only to inbound webhook registration.
 	if len(opts.secrets) > 0 {
-		return scaffoldRequest{}, errors.New("--secret can only be used with --webhook")
+		return errors.New("--secret can only be used with --webhook")
 	}
-	kind := configfile.KindSDK
-	// MCP is the only mode whose durable config and target directory differ from SDK.
+	return nil
+}
+
+// validateNonReceiverInitFlags keeps direct API and webhook initialization outside app-only features.
+func validateNonReceiverInitFlags(cmd *cobra.Command, mode unifiedInitMode, opts *unifiedInitOptions) error {
+	// Event attachments require a long-lived receiver and cannot be discarded silently.
+	if cmd.Flags().Changed("webhook-attachment") || len(opts.events) > 0 {
+		return errors.New("--webhook-attachment and --events can only be used with --sdk or --mcp")
+	}
+	// A nonreceiver mode cannot silently discard requested workflows.
+	if len(opts.workflowIDs) > 0 {
+		return errors.New("--workflow requires --sdk or --mcp")
+	}
+	// Classifier settings require a hosted MCP runtime.
+	if cmd.Flags().Changed("fused-intelligent-classifier") {
+		return errors.New("--fused-intelligent-classifier requires --mcp")
+	}
+	// Secret registration is never part of ordinary direct API initialization.
+	if mode != unifiedInitModeWebhook && len(opts.secrets) > 0 {
+		return errors.New("--secret can only be used with --webhook")
+	}
+	return nil
+}
+
+// parseUnifiedInitSelections validates physical flag syntax while allowing workflow-only initialization.
+func parseUnifiedInitSelections(opts *unifiedInitOptions) (scaffoldRequest, error) {
+	request := scaffoldRequest{workflowIDs: opts.workflowIDs}
+	var err error
+	request.services, err = parseScaffoldServices(opts.services, false)
+	// Reject ambiguous service flag syntax before remote resolution.
+	if err != nil {
+		return request, err
+	}
+	// A working app must have explicit physical scope or published workflow scope.
+	if len(request.services) == 0 && len(opts.workflowIDs) == 0 {
+		return request, errors.New("init requires at least one --service or --workflow")
+	}
+	request.operations, err = parseScaffoldOperations(opts.operations)
+	// Invalid operation selectors must not become partial workspace scope.
+	if err != nil {
+		return request, err
+	}
+	request.selectAll, err = parseScaffoldNames("--select-all", opts.selectAll)
+	// Invalid bulk selectors must fail alongside explicit operation validation.
+	if err != nil {
+		return request, err
+	}
+	request.events, err = parseScaffoldEvents(opts.events)
+	return request, err
+}
+
+// validateUnifiedInitAttachment requires an explicit registration before a new app can receive selected events.
+func validateUnifiedInitAttachment(cmd *cobra.Command, opts *unifiedInitOptions) error {
+	attachment := strings.TrimSpace(opts.webhookAttachment)
+	// An explicit empty flag cannot accidentally reuse another registration.
+	if cmd.Flags().Changed("webhook-attachment") && attachment == "" {
+		return errors.New("--webhook-attachment requires a name")
+	}
+	// A new receiver cannot infer which ingress registration owns its events.
+	if !opts.extend && len(opts.events) > 0 && attachment == "" {
+		return errors.New("--events requires --webhook-attachment")
+	}
+	return nil
+}
+
+// unifiedInitIdentityRequest preserves the existing flag-to-config identity and routing contract.
+func unifiedInitIdentityRequest(cmd *cobra.Command, mode unifiedInitMode, name string, opts *unifiedInitOptions, request scaffoldRequest) scaffoldRequest {
+	request.kind = configfile.KindSDK
+	// Hosted MCP is the only app mode with a different durable kind.
 	if mode == unifiedInitModeMCP {
-		kind = configfile.KindMCP
+		request.kind = configfile.KindMCP
 	}
-	services, err := parseScaffoldServices(opts.services, false)
-	// Service syntax is validated locally before any Registry resolution.
-	if err != nil {
-		return scaffoldRequest{}, err
-	}
-	// Top-level init promises a working runtime, so an empty editable skeleton belongs to the compatibility commands instead.
-	if len(services) == 0 {
-		return scaffoldRequest{}, errors.New("init requires at least one --service")
-	}
-	operations, err := parseScaffoldOperations(opts.operations)
-	// Explicit operation syntax remains the same contract as resource-scoped init.
-	if err != nil {
-		return scaffoldRequest{}, err
-	}
-	selectAll, err := parseScaffoldNames("--select-all", opts.selectAll)
-	// Duplicate or malformed select-all values must fail before path creation.
-	if err != nil {
-		return scaffoldRequest{}, err
-	}
-	events, err := parseScaffoldEvents(opts.events)
-	// Event groups are parsed before service resolution so malformed local input cannot enable workspace state.
-	if err != nil {
-		return scaffoldRequest{}, err
-	}
-	webhookAttachment := strings.TrimSpace(opts.webhookAttachment)
-	// An explicitly supplied attachment must name one applied registration bundle.
-	if cmd.Flags().Changed("webhook-attachment") && webhookAttachment == "" {
-		return scaffoldRequest{}, errors.New("--webhook-attachment requires a name")
-	}
-	// New SDKs cannot derive an ingress identity from anywhere except the explicit attachment flag.
-	if !opts.extend && len(events) > 0 && webhookAttachment == "" {
-		return scaffoldRequest{}, errors.New("--events requires --webhook-attachment")
-	}
-	path, err := scaffoldTargetPath(kind, strings.TrimSpace(name), ConfigFile)
-	// Target validation prevents unsafe or ambiguous config writes.
-	if err != nil {
-		return scaffoldRequest{}, err
-	}
-	language := opts.language
-	// Only generated SDKs select a package emitter; direct API and MCP outcomes must not silently ignore this flag.
+	request.name, request.extend = strings.TrimSpace(name), opts.extend
+	request.version, request.description = opts.version, opts.description
+	request.bucket, request.webhookAttachment = strings.TrimSpace(opts.bucket), strings.TrimSpace(opts.webhookAttachment)
+	request.fusedIntelligentClassifier, request.classifierSet = opts.fusedIntelligentClassifier, cmd.Flags().Changed("fused-intelligent-classifier")
+	request.versionSet, request.languageSet = cmd.Flags().Changed("version"), cmd.Flags().Changed("language")
+	request.descriptionSet = mode == unifiedInitModeMCP && strings.TrimSpace(opts.description) != ""
+	request.bucketSet, request.webhookAttachmentSet = cmd.Flags().Changed("bucket"), cmd.Flags().Changed("webhook-attachment")
+	request.generate, request.generateSet = mode == unifiedInitModeSDK, mode == unifiedInitModeSDK || mode == unifiedInitModeAPI
+	request.noApply, request.noToken = opts.noApply, opts.noToken
+	return request
+}
+
+// unifiedInitLanguage rejects ignored emitter flags while preserving package-free API defaults.
+func unifiedInitLanguage(cmd *cobra.Command, mode unifiedInitMode, opts *unifiedInitOptions) (string, error) {
+	// A non-SDK mode cannot silently ignore an explicit code-generation choice.
 	if mode != unifiedInitModeSDK && cmd.Flags().Changed("language") {
-		return scaffoldRequest{}, errors.New("--language can only be used with --sdk")
+		return "", errors.New("--language can only be used with --sdk")
 	}
-	// Hosted MCP configs omit the language field, while direct API keeps the SDK schema default with generation disabled.
+	// MCP has no generated client language in its desired state.
 	if mode == unifiedInitModeMCP {
-		language = ""
+		return "", nil
 	}
-	return scaffoldRequest{
-		kind: kind, name: strings.TrimSpace(name), path: path, extend: opts.extend,
-		services: services, operations: operations, selectAll: selectAll, events: events,
-		version: opts.version, description: opts.description, fusedIntelligentClassifier: opts.fusedIntelligentClassifier, classifierSet: cmd.Flags().Changed("fused-intelligent-classifier"), language: language, bucket: strings.TrimSpace(opts.bucket), webhookAttachment: webhookAttachment,
-		versionSet: cmd.Flags().Changed("version"), languageSet: cmd.Flags().Changed("language"),
-		descriptionSet: mode == unifiedInitModeMCP && strings.TrimSpace(opts.description) != "", bucketSet: cmd.Flags().Changed("bucket"), webhookAttachmentSet: cmd.Flags().Changed("webhook-attachment"),
-		generate: mode == unifiedInitModeSDK, generateSet: mode == unifiedInitModeSDK || mode == unifiedInitModeAPI,
-		noApply: opts.noApply, noToken: opts.noToken,
-	}, nil
+	return opts.language, nil
 }
 
 // runUnifiedInitLifecycle either publishes validated local desired state or keeps both remote receipt boundaries behind one confirmation.
 func runUnifiedInitLifecycle(cmd *cobra.Command, mode unifiedInitMode, request scaffoldRequest) error {
+	// Resolve and compose every requested release before the existing lifecycle may activate services.
+	var err error
+	request, err = addWorkflowSelections(request, request.workflowIDs)
+	// Unavailable or incompatible workflows must stop before filesystem and service changes.
+	if err != nil {
+		return err
+	}
 	// Create-only collisions must fail before the composed workspace lifecycle can plan or apply a missing service.
 	if !request.extend {
 		if err := ensureUnifiedInitTargetAbsent(request.path); err != nil {
@@ -351,6 +418,11 @@ func runUnifiedInitLifecycle(cmd *cobra.Command, mode unifiedInitMode, request s
 	if err != nil {
 		return err
 	}
+	return commitUnifiedInitLifecycle(cmd, mode, lifecycle)
+}
+
+// commitUnifiedInitLifecycle keeps the workspace and app commit boundaries ordered under one reviewed intent.
+func commitUnifiedInitLifecycle(cmd *cobra.Command, mode unifiedInitMode, lifecycle sdkInitLifecycle) error {
 	confirmed, err := confirmSDKInitIfNeeded(lifecycle.request, lifecycle.services, lifecycle.draft != nil)
 	// Prompt failures cannot authorize either receipt boundary.
 	if err != nil {
@@ -365,6 +437,7 @@ func runUnifiedInitLifecycle(cmd *cobra.Command, mode unifiedInitMode, request s
 	if err != nil {
 		return err
 	}
+	// Preserve partial-commit context when the app fails after workspace activation.
 	if err := createPlanApplyUnifiedInit(cmd, lifecycle.client, mode, lifecycle.request, workspaceApplied, mode == unifiedInitModeSDK, resolveScaffoldRequirements, resolveScaffoldBucket); err != nil {
 		var precommitErr *unifiedInitPrecommitError
 		// Preparation and plan failures already carry precise workspace and local-state context.

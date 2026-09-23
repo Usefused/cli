@@ -188,7 +188,7 @@ func TestUnifiedExtendNoInputRequiresExactChange(t *testing.T) {
 	command := newUnifiedExtendCommandWithRunner(nil)
 	_, err = buildUnifiedExtendRequest(command, target, &unifiedExtendOptions{})
 	// The remediation lists every deterministic selection or successor flag accepted by the wrapper.
-	if err == nil || !strings.Contains(err.Error(), "--no-input extend requires --service, --operation, --select-all, --version, or an MCP --description") {
+	if err == nil || !strings.Contains(err.Error(), "--no-input extend requires --service, --operation, --select-all, --workflow, --version, or an MCP --description") {
 		t.Fatalf("no-input error=%v", err)
 	}
 }

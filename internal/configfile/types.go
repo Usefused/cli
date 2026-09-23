@@ -236,6 +236,8 @@ type AppConfig struct {
 	// Services because bindings refer to opaque configured service keys in this
 	// exact immutable app version; Engine resolves those keys during plan.
 	UnifiedOperations map[string]UnifiedOperation `yaml:"unified_operations,omitempty" json:"unified_operations,omitempty"`
+	// WorkflowSources records provenance only; it never substitutes for the installed definitions.
+	WorkflowSources []WorkflowSource `yaml:"workflow_sources,omitempty" json:"workflow_sources,omitempty"`
 }
 
 type SDKConfig = AppConfig
@@ -371,4 +373,11 @@ type WebhookRelaySource struct {
 	Bucket         string `yaml:"bucket" json:"bucket"`
 	ConnectionID   string `yaml:"connection_id" json:"connection_id"`
 	RegistrationID string `yaml:"registration_id" json:"registration_id"`
+}
+
+// WorkflowSource pins a deliberately imported library release without granting any execution authority.
+type WorkflowSource struct {
+	ID      string `yaml:"id" json:"id"`
+	Version string `yaml:"version" json:"version"`
+	Hash    string `yaml:"hash" json:"hash"`
 }

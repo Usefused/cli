@@ -461,6 +461,10 @@ func validateMCPConfig(cfg *MCPConfig) error { return validateAppConfig(cfg, Kin
 // validateAppConfig centralizes shared identity, selection, and auth
 // policy checks so SDK and MCP files cannot drift.
 func validateAppConfig(cfg *AppConfig, kind ConfigKind) error {
+	// Provenance must be well-formed even when the config is authored without the library installer.
+	if err := validateWorkflowSources(cfg.WorkflowSources); err != nil {
+		return err
+	}
 	// Every app identity needs a stable human-readable name before deeper validation.
 	if cfg.Name == "" {
 		return fmt.Errorf("%s config requires a name", kind)

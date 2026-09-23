@@ -14,6 +14,7 @@ import (
 )
 
 type unifiedExtendOptions struct {
+	workflowIDs []string
 	services    []string
 	operations  []string
 	selectAll   []string
@@ -59,6 +60,7 @@ next minor release; pass --version to choose a different immutable successor.`,
 		}),
 	}
 
+	command.Flags().StringSliceVar(&opts.workflowIDs, "workflow", nil, "Exact Registry workflow release UUID; repeat to bundle workflows")
 	command.Flags().StringSliceVar(&opts.services, "service", nil, "Registry service as <service>[@<version>]; comma-separated or repeatable")
 	command.Flags().StringSliceVar(&opts.operations, "operation", nil, "Selected operation as <service>=<operationId>; repeatable")
 	command.Flags().StringSliceVar(&opts.selectAll, "select-all", nil, "Service whose complete operation surface should be selected; repeatable")
@@ -207,71 +209,94 @@ func unifiedExtendConfigName(parsed *configfile.ParsedConfig) (string, error) {
 
 // buildUnifiedExtendRequest converts additive flags and inferred identity into the shared scaffold contract.
 func buildUnifiedExtendRequest(cmd *cobra.Command, target unifiedExtendTarget, opts *unifiedExtendOptions) (scaffoldRequest, error) {
-	services, err := parseScaffoldServices(opts.services, false)
-	// Service flag syntax must be valid before pinned versions are inherited from the file.
+	request, err := parseUnifiedExtendSelections(target, opts)
+	// Reject invalid additive flags before reading or changing remote scope.
 	if err != nil {
-		return scaffoldRequest{}, err
+		return request, err
 	}
-	services = inheritUnifiedExtendServiceVersions(services, target.config)
-	operations, err := parseScaffoldOperations(opts.operations)
-	// Explicit operation IDs retain the same parsing contract as unified init.
+	// Explicit identity and description overrides are checked before deciding whether to prompt for scope.
+	if err := validateUnifiedExtendOverrides(cmd, target, opts); err != nil {
+		return request, err
+	}
+	request.versionSet, request.descriptionSet = cmd.Flags().Changed("version"), cmd.Flags().Changed("description")
+	request.description = strings.TrimSpace(opts.description)
+	// Automation cannot infer an unspecified extension.
+	if err := completeUnifiedExtendSelections(&request, target); err != nil {
+		return request, err
+	}
+	request.name, request.version, request.kind, err = unifiedExtendIdentity(target.config)
+	// An invalid existing identity cannot become a successor app.
 	if err != nil {
-		return scaffoldRequest{}, err
+		return request, err
 	}
-	selectAll, err := parseScaffoldNames("--select-all", opts.selectAll)
-	// Complete-surface selections must also fail locally on malformed or duplicate names.
-	if err != nil {
-		return scaffoldRequest{}, err
+	// An explicit successor is authoritative over automatic additive version inference.
+	if request.versionSet {
+		request.version = strings.TrimSpace(opts.version)
 	}
-	versionSet := cmd.Flags().Changed("version")
-	// An explicitly empty successor is different from omission and cannot be inferred safely.
-	if versionSet && strings.TrimSpace(opts.version) == "" {
-		return scaffoldRequest{}, errors.New("--version must not be empty")
-	}
-	descriptionSet := cmd.Flags().Changed("description")
-	description := strings.TrimSpace(opts.description)
-	// Only hosted MCP successors have protocol identity prose to update.
-	if descriptionSet && target.mode != unifiedInitModeMCP {
-		return scaffoldRequest{}, errors.New("--description can only be used when extending an MCP server")
-	}
-	// An explicitly empty replacement cannot serve as complete successor identity.
-	if descriptionSet && description == "" {
-		return scaffoldRequest{}, errors.New("--description must not be empty")
-	}
-	selectionProvided := len(services) > 0 || len(operations) > 0 || len(selectAll) > 0 || versionSet || descriptionSet
-	// Automation cannot open the operation selector, so it must name one deterministic change.
-	if !selectionProvided && nonInteractive() {
-		return scaffoldRequest{}, errors.New("--no-input extend requires --service, --operation, --select-all, --version, or an MCP --description")
-	}
-	// A bare terminal command searches operations across already selected services.
-	if !selectionProvided {
-		services = unifiedExtendSelectableServices(target.config)
-		// A config with no scoped services has no operation catalogue to open, so request an explicit service.
-		if len(services) == 0 {
-			return scaffoldRequest{}, errors.New("extend requires --service because the existing app has no selected services")
-		}
-	}
-	name, currentVersion, kind, err := unifiedExtendIdentity(target.config)
-	if err != nil {
-		return scaffoldRequest{}, err
-	}
-	version := currentVersion
-	// Explicit successor intent is carried into pre-write version collision checks unchanged.
-	if versionSet {
-		version = strings.TrimSpace(opts.version)
-	}
-	request := scaffoldRequest{
-		kind: kind, name: name, path: target.path, extend: true,
-		services: services, operations: operations, selectAll: selectAll,
-		version: version, versionSet: versionSet,
-		description: description, descriptionSet: descriptionSet,
-	}
-	// Generated SDK and direct API declarations must preserve their distinct generation invariant during merge validation.
+	request.path, request.extend = target.path, true
 	if target.mode == unifiedInitModeSDK || target.mode == unifiedInitModeAPI {
-		request.generate = target.mode == unifiedInitModeSDK
-		request.generateSet = true
+		// Preserve the existing family's immutable package-generation mode.
+		request.generate, request.generateSet = target.mode == unifiedInitModeSDK, true
 	}
 	return request, nil
+}
+
+// parseUnifiedExtendSelections reuses physical flag parsing and inherits omitted provider pins from the existing app.
+func parseUnifiedExtendSelections(target unifiedExtendTarget, opts *unifiedExtendOptions) (scaffoldRequest, error) {
+	request := scaffoldRequest{workflowIDs: opts.workflowIDs}
+	var err error
+	request.services, err = parseScaffoldServices(opts.services, false)
+	// Malformed service references must not be inherited into the existing config.
+	if err != nil {
+		return request, err
+	}
+	request.services = inheritUnifiedExtendServiceVersions(request.services, target.config)
+	request.operations, err = parseScaffoldOperations(opts.operations)
+	// Operation syntax must be valid before merging any additions.
+	if err != nil {
+		return request, err
+	}
+	request.selectAll, err = parseScaffoldNames("--select-all", opts.selectAll)
+	return request, err
+}
+
+// validateUnifiedExtendOverrides prevents empty or mode-incompatible replacements from changing app identity.
+func validateUnifiedExtendOverrides(cmd *cobra.Command, target unifiedExtendTarget, opts *unifiedExtendOptions) error {
+	// Empty explicit values differ from omission and cannot be inferred safely.
+	if cmd.Flags().Changed("version") && strings.TrimSpace(opts.version) == "" {
+		return errors.New("--version must not be empty")
+	}
+	// Only an explicit description override changes existing authored metadata.
+	if cmd.Flags().Changed("description") {
+		// Only hosted MCP servers expose an authored server description.
+		if target.mode != unifiedInitModeMCP {
+			return errors.New("--description can only be used when extending an MCP server")
+		}
+		// An explicit blank description cannot erase required MCP metadata.
+		if strings.TrimSpace(opts.description) == "" {
+			return errors.New("--description must not be empty")
+		}
+	}
+	return nil
+}
+
+// completeUnifiedExtendSelections opens the existing selector only when no deterministic extension was supplied.
+func completeUnifiedExtendSelections(request *scaffoldRequest, target unifiedExtendTarget) error {
+	hasIntent := len(request.services)+len(request.operations)+len(request.selectAll)+len(request.workflowIDs) > 0
+	// Version-only or description-only updates are also explicit changes.
+	if hasIntent || request.versionSet || request.descriptionSet {
+		return nil
+	}
+	// Noninteractive extension requires deterministic user intent.
+	if nonInteractive() {
+		return errors.New("--no-input extend requires --service, --operation, --select-all, --workflow, --version, or an MCP --description")
+	}
+	request.services = unifiedExtendSelectableServices(target.config)
+	// An empty existing app offers no safe provider selection to infer.
+	if len(request.services) == 0 {
+		return errors.New("extend requires --service because the existing app has no selected services")
+	}
+	return nil
 }
 
 // inheritUnifiedExtendServiceVersions keeps an existing provider pin when --service omits its version.
