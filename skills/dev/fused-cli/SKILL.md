@@ -871,7 +871,7 @@ for a single-domain question.
 
 ## Natural-language app proposals
 
-`fused-cli prompt '<goal>'` parses the goal with Registry's configured chat model
+`fused-cli describe '<goal>'` parses the goal with Registry's configured chat model
 and uses Jev through the licensed Fused Registry classifier to resolve operation
 intents. The CLI discloses that search intent, operation names, and descriptions
 are sent to Jev; customers need no additional key. Exact operation IDs bypass

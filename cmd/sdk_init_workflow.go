@@ -244,6 +244,10 @@ func completeSDKInitVersionExtension(client *api.Client, request scaffoldRequest
 	probeRequest := request
 	probeRequest.description = ""
 	probeRequest.descriptionSet = false
+	// Hosted metadata edits are evaluated after the neutral probe so they can trigger successor inference.
+	if request.hostedMCP {
+		probeRequest.classifierSet = false
+	}
 	_, changed, _, err := extendAppScaffoldData(probeRequest, data, deferScaffoldRequirements, bucketResolver)
 	// Structural conflicts must stop before workspace apply, while runtime enrichment waits until newly enabled contracts can be refreshed.
 	if err != nil {
@@ -251,6 +255,11 @@ func completeSDKInitVersionExtension(client *api.Client, request scaffoldRequest
 	}
 	// Authored prose can independently require a successor even when its selected operation surface is unchanged.
 	changed = changed || (request.kind == configfile.KindMCP && request.descriptionSet && strings.TrimSpace(request.description) != strings.TrimSpace(current.Description))
+	// The combined App's nested server metadata also owns immutable version identity.
+	if request.hostedMCP && current.MCP != nil {
+		changed = changed || (request.descriptionSet && request.description != current.MCP.Description) ||
+			(request.classifierSet && request.fusedIntelligentClassifier != current.MCP.FusedIntelligentClassifier)
+	}
 	// An idempotent extension can safely plan the current version without manufacturing a successor.
 	if !changed {
 		return request, nil

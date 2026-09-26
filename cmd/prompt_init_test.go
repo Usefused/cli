@@ -13,12 +13,26 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// TestPromptInitAlwaysRequiresInteractiveConfirmation verifies LLM-derived plans have no unattended approval path.
-func TestPromptInitAlwaysRequiresInteractiveConfirmation(t *testing.T) {
+// TestDescribeCommandReplacesPromptAtRoot protects the public command spelling without keeping the old root alias.
+func TestDescribeCommandReplacesPromptAtRoot(t *testing.T) {
+	command, remaining, err := RootCmd.Find([]string{"describe"})
+	// The registered root command must accept natural-language goals under the new name.
+	if err != nil || command.Name() != "describe" || len(remaining) != 0 {
+		t.Fatalf("describe lookup: command=%v remaining=%v err=%v", command, remaining, err)
+	}
+	command, remaining, err = RootCmd.Find([]string{"prompt"})
+	// An unknown old name must stay at the root instead of invoking an undisclosed alias.
+	if err == nil || command != RootCmd || len(remaining) != 1 || remaining[0] != "prompt" {
+		t.Fatalf("prompt lookup: command=%v remaining=%v err=%v", command, remaining, err)
+	}
+}
+
+// TestDescribeAlwaysRequiresInteractiveConfirmation verifies LLM-derived plans have no unattended approval path.
+func TestDescribeAlwaysRequiresInteractiveConfirmation(t *testing.T) {
 	command := newPromptInitCommand()
-	// Removing the approval bypass keeps every successful prompt execution behind the confirmation UI.
+	// Removing the approval bypass keeps every successful describe execution behind the confirmation UI.
 	if command.Flags().Lookup("yes") != nil {
-		t.Fatal("prompt must not expose --yes")
+		t.Fatal("describe must not expose --yes")
 	}
 
 	previousNoInput := NoInput
@@ -30,7 +44,7 @@ func TestPromptInitAlwaysRequiresInteractiveConfirmation(t *testing.T) {
 	command.SetArgs([]string{"create an SDK for task management"})
 	err := command.Execute()
 	// Non-interactive execution must fail before intent parsing or any Engine mutation.
-	if err == nil || !strings.Contains(err.Error(), "prompt requires a terminal confirmation") {
+	if err == nil || !strings.Contains(err.Error(), "describe requires a terminal confirmation") {
 		t.Fatalf("expected interactive-only error, got %v", err)
 	}
 }
@@ -49,7 +63,7 @@ func TestBuildPromptInitPlanRejectsWebhookForREST(t *testing.T) {
 	}
 }
 
-// TestResolvePromptInitModeRestrictsPrimaryOutputs verifies webhook remains a composed SDK capability rather than a prompt kind.
+// TestResolvePromptInitModeRestrictsPrimaryOutputs verifies webhook remains a composed SDK capability rather than a describe output.
 func TestResolvePromptInitModeRestrictsPrimaryOutputs(t *testing.T) {
 	tests := []struct {
 		name     string

@@ -22,7 +22,7 @@ type unifiedInitSnapshotTarget struct {
 // unifiedInitCanRefreshGenerationSnapshot limits automatic repair to generated SDK init and one typed Engine condition.
 func unifiedInitCanRefreshGenerationSnapshot(mode unifiedInitMode, parsed *configfile.ParsedConfig, cause error) bool {
 	// API and MCP modes must never acquire package-generation behavior through shared kind or lifecycle code.
-	if mode != unifiedInitModeSDK || parsed == nil || parsed.SDK == nil || !sdkGeneratesPackage(parsed.SDK) {
+	if (mode != unifiedInitModeSDK && mode != unifiedInitModeApp) || parsed == nil || parsed.SDK == nil || !sdkGeneratesPackage(parsed.SDK) {
 		return false
 	}
 	var apiErr *api.APIError

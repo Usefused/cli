@@ -86,14 +86,16 @@ type applyOptions struct {
 }
 
 type sdkApplyOutput struct {
-	ConfigKey      string                 `json:"config_key"`
-	PlanID         string                 `json:"plan_id"`
-	Status         string                 `json:"status"`
-	SDKID          string                 `json:"sdk_id"`
-	VersionID      string                 `json:"version_id"`
-	ExecutionToken string                 `json:"execution_token,omitempty"`
-	Generation     sdkApplyStageOutput    `json:"generation"`
-	Download       sdkApplyDownloadOutput `json:"download"`
+	ConfigKey        string                 `json:"config_key"`
+	PlanID           string                 `json:"plan_id"`
+	Status           string                 `json:"status"`
+	SDKID            string                 `json:"sdk_id"`
+	VersionID        string                 `json:"version_id"`
+	ExecutionToken   string                 `json:"execution_token,omitempty"`
+	HostedMCP        bool                   `json:"hosted_mcp,omitempty"`
+	MCPTransportURLs *api.MCPTransportURLs  `json:"mcp_transport_urls,omitempty"`
+	Generation       sdkApplyStageOutput    `json:"generation"`
+	Download         sdkApplyDownloadOutput `json:"download"`
 }
 
 type sdkApplyStageOutput struct {
@@ -633,6 +635,11 @@ func applyPreparedSDKJSON(client *api.Client, cfg *configfile.ParsedConfig, rece
 		Generation: sdkApplyStageOutput{Status: sdkApplyGenerationStageStatus(resp, sdkGeneratesPackage(cfg.SDK)), JobID: resp.JobID},
 		Download:   sdkApplyDownloadOutput{Status: "not_requested"},
 	}
+	// Structured output binds hosted endpoints to the same immutable SDK-kind App version.
+	if resp.HostedMCP {
+		result.HostedMCP = true
+		result.MCPTransportURLs = &resp.MCPTransportURLs
+	}
 	// generate: false publishes the version without building a package, so
 	// there is no job to wait on and nothing to download. --download is already
 	// rejected for this config before apply runs.
@@ -873,6 +880,11 @@ func applyPreparedSDKWithResult(client *api.Client, cfg *configfile.ParsedConfig
 		Generation: sdkApplyStageOutput{Status: sdkApplyGenerationStageStatus(resp, sdkGeneratesPackage(cfg.SDK)), JobID: resp.JobID},
 		Download:   sdkApplyDownloadOutput{Status: "not_requested"},
 	}
+	// One apply receipt carries all delivery endpoints and one family token.
+	if resp.HostedMCP {
+		result.HostedMCP = true
+		result.MCPTransportURLs = &resp.MCPTransportURLs
+	}
 	label := sdkApplyResourceLabel(cfg.SDK)
 	fmt.Printf("Successfully applied %s %s\n", label, cfg.SDK.Name)
 	fmt.Printf("  %s ID: %s\n  Version ID: %s\n", label, resp.AppFamilyID, resp.AppID)
@@ -882,6 +894,11 @@ func applyPreparedSDKWithResult(client *api.Client, cfg *configfile.ParsedConfig
 		fmt.Printf("  %s token (shown once): %s\n", label, resp.ExecutionToken)
 	} else if receipt.NoToken {
 		fmt.Printf("  Token creation skipped (--no-token); run 'fused-cli sdk token generate %s <token-name>' to create one.\n", cfg.SDK.Name)
+	}
+	// The stable route is advertised now and becomes callable when generation completes.
+	if resp.HostedMCP {
+		fmt.Printf("  MCP stable URL: %s\n  MCP version URL: %s\n", resp.MCPTransportURLs.StreamableHTTP, resp.MCPTransportURLs.VersionedStreamableHTTP)
+		fmt.Printf("  REST and MCP use the same App ID and execution token.\n")
 	}
 	// A direct API has no package job or download stage, but its exact identity remains useful to unified init.
 	if !sdkGeneratesPackage(cfg.SDK) {

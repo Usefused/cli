@@ -167,25 +167,27 @@ Fused detects the supported source format. See
 GraphQL, AsyncAPI, Postman, WSDL, Google Discovery, overlays, strict mode, and
 diagnostics.
 
-## Create an SDK, API app, MCP server, or webhook registration
+## Create a Fused App
 
 Start from the service you want to use. The CLI defaults its version, lets you
 accept all operations with Enter or search a narrower set, enables the service
 when needed, and drives the existing plan/apply boundaries:
 
 ```bash
+fused-cli init support-app --service linear
 fused-cli init support-sdk --sdk --service linear
-fused-cli init support-api --api --service linear
+fused-cli init support-api --rest --service linear
 fused-cli init support-agent --mcp \
   --description "Read and update support issues" \
   --service linear
 ```
 
-SDK mode downloads a typed package, API mode prints a central Engine REST
-request template without generating a package, and MCP mode reports the hosted
-server connection details. Omit the mode in a terminal to choose it. For
-automation, pass `--no-input` and one explicit mode. SDK, API, and MCP modes
-also require `--operation` or `--select-all` for every service.
+With no method flag, init creates one App with SDK, MCP, and REST delivery,
+sharing one version and execution token. `--sdk`, `--rest` (or `--api`), and
+`--mcp` retain single-method creation. The combined App downloads a typed
+package and reports hosted MCP URLs; `--rest` prints a central Engine REST
+request template without generating a package. In automation, pass
+`--no-input` and explicit `--operation` or `--select-all` for every service.
 
 Pass `--no-apply` to plan without applying. Fused writes the app config and any
 required workspace service additions, saves every plan receipt whose
@@ -229,14 +231,18 @@ non-SemVer versions require an explicit successor.
 
 ## Create or update from a goal
 
-Use `prompt` in an interactive terminal to review and apply a natural-language request:
+Use `describe` in an interactive terminal to review and apply a natural-language request:
 
 ```bash
-fused-cli prompt "Create a TypeScript SDK for Stripe customer lookup"
-fused-cli prompt --update billing-sdk "Add Stripe invoice lookup"
-fused-cli prompt --update billing-sdk \
+fused-cli describe "Create a TypeScript SDK for Stripe customer lookup"
+fused-cli describe --update billing-sdk "Add Stripe invoice lookup"
+fused-cli describe --update billing-sdk \
   "Add one operation that creates a Stripe customer, then creates an invoice for that customer"
 ```
+
+`describe` selects an SDK, MCP, or REST outcome from the goal; use `--kind` to
+constrain it. For one App with all three delivery methods, use `init` without
+a method flag. `describe` always requires interactive proposal review.
 
 You can also name the existing app in the goal: `Update billing-sdk to add Stripe invoice lookup`.
 Updates resolve an existing local config; pass `-f <path>` when names are ambiguous.

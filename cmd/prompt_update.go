@@ -65,13 +65,13 @@ func promptIntentUpdateTarget(explicit *unifiedExtendTarget, intent *api.IntentP
 	}
 	// Unknown actions cannot safely select a mutation lifecycle.
 	if intent.Action != "" && intent.Action != "create" && intent.Action != "update" {
-		return nil, fmt.Errorf("unsupported prompt action %q", intent.Action)
+		return nil, fmt.Errorf("unsupported action in described goal %q", intent.Action)
 	}
 	// An explicit target is authoritative, but a conflicting named target needs a corrected goal.
 	if explicit != nil {
 		name, _ := unifiedExtendConfigName(explicit.config)
 		if intent.Target != "" && intent.Target != name {
-			return nil, fmt.Errorf("prompt targets %q but the selected app is %q", intent.Target, name)
+			return nil, fmt.Errorf("goal targets %q but the selected app is %q", intent.Target, name)
 		}
 		return explicit, nil
 	}
@@ -81,7 +81,7 @@ func promptIntentUpdateTarget(explicit *unifiedExtendTarget, intent *api.IntentP
 	}
 	// Conflicting model fields cannot turn a creation request into an update of a named family.
 	if intent.Action != "update" {
-		return nil, fmt.Errorf("prompt returned an existing target without update intent; specify --update <app-name>")
+		return nil, fmt.Errorf("goal parser returned an existing target without update intent; specify --update <app-name>")
 	}
 	// An unnamed update needs user input rather than selecting an arbitrary local SDK.
 	if strings.TrimSpace(intent.Target) == "" {
@@ -111,7 +111,7 @@ func promptUpdateRequest(cmd *cobra.Command, request scaffoldRequest, target *un
 		return scaffoldRequest{}, err
 	}
 	if opts.name != "" && opts.name != name {
-		// Renaming a family is outside additive prompt updates.
+		// Additive updates proposed from a goal cannot rename an existing family.
 		return scaffoldRequest{}, fmt.Errorf("--name cannot rename existing app %q", name)
 	}
 	request.name, request.path, request.kind, request.extend = name, target.path, kind, true
@@ -208,7 +208,7 @@ func validatePromptPlanBaseline(plan promptInitPlan) error {
 		return err
 	}
 	if plan.baseHash == "" || current.SourceHash != plan.baseHash {
-		return fmt.Errorf("existing app config changed during prompt review; rerun prompt to review a fresh proposal")
+		return fmt.Errorf("existing app config changed during review; rerun fused-cli describe to review a fresh proposal")
 	}
 	return nil
 }

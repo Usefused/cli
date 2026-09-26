@@ -1,7 +1,7 @@
 # Config as code
 
-Fused can manage workspace services, generated SDKs, MCP servers, and webhook
-registrations through YAML stored under `.fused/`.
+Fused can manage workspace services, Apps with SDK, MCP, and REST delivery,
+and webhook registrations through YAML stored under `.fused/`.
 
 ## Create or extend a config
 
@@ -10,6 +10,9 @@ editable workspace skeleton:
 
 ```bash
 fused-cli workspace init
+fused-cli init customer-app \
+  --service okta@v2 \
+  --operation okta=listLogEvents
 fused-cli init my-sdk --sdk \
   --service okta@v2 \
   --operation okta=listLogEvents
@@ -38,12 +41,15 @@ repeats keep the current version. Pass `--version` to override inference, and
 always pass it when the current version is a prerelease or not SemVer.
 
 Top-level init requires at least one service and resolves an omitted provider
-version to one concrete enabled or latest public version. In a terminal, omit
-`--sdk`, `--api`, or `--mcp` to choose the outcome, and omit operation flags to
-choose all operations or search a narrower set. If a version is not enabled,
-the CLI asks once to enable it and create the app; workspace and app changes
-still receive separate plan receipts. `--no-input` and `CI=true` skip prompts,
-require one explicit mode, and require `--operation` or `--select-all` for each
+version to one concrete enabled or latest public version. With no method flag,
+it creates one App with SDK, MCP, and REST delivery. Use `--sdk`, `--mcp`, or
+`--rest` (also available as `--api`) for a single method. In a terminal, omit
+operation flags to choose all operations or search a narrower set. The combined
+App uses one `kind: sdk` file with `generate: true` and an `mcp` section. Its
+immutable version and execution token are shared by all three methods.
+If a version is not enabled, the CLI asks once to enable it and create the app; workspace and app changes
+still receive separate plan receipts. `--no-input` and `CI=true` skip prompts
+and require `--operation` or `--select-all` for each
 service. Top-level init does not support `--json`.
 
 Use `--no-apply` when initialization is only preparing files for later review.
@@ -98,6 +104,34 @@ services:
     connect:
       scopes: [openid, profile]
 ```
+
+### One App with SDK, MCP, and REST
+
+Add `mcp:` to a `kind: sdk` declaration to expose the same immutable App version
+through hosted MCP. REST execution is already available for every SDK-kind App.
+The App ID, version, selected operations, credential bucket, and execution token
+are shared across all three methods.
+
+```yaml
+apiVersion: fused/v1
+kind: sdk
+name: customer-app
+version: "1.0.0"
+language: typescript
+bucket: default
+mcp:
+  description: Search and manage customer records
+services:
+  crm:
+    version: "2026-07-01"
+    operations: [listCustomers, getCustomer]
+```
+
+Run `fused-cli sdk plan` and `fused-cli sdk apply --download`. Apply returns one
+App ID and token plus the Engine-owned MCP URLs. The MCP route becomes callable
+when package generation completes. This App uses both the SDK and MCP family
+allowances. A successor version keeps the same family identity and can change
+its MCP description or selected operations through a new reviewed config.
 
 `auth.ref` reuses the complete OAuth/OIDC application pair stored for the
 named source service/auth family in this app's `bucket`. The source service

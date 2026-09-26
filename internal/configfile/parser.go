@@ -516,11 +516,27 @@ func validateSDKKindFields(cfg *AppConfig) error {
 	if strings.TrimSpace(cfg.Description) != "" {
 		return fmt.Errorf("sdk config must not set description")
 	}
+	// Hosted MCP delivery requires an authored server summary within the Engine's bounded initialize contract.
+	if cfg.MCP != nil {
+		if strings.TrimSpace(cfg.MCP.Description) == "" || len(cfg.MCP.Description) > maxMCPServerDescriptionLength {
+			return fmt.Errorf("sdk mcp description is required and must be at most %d bytes", maxMCPServerDescriptionLength)
+		}
+		for name, service := range cfg.Services {
+			// MCP event resources need an explicit finite set even when SDK generation can select all.
+			if service.WebhooksSelectAll {
+				return fmt.Errorf("sdk mcp service %q must select explicit webhook events instead of webhooks_select_all", name)
+			}
+		}
+	}
 	return nil
 }
 
 // validateMCPKindFields admits only fields consumed by the hosted MCP runtime.
 func validateMCPKindFields(cfg *AppConfig) error {
+	// A standalone MCP config cannot recursively request another hosted delivery.
+	if cfg.MCP != nil {
+		return fmt.Errorf("mcp config must not set nested mcp delivery")
+	}
 	// MCP apps are hosted by Engine and therefore do not choose a package language.
 	if strings.TrimSpace(cfg.Language) != "" {
 		return fmt.Errorf("mcp config must not set language")

@@ -109,18 +109,24 @@ Manage your local CLI configuration (`set`, `get`, `list`, `reset`). Inherits gl
 
 ## `init <app-name>`
 
-Create and start a typed SDK, a direct Engine API app, or an Engine-hosted MCP
+Create one App with SDK, MCP, and REST delivery by default. Explicit method
+flags create only a typed SDK, a direct Engine REST app, or an Engine-hosted MCP
 server. Top-level init composes the existing workspace and app plan/apply
 functions; it does not introduce a new resource kind or receipt boundary.
 
 ```bash
+# Create one App with all three delivery methods
+fused-cli init customer-app \
+  --service '@google/drive' \
+  --operation '@google/drive=listFiles'
+
 # Generate, apply, and download a typed SDK
 fused-cli init google-workspace --sdk \
   --service '@google/drive' \
   --operation '@google/drive=listFiles'
 
 # Apply the same execution app without generating a package
-fused-cli init google-api --api \
+fused-cli init google-api --rest \
   --service '@google/drive' \
   --select-all '@google/drive'
 
@@ -130,6 +136,11 @@ fused-cli init support-agent --mcp \
   --service jira \
   --select-all jira
 ```
+
+The default writes one `kind: sdk` config with `generate: true` and an
+`mcp` section. Apply creates one App family and one immutable version, then
+downloads the typed package and reports the hosted MCP URLs. The issued
+execution token works for generated SDK, MCP, and REST calls to that App.
 
 `--service <service>[@<version>]` accepts comma-separated values or repeated
 flags. `--operation <service>=<operationId>` and `--select-all <service>` are
@@ -147,10 +158,11 @@ receipt is saved immediately. The command prints the exact remaining commands,
 including `sdk apply --download` for generated SDKs, and tells users to re-plan
 if a retained receipt becomes stale.
 
-In a terminal, omit the mode flag to choose `--sdk`, `--api`, or `--mcp`. If a
+Omitting the method flag creates the combined App in terminals and automation.
+`--api` remains an alias for `--rest`. If a
 service has no operation flags, the highlighted default is **All operations**;
 choose the narrower path to search by operation ID, method, path, description,
-or tag. In automation, `--no-input` or `CI=true` requires one explicit mode and
+or tag. In automation, `--no-input` or `CI=true` requires
 an explicit `--operation` or `--select-all` for every service. Non-interactive
 MCP creation also requires `--description`.
 
@@ -170,8 +182,9 @@ atomically creating the YAML file. If that app plan fails, no app config or app
 receipt is created. A workspace activation completed earlier in the composed
 flow remains applied under its separate receipt.
 
-For generated SDK mode, `generation_contract_pin_unavailable` starts one
-bounded legacy-snapshot repair. The CLI resolves every selected active
+For generated SDK delivery, including the default combined App,
+`generation_contract_pin_unavailable` starts one bounded legacy-snapshot
+repair. The CLI resolves every selected active
 `service@version` before changing anything, visibly refreshes each exact Engine
 snapshot, and retries the unchanged app plan once. `--no-input` follows the
 same deterministic path without prompting. The CLI never substitutes a runtime
@@ -196,6 +209,33 @@ workspace policy or native `x-fused-connect` routing is not duplicated. The
 older `sdk init` and `mcp init` scaffold commands remain callable but hidden for
 compatibility. See the `fused-config` OpenAPI/Postman reference for the canonical
 Sendbird binding and bucket-value setup.
+
+## `describe <goal>`
+
+Turn a natural-language goal into a reviewable App proposal. `describe` selects
+an SDK, MCP server, or direct REST app from the goal; use `--kind sdk|mcp|rest`
+to constrain that choice. Use `init` without a method flag when you want one
+App with all three delivery methods by default.
+
+```bash
+fused-cli describe 'Create a TypeScript SDK for Stripe customer lookup'
+fused-cli describe --kind mcp 'Help support teams find and update Jira issues'
+fused-cli describe --update billing-sdk 'Add Stripe invoice lookup'
+```
+
+`describe` requires an interactive terminal. It resolves exact Registry
+services and operations, shows the proposal, and applies it only after
+confirmation; `--no-input` and CI cannot approve a model-derived scope.
+Operation selection uses Jev through Fused Registry, and goal parsing uses
+Registry's configured language model. The CLI discloses those requests before
+sending them. SDK and MCP proposals can attach provider webhook events; direct
+REST apps have no event receiver.
+
+`--update <app-name>` uses an existing local App config and publishes an
+immutable successor when the reviewed proposal changes it. Use `-f <path>`
+when a name is ambiguous. `--name`, `--version`, `--language`, and `--bucket`
+constrain creation; updates preserve omitted settings. A missing update target
+stops before creating anything.
 
 ## `workspace init`
 

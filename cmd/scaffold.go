@@ -55,6 +55,7 @@ type scaffoldRequest struct {
 	bucket                     string
 	webhookAttachment          string
 	generate                   bool
+	hostedMCP                  bool
 	noApply                    bool
 	noToken                    bool
 	versionSet                 bool
@@ -520,6 +521,10 @@ func newScaffoldData(request scaffoldRequest, resolver scaffoldRequirementsResol
 	}
 	if request.kind == configfile.KindSDK {
 		config.Language = request.language
+		// A combined App carries hosted MCP metadata inside the SDK-kind version it also serves over REST.
+		if request.hostedMCP {
+			config.MCP = &configfile.AppMCPDelivery{Description: hostedMCPDescription(request), FusedIntelligentClassifier: request.fusedIntelligentClassifier}
+		}
 		// Direct API mode declares no-codegen before serialization so config creation remains one validated atomic write.
 		if request.generateSet {
 			generate := request.generate
@@ -658,6 +663,11 @@ func mergeAppIdentity(config *configfile.AppConfig, request scaffoldRequest) (bo
 	if err != nil {
 		return false, err
 	}
+	// Combined App metadata is nested because its family and version remain SDK-kind.
+	hostedChanged, err := mergeHostedMCPDelivery(config, request, versionChanged)
+	if err != nil {
+		return false, err
+	}
 	generateChanged, err := mergeSDKGenerate(config, request)
 	// Package-generation intent is immutable within one app version, so extension must reject a conflicting mode.
 	if err != nil {
@@ -669,7 +679,47 @@ func mergeAppIdentity(config *configfile.AppConfig, request scaffoldRequest) (bo
 		return false, err
 	}
 	webhookAttachmentChanged, err := mergeSDKWebhookAttachment(config, request)
-	return changed || searchChanged || languageChanged || descriptionChanged || generateChanged || bucketChanged || webhookAttachmentChanged, err
+	return changed || searchChanged || languageChanged || descriptionChanged || hostedChanged || generateChanged || bucketChanged || webhookAttachmentChanged, err
+}
+
+// hostedMCPDescription creates a stable server summary when the default combined mode has no authored prose.
+func hostedMCPDescription(request scaffoldRequest) string {
+	// Explicit prose remains authoritative and is already bounded by config validation.
+	if description := strings.TrimSpace(request.description); description != "" {
+		return description
+	}
+	return fmt.Sprintf("%s exposes its selected operations and workflows through Fused MCP.", request.name)
+}
+
+// mergeHostedMCPDelivery adds or updates the nested hosted surface only for a reviewed combined App successor.
+func mergeHostedMCPDelivery(config *configfile.AppConfig, request scaffoldRequest, versionChanged bool) (bool, error) {
+	// Single-method declarations cannot implicitly acquire an MCP route during extension.
+	if !request.hostedMCP || request.kind != configfile.KindSDK {
+		return false, nil
+	}
+	// Adding hosted delivery is an immutable scope change detected by successor inference.
+	if config.MCP == nil {
+		config.MCP = &configfile.AppMCPDelivery{Description: hostedMCPDescription(request), FusedIntelligentClassifier: request.fusedIntelligentClassifier}
+		return true, nil
+	}
+	changed := false
+	// A changed summary needs a new version; omission preserves the previous authored metadata.
+	if request.descriptionSet && request.description != config.MCP.Description {
+		if !versionChanged {
+			return false, errors.New("changing hosted MCP description requires an App successor version")
+		}
+		config.MCP.Description = request.description
+		changed = true
+	}
+	// Remote classifier consent is likewise immutable within one version.
+	if request.classifierSet && request.fusedIntelligentClassifier != config.MCP.FusedIntelligentClassifier {
+		if !versionChanged {
+			return false, errors.New("changing hosted MCP classifier requires an App successor version")
+		}
+		config.MCP.FusedIntelligentClassifier = request.fusedIntelligentClassifier
+		changed = true
+	}
+	return changed, nil
 }
 
 // mergeSDKWebhookAttachment adds one app-wide ingress registration reference without retargeting an existing draft.
@@ -1138,6 +1188,10 @@ func init() {
 
 // mergeMCPFusedIntelligentClassifier prevents extensions from silently changing remote-processing consent.
 func mergeMCPFusedIntelligentClassifier(config *configfile.AppConfig, request scaffoldRequest, versionChanged bool) (bool, error) {
+	// Combined SDK-kind Apps keep consent in nested MCP metadata, handled by its own merge path.
+	if request.hostedMCP {
+		return false, nil
+	}
 	// Omission preserves the existing immutable setting.
 	if !request.classifierSet || request.fusedIntelligentClassifier == config.FusedIntelligentClassifier {
 		return false, nil

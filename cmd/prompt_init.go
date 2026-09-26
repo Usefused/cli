@@ -36,11 +36,11 @@ type promptInitPlan struct {
 var selectPromptWebhookAttachment = promptWebhookAttachment
 var confirmPromptPlan = promptInitConfirmation
 
-// newPromptInitCommand creates or extends apps while retaining the reviewed deterministic lifecycle.
+// newPromptInitCommand exposes natural-language App proposals under the describe command while retaining the reviewed deterministic lifecycle.
 func newPromptInitCommand() *cobra.Command {
 	opts := &promptInitOptions{version: defaultScaffoldVersion}
 	command := &cobra.Command{
-		Use:   "prompt <goal>",
+		Use:   "describe <goal>",
 		Short: "Create or update an SDK, MCP server, or REST app from a natural-language goal",
 		Long: `Create or update an SDK, MCP server, or direct REST app from a natural-language goal.
 
@@ -49,15 +49,15 @@ config (use -f to disambiguate), preserve its settings, and publish an immutable
 Sequential runtime intent can produce a Unified Operation for TypeScript/Python SDKs or MCP.
 Composition uses exact operation contracts and the Registry's configured drafting model.
 
-Prompt uses Jev through Fused Registry to select operations from search intent and operation names/descriptions.
-No additional API key is required. Prompt resolves exact selections before showing its proposal.
-If an SDK or MCP goal asks to receive provider events, prompt also creates or reuses a webhook
+Describe uses Jev through Fused Registry to select operations from search intent and operation names/descriptions.
+No additional API key is required. Describe resolves exact selections before showing its proposal.
+If an SDK or MCP goal asks to receive provider events, describe also creates or reuses a webhook
 registration and attaches it to the app. Direct REST apps cannot receive webhook events.
 Every proposal requires interactive terminal confirmation before changes are applied.`,
 		Args: cobra.MinimumNArgs(1),
-		RunE: WithTelemetry("cli.prompt", func(cmd *cobra.Command, args []string) error {
+		RunE: WithTelemetry("cli.describe", func(cmd *cobra.Command, args []string) error {
 			// LLM-derived scope always requires a human to review the grounded proposal before mutation.
-			if err := requireInteractive("prompt requires a terminal confirmation; use sdk init, mcp init, or init --api for deterministic automation"); err != nil {
+			if err := requireInteractive("describe requires a terminal confirmation; use init with explicit selections for deterministic automation"); err != nil {
 				return err
 			}
 			client, err := getAPIClient()
@@ -82,7 +82,7 @@ Every proposal requires interactive terminal confirmation before changes are app
 			}
 			// Cancellation is explicit and occurs before either local or remote resource changes.
 			if !confirmed {
-				return errors.New("prompt initialization cancelled")
+				return errors.New("describe initialization cancelled")
 			}
 			return executePromptInitPlan(cmd, plan)
 		}),
@@ -100,13 +100,13 @@ Every proposal requires interactive terminal confirmation before changes are app
 func buildPromptInitPlan(cmd *cobra.Command, client *api.Client, goal string, opts *promptInitOptions) (promptInitPlan, error) {
 	// Empty whitespace cannot be classified into a safe app capability boundary.
 	if goal == "" {
-		return promptInitPlan{}, errors.New("prompt requires a non-empty goal")
+		return promptInitPlan{}, errors.New("describe requires a non-empty goal")
 	}
 	// An explicitly empty update flag must never fall through to app creation.
 	if cmd.Flags().Changed("update") && strings.TrimSpace(opts.update) == "" {
 		return promptInitPlan{}, errors.New("--update requires an existing app name")
 	}
-	fmt.Fprintln(cmd.ErrOrStderr(), "Prompt operation selection uses Jev via Fused Registry. Search intent, operation names, and descriptions are sent to Jev. No extra API key is needed.")
+	fmt.Fprintln(cmd.ErrOrStderr(), "Describe operation selection uses Jev via Fused Registry. Search intent, operation names, and descriptions are sent to Jev. No extra API key is needed.")
 	fmt.Fprintln(cmd.ErrOrStderr(), "Intent parsing uses Registry's configured language model with your goal and, for updates, the app name, kind, and service names.")
 	target, err := promptExplicitUpdateTarget(opts)
 	// Explicit update targets must exist before intent parsing can interpret their service context.
@@ -116,7 +116,7 @@ func buildPromptInitPlan(cmd *cobra.Command, client *api.Client, goal string, op
 	intent, err := client.ParsePromptIntentWithContext(goal, promptUpdateContext(target))
 	// Registry model failures must remain upstream of service activation and config publication.
 	if err != nil {
-		return promptInitPlan{}, fmt.Errorf("parse prompt intent: %w", err)
+		return promptInitPlan{}, fmt.Errorf("parse describe intent: %w", err)
 	}
 	hadContext := target != nil
 	target, err = promptIntentUpdateTarget(target, intent)
@@ -137,7 +137,7 @@ func buildPromptInitPlan(cmd *cobra.Command, client *api.Client, goal string, op
 	}
 	// An intent without services cannot produce an executable app and must not become an empty local skeleton.
 	if len(intent.Services) == 0 {
-		return promptInitPlan{}, errors.New("prompt did not identify a Registry service; name at least one service")
+		return promptInitPlan{}, errors.New("describe did not identify a Registry service; name at least one service")
 	}
 	mode, err := resolvePromptInitMode(opts.kind, intent.Kind)
 	// Existing authored kind takes precedence over an inferred output kind.
@@ -184,7 +184,7 @@ func buildPromptInitPlan(cmd *cobra.Command, client *api.Client, goal string, op
 	}
 	// Blank model service names cannot be resolved and must not degrade into an empty app scaffold.
 	if len(request.services) == 0 {
-		return promptInitPlan{}, errors.New("prompt did not identify a valid Registry service name")
+		return promptInitPlan{}, errors.New("describe did not identify a valid Registry service name")
 	}
 	// MCP requires a user-facing runtime description, so the original goal is the stable fallback.
 	if mode == unifiedInitModeMCP && request.description == "" {
@@ -249,11 +249,11 @@ func buildPromptInitPlan(cmd *cobra.Command, client *api.Client, goal string, op
 // resolvePromptInitMode applies an explicit constraint or validates the Registry's primary output classification.
 func resolvePromptInitMode(override, inferred string) (unifiedInitMode, error) {
 	value := strings.ToLower(strings.TrimSpace(inferred))
-	// A user-supplied kind is authoritative but still limited to prompt's three primary outputs.
+	// A user-supplied kind is authoritative but still limited to describe's three primary outputs.
 	if strings.TrimSpace(override) != "" {
 		value = strings.ToLower(strings.TrimSpace(override))
 	}
-	// Only these three outcomes have complete init lifecycles and user-facing runtime semantics in prompt.
+	// Only these three outcomes have complete init lifecycles and user-facing runtime semantics in describe.
 	switch value {
 	case "sdk":
 		return unifiedInitModeSDK, nil
@@ -262,7 +262,7 @@ func resolvePromptInitMode(override, inferred string) (unifiedInitMode, error) {
 	case "rest", "api":
 		return unifiedInitModeAPI, nil
 	default:
-		return "", fmt.Errorf("prompt kind must be sdk, mcp, or rest; got %q", value)
+		return "", fmt.Errorf("describe kind must be sdk, mcp, or rest; got %q", value)
 	}
 }
 
@@ -373,7 +373,7 @@ func resolvePromptSelections(client *api.Client, request scaffoldRequest, resolv
 		queries := promptOperationQueries(intent)
 		// Conflicting model fields cannot be interpreted as both a narrow and complete capability boundary.
 		if intent.SelectAllOperations && len(queries) > 0 {
-			return scaffoldRequest{}, nil, fmt.Errorf("prompt returned both specific operations and all operations for %s@%s", service.target.slug, service.version)
+			return scaffoldRequest{}, nil, fmt.Errorf("describe returned both specific operations and all operations for %s@%s", service.target.slug, service.version)
 		}
 		// Explicit complete-catalogue language is preserved as select-all rather than searched as prose.
 		if intent.SelectAllOperations {
@@ -764,7 +764,7 @@ func appendUniquePromptString(values []string, candidate string) []string {
 // printPromptInitPlan renders the exact resources and immutable selections authorized by the user.
 func printPromptInitPlan(cmd *cobra.Command, plan promptInitPlan) error {
 	out := cmd.OutOrStdout()
-	fmt.Fprintf(out, "Prompt proposal: %s %s version %s\n", promptModeLabel(plan.mode), plan.primary.name, plan.primary.version)
+	fmt.Fprintf(out, "Describe proposal: %s %s version %s\n", promptModeLabel(plan.mode), plan.primary.name, plan.primary.version)
 	// The version transition and retained settings distinguish an additive update from app creation.
 	if plan.primary.extend {
 		fmt.Fprintf(out, "Update %s: %s -> %s (existing settings and selections preserved)\n", plan.primary.path, plan.baseVersion, plan.primary.version)
@@ -830,16 +830,16 @@ func executePromptInitPlan(cmd *cobra.Command, plan promptInitPlan) error {
 	}
 	// The primary lifecycle revalidates exact selections and performs its normal plan/apply behavior.
 	if err := runUnifiedInitLifecycle(cmd, plan.mode, plan.primary); err != nil {
-		// A committed webhook is intentionally retained; rerunning the same prompt discovers and reuses it.
+		// A committed webhook is intentionally retained; rerunning the same description discovers and reuses it.
 		if plan.webhook != nil {
-			return fmt.Errorf("webhook attachment %s was created, but %s initialization did not complete: %w; retry with fused-cli prompt %s", plan.webhook.name, strings.ToLower(promptModeLabel(plan.mode)), err, shellQuoteWorkspaceServiceArg(plan.goal))
+			return fmt.Errorf("webhook attachment %s was created, but %s initialization did not complete: %w; retry with fused-cli describe %s", plan.webhook.name, strings.ToLower(promptModeLabel(plan.mode)), err, shellQuoteWorkspaceServiceArg(plan.goal))
 		}
 		return err
 	}
 	return nil
 }
 
-// init registers prompt as a root workflow because its primary output is not limited to SDKs.
+// init registers describe as a root workflow because its primary output is not limited to SDKs.
 func init() {
 	RootCmd.AddCommand(newPromptInitCommand())
 }

@@ -2189,13 +2189,15 @@ func (c *Client) PlanWorkspaceConfigWithRemovals(sourceHash, configKey string, c
 }
 
 type SDKConfigApplyResponse struct {
-	Status           string `json:"status"`
-	GenerationStatus string `json:"generation_status"`
-	PlanID           string `json:"plan_id"`
-	AppFamilyID      string `json:"app_family_id"`
-	AppID            string `json:"app_id"`
-	JobID            string `json:"job_id"`
-	ExecutionToken   string `json:"execution_token"`
+	Status           string           `json:"status"`
+	GenerationStatus string           `json:"generation_status"`
+	PlanID           string           `json:"plan_id"`
+	AppFamilyID      string           `json:"app_family_id"`
+	AppID            string           `json:"app_id"`
+	JobID            string           `json:"job_id"`
+	ExecutionToken   string           `json:"execution_token"`
+	HostedMCP        bool             `json:"hosted_mcp,omitempty"`
+	MCPTransportURLs MCPTransportURLs `json:"mcp_transport_urls,omitempty"`
 }
 
 // SDKGenerationStatusResponse reports Engine-owned progress for one immutable SDK version.

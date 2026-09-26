@@ -1188,6 +1188,32 @@ services:
 	}
 }
 
+// TestParseSDKConfigWithHostedMCP keeps one SDK-kind identity while admitting hosted discovery metadata.
+func TestParseSDKConfigWithHostedMCP(t *testing.T) {
+	parsed, err := configfile.Parse([]byte(`
+apiVersion: fused/v1
+kind: sdk
+name: customer-app
+version: 1.0.0
+language: typescript
+bucket: customer
+mcp:
+  description: Customer operations for agents
+  fused-intelligent-classifier: true
+services:
+  github:
+    version: "2026-07-01"
+    operations: [reposList]
+`), "app.yaml")
+	if err != nil {
+		t.Fatalf("parse combined App: %v", err)
+	}
+	// The nested delivery adds no second config key or version identity.
+	if parsed.ConfigKey != "sdk:customer-app:1.0.0" || parsed.SDK == nil || parsed.SDK.MCP == nil || !parsed.SDK.MCP.FusedIntelligentClassifier {
+		t.Fatalf("combined App identity or hosted metadata lost: %#v", parsed)
+	}
+}
+
 // TestParseSDKConfigCarriesGenerateAsTriState proves absent and explicit true
 // are distinguishable from an explicit false, so the historical
 // always-build-a-package default survives configs written before the field.

@@ -29,6 +29,7 @@ func TestUnifiedInitRoutesExplicitModes(t *testing.T) {
 	}{
 		{name: "sdk", modeFlag: "--sdk", wantMode: unifiedInitModeSDK, wantKind: configfile.KindSDK},
 		{name: "api", modeFlag: "--api", wantMode: unifiedInitModeAPI, wantKind: configfile.KindSDK},
+		{name: "rest", modeFlag: "--rest", wantMode: unifiedInitModeAPI, wantKind: configfile.KindSDK},
 		{name: "mcp", modeFlag: "--mcp", extra: []string{"--description", "Manage support issues."}, wantMode: unifiedInitModeMCP, wantKind: configfile.KindMCP},
 	}
 	for _, test := range tests {
@@ -114,8 +115,8 @@ func TestUnifiedInitRejectsWebhookReceiverFlagsWithoutReceiverTransport(t *testi
 	}
 }
 
-// TestUnifiedInitNoApplyPlansWorkspaceWithoutApplying proves missing services retain a workspace receipt while app planning waits for activation.
-func TestUnifiedInitNoApplyPlansWorkspaceWithoutApplying(t *testing.T) {
+// TestUnifiedInitNoApplyPlansCombinedAppWithoutApplying proves the default App retains all methods across deferred planning.
+func TestUnifiedInitNoApplyPlansCombinedAppWithoutApplying(t *testing.T) {
 	directory := t.TempDir()
 	server, lifecycleCalls := newSDKInitLifecycleServer(t)
 	defer server.Close()
@@ -138,7 +139,7 @@ func TestUnifiedInitNoApplyPlansWorkspaceWithoutApplying(t *testing.T) {
 	command := newUnifiedInitCommand()
 	command.SetOut(&output)
 	command.SetErr(&bytes.Buffer{})
-	command.SetArgs([]string{"deferred-sdk", "--sdk", "--service", "linear", "--operation", "linear=issueUpdate", "--no-apply"})
+	command.SetArgs([]string{"deferred-sdk", "--service", "linear", "--operation", "linear=issueUpdate", "--no-apply"})
 	// The public command must complete without a lifecycle mutation endpoint.
 	if err := command.Execute(); err != nil {
 		t.Fatalf("execute deferred init: %v", err)
@@ -148,7 +149,7 @@ func TestUnifiedInitNoApplyPlansWorkspaceWithoutApplying(t *testing.T) {
 	workspace, workspaceErr := configfile.ParseFile(workspacePath)
 	app, appErr := configfile.ParseFile(appPath)
 	// Both validated files must retain the one exact resolved Registry version for later review.
-	if workspaceErr != nil || appErr != nil || !configWorkspaceServiceHasVersion(workspace.Workspace.Services["linear"], "v1") || app.SDK.Services["linear"].Version != "v1" {
+	if workspaceErr != nil || appErr != nil || !configWorkspaceServiceHasVersion(workspace.Workspace.Services["linear"], "v1") || app.SDK.Services["linear"].Version != "v1" || app.SDK.MCP == nil || app.SDK.MCP.Description == "" {
 		t.Fatalf("workspaceErr=%v appErr=%v workspace=%#v app=%#v", workspaceErr, appErr, workspace, app)
 	}
 	// Workspace planning is the only lifecycle call possible before the missing service version is active.
@@ -229,6 +230,7 @@ func TestUnifiedInitNoApplyReturnsModeSpecificApplyCommands(t *testing.T) {
 		mode                  unifiedInitMode
 		appPlanned            bool
 	}{
+		{name: "combined App downloads", mode: unifiedInitModeApp, appPlanned: true, want: "fused-cli sdk apply -f 'app.yaml' --download"},
 		{name: "SDK downloads", mode: unifiedInitModeSDK, appPlanned: true, want: "fused-cli sdk apply -f 'app.yaml' --download"},
 		{name: "API uses generic apply", mode: unifiedInitModeAPI, appPlanned: true, want: "fused-cli apply -f 'app.yaml'", forbidden: "fused-cli sdk apply"},
 		{name: "API deferred plan uses generic commands", mode: unifiedInitModeAPI, want: "fused-cli plan -f 'app.yaml'\n  fused-cli apply -f 'app.yaml'", forbidden: "fused-cli sdk"},
@@ -249,19 +251,18 @@ func TestUnifiedInitNoApplyReturnsModeSpecificApplyCommands(t *testing.T) {
 	}
 }
 
-// TestUnifiedInitModeValidationRejectsAmbiguousAutomation proves scripts cannot depend on a prompt or select competing outcomes.
+// TestUnifiedInitModeValidationRejectsAmbiguousAutomation proves conflicting flags never override the default combined App.
 func TestUnifiedInitModeValidationRejectsAmbiguousAutomation(t *testing.T) {
 	tests := []struct {
 		name string
 		args []string
 		want string
 	}{
-		{name: "missing mode", args: []string{"support", "--service", "linear", "--select-all", "linear"}, want: "--no-input requires exactly one"},
 		{name: "competing modes", args: []string{"support", "--sdk", "--api", "--service", "linear", "--select-all", "linear"}, want: "choose exactly one"},
 		{name: "missing service", args: []string{"support", "--sdk"}, want: "at least one --service"},
 		{name: "missing mcp description", args: []string{"support", "--mcp", "--service", "linear", "--select-all", "linear"}, want: "requires --description"},
-		{name: "API language", args: []string{"support", "--api", "--language", "python", "--service", "linear", "--select-all", "linear"}, want: "--language can only be used with --sdk"},
-		{name: "MCP language", args: []string{"support", "--mcp", "--description", "Support users.", "--language", "python", "--service", "linear", "--select-all", "linear"}, want: "--language can only be used with --sdk"},
+		{name: "API language", args: []string{"support", "--api", "--language", "python", "--service", "linear", "--select-all", "linear"}, want: "--language can only be used with a combined App or --sdk"},
+		{name: "MCP language", args: []string{"support", "--mcp", "--description", "Support users.", "--language", "python", "--service", "linear", "--select-all", "linear"}, want: "--language can only be used with a combined App or --sdk"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -276,32 +277,25 @@ func TestUnifiedInitModeValidationRejectsAmbiguousAutomation(t *testing.T) {
 	}
 }
 
-// TestUnifiedInitPromptsForModeAndMCPDescription proves the guided path fills only omitted terminal decisions.
-func TestUnifiedInitPromptsForModeAndMCPDescription(t *testing.T) {
-	originalModePrompt := selectUnifiedInitMode
-	originalDescriptionPrompt := requestUnifiedInitMCPDescription
-	originalNoInput := NoInput
-	t.Cleanup(func() {
-		selectUnifiedInitMode = originalModePrompt
-		requestUnifiedInitMCPDescription = originalDescriptionPrompt
-		NoInput = originalNoInput
-	})
-	NoInput = false
-	selectUnifiedInitMode = func() (unifiedInitMode, error) { return unifiedInitModeMCP, nil }
-	// The prompt exemplar names the selected service so persisted identity demonstrates the authoring contract.
-	requestUnifiedInitMCPDescription = func() (string, error) { return " Use Linear to search and update incidents. ", nil }
+// TestUnifiedInitDefaultsToCombinedApp proves omitted method flags work in automation with all three deliveries.
+func TestUnifiedInitDefaultsToCombinedApp(t *testing.T) {
+	var gotMode unifiedInitMode
 	var got scaffoldRequest
-	command := newUnifiedInitCommandWithRunner(func(_ *cobra.Command, _ unifiedInitMode, request scaffoldRequest) error {
-		got = request
+	executeUnifiedInitForTest(t, func(_ *cobra.Command, mode unifiedInitMode, request scaffoldRequest) error {
+		gotMode, got = mode, request
 		return nil
-	})
-	command.SetArgs([]string{"incident-agent", "--service", "linear", "--select-all", "linear"})
-	if err := command.Execute(); err != nil {
-		t.Fatalf("execute guided init: %v", err)
+	}, "incident-agent", "--service", "linear", "--select-all", "linear")
+	// One SDK-kind declaration generates a package and opts the same version into hosted MCP and REST.
+	if gotMode != unifiedInitModeApp || got.kind != configfile.KindSDK || !got.hostedMCP || !got.generate {
+		t.Fatalf("default combined request=%#v, mode=%q", got, gotMode)
 	}
-	// Prompted description is trimmed once and persisted as immutable MCP identity prose.
-	if got.kind != configfile.KindMCP || got.description != "Use Linear to search and update incidents." || !got.descriptionSet {
-		t.Fatalf("guided request=%#v", got)
+	data, _, err := newScaffoldData(got, noOpScaffoldRequirements, defaultTestScaffoldBucket)
+	if err != nil {
+		t.Fatalf("build combined config: %v", err)
+	}
+	parsed, err := configfile.Parse(data, got.path)
+	if err != nil || parsed.SDK == nil || parsed.SDK.MCP == nil || parsed.SDK.MCP.Description == "" {
+		t.Fatalf("default combined config=%#v, error=%v", parsed, err)
 	}
 }
 
