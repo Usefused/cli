@@ -67,3 +67,37 @@ func TestExecutionBundleDigestRequiresServiceScope(t *testing.T) {
 		t.Fatalf("service-free Execution App error = %v", err)
 	}
 }
+
+// TestExecutionSourceReachesPlanAndHash verifies Engine compilation receives source bound to desired-state identity.
+func TestExecutionSourceReachesPlanAndHash(t *testing.T) {
+	base := "apiVersion: fused/v1\nkind: execution\nname: capability-app\nversion: 1.0.0\nlanguage: typescript\ngenerate: false\nbucket: default\nsource: |\n  export default buildExecutionApp({});\nservices:\n  crm:\n    version: v1\n    operations: [customers.create]\n"
+	parsed, err := Parse([]byte(base), "app.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(parsed.Execution)
+	// The Engine plan receives source in its cart and never a CLI-supplied digest.
+	if err != nil || !strings.Contains(string(raw), `"source":"export default buildExecutionApp({});\n"`) || strings.Contains(string(raw), "bundle_digest") {
+		t.Fatalf("source cart = %s, %v", raw, err)
+	}
+	changed, err := Parse([]byte(strings.Replace(base, "buildExecutionApp({})", "buildExecutionApp({input: 1})", 1)), "app.yaml")
+	if err != nil || parsed.SourceHash == changed.SourceHash {
+		t.Fatalf("source hash did not bind code: %v", err)
+	}
+}
+
+// TestExecutionSourceRejectsCompetingAuthority prevents source and a caller digest from selecting different bundles.
+func TestExecutionSourceRejectsCompetingAuthority(t *testing.T) {
+	base := "apiVersion: fused/v1\nkind: execution\nname: capability-app\nversion: 1.0.0\nlanguage: typescript\ngenerate: false\nbucket: default\nsource: 'export default buildExecutionApp({})'\nservices:\n  crm:\n    version: v1\n    operations: [customers.create]\n"
+	for _, document := range []string{
+		strings.Replace(base, "source: 'export default buildExecutionApp({})'", "source: '   '", 1),
+		base + "bundle_digest: sha256:" + strings.Repeat("a", 64) + "\n",
+		strings.Replace(base, "kind: execution", "kind: sdk", 1),
+		strings.Replace(base, "kind: execution", "kind: mcp", 1),
+	} {
+		// Malformed source authority must fail before an Engine plan is requested.
+		if _, err := Parse([]byte(document), "app.yaml"); err == nil {
+			t.Fatalf("accepted invalid source document: %s", document)
+		}
+	}
+}

@@ -16,30 +16,6 @@ type AppScaffoldRequirement struct {
 	Variable string `json:"variable"`
 }
 
-// ExecutionBuildSelection pins one reviewed operation to Engine-owned immutable IDs.
-type ExecutionBuildSelection struct {
-	Service          string `json:"service"`
-	Operation        string `json:"operation"`
-	ServiceID        string `json:"serviceId"`
-	ServiceVersionID string `json:"serviceVersionId"`
-	EndpointID       string `json:"endpointId"`
-}
-
-// ExecutionBuildSelections resolves a finite operation set in one authorized Engine query.
-func (c *Client) ExecutionBuildSelections(selections []AppScaffoldSelection) ([]ExecutionBuildSelection, error) {
-	var response struct {
-		Selections []ExecutionBuildSelection `json:"executionBuildSelections"`
-	}
-	query := `query ExecutionBuildSelections($selections: [AppScaffoldSelectionInput!]!) {
-		executionBuildSelections(selections: $selections) { service operation serviceId serviceVersionId endpointId }
-	}`
-	// An incomplete response cannot become a bundle authority when Engine omits an operation.
-	if err := c.EngineGraphQL(query, map[string]interface{}{"selections": selections}, &response); err != nil {
-		return nil, err
-	}
-	return response.Selections, nil
-}
-
 // AppScaffoldRequirements resolves every selected service in one Engine
 // GraphQL request so scaffold enrichment cannot become a per-service lookup.
 func (c *Client) AppScaffoldRequirements(selections []AppScaffoldSelection) ([]AppScaffoldRequirement, error) {

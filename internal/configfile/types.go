@@ -223,6 +223,8 @@ type AppConfig struct {
 	Generate *bool `yaml:"generate,omitempty" json:"generate,omitempty"`
 	// BundleDigest pins the exact hosted TypeScript compiler output in the immutable Engine plan.
 	BundleDigest string `yaml:"bundle_digest,omitempty" json:"bundle_digest,omitempty"`
+	// Source is compiled by Engine during plan; keeping it in desired state binds review and source_hash to the exact code.
+	Source string `yaml:"source,omitempty" json:"source,omitempty"`
 	// WebhookAttachment names one kind: webhook config (its own top-level
 	// `name:`) this SDK/MCP wants webhook delivery from. Deliberately a
 	// single scalar, not a list, and hoisted here at the app's top

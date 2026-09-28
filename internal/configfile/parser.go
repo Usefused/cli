@@ -561,8 +561,8 @@ func validateSDKKindFields(cfg *AppConfig) error {
 // validateSDKBundleDigest binds authored code only to the supported runtime and exact compiler bytes.
 func validateSDKBundleDigest(cfg *AppConfig) error {
 	// SDK package identity never owns a compiler bundle; that is a separate App family kind.
-	if cfg.BundleDigest != "" {
-		return fmt.Errorf("bundle_digest requires kind: execution")
+	if cfg.BundleDigest != "" || cfg.Source != "" {
+		return fmt.Errorf("source and bundle_digest require kind: execution")
 	}
 	return nil
 }
@@ -570,8 +570,11 @@ func validateSDKBundleDigest(cfg *AppConfig) error {
 // validateExecutionKindFields admits one immutable compiler bundle under its own hosted App kind.
 func validateExecutionKindFields(cfg *AppConfig) error {
 	// The Engine bundle route compares exact emitted bytes to this planned compiler identity.
-	if cfg.Language != "typescript" || cfg.Generate == nil || *cfg.Generate || !canonicalSHA256Pattern.MatchString(cfg.BundleDigest) {
-		return fmt.Errorf("execution config requires TypeScript, generate: false, and canonical bundle_digest")
+	if cfg.Language != "typescript" || cfg.Generate == nil || *cfg.Generate {
+		return fmt.Errorf("execution config requires TypeScript and generate: false")
+	}
+	if err := validateExecutionCodeSource(cfg); err != nil {
+		return err
 	}
 	// A declarative graph would introduce a second execute contract for the same App version.
 	if len(cfg.UnifiedOperations) != 0 || cfg.FusedIntelligentClassifier || strings.TrimSpace(cfg.Description) != "" {
@@ -581,6 +584,22 @@ func validateExecutionKindFields(cfg *AppConfig) error {
 		return err
 	}
 	return validateExecutionOperationScope(cfg.Services)
+}
+
+// validateExecutionCodeSource admits either Engine-compiled source or a precompiled digest, never competing authorities.
+func validateExecutionCodeSource(cfg *AppConfig) error {
+	// Inline source is bounded before any plan request allocates compiler resources.
+	if cfg.Source != "" {
+		if len(cfg.Source) > 256*1024 || strings.TrimSpace(cfg.Source) == "" || cfg.BundleDigest != "" {
+			return fmt.Errorf("execution source must be nonempty, at most 256 KiB, and must not set bundle_digest")
+		}
+		return nil
+	}
+	// Manual precompiled workflows retain immutable digest admission.
+	if !canonicalSHA256Pattern.MatchString(cfg.BundleDigest) {
+		return fmt.Errorf("execution config requires source or canonical bundle_digest")
+	}
+	return nil
 }
 
 // validateExecutionDeliveryFields requires a bucket and bounded MCP metadata for optional transport.
@@ -620,6 +639,10 @@ func validateExecutionOperationScope(services map[string]AppService) error {
 
 // validateMCPKindFields admits only fields consumed by the hosted MCP runtime.
 func validateMCPKindFields(cfg *AppConfig) error {
+	// Authored execution code belongs to the separate hosted App family kind.
+	if cfg.Source != "" {
+		return fmt.Errorf("source requires kind: execution")
+	}
 	// A standalone MCP config cannot recursively request another hosted delivery.
 	if cfg.MCP != nil {
 		return fmt.Errorf("mcp config must not set nested mcp delivery")

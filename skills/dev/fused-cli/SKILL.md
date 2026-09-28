@@ -881,15 +881,13 @@ scope is intended. Each proposal still requires interactive review before apply.
 This creation-time selection does not enable an MCP's runtime intelligent search.
 
 Describe creates a hosted TypeScript Execution App by default. It drafts one
-`buildExecutionApp` source file from exact Registry operation contracts, shows
-the full source and scope for review, then compiles with `fused-execution-build`
-from `@fused/execution`. The CLI resolves immutable operation IDs in one Engine
-batch after workspace activation, writes the source and build spec under
-`.fused/executions/<name>/`, plans and applies `kind: execution`, and attaches
-the bundle to the returned App version. Install the compiler on `PATH` before
-running describe, or set `FUSED_EXECUTION_BUILD` to its executable path.
+`buildExecutionApp` source draft from exact Registry operation contracts and
+shows the full source and operation scope for review. It saves the selected
+cart and source in `.fused/executions/<name>.yaml`, then sends that config to
+Engine through the regular Execution App plan/apply lifecycle. Engine resolves
+operation IDs, compiles TypeScript, and deploys the bundle. No local compiler
+or `FUSED_EXECUTION_BUILD` variable is needed.
 `--kind sdk`, `--kind mcp`, and `--kind rest` retain their existing output paths.
 Execution App describe currently requires 1 to 16 explicit operations and a
-creation goal. To change an existing Execution App, edit the TypeScript and
-deploy a reviewed new version with the explicit execution plan/apply/bundle
-commands.
+creation goal. To change an existing Execution App, edit the config source and
+deploy a reviewed new version with `fused-cli execution plan/apply`.
