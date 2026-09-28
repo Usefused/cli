@@ -348,6 +348,10 @@ func scaffoldTargetPath(kind configfile.ConfigKind, name, explicit string) (stri
 	if kind == configfile.KindMCP {
 		directory = "mcps"
 	}
+	// Hosted code has its own discovered desired-state directory.
+	if kind == configfile.KindExecution {
+		directory = "executions"
+	}
 	// Ingress bundles must be discovered as webhooks rather than app configs.
 	if kind == configfile.KindWebhook {
 		directory = "webhooks"

@@ -19,11 +19,12 @@ import (
 type unifiedInitMode string
 
 const (
-	unifiedInitModeApp     unifiedInitMode = "app"
-	unifiedInitModeSDK     unifiedInitMode = "sdk"
-	unifiedInitModeMCP     unifiedInitMode = "mcp"
-	unifiedInitModeAPI     unifiedInitMode = "api"
-	unifiedInitModeWebhook unifiedInitMode = "webhook"
+	unifiedInitModeApp       unifiedInitMode = "app"
+	unifiedInitModeSDK       unifiedInitMode = "sdk"
+	unifiedInitModeMCP       unifiedInitMode = "mcp"
+	unifiedInitModeAPI       unifiedInitMode = "api"
+	unifiedInitModeWebhook   unifiedInitMode = "webhook"
+	unifiedInitModeExecution unifiedInitMode = "execution"
 )
 
 type unifiedInitOptions struct {

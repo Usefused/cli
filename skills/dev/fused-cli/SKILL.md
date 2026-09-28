@@ -879,3 +879,17 @@ Jev. Missing or unmatched operation intent must be clarified, never interpreted
 as selecting all operations. Use explicit complete-catalogue language when that
 scope is intended. Each proposal still requires interactive review before apply.
 This creation-time selection does not enable an MCP's runtime intelligent search.
+
+Describe creates a hosted TypeScript Execution App by default. It drafts one
+`buildExecutionApp` source file from exact Registry operation contracts, shows
+the full source and scope for review, then compiles with `fused-execution-build`
+from `@fused/execution`. The CLI resolves immutable operation IDs in one Engine
+batch after workspace activation, writes the source and build spec under
+`.fused/executions/<name>/`, plans and applies `kind: execution`, and attaches
+the bundle to the returned App version. Install the compiler on `PATH` before
+running describe, or set `FUSED_EXECUTION_BUILD` to its executable path.
+`--kind sdk`, `--kind mcp`, and `--kind rest` retain their existing output paths.
+Execution App describe currently requires 1 to 16 explicit operations and a
+creation goal. To change an existing Execution App, edit the TypeScript and
+deploy a reviewed new version with the explicit execution plan/apply/bundle
+commands.

@@ -35,3 +35,26 @@ func (c *Client) DraftPromptUnifiedOperation(goal string, selections []PromptOpe
 	}
 	return response.Draft, nil
 }
+
+// DraftPromptExecutionApp asks Registry to author TypeScript against exact operation contracts.
+func (c *Client) DraftPromptExecutionApp(goal string, selections []PromptOperationSelection) (string, error) {
+	encoded, err := json.Marshal(selections)
+	// The bounded exact selection document is the only model grounding sent by the CLI.
+	if err != nil {
+		return "", err
+	}
+	var response struct {
+		Draft string `json:"draftPromptExecutionApp"`
+	}
+	err = c.GraphQL(`query DraftPromptExecutionApp($q: String!, $selections: String!) {
+		draftPromptExecutionApp(q: $q, selections: $selections)
+	}`, map[string]any{"q": goal, "selections": string(encoded)}, &response)
+	// Missing or oversized code cannot become a silent no-op deployment.
+	if err != nil {
+		return "", err
+	}
+	if response.Draft == "" || len(response.Draft) > 128*1024 {
+		return "", fmt.Errorf("Execution App draft was empty or oversized")
+	}
+	return response.Draft, nil
+}
