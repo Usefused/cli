@@ -75,23 +75,25 @@ type preparedSDKInvocation struct {
 }
 
 type sdkInvokeHTTPResponse struct {
-	AppID      string `json:"app_id"`
-	Operation  string `json:"operation"`
-	Kind       string `json:"kind"`
-	StatusCode int    `json:"status_code,omitempty"`
-	Results    []any  `json:"results"`
-	Rollbacks  []any  `json:"rollbacks,omitempty"`
+	AppID      string           `json:"app_id"`
+	Operation  string           `json:"operation"`
+	Kind       string           `json:"kind"`
+	StatusCode int              `json:"status_code,omitempty"`
+	Results    []any            `json:"results"`
+	Rollbacks  []any            `json:"rollbacks,omitempty"`
+	Output     *json.RawMessage `json:"-"`
 }
 
 type sdkInvokeOutput struct {
-	AppID          string  `json:"app_id"`
-	Operation      string  `json:"operation"`
-	Kind           string  `json:"kind"`
-	StatusCode     int     `json:"status_code,omitempty"`
-	Results        []any   `json:"results"`
-	Rollbacks      *[]any  `json:"rollbacks,omitempty"`
-	ElapsedMS      float64 `json:"elapsed_ms"`
-	EngineEndpoint string  `json:"engine_endpoint"`
+	AppID          string           `json:"app_id"`
+	Operation      string           `json:"operation"`
+	Kind           string           `json:"kind"`
+	StatusCode     int              `json:"status_code,omitempty"`
+	Results        []any            `json:"results,omitempty"`
+	Rollbacks      *[]any           `json:"rollbacks,omitempty"`
+	Output         *json.RawMessage `json:"output,omitempty"`
+	ElapsedMS      float64          `json:"elapsed_ms"`
+	EngineEndpoint string           `json:"engine_endpoint"`
 }
 
 type sdkInvokeError struct {
@@ -251,13 +253,13 @@ func runSDKInvoke(cmd *cobra.Command, target sdkDownloadTarget, operation string
 		return err
 	}
 	var rollbacks *[]any
-	if response.Kind == "unified" {
-		// Why: Unified output must preserve an explicit empty rollback array while physical output omits the field.
+	if response.Kind == "unified" && response.Output == nil {
+		// Only all-settled Unified responses have rollback details; authored output is an exact root value.
 		rollbacks = &response.Rollbacks
 	}
 	output := sdkInvokeOutput{
 		AppID: prepared.AppID, Operation: operation, Kind: response.Kind,
-		StatusCode: response.StatusCode, Results: response.Results, Rollbacks: rollbacks,
+		StatusCode: response.StatusCode, Results: response.Results, Rollbacks: rollbacks, Output: response.Output,
 		ElapsedMS: float64(time.Since(started).Microseconds()) / 1000, EngineEndpoint: endpoint,
 	}
 	return writeSDKInvocationOutput(cmd, output)
@@ -537,19 +539,54 @@ func sdkInvokeTransportError(cause error) error {
 	}
 }
 
-// decodeSDKInvokeHTTPResult selects the reviewed success or error decoder by status.
+// decodeSDKInvokeHTTPResult selects exact-root or envelope decoding from the request and response contracts.
 func decodeSDKInvokeHTTPResult(statusCode int, body []byte, prepared preparedSDKInvocation) (sdkInvokeHTTPResponse, error) {
 	if statusCode < http.StatusOK || statusCode >= http.StatusMultipleChoices {
 		return sdkInvokeHTTPResponse{}, decodeSDKInvokeHTTPError(statusCode, body)
+	}
+	// Authored Unified output is the exact JSON root; only selected Unified targets can use that contract.
+	if len(prepared.Request.Targets) != 0 && !isSDKInvokeEnvelope(body) {
+		return decodeSDKInvokeRootOutput(body)
 	}
 	decoded, err := decodeSDKInvokeHTTPResponse(body)
 	if err != nil {
 		return sdkInvokeHTTPResponse{}, err
 	}
-	if decoded.AppID != prepared.AppID || decoded.Operation != prepared.Request.Operation {
+	// A transformed root intentionally carries no envelope identity; the request already used the resolved exact app route.
+	if decoded.Output == nil && (decoded.AppID != prepared.AppID || decoded.Operation != prepared.Request.Operation) {
 		return sdkInvokeHTTPResponse{}, invalidSDKInvokeHTTPResponse("Engine returned mismatched execution identity", nil)
 	}
 	return decoded, nil
+}
+
+// isSDKInvokeEnvelope keeps the existing all-settled and physical response validation for recognizable wrappers.
+func isSDKInvokeEnvelope(data []byte) bool {
+	var fields map[string]json.RawMessage
+	// Scalar and malformed JSON cannot declare envelope fields, so the root decoder handles validation.
+	if json.Unmarshal(data, &fields) != nil {
+		return false
+	}
+	// Complete wrapper identity remains an envelope even if its kind is unknown and must fail validation.
+	if fields["app_id"] != nil && fields["operation"] != nil && fields["results"] != nil {
+		return true
+	}
+	var kind string
+	// Unknown kinds belong to the root value unless the complete wrapper identity above proves otherwise.
+	if json.Unmarshal(fields["kind"], &kind) != nil || (kind != "physical" && kind != "unified") {
+		return false
+	}
+	// A kind paired with wrapper identity or results signals an Engine envelope, even when another required field is missing.
+	return fields["app_id"] != nil || fields["operation"] != nil || fields["results"] != nil
+}
+
+// decodeSDKInvokeRootOutput retains the complete authored JSON value, including scalar and null results.
+func decodeSDKInvokeRootOutput(data []byte) (sdkInvokeHTTPResponse, error) {
+	var output json.RawMessage
+	// The Engine's transformed response must be exactly one valid JSON value.
+	if err := decodeStrictSDKInvokeJSON(data, &output); err != nil {
+		return sdkInvokeHTTPResponse{}, invalidSDKInvokeHTTPResponse("Engine returned an invalid Unified output", err)
+	}
+	return sdkInvokeHTTPResponse{Kind: "unified", Output: &output}, nil
 }
 
 // rejectSDKInvokeRedirect prevents a family execution token from crossing to another route or origin.
@@ -680,12 +717,19 @@ func genericSDKInvokeHTTPError(statusCode int) error {
 	return &sdkInvokeError{code: code, message: message, category: category, details: map[string]any{"http_status": statusCode}}
 }
 
-// writeSDKInvocationOutput renders physical status or Unified rollbacks without exposing the execution token.
+// writeSDKInvocationOutput renders physical status, Unified rollbacks, or authored output without the execution token.
 func writeSDKInvocationOutput(cmd *cobra.Command, output sdkInvokeOutput) error {
 	if wantsJSON(cmd) {
 		return writeJSON(cmd, output)
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "Kind: %s\nEngine: %s\n", output.Kind, output.EngineEndpoint)
+	// Authored output is one JSON value; printing it once preserves the root without inventing target results.
+	if output.Output != nil {
+		// Propagate writer failures so CLI automation does not treat truncated output as success.
+		if err := writeSDKInvokeValue(cmd.OutOrStdout(), output.Output); err != nil {
+			return err
+		}
+	}
 	for _, result := range output.Results {
 		if err := writeSDKInvokeValue(cmd.OutOrStdout(), result); err != nil {
 			return err

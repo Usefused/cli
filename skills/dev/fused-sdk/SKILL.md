@@ -50,6 +50,8 @@ services:
         value: ${bucket.env.MY_VAR}           # Supports ${bucket.env.*}, ${bucket.values.*} (identical alias), and ${bucket.secrets.*}
 ```
 
+For a hosted Execution App, compile one default-exported `buildExecutionApp({ input, output, execute, fetch? })` definition with the execution package. This uses the distinct `kind: execution`. Copy the compiler's `bundle.js.digest.json` sidecar value into top-level `bundle_digest`; use `language: typescript`, `generate: false`, a bucket, and at least one explicit selected service operation. The digest is canonical `sha256:<64 lowercase hex>` over the exact emitted UTF-8 bundle bytes. Run `fused-cli execution plan --json`, `fused-cli execution apply --json`, then `fused-cli execution bundle attach <app-version-id> --source-hash <applied-source-hash> --bundle <bundle.js> --manifest <manifest.json> --json`. The bundle route verifies exact bytes against the immutable plan. Execution Apps cannot declare `unified_operations`, select all raw operations, or select a raw operation named `execute`. The authored package supplies its typed REST client; Registry SDK generation does not build an Execution App package.
+
 `injections[].value` tags always resolve against *this SDK's own* `bucket:` -- there's no way to name a different bucket here, unlike `kind: webhook`'s `${bucket.<name>.secret.<key>}` (see `fused-webhook`). A value can also merge a tag with surrounding text (e.g. `"Bearer ${bucket.secrets.API_KEY}"`), which a webhook's secret field cannot. Writing a webhook-style named-bucket reference here (e.g. `${bucket.prod.secrets.API_KEY}`) is rejected at dispatch time with an explicit error naming the unsupported reference, rather than one of the three ambient forms above.
 
 `webhooks`/`webhooks_select_all` require a `kind: webhook` config named by top-level `webhook_attachment`; they select which events this SDK receives, not the webhook registration itself (see `fused-webhook`). Plan rejects either field without the attachment.
@@ -222,6 +224,8 @@ also accepts an `@file`. `--environment` is backward-compatible physical
 provider document up to 1 MiB and a bounded 17 MiB Unified aggregate; generated
 SDKs retain their broader gRPC transports. The command produces one logical
 Engine execution and does not implement local provider retries or redirects. For direct HTTP request construction, read [reference/engine-execution-api.md](reference/engine-execution-api.md).
+`sdk invoke --json` returns configured Unified JSON under `output` (including `null`), without `results` or `rollbacks`; physical and all-settled fields stay unchanged.
+Because the endpoint does not label roots, an object mimicking an envelope (`app_id`, `operation`, `results`, `kind`) is parsed as one; use the generated SDK or direct REST for that schema.
 
 `sdk activity` reads the canonical Engine execution receipts for one exact SDK
 version. Use `--all-versions` only when SDK-wide history is intended, and
@@ -287,15 +291,9 @@ keeps management authority, while `fused-cli workspace access app grant
 replacing or revealing its runtime token. Likewise, a platform-owned bucket shared with `workspace access bucket grant <bucket-name>` can be selected by any eligible
 owning team without granting those teams secret management.
 
-`sdk sync` full-mirrors the exact Engine app version declared by the local SDK config back into that file. Anything the Engine app no longer selects is removed locally, not just flagged, and Engine values win on any conflict.
-There is no implicit latest lookup or sync-time version upgrade; change the config's `version`, then plan and apply that exact version deliberately.
+`sdk sync` full-mirrors the exact Engine app version declared by the local SDK config back into that file. Anything the Engine app no longer selects is removed locally, not just flagged, and Engine values win on any conflict. There is no implicit latest lookup or sync-time version upgrade; change the config's `version`, then plan and apply that exact version deliberately.
 
-Every persisted selection returned by Engine must carry exactly
-`schema_version: 3`; this is Engine response metadata, not an `sdk.yaml` field.
-`sdk sync` accepts only that current value. A missing or older value requires
-the original config to publish a new SDK version before retrying.
-A higher unknown value requires a newer CLI. Never infer or normalize
-selection policy.
+Every persisted Engine selection must carry `schema_version: 3` as response metadata, not an `sdk.yaml` field. `sdk sync` accepts only that current value: missing or older requires publishing a new SDK version; an unknown value requires a newer CLI. Never infer or normalize selection policy.
 
 Generated SDK calls only ever carry Fused selectors (`endUserRef`, `authType`, `resourceId`) -- never a raw provider token, API key, or provider base URL. For execution-contract negotiation, keep each pinned service version's `contract_version` and `required_capabilities` intact: Registry and Engine accept additive documentation fields but fail closed on unsupported execution semantics. Never bypass that error by dropping fields or adding provider-specific client logic; upgrade Engine or publish semantics implemented end to end. These identifiers describe provider execution, not SDK operation grants or token allowlists.
 Pagination comes from the endpoint and effective service-version policy. Do not

@@ -17,6 +17,7 @@ const (
 	KindServices  ConfigKind       = "services"
 	KindSDK       ConfigKind       = "sdk"
 	KindMCP       ConfigKind       = "mcp"
+	KindExecution ConfigKind       = "execution"
 	KindWebhook   ConfigKind       = "webhook"
 )
 
@@ -220,6 +221,8 @@ type AppConfig struct {
 	// so the choice is declared, which means flipping it changes SourceHash
 	// and needs a version bump -- the same rule as any other scope change.
 	Generate *bool `yaml:"generate,omitempty" json:"generate,omitempty"`
+	// BundleDigest pins the exact hosted TypeScript compiler output in the immutable Engine plan.
+	BundleDigest string `yaml:"bundle_digest,omitempty" json:"bundle_digest,omitempty"`
 	// WebhookAttachment names one kind: webhook config (its own top-level
 	// `name:`) this SDK/MCP wants webhook delivery from. Deliberately a
 	// single scalar, not a list, and hoisted here at the app's top
@@ -250,6 +253,7 @@ type AppMCPDelivery struct {
 
 type SDKConfig = AppConfig
 type MCPConfig = AppConfig
+type ExecutionConfig = AppConfig
 
 // AppService represents the requested immutable provider version and
 // selected surface shared by SDK and MCP app declarations.
@@ -352,6 +356,7 @@ type ParsedConfig struct {
 	Workspace  *WorkspaceConfig
 	SDK        *SDKConfig
 	MCP        *MCPConfig
+	Execution  *ExecutionConfig
 	Webhook    *WebhookConfig
 }
 

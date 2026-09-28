@@ -58,6 +58,7 @@ type configKindFilter string
 const (
 	filterAll       configKindFilter = ""
 	filterSDK       configKindFilter = "sdk"
+	filterExecution configKindFilter = "execution"
 	filterMCP       configKindFilter = "mcp"
 	filterWorkspace configKindFilter = "workspace"
 	filterWebhook   configKindFilter = "webhook"
@@ -321,6 +322,18 @@ func planOneConfig(client *api.Client, cfg *configfile.ParsedConfig, engineURL, 
 			credentialReadiness: resp.CredentialReadiness,
 			requiredPermissions: resp.RequiredPermissions,
 		}, nil
+	case configfile.KindExecution:
+		// Compiler provenance travels in the same desired-state envelope under a separate route.
+		raw, _ := json.Marshal(cfg.Execution)
+		resp, err := client.PlanExecutionConfig(desiredConfigPlanIntent(cfg, raw, ownerTeamSlug))
+		if err != nil {
+			return plannedConfig{}, fmt.Errorf("failed to plan Execution App %s: %w", cfg.Execution.Name, err)
+		}
+		return plannedConfig{
+			receipt: newPlanReceipt(resp.PlanID, cfg.ConfigKey, cfg.SourceHash, engineURL),
+			summary: resp.Summary, notifications: resp.Notifications,
+			credentialReadiness: resp.CredentialReadiness, requiredPermissions: resp.RequiredPermissions,
+		}, nil
 	case configfile.KindMCP:
 		raw, _ := json.Marshal(cfg.MCP)
 		resp, err := client.PlanMCPConfig(desiredConfigPlanIntent(cfg, raw, ownerTeamSlug))
@@ -583,6 +596,10 @@ func applyConfigs(client *api.Client, configs []*configfile.ParsedConfig, opts a
 		return err
 	}
 	if opts.jsonOut {
+		// Execution receipts use App identity labels rather than SDK package labels.
+		if len(prepared) > 0 && prepared[0].config.Kind == configfile.KindExecution {
+			return applyExecutionConfigsJSON(client, prepared, opts)
+		}
 		return applySDKConfigsJSON(client, prepared, opts)
 	}
 	for _, item := range prepared {
@@ -853,6 +870,8 @@ func applyPreparedConfig(client *api.Client, item preparedConfigApply, download 
 		return applyWorkspaceConfig(client, cfg, receipt, item.workspacePayload)
 	case configfile.KindSDK:
 		return applyPreparedSDK(client, cfg, receipt, download)
+	case configfile.KindExecution:
+		return applyPreparedExecution(client, cfg, receipt)
 	case configfile.KindMCP:
 		return applyPreparedMCP(client, cfg, receipt)
 	case configfile.KindWebhook:

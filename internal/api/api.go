@@ -2069,6 +2069,11 @@ func (c *Client) PlanSDKConfig(intent DesiredConfigPlanIntent) (*SDKConfigPlanRe
 	return c.planDesiredConfig("sdk", intent)
 }
 
+// PlanExecutionConfig pins hosted TypeScript provenance through the distinct Execution App route.
+func (c *Client) PlanExecutionConfig(intent DesiredConfigPlanIntent) (*SDKConfigPlanResponse, error) {
+	return c.planDesiredConfig("execution", intent)
+}
+
 // PlanMCPConfig plans an Engine runtime without invoking Registry generation.
 func (c *Client) PlanMCPConfig(intent DesiredConfigPlanIntent) (*SDKConfigPlanResponse, error) {
 	return c.planDesiredConfig("mcp", intent)
@@ -2278,6 +2283,16 @@ type WebhookConfigRegistration struct {
 // skipToken tells Engine not to auto-issue that first token at all, for
 // callers who intend to mint their own via GenerateAppToken.
 func (c *Client) ApplySDKConfig(planID, sourceHash string, skipToken bool) (*SDKConfigApplyResponse, error) {
+	return c.applyAppConfig("sdk", planID, sourceHash, skipToken)
+}
+
+// ApplyExecutionConfig publishes one hosted App version without requesting Registry SDK generation.
+func (c *Client) ApplyExecutionConfig(planID, sourceHash string, skipToken bool) (*SDKConfigApplyResponse, error) {
+	return c.applyAppConfig("execution", planID, sourceHash, skipToken)
+}
+
+// applyAppConfig sends the same immutable plan receipt to its kind-specific Engine route.
+func (c *Client) applyAppConfig(kind, planID, sourceHash string, skipToken bool) (*SDKConfigApplyResponse, error) {
 	reqBody := map[string]any{
 		"plan_id":     planID,
 		"source_hash": sourceHash,
@@ -2290,7 +2305,7 @@ func (c *Client) ApplySDKConfig(planID, sourceHash string, skipToken bool) (*SDK
 		return nil, err
 	}
 
-	req, err := http.NewRequest("POST", c.BaseURL+"/sdk-config/apply", bytes.NewBuffer(body))
+	req, err := http.NewRequest("POST", c.BaseURL+"/"+kind+"-config/apply", bytes.NewBuffer(body))
 	if err != nil {
 		return nil, err
 	}

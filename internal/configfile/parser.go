@@ -51,6 +51,10 @@ func loadFusedDirectory() (*Run, error) {
 	if err := appendDesiredConfigs(run, filepath.Join(fusedDir, "sdks"), KindSDK); err != nil {
 		return nil, err
 	}
+	// Execution App declarations retain their own family identity and directory.
+	if err := appendDesiredConfigs(run, filepath.Join(fusedDir, "executions"), KindExecution); err != nil {
+		return nil, err
+	}
 	if err := appendDesiredConfigs(run, filepath.Join(fusedDir, "mcps"), KindMCP); err != nil {
 		return nil, err
 	}
@@ -287,7 +291,7 @@ func isYAMLFile(name string) bool {
 func rejectDuplicateConfigIdentities(configs []*ParsedConfig) error {
 	seenKeys := make(map[string]string)
 	for _, cfg := range configs {
-		if cfg.Kind != KindSDK && cfg.Kind != KindMCP && cfg.Kind != KindWebhook {
+		if cfg.Kind != KindSDK && cfg.Kind != KindMCP && cfg.Kind != KindExecution && cfg.Kind != KindWebhook {
 			continue
 		}
 		if existingPath, ok := seenKeys[cfg.ConfigKey]; ok {
@@ -382,6 +386,8 @@ func parseTypedConfig(data []byte, kind ConfigKind, parsed *ParsedConfig) error 
 		}
 		parsed.SDK = &sdkConfig
 		parsed.ConfigKey = appConfigKey(KindSDK, sdkConfig.Name, sdkConfig.Version)
+	case KindExecution:
+		return parseExecutionConfig(data, parsed)
 	case KindMCP:
 		// MCP and SDK share the app shape but keep distinct key prefixes so
 		// Engine can route each desired state to its own executor without legacy targets.
@@ -407,11 +413,24 @@ func parseTypedConfig(data []byte, kind ConfigKind, parsed *ParsedConfig) error 
 	return nil
 }
 
+// parseExecutionConfig keeps the hosted App shape shared while its config key remains distinct.
+func parseExecutionConfig(data []byte, parsed *ParsedConfig) error {
+	var config ExecutionConfig
+	if err := strictUnmarshal(data, &config); err != nil {
+		return fmt.Errorf("failed to parse execution config: %w", err)
+	}
+	parsed.Execution = &config
+	parsed.ConfigKey = appConfigKey(KindExecution, config.Name, config.Version)
+	return nil
+}
+
 // validateConfig performs basic semantic validation on the parsed config.
 func validateConfig(parsed *ParsedConfig) error {
 	switch parsed.Kind {
 	case KindSDK:
 		return validateSDKConfig(parsed.SDK)
+	case KindExecution:
+		return validateAppConfig(parsed.Execution, KindExecution)
 	case KindMCP:
 		return validateMCPConfig(parsed.MCP)
 	case KindWorkspace:
@@ -477,7 +496,7 @@ func validateAppConfig(cfg *AppConfig, kind ConfigKind) error {
 	if err := validateAppKindFields(cfg, kind); err != nil {
 		return err
 	}
-	// An app without services cannot expose any generated or hosted operations.
+	// All App kinds require reviewed provider operations or webhook selections.
 	if len(cfg.Services) == 0 {
 		return fmt.Errorf("%s config requires at least one service", kind)
 	}
@@ -495,6 +514,10 @@ func validateAppKindFields(cfg *AppConfig, kind ConfigKind) error {
 	if kind == KindSDK {
 		return validateSDKKindFields(cfg)
 	}
+	// Authored code is admitted only for the distinct hosted Execution App kind.
+	if kind == KindExecution {
+		return validateExecutionKindFields(cfg)
+	}
 	// MCP is the only remaining app kind with hosted-runtime-only fields.
 	if kind == KindMCP {
 		return validateMCPKindFields(cfg)
@@ -511,6 +534,10 @@ func validateSDKKindFields(cfg *AppConfig) error {
 	// SDK generation supports only Registry-owned emitters.
 	if !isSDKLanguage(cfg.Language) {
 		return fmt.Errorf("invalid language %q", cfg.Language)
+	}
+	// The compiler identity has its own admission rule so package validation remains bounded.
+	if err := validateSDKBundleDigest(cfg); err != nil {
+		return err
 	}
 	// Server identity prose belongs only to MCP; accepting it on SDK would mutate source state without changing output.
 	if strings.TrimSpace(cfg.Description) != "" {
@@ -531,6 +558,66 @@ func validateSDKKindFields(cfg *AppConfig) error {
 	return nil
 }
 
+// validateSDKBundleDigest binds authored code only to the supported runtime and exact compiler bytes.
+func validateSDKBundleDigest(cfg *AppConfig) error {
+	// SDK package identity never owns a compiler bundle; that is a separate App family kind.
+	if cfg.BundleDigest != "" {
+		return fmt.Errorf("bundle_digest requires kind: execution")
+	}
+	return nil
+}
+
+// validateExecutionKindFields admits one immutable compiler bundle under its own hosted App kind.
+func validateExecutionKindFields(cfg *AppConfig) error {
+	// The Engine bundle route compares exact emitted bytes to this planned compiler identity.
+	if cfg.Language != "typescript" || cfg.Generate == nil || *cfg.Generate || !canonicalSHA256Pattern.MatchString(cfg.BundleDigest) {
+		return fmt.Errorf("execution config requires TypeScript, generate: false, and canonical bundle_digest")
+	}
+	// A declarative graph would introduce a second execute contract for the same App version.
+	if len(cfg.UnifiedOperations) != 0 || cfg.FusedIntelligentClassifier || strings.TrimSpace(cfg.Description) != "" {
+		return fmt.Errorf("execution config must not set unified_operations or MCP-only discovery fields")
+	}
+	if err := validateExecutionDeliveryFields(cfg); err != nil {
+		return err
+	}
+	return validateExecutionOperationScope(cfg.Services)
+}
+
+// validateExecutionDeliveryFields requires a bucket and bounded MCP metadata for optional transport.
+func validateExecutionDeliveryFields(cfg *AppConfig) error {
+	// Provider credentials remain scoped to one declared bucket.
+	if strings.TrimSpace(cfg.Bucket) == "" {
+		return fmt.Errorf("execution config requires a bucket")
+	}
+	// Optional MCP delivery reuses the existing server metadata contract.
+	if cfg.MCP != nil && (strings.TrimSpace(cfg.MCP.Description) == "" || len(cfg.MCP.Description) > maxMCPServerDescriptionLength) {
+		return fmt.Errorf("execution mcp description is required and must be at most %d bytes", maxMCPServerDescriptionLength)
+	}
+	return nil
+}
+
+// validateExecutionOperationScope mirrors Engine's finite manifest cap before a local plan request is sent.
+func validateExecutionOperationScope(services map[string]AppService) error {
+	operationCount := 0
+	for _, service := range services {
+		// The authored operation owns the public execute name across REST and MCP.
+		if service.SelectAll {
+			return fmt.Errorf("execution config requires explicit operations so execute cannot be selected as a raw operation")
+		}
+		for _, operation := range service.Operations {
+			if operation == "execute" {
+				return fmt.Errorf("execution config reserves raw operation execute")
+			}
+			operationCount++
+		}
+	}
+	// The compiler and Engine accept exactly 1–64 raw operations for one authored App.
+	if operationCount == 0 || operationCount > 64 {
+		return fmt.Errorf("execution config requires 1 to 64 selected operations")
+	}
+	return nil
+}
+
 // validateMCPKindFields admits only fields consumed by the hosted MCP runtime.
 func validateMCPKindFields(cfg *AppConfig) error {
 	// A standalone MCP config cannot recursively request another hosted delivery.
@@ -547,6 +634,10 @@ func validateMCPKindFields(cfg *AppConfig) error {
 	// silently into a field nothing reads.
 	if cfg.Generate != nil {
 		return fmt.Errorf("mcp config must not set generate")
+	}
+	// Standalone MCP declarations cannot attach hosted SDK compiler output.
+	if cfg.BundleDigest != "" {
+		return fmt.Errorf("mcp config must not set bundle_digest")
 	}
 	// MCP hosts need a useful server-level routing signal before clients decide which connector to invoke.
 	if strings.TrimSpace(cfg.Description) == "" {

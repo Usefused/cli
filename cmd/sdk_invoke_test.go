@@ -235,6 +235,102 @@ func TestSDKInvokeUnifiedSendsTargetsSelectorsAndDecodesRollbacks(t *testing.T) 
 	}
 }
 
+// TestSDKInvokeUnifiedDecodesAuthoredRootOutput verifies the shared Engine route returns configured JSON directly.
+func TestSDKInvokeUnifiedDecodesAuthoredRootOutput(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		assertSDKInvokeRuntimeHeaders(t, request, "runtime-token", "root-output-key", "control-token")
+		body := decodeSDKInvokeTestRequest(t, request)
+		// The request must retain selected bindings even though the response has no execution envelope.
+		if body.Operation != "greetings.pair" || len(body.Targets) != 2 {
+			t.Fatalf("Unified request = %#v", body)
+		}
+		_, _ = w.Write([]byte(`{"first":"Hello AdaRest","second":"Hello Hello AdaRest","large":9007199254740993}`))
+	}))
+	defer server.Close()
+	prepared := preparedSDKInvocation{
+		EngineURL: server.URL, AppID: sdkInvokeTestAppID, Token: "runtime-token", IdempotencyKey: "root-output-key",
+		Request: sdkInvokeRequest{Operation: "greetings.pair", Input: json.RawMessage(`{"name":"Ada"}`), Targets: []string{"first", "second"}},
+	}
+	response, _, err := executeSDKInvocation(context.Background(), prepared)
+	// A root response must be accepted without inventing target results.
+	if err != nil || response.Kind != "unified" || response.Output == nil || len(response.Results) != 0 {
+		t.Fatalf("authored root response = %#v, error = %v", response, err)
+	}
+	// Raw JSON avoids losing large provider identifiers in CLI output.
+	if string(*response.Output) != `{"first":"Hello AdaRest","second":"Hello Hello AdaRest","large":9007199254740993}` {
+		t.Fatalf("authored root output = %s", *response.Output)
+	}
+	command := &cobra.Command{Use: "test"}
+	addJSONOutputFlag(command)
+	// The structured renderer is the user-facing smoke-test contract.
+	if err := command.Flags().Set(jsonOutputFlag, "true"); err != nil {
+		t.Fatalf("enable JSON output: %v", err)
+	}
+	var rendered bytes.Buffer
+	command.SetOut(&rendered)
+	// The renderer must carry the authored value through its metadata wrapper.
+	if err := writeSDKInvocationOutput(command, sdkInvokeOutput{
+		AppID: prepared.AppID, Operation: prepared.Request.Operation, Kind: response.Kind, Output: response.Output,
+	}); err != nil {
+		t.Fatalf("render authored root: %v", err)
+	}
+	var output map[string]json.RawMessage
+	// A parseable JSON document lets automation inspect the exact root value.
+	if err := json.Unmarshal(rendered.Bytes(), &output); err != nil {
+		t.Fatalf("decode rendered output: %v", err)
+	}
+	// The CLI adds invocation metadata but must not invent all-settled fields around authored output.
+	if output["output"] == nil || output["results"] != nil || output["rollbacks"] != nil {
+		t.Fatalf("rendered authored output = %s", rendered.Bytes())
+	}
+}
+
+// TestSDKInvokeUnifiedRootOutputAcceptsJSONValues retains every valid configured JSON root, including null.
+func TestSDKInvokeUnifiedRootOutputAcceptsJSONValues(t *testing.T) {
+	prepared := preparedSDKInvocation{AppID: sdkInvokeTestAppID, Request: sdkInvokeRequest{Operation: "root.run", Targets: []string{"first"}}}
+	// Authored projection schemas may legitimately choose any JSON root type.
+	for _, value := range []string{`"ok"`, `42`, `true`, `null`, `[1,2]`, `{"kind":"unified","value":1}`} {
+		response, err := decodeSDKInvokeHTTPResult(http.StatusOK, []byte(value), prepared)
+		// The decoder must preserve the exact value rather than coercing it into a result list.
+		if err != nil || response.Output == nil || string(*response.Output) != value {
+			t.Fatalf("root %s = %#v, %v", value, response, err)
+		}
+		encoded, err := json.Marshal(sdkInvokeOutput{Kind: response.Kind, Output: response.Output})
+		// A nonnil pointer keeps even a JSON null visible as an authored output.
+		if err != nil || !bytes.Contains(encoded, []byte(`"output":`+value)) {
+			t.Fatalf("rendered root %s = %s, %v", value, encoded, err)
+		}
+	}
+	// Malformed or concatenated documents must not become successful execution output.
+	for _, invalid := range []string{"", `{"value":1} {"value":2}`, `{"value":`} {
+		// The REST success boundary still requires exactly one complete JSON value.
+		if _, err := decodeSDKInvokeHTTPResult(http.StatusOK, []byte(invalid), prepared); err == nil {
+			t.Fatalf("invalid root %q succeeded", invalid)
+		}
+	}
+}
+
+// TestSDKInvokeUnifiedRejectsMalformedEnvelope retains strict validation when Engine advertises an all-settled wrapper.
+func TestSDKInvokeUnifiedRejectsMalformedEnvelope(t *testing.T) {
+	prepared := preparedSDKInvocation{AppID: sdkInvokeTestAppID, Request: sdkInvokeRequest{Operation: "root.run", Targets: []string{"first"}}}
+	// Wrapper-like responses keep identity and shape validation despite the root-output fallback.
+	for _, body := range []string{
+		fmt.Sprintf(`{"app_id":%q,"operation":"root.run","kind":"unified","results":[]}`, sdkInvokeTestAppID),
+		fmt.Sprintf(`{"app_id":%q,"operation":"other.run","kind":"unified","results":[],"rollbacks":[]}`, sdkInvokeTestAppID),
+		fmt.Sprintf(`{"app_id":%q,"operation":"root.run","kind":"unknown","results":[],"rollbacks":[]}`, sdkInvokeTestAppID),
+	} {
+		// A malformed Engine wrapper should never masquerade as a valid authored value.
+		if _, err := decodeSDKInvokeHTTPResult(http.StatusOK, []byte(body), prepared); err == nil {
+			t.Fatalf("malformed or mismatched envelope %s succeeded", body)
+		}
+	}
+	// A physical request has no authored-output contract, so the same root must still fail.
+	prepared.Request.Targets = nil
+	if _, err := decodeSDKInvokeHTTPResult(http.StatusOK, []byte(`{"value":1}`), prepared); err == nil {
+		t.Fatal("physical request accepted a bare root response")
+	}
+}
+
 // TestWriteSDKInvocationJSONPreservesKindSpecificRollbacks verifies Unified emits [] while physical omits the field.
 func TestWriteSDKInvocationJSONPreservesKindSpecificRollbacks(t *testing.T) {
 	emptyRollbacks := []any{}
