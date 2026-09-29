@@ -1,10 +1,44 @@
 # Execution App example
 
-This example selects one workspace operation, stores a searchable customer ID,
-and returns a typed output. Replace `crm`, its version, and `createCustomer`
-with an operation enabled in your workspace. Use a bucket you can access.
+Use `describe` to draft and deploy from a goal, or author the config directly.
+The manual example below selects one workspace operation, stores a searchable
+customer ID, and returns a typed output. Replace `crm`, its version, and
+`createCustomer` with an operation enabled in your workspace. Use a bucket you
+can access.
 
-## 1. Put the TypeScript in the config
+## Start with `fused-cli describe`
+
+In an interactive terminal connected to your Engine, describe the outcome and
+name the services you want to use:
+
+```bash
+fused-cli describe --name customer-onboarding --bucket default \
+  'Create a Stripe customer, create a HubSpot contact, and return both IDs'
+```
+
+Execution App is the default output; `--kind execution` is optional. The CLI
+resolves 1–16 exact operations, drafts `buildExecutionApp` TypeScript from their
+contracts, and shows the full source and selections before asking you to
+apply the proposal. Review the provider calls and output schema. If they do
+not match your goal, cancel and make the request more specific.
+
+After confirmation, the CLI sends the source cart to Engine for compilation,
+plans the App, saves `.fused/executions/customer-onboarding.yaml`, and applies
+the plan. A successful run prints the App ID and one-time execution token.
+`describe` requires terminal review; it cannot run unattended in CI. To
+change the App later, edit that saved config, increase the version, and run
+`execution plan` and `execution apply` with its path:
+
+```bash
+fused-cli execution plan -f .fused/executions/customer-onboarding.yaml
+fused-cli execution apply -f .fused/executions/customer-onboarding.yaml
+```
+
+`describe --update` does not update Execution Apps.
+
+## Author the config yourself
+
+### 1. Put the TypeScript in the config
 
 Create `.fused/executions/customer-app.yaml`. The `source: |` block is the
 TypeScript entry point, and every source line is indented by two spaces. If
@@ -40,7 +74,7 @@ source: |
   });
 ```
 
-## 2. Compile and host it
+### 2. Compile and host it
 
 Run these commands from the directory containing `.fused/`:
 
@@ -53,10 +87,9 @@ fused-cli execution apply -f .fused/executions/customer-app.yaml --json
 Engine, where the TypeScript is validated and compiled. `execution apply`
 uses that plan to host the compiled bundle and activate the App. There is no
 local `tsc` step or separate `.ts` upload command. Save the returned App ID and
-one-time family execution token securely. `fused-cli describe '<goal>'` can
-draft and deploy an Execution App through an interactive review.
+one-time family execution token securely.
 
-## 3. Execute the deployed App
+## Execute the deployed App
 
 Call the same Engine REST route used for SDK apps:
 

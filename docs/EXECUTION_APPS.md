@@ -61,5 +61,6 @@ four dot-separated segments. A caller needs an app token with the
 
 ## Next steps
 
+- [Generate and deploy from a goal with `fused-cli describe`](execution-apps/example.md#start-with-fused-cli-describe)
 - [Complete config, TypeScript, deploy, and API example](execution-apps/example.md)
 - [OAuth connections and connected-user routing](execution-apps/oauth.md)
