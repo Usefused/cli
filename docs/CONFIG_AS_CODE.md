@@ -1,6 +1,6 @@
 # Config as code
 
-Fused can manage workspace services, Execution Apps, Apps with SDK, MCP, and
+Fused can manage workspace services, Unified Apps, Apps with SDK, MCP, and
 REST delivery, and webhook registrations through YAML stored under `.fused/`.
 
 ## Create or extend a config
@@ -80,29 +80,29 @@ the config with `fused-cli value set`. The `fused-config` OpenAPI/Postman
 reference contains the single canonical Sendbird setup example and routing
 safety rules.
 
-## Execution App configuration
+## Unified App configuration
 
-An Execution App is a distinct `kind: execution` resource. Its config selects
-explicit workspace operations and includes one TypeScript `source` export using
-`buildExecutionApp({ input, output, execute, fetch? })`. Input and output use
-Zod. Set `language: typescript` and `generate: false`; the CLI sends source to
-Engine, which compiles it during `execution plan` and publishes the bundle
-during `execution apply`. The CLI does not compile or attach a bundle for an
-inline-source config.
+A Unified App is a distinct `kind: unified_app` resource. Its config selects
+explicit workspace operations and links one TypeScript `source_path` export using
+`buildUnifiedApp({ input, output, execute, fetch? })`. Input and output use
+Zod. The CLI reads the `.tsx` file and sends its bytes to Engine, which
+compiles them during `unified-app plan` and publishes the bundle during
+`unified-app apply`. `unified-app sync` moves legacy inline `source: |` into a `.tsx`
+file and updates the YAML. `language` and `generate` are unnecessary here.
 
-Store the config under `.fused/executions/` and run:
+Store the config and source under `.fused/unified_app/` and run:
 
 ```bash
-fused-cli execution plan -f .fused/executions/customer-app.yaml --json
-fused-cli execution apply -f .fused/executions/customer-app.yaml --json
+fused-cli unified-app plan -f .fused/unified_app/customer-app.yaml --json
+fused-cli unified-app apply -f .fused/unified_app/customer-app.yaml --json
 ```
 
 Engine returns the immutable App version ID and shows its family execution
-token once. A new source revision needs a new App version. `source` and a
-precompiled `bundle_digest` are mutually exclusive; `select_all` and
-`unified_operations` are not valid for Execution Apps. See
-the [`buildExecutionApp` guide](EXECUTION_APPS.md) for the function contract,
-or the [complete example](execution-apps/example.md) for YAML, apply, and API
+token once. A new source revision needs a new App version. `source_path` and a
+`bundle_digest` for code compiled outside Engine are mutually exclusive;
+`select_all` is not valid for Unified Apps. See
+the [`buildUnifiedApp` guide](UNIFIED_APPS.md) for the function contract,
+or the [complete example](unified-apps/example.md) for YAML, apply, and API
 calls.
 
 ## SDK configuration
@@ -176,97 +176,6 @@ fused-cli sdk plan -f .fused/sdks/my-sdk.yaml --json
 
 `sdk plan` performs the same local validation first, before its Engine request.
 The standalone `sdk validate` command remains available for offline-only checks.
-
-### Unified Operations
-
-TypeScript and Python SDK configs may add top-level `unified_operations`. A
-binding key is an exact key from `services` (including a provider-qualified key
-such as `@acme/github`), and its `operation` is the exact, case-sensitive
-OpenAPI `operationId` selected for that service. Do not qualify an operationId
-with the service slug.
-
-```yaml
-unified_operations:
-  issues.create:
-    description: Create the same issue in selected providers
-    input:
-      type: object
-      required: [title]
-      properties:
-        title: {type: string}
-        body: {type: string}
-    bindings:
-      jira:
-        operation: createProject
-        rollback:
-          operation: deleteProject
-          input:
-            projectId: ${response.jira.id}
-      github:
-        operation: createIssue
-        depends_on: [jira]
-        input:
-          title: ${input.title}
-          body: ${input.body?}
-      gitlab: createIssue # compact pass-through form
-    output:
-      type: object
-      required: [id, issue]
-      properties:
-        id: ${response.github.id ?? response.gitlab.iid}
-        issue:
-          type: object
-          value: ${response.github.issue}
-          required: [number]
-          properties:
-            number: {type: integer}
-            title: {type: string}
-        labels:
-          type: array
-          value: ${response.github.labels}
-          items: {type: string}
-```
-
-An expanded binding accepts `operation`, optional `input`, `depends_on`,
-`rollback`, and `output`. A binding without `depends_on` is ready to run in
-parallel. A binding with dependencies waits for those exact binding targets to
-succeed; missing targets, repeated targets, self-dependencies, and cycles are
-rejected before plan. Its forward `input` may reference `${response.<target>}`
-only for targets directly listed in its own `depends_on`.
-
-`rollback` names an exact operation already selected for the same service and
-may map its input from the original Unified input and its own successful binding
-response only. If a binding fails, Engine compensates only its successful direct
-`depends_on` targets that declare a rollback. It does not recursively compensate
-ancestors or unrelated bindings. In the example, a GitHub failure can invoke
-Jira's rollback because GitHub directly names Jira.
-
-DynamicValue documents preserve JSON nulls, booleans, exact numbers, strings,
-arrays, and objects across forward, rollback, and output mappings. A complete
-`${...}` retains its JSON type, while strings may also interpolate scalar
-values. YAML aliases, merge keys, custom tags, timestamps, and non-string
-object keys are rejected because they are not portable JSON values.
-
-The only output form is a recursive typed tree; the removed `{schema, mapping}`
-form is invalid. Operation and binding outputs both have a constructed
-`type: object` root with `properties`, and they may coexist. A scalar property
-may use mapping shorthand as above or expanded `{type, value}`. Nested objects
-may either construct mapping-bearing properties or pass through one `value`
-with schema-only `properties`/`required`. Arrays use one `value` plus an optional
-schema-only `items` shape.
-
-When the operation declares output, the generated method returns exactly that
-object with no `data` wrapper. Binding outputs run first and become the values
-read by the operation output; a binding without output contributes its raw
-provider JSON. Without operation output, the generated method retains the
-all-settled results/rollbacks envelope and any binding output becomes that
-target's normalized result data.
-
-The CLI bounds this source contract to 64 Unified Operations, 16 bindings per
-operation, 512 expressions, 10,000 DynamicValue nodes, depth 32, and 1 MiB of
-encoded Unified definition data. Engine plan validates expression grammar and
-bounds, exact endpoints, dependency/dataflow rules, output-schema syntax, and
-generated-name collisions.
 
 ## Workspace configuration
 
@@ -417,6 +326,6 @@ invocation may only lower the maximum page count for that call. Quota,
 concurrency, and retry policies follow the same Engine-owned boundary;
 generated clients make one logical Engine request.
 
-See the bundled `fused-config`, `fused-workspace`, `fused-sdk`,
-`fused-unified-operations`, and `fused-mcp` skills for task-specific guidance,
+See the bundled `fused-config`, `fused-workspace`, `fused-sdk`, and `fused-mcp`
+skills for task-specific guidance,
 or use the [command reference](COMMANDS.md) for every plan/apply/sync flag.

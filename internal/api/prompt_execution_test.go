@@ -10,8 +10,8 @@ import (
 	"github.com/Usefused/cli/internal/api"
 )
 
-// TestDraftPromptExecutionAppUsesRegistryTransport verifies model grounding stays on Registry's authenticated path.
-func TestDraftPromptExecutionAppUsesRegistryTransport(t *testing.T) {
+// TestDraftPromptUnifiedAppUsesRegistryTransport verifies model grounding stays on Registry's authenticated path.
+func TestDraftPromptUnifiedAppUsesRegistryTransport(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		// Registry owns the model and exact contract reads; Engine receives only the resulting build scope.
 		if request.URL.Path != "/graphql" {
@@ -23,16 +23,16 @@ func TestDraftPromptExecutionAppUsesRegistryTransport(t *testing.T) {
 		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
 			t.Error(err)
 		}
-		if !strings.Contains(body.Query, "draftPromptExecutionApp") {
+		if !strings.Contains(body.Query, "draftPromptUnifiedApp") {
 			t.Errorf("unexpected query %q", body.Query)
 		}
 		writer.Header().Set("Content-Type", "application/json")
-		_, _ = writer.Write([]byte(`{"data":{"draftPromptExecutionApp":"{\"clarification\":\"\",\"source\":\"export default buildExecutionApp({})\"}"}}`))
+		_, _ = writer.Write([]byte(`{"data":{"draftPromptUnifiedApp":"{\"clarification\":\"\",\"source\":\"export default buildUnifiedApp({})\"}"}}`))
 	}))
 	defer server.Close()
 	client := api.NewClient(server.URL, "fsk_test")
-	draft, err := client.DraftPromptExecutionApp("create a customer", []api.PromptOperationSelection{{Service: "crm", ServiceID: "service-id", Version: "v1", Operation: "create"}})
-	if err != nil || !strings.Contains(draft, "buildExecutionApp") {
+	draft, err := client.DraftPromptUnifiedApp("create a customer", []api.PromptOperationSelection{{Service: "crm", ServiceID: "service-id", Version: "v1", Operation: "create"}})
+	if err != nil || !strings.Contains(draft, "buildUnifiedApp") {
 		t.Fatalf("draft = %q, err=%v", draft, err)
 	}
 }

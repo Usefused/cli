@@ -125,7 +125,7 @@ fused-cli init google-workspace --sdk \
   --service '@google/drive' \
   --operation '@google/drive=listFiles'
 
-# Apply the same execution app without generating a package
+# Apply the same unified app without generating a package
 fused-cli init google-api --rest \
   --service '@google/drive' \
   --select-all '@google/drive'
@@ -212,7 +212,7 @@ Sendbird binding and bucket-value setup.
 
 ## `describe <goal>`
 
-Turn a natural-language goal into a reviewable Execution App by default.
+Turn a natural-language goal into a reviewable Unified App by default.
 `describe` shows the drafted TypeScript source and exact selected operations,
 then sends that cart to Engine for compilation and deployment after approval.
 Use `--kind sdk|mcp|rest` to request another output. Use `init` without a method
@@ -233,14 +233,16 @@ Registry's configured language model. The CLI discloses those requests before
 sending them. SDK and MCP proposals can attach provider webhook events; direct
 REST apps have no event receiver.
 
-Execution App creation needs 1–16 explicit operations. Edit its TypeScript
-config and deploy a new version to update it. `--update <app-name>` applies to
+Unified App creation needs 1–16 explicit operations. `describe` saves
+`.fused/unified_app/<app>.tsx` and a YAML `source_path` reference. Edit that
+TypeScript file and deploy a new version to update it. `unified-app sync` moves
+inline YAML source into the editable file. `--update <app-name>` applies to
 existing SDK, MCP, and REST configs and publishes an immutable successor when
 the reviewed proposal changes it. Use `-f <path>` when a name is ambiguous.
 `--name`, `--version`, `--language`, and `--bucket` constrain creation; updates
 preserve omitted settings. A missing update target stops before creating
-anything. See the [`buildExecutionApp` guide](EXECUTION_APPS.md) for the
-function contract and the [complete example](execution-apps/example.md) for
+anything. See the [`buildUnifiedApp` guide](UNIFIED_APPS.md) for the
+function contract and the [complete example](unified-apps/example.md) for
 config and API calls.
 
 ## `workspace init`
@@ -651,6 +653,80 @@ replaying apply or depending on a Registry event stream.
 | `--plan-id` | | Apply a specific remote plan ID | `""` |
 | `--receipt` | | Read a specific plan receipt | `""` |
 
+## `unified-app plan`
+
+Plan a `kind: unified_app` config with selected workspace operations and a
+TypeScript `source_path`. The CLI reads the source file, validates the config,
+and sends the reviewed cart to Engine for compilation. If the config still has
+inline `source: |`, plan first writes an editable `.tsx` file and updates the
+YAML reference. The plan receipt is used by `unified-app apply`.
+
+| Argument | Description |
+|----------|-------------|
+| `--json` | Print the plan result as JSON |
+| `--receipt-out <path>` | Write the plan receipt to a specific path |
+| `--owner-team <slug>` | Set the owning team |
+
+## `unified-app apply`
+
+Apply a Unified App plan and publish its immutable version. Engine returns the
+App IDs and shows the initial execution token once.
+
+| Argument | Description |
+|----------|-------------|
+| `--json` | Print the apply receipt as JSON |
+| `--plan-id <id>` | Apply a specific remote plan ID |
+| `--receipt <path>` | Read a saved plan receipt |
+
+## `unified-app promote [app-name] --version <version>`
+
+Switch new traffic to an existing Unified App version without recompiling or changing local files. Use an exact app name and a version label such as `1.0.0`; you do not need a UUID.
+
+```sh
+fused-cli unified-app promote "Customer lookup" --version 1.0.0
+fused-cli unified-app promote -f .fused/unified_app/customer-app.yaml --version 1.0.0
+```
+
+| Argument | Description |
+|----------|-------------|
+| `[app-name]` | Exact app name; takes precedence over config selection and needs no local config |
+| `-f <path>` | Read the app's top-level `name` from this Unified App config when no positional name is supplied |
+| `--version <version>` | Required exact destination version label; never inferred from the config or latest version |
+| `--json` | Print `name`, `version`, `app_family_id`, and `active_app_id` in the traffic receipt |
+
+Without a positional name or `-f`, config discovery must find exactly one `kind: unified_app` declaration. Use `-f` when multiple apps are present. The config's `name` identifies the app; its `version` and linked TypeScript remain unchanged by promotion.
+
+You need `app.unified_app.read` and `app.unified_app.manage`. The destination must be a retained version with a runnable bundle; a deleted version cannot be promoted. Historical results remain available after the switch.
+
+Exact-version REST URLs do not redirect: update callers to the selected version's URL. The hosted MCP family URL follows the active version; clients with sessions on the previous version must reconnect. A competing traffic change causes a conflict. Inspect the current destination before retrying; the CLI does not automatically retry promotion.
+
+## Unified App error diagnostics
+
+Public execution errors contain stable codes. Detailed exceptions and captured bodies are available in the app's Requests inspector to actors granted `app.unified_app.diagnostics.read` on its family or workspace. Ordinary read/manage grants do not include this permission; Owner retains all permissions. Requests also needs `app.unified_app.read` and `audit.read`. The management endpoint is `GET /apps/{app_id}/executions/{execution_id}/diagnostics`; runtime execution tokens cannot use it. Evidence expires with the retained result, currently after 24 hours. New compiled bundles include TypeScript source maps.
+
+## `unified-app bundle attach <app-version-id>`
+
+You usually do not need this command. With `source_path`, Engine compiles the
+TypeScript during `unified-app plan`.
+
+Use `bundle attach` only if you compiled the code yourself. Put the compiled
+file's checksum in the config as `bundle_digest`, then run `unified-app plan`
+and `unified-app apply`. The attach command uploads that JavaScript file and
+the compiler's metadata file to the new App version. Pass the plan's
+`source_hash` with `--source-hash`, the JavaScript file with `--bundle`, and the
+metadata file with `--manifest`.
+
+## `unified-app sync`
+
+Create `.fused/unified_app/<app>.tsx` from a local Unified App's inline
+`source: |`, and replace that block with a relative `source_path`. A linked
+source in another location is copied into the canonical path. Existing files
+with different contents are left untouched and reported as conflicts.
+
+Usage: `fused-cli unified-app sync -f .fused/unified_app/<app>.yaml`. Omit `-f` to
+sync all discovered local Unified App configs. `unified-app plan` performs the
+inline-source conversion automatically before sending the cart to Engine.
+
 ## `sdk sync`
 Full-mirror a local SDK config from the exact Engine app version declared in that file. There is no implicit latest lookup or sync-time version upgrade.
 
@@ -707,9 +783,8 @@ List services selected by one exact SDK version.
 
 ## `mcp operations <mcp-name@version-or-version-id>`
 List every operation ID callable through one exact MCP server version. The
-Engine expands `select_all` from its immutable local service-contract snapshots
-and includes Unified Operations from the integrity-checked applied plan. Human
-output shows `OPERATION_ID` and `KIND` (`physical` or `unified`); `--json`
+Engine expands `select_all` from its immutable local service-contract snapshots.
+Human output shows `OPERATION_ID` and `KIND` (`physical`); `--json`
 returns the MCP and Version IDs plus exact physical service provenance. A bare
 MCP name without `@version` is rejected so the result cannot float to another
 version.
@@ -763,7 +838,7 @@ a request-branch count consistent with the declared operation count.
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
-| `--operation` | | Export one exact physical or Unified operation name; surrounding whitespace is rejected and the value is case-sensitive, non-empty, and at most 512 bytes | `""` |
+| `--operation` | | Export one exact physical operation name; surrounding whitespace is rejected and the value is case-sensitive, non-empty, and at most 512 bytes | `""` |
 | `--out` | `-o` | Atomic output file path | `<safe-sdk-name>-<version>.openapi.<format>`; Version ID input uses `<version-id>.openapi.<format>` |
 | `--format` | | Output format: `yaml` or `json` | `"yaml"` |
 | `--json` | | Print export metadata only (SDK, version, Version ID, operation, `operation_count`, format, path, bytes, `sha256:<64 lowercase hex>`, server URL, and status) | `false` |
@@ -786,7 +861,7 @@ metadata identify the resource as an API instead of an SDK.
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
-| `--operation` | | Export one exact physical or Unified operation name | `""` |
+| `--operation` | | Export one exact physical operation name | `""` |
 | `--out` | `-o` | Atomic output file path | `<safe-api-name>-<version>.openapi.<format>`; Version ID input uses `<version-id>.openapi.<format>` |
 | `--format` | | Output format: `yaml` or `json` | `"yaml"` |
 | `--json` | | Print export metadata only, using the `api` field for the resource name | `false` |
@@ -798,20 +873,17 @@ the global `--engine-url` / `FUSED_ENGINE_URL` setting. The SDK execution token
 comes from `FUSED_SDK_TOKEN`, a variable named by `--token-env`, or stdin with
 `--token-stdin`; management and provider credentials are never substituted.
 Generated SDKs retain their broader gRPC transports; this CLI smoke-test surface
-accepts only buffered JSON provider responses up to 1 MiB each and bounds a
-Unified aggregate response at 17 MiB.
+accepts only buffered JSON provider responses up to 1 MiB.
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
-| `--params` | | One duplicate-free JSON value, `@file`, or `-` for stdin; physical operations require an object | `"{}"` |
+| `--params` | | One duplicate-free JSON object, `@file`, or `-` for stdin | `"{}"` |
 | `--token-env` | | Environment variable containing the execution token | `"FUSED_SDK_TOKEN"` |
 | `--token-stdin` | | Read the execution token from stdin | `false` |
-| `--environment` | | Physical provider environment selector; sugar for `--selector` | `""` |
-| `--target` | | Required for Unified: explicit unique target; repeat 1–16 times. Omit for physical operations. | `[]` |
-| `--selector` | | Strict physical selector JSON object or `@file` | `""` |
-| `--selectors` | | Strict Unified service-selector map or `@file` | `""` |
+| `--environment` | | Provider environment selector; sugar for `--selector` | `""` |
+| `--selector` | | Strict selector JSON object or `@file` | `""` |
 | `--idempotency-key` | | Stable logical-request key; generated when omitted | `""` |
-| `--json` | | Print Engine endpoint, inferred kind, results, rollbacks, and timing | `false` |
+| `--json` | | Print Engine endpoint, physical results, status, and timing | `false` |
 
 ## `sdk activity <sdk-name@version-or-version-id>`
 

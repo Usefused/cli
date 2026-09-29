@@ -15,13 +15,13 @@ import (
 const maxCLIExecutionBundleBytes = 2 << 20
 const maxCLIExecutionManifestBytes = 1 << 20
 
-var sdkBundleCmd = commandGroup("bundle", "Manage one hosted execute bundle for an Execution App version")
+var sdkBundleCmd = commandGroup("bundle", "Upload code compiled outside Engine")
 
 var sdkBundleAttachCmd = &cobra.Command{
 	Use:   "attach <app-version-id>",
-	Short: "Attach compiled execute code to one applied Execution App version",
+	Short: "Upload code compiled outside Engine to one Unified App version",
 	Args:  cobra.ExactArgs(1),
-	RunE: WithTelemetry("cli.execution.bundle.attach", func(cmd *cobra.Command, args []string) error {
+	RunE: WithTelemetry("cli.unified.bundle.attach", func(cmd *cobra.Command, args []string) error {
 		return runSDKBundleAttach(cmd, args[0])
 	}),
 }
@@ -57,12 +57,12 @@ func runSDKBundleAttach(cmd *cobra.Command, appID string) error {
 	if err != nil {
 		return err
 	}
-	recordAppliedChange(cmd.Context(), "execution.bundle.attach", "execution")
+	recordAppliedChange(cmd.Context(), "unified.bundle.attach", "unified_app")
 	// The receipt contains metadata only; compiled code and saved credentials never enter output.
 	if wantsJSON(cmd) {
 		return writeJSON(cmd, result)
 	}
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Attached execute bundle to App version %s.\n", result.AppID)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Uploaded compiled code to App version %s.\n", result.AppID)
 	return nil
 }
 
@@ -83,10 +83,10 @@ func readBoundedSDKBundleFile(path string, limit int64) ([]byte, error) {
 
 // init registers the explicit immutable-code attachment after SDK apply.
 func init() {
-	executionCmd.AddCommand(sdkBundleCmd)
+	unifiedCmd.AddCommand(sdkBundleCmd)
 	sdkBundleCmd.AddCommand(sdkBundleAttachCmd)
-	sdkBundleAttachCmd.Flags().String("source-hash", "", "Exact source_hash from the applied Execution App plan")
-	sdkBundleAttachCmd.Flags().String("bundle", "", "Compiled JavaScript bundle file")
-	sdkBundleAttachCmd.Flags().String("manifest", "", "Compiler manifest JSON file")
-	sdkBundleAttachCmd.Flags().Bool(jsonOutputFlag, false, "Print attachment receipt as JSON")
+	sdkBundleAttachCmd.Flags().String("source-hash", "", "Exact source hash from the plan receipt")
+	sdkBundleAttachCmd.Flags().String("bundle", "", "Compiled JavaScript file")
+	sdkBundleAttachCmd.Flags().String("manifest", "", "Compiler metadata JSON file")
+	sdkBundleAttachCmd.Flags().Bool(jsonOutputFlag, false, "Print upload result as JSON")
 }

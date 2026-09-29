@@ -19,16 +19,15 @@ import (
 type unifiedInitMode string
 
 const (
-	unifiedInitModeApp       unifiedInitMode = "app"
-	unifiedInitModeSDK       unifiedInitMode = "sdk"
-	unifiedInitModeMCP       unifiedInitMode = "mcp"
-	unifiedInitModeAPI       unifiedInitMode = "api"
-	unifiedInitModeWebhook   unifiedInitMode = "webhook"
-	unifiedInitModeExecution unifiedInitMode = "execution"
+	unifiedInitModeApp     unifiedInitMode = "app"
+	unifiedInitModeSDK     unifiedInitMode = "sdk"
+	unifiedInitModeMCP     unifiedInitMode = "mcp"
+	unifiedInitModeAPI     unifiedInitMode = "api"
+	unifiedInitModeWebhook unifiedInitMode = "webhook"
+	unifiedInitModeUnified unifiedInitMode = "unified"
 )
 
 type unifiedInitOptions struct {
-	workflowIDs                []string
 	sdk                        bool
 	mcp                        bool
 	api                        bool
@@ -124,10 +123,9 @@ retain available plan receipts without applying Engine state.`,
 		}),
 	}
 
-	command.Flags().StringSliceVar(&opts.workflowIDs, "workflow", nil, "Exact Registry workflow release UUID; repeat to bundle workflows")
 	command.Flags().BoolVar(&opts.sdk, "sdk", false, "Create a generated typed SDK and download its package")
-	command.Flags().BoolVar(&opts.api, "api", false, "Create a direct REST execution app without generating a package")
-	command.Flags().BoolVar(&opts.rest, "rest", false, "Create a direct REST execution app without generating a package")
+	command.Flags().BoolVar(&opts.api, "api", false, "Create a direct REST unified app without generating a package")
+	command.Flags().BoolVar(&opts.rest, "rest", false, "Create a direct REST unified app without generating a package")
 	command.Flags().BoolVar(&opts.mcp, "mcp", false, "Create and deploy an Engine-hosted MCP server")
 	command.Flags().BoolVar(&opts.webhook, "webhook", false, "Create and apply an inbound webhook registration")
 	command.Flags().StringArrayVar(&opts.secrets, "secret", nil, "Webhook signing reference as <service>=${bucket.<name>.secret.<key>}; repeatable")
@@ -156,7 +154,7 @@ func resolveUnifiedInitMode(opts *unifiedInitOptions) (unifiedInitMode, error) {
 	if opts.sdk {
 		selected = append(selected, unifiedInitModeSDK)
 	}
-	// API is an SDK execution app with code generation disabled, not a separate config kind.
+	// API is an SDK unified app with code generation disabled, not a separate config kind.
 	if opts.api {
 		selected = append(selected, unifiedInitModeAPI)
 	}
@@ -274,7 +272,7 @@ func buildUnifiedInitRequest(cmd *cobra.Command, mode unifiedInitMode, name stri
 
 // validateWorkflowInitModeFlags prevents irrelevant flags from silently changing another resource kind.
 func validateWorkflowInitModeFlags(cmd *cobra.Command, mode unifiedInitMode, opts *unifiedInitOptions) error {
-	// Only SDK and MCP apps receive provider events and reusable workflows.
+	// Only SDK and MCP apps receive provider events.
 	if mode != unifiedInitModeApp && mode != unifiedInitModeSDK && mode != unifiedInitModeMCP {
 		return validateNonReceiverInitFlags(cmd, mode, opts)
 	}
@@ -295,10 +293,6 @@ func validateNonReceiverInitFlags(cmd *cobra.Command, mode unifiedInitMode, opts
 	if cmd.Flags().Changed("webhook-attachment") || len(opts.events) > 0 {
 		return errors.New("--webhook-attachment and --events can only be used with --sdk or --mcp")
 	}
-	// A nonreceiver mode cannot silently discard requested workflows.
-	if len(opts.workflowIDs) > 0 {
-		return errors.New("--workflow requires --sdk or --mcp")
-	}
 	// Classifier settings require a hosted MCP runtime.
 	if cmd.Flags().Changed("fused-intelligent-classifier") {
 		return errors.New("--fused-intelligent-classifier requires --mcp")
@@ -310,18 +304,18 @@ func validateNonReceiverInitFlags(cmd *cobra.Command, mode unifiedInitMode, opts
 	return nil
 }
 
-// parseUnifiedInitSelections validates physical flag syntax while allowing workflow-only initialization.
+// parseUnifiedInitSelections validates physical flag syntax for app initialization.
 func parseUnifiedInitSelections(opts *unifiedInitOptions) (scaffoldRequest, error) {
-	request := scaffoldRequest{workflowIDs: opts.workflowIDs}
+	request := scaffoldRequest{}
 	var err error
 	request.services, err = parseScaffoldServices(opts.services, false)
 	// Reject ambiguous service flag syntax before remote resolution.
 	if err != nil {
 		return request, err
 	}
-	// A working app must have explicit physical scope or published workflow scope.
-	if len(request.services) == 0 && len(opts.workflowIDs) == 0 {
-		return request, errors.New("init requires at least one --service or --workflow")
+	// A working app needs an explicit provider scope.
+	if len(request.services) == 0 {
+		return request, errors.New("init requires at least one --service")
 	}
 	request.operations, err = parseScaffoldOperations(opts.operations)
 	// Invalid operation selectors must not become partial workspace scope.
@@ -386,13 +380,6 @@ func unifiedInitLanguage(cmd *cobra.Command, mode unifiedInitMode, opts *unified
 
 // runUnifiedInitLifecycle either publishes validated local desired state or keeps both remote receipt boundaries behind one confirmation.
 func runUnifiedInitLifecycle(cmd *cobra.Command, mode unifiedInitMode, request scaffoldRequest) error {
-	// Resolve and compose every requested release before the existing lifecycle may activate services.
-	var err error
-	request, err = addWorkflowSelections(request, request.workflowIDs)
-	// Unavailable or incompatible workflows must stop before filesystem and service changes.
-	if err != nil {
-		return err
-	}
 	// Create-only collisions must fail before the composed workspace lifecycle can plan or apply a missing service.
 	if !request.extend {
 		if err := ensureUnifiedInitTargetAbsent(request.path); err != nil {

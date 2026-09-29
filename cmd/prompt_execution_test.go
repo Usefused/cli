@@ -17,21 +17,28 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// TestPromptExecutionConfigProducesEngineCompiledCart verifies describe sends source and scope without a local bundle.
-func TestPromptExecutionConfigProducesEngineCompiledCart(t *testing.T) {
+// TestPromptUnifiedAppConfigProducesEngineCompiledCart verifies describe preserves a lintable file without sending its path.
+func TestPromptUnifiedAppConfigProducesEngineCompiledCart(t *testing.T) {
+	t.Chdir(t.TempDir())
+	if err := os.MkdirAll(filepath.Join(".fused", "unified_app"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	request := scaffoldRequest{name: "billing", version: "1.0.0", bucket: "main", services: []scaffoldService{{name: "crm", version: "v1"}}, operations: []scaffoldOperation{{service: "crm", operation: "createCustomer"}}}
-	source := "export default buildExecutionApp({});"
-	config := promptExecutionConfig(request, source)
+	source := "export default buildUnifiedApp({});"
+	if err := os.WriteFile(filepath.Join(".fused", "unified_app", "billing.tsx"), []byte(source), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	config := promptUnifiedAppConfig(request, "billing.tsx")
 	data, err := yaml.Marshal(config)
 	if err != nil {
 		t.Fatal(err)
 	}
-	parsed, err := configfile.Parse(data, ".fused/executions/billing.yaml")
+	parsed, err := configfile.Parse(data, ".fused/unified_app/billing.yaml")
 	// The shared parser must admit source-only hosted desired state and retain exact scope.
-	if err != nil || parsed.Kind != configfile.KindExecution || parsed.Execution.Source != source || parsed.Execution.BundleDigest != "" {
+	if err != nil || parsed.Kind != configfile.KindUnifiedApp || parsed.UnifiedApp.Source != source || parsed.UnifiedApp.SourcePath != "billing.tsx" || parsed.UnifiedApp.BundleDigest != "" {
 		t.Fatalf("hosted config = %#v, %v", parsed, err)
 	}
-	if got := parsed.Execution.Services["crm"]; len(got.Operations) != 1 || got.Operations[0] != "createCustomer" {
+	if got := parsed.UnifiedApp.Services["crm"]; len(got.Operations) != 1 || got.Operations[0] != "createCustomer" {
 		t.Fatalf("operation scope = %#v", got)
 	}
 }
@@ -44,8 +51,8 @@ func TestDecodePromptExecutionDraftRequiresReviewableSource(t *testing.T) {
 			t.Fatalf("accepted draft %q", raw)
 		}
 	}
-	source, err := decodePromptExecutionDraft(`{"clarification":"","source":"export default buildExecutionApp({})"}`)
-	if err != nil || !strings.Contains(source, "buildExecutionApp") {
+	source, err := decodePromptExecutionDraft(`{"clarification":"","source":"export default buildUnifiedApp({})"}`)
+	if err != nil || !strings.Contains(source, "buildUnifiedApp") {
 		t.Fatalf("source = %q, %v", source, err)
 	}
 }
@@ -64,7 +71,7 @@ func TestPromptExecutionDraftSelectionsPinsRegistryIdentity(t *testing.T) {
 func TestDeployPromptExecutionSendsCartToEngine(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
-	if err := os.MkdirAll(filepath.Join(".fused", "executions"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(".fused", "unified_app"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	appID := uuid.New().String()
@@ -72,9 +79,9 @@ func TestDeployPromptExecutionSendsCartToEngine(t *testing.T) {
 	server := newPromptExecutionTestServer(t, appID, &paths)
 	defer server.Close()
 	client := api.NewClient(server.URL, "fsk_test")
-	request := scaffoldRequest{name: "billing", version: "1.0.0", bucket: "main", path: filepath.Join(".fused", "executions", "billing.yaml"), services: []scaffoldService{{name: "crm", version: "v1"}}, operations: []scaffoldOperation{{service: "crm", operation: "create"}}}
-	source := "export default buildExecutionApp({});"
-	plan := promptInitPlan{mode: unifiedInitModeExecution, primary: request, execution: &promptExecutionDraft{source: source}}
+	request := scaffoldRequest{name: "billing", version: "1.0.0", bucket: "main", path: filepath.Join(".fused", "unified_app", "billing.yaml"), services: []scaffoldService{{name: "crm", version: "v1"}}, operations: []scaffoldOperation{{service: "crm", operation: "create"}}}
+	source := "export default buildUnifiedApp({});"
+	plan := promptInitPlan{mode: unifiedInitModeUnified, primary: request, execution: &promptExecutionDraft{source: source}}
 	command := &cobra.Command{}
 	var output bytes.Buffer
 	command.SetOut(&output)
@@ -82,12 +89,20 @@ func TestDeployPromptExecutionSendsCartToEngine(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Engine receives the source-bound cart once, then applies without a bundle upload route.
-	if strings.Join(paths, ",") != "/execution-config/plan,/execution-config/apply" || !strings.Contains(output.String(), "Execution token (shown once): once") {
+	if strings.Join(paths, ",") != "/unified-app-config/plan,/unified-app-config/apply" || !strings.Contains(output.String(), "Execution token (shown once): once") {
 		t.Fatalf("routes=%#v output=%q", paths, output.String())
 	}
 	parsed, err := configfile.ParseFile(request.path)
-	if err != nil || parsed.Kind != configfile.KindExecution || parsed.Execution.Source != source {
+	if err != nil || parsed.Kind != configfile.KindUnifiedApp || parsed.UnifiedApp.Source != source || parsed.UnifiedApp.SourcePath != "billing.tsx" {
 		t.Fatalf("published config=%#v err=%v", parsed, err)
+	}
+	// Describe must leave reviewable YAML linked to TypeScript, never embed the generated code.
+	if savedConfig, err := os.ReadFile(request.path); err != nil || !strings.Contains(string(savedConfig), "source_path: billing.tsx") || strings.Contains(string(savedConfig), "source: |") {
+		t.Fatalf("saved config = %q, %v", savedConfig, err)
+	}
+	// A successful describe keeps its reviewed TypeScript in a standalone editable file.
+	if saved, err := os.ReadFile(filepath.Join(".fused", "unified_app", "billing.tsx")); err != nil || string(saved) != source {
+		t.Fatalf("saved source = %q, %v", saved, err)
 	}
 }
 
@@ -99,10 +114,10 @@ func newPromptExecutionTestServer(t *testing.T, appID string, paths *[]string) *
 		writer.Header().Set("Content-Type", "application/json")
 		// The plan owns source compilation; apply only consumes its immutable receipt.
 		switch request.URL.Path {
-		case "/execution-config/plan":
+		case "/unified-app-config/plan":
 			assertPromptExecutionPlanCart(t, request)
 			_, _ = writer.Write([]byte(`{"plan_id":"plan-1","summary":{}}`))
-		case "/execution-config/apply":
+		case "/unified-app-config/apply":
 			_, _ = writer.Write([]byte(`{"status":"applied","plan_id":"plan-1","app_family_id":"family-1","app_id":"` + appID + `","execution_token":"once"}`))
 		default:
 			t.Errorf("unexpected route %s", request.URL.Path)
@@ -127,7 +142,7 @@ func assertPromptExecutionPlanCart(t *testing.T, request *http.Request) {
 		t.Error(err)
 	}
 	// A local compiler regression would remove source or add a digest before Engine receives the cart.
-	if body.Config.Kind != "execution" || !strings.Contains(body.Config.Source, "buildExecutionApp") || body.Config.BundleDigest != "" || len(body.Config.Services["crm"].Operations) != 1 {
+	if body.Config.Kind != "unified_app" || !strings.Contains(body.Config.Source, "buildUnifiedApp") || body.Config.BundleDigest != "" || len(body.Config.Services["crm"].Operations) != 1 {
 		t.Errorf("invalid Engine cart: %#v", body.Config)
 	}
 }

@@ -34,8 +34,8 @@ control, or generated SDK/MCP config.
 - Ask the user only when this choice, a provider ambiguity, credential ownership,
   or a destructive/production apply would materially change the result.
 
-Read `fused-sdk` or `fused-mcp` for the selected config shape. For one generated
-SDK method spanning multiple services, also read `fused-unified-operations`.
+Read `fused-sdk` or `fused-mcp` for the selected config shape. For authored
+cross-service behavior, see the [Unified App example](../../../../docs/unified-apps/example.md).
 Read `fused-bucket` when credentials or OAuth are required, and `fused-config`
 for auth, connect scopes, connection profiles, or execution policy.
 

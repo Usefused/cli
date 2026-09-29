@@ -8,8 +8,8 @@ import (
 	"testing"
 )
 
-// TestExecutionConfigUsesDistinctPlanAndApplyRoutes proves SDK and hosted App requests cannot cross kinds.
-func TestExecutionConfigUsesDistinctPlanAndApplyRoutes(t *testing.T) {
+// TestUnifiedAppConfigUsesDistinctPlanAndApplyRoutes proves SDK and hosted App requests cannot cross kinds.
+func TestUnifiedAppConfigUsesDistinctPlanAndApplyRoutes(t *testing.T) {
 	paths := make([]string, 0, 2)
 	client := &Client{BaseURL: "https://engine.test", APIKey: "saved-control-key"}
 	client.HTTP = &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
@@ -19,20 +19,20 @@ func TestExecutionConfigUsesDistinctPlanAndApplyRoutes(t *testing.T) {
 			t.Errorf("missing management credential on %s", request.URL.Path)
 		}
 		body := `{"plan_id":"plan-1","source_hash":"sha256:source"}`
-		if request.URL.Path == "/execution-config/apply" {
+		if request.URL.Path == "/unified-app-config/apply" {
 			body = `{"status":"applied","plan_id":"plan-1","app_family_id":"family-1","app_id":"app-1"}`
 		}
 		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
 	})}
-	_, err := client.PlanExecutionConfig(DesiredConfigPlanIntent{ConfigKey: "execution:greeting:1.0.0", SourceHash: "sha256:source", Config: json.RawMessage(`{"kind":"execution"}`)})
+	_, err := client.PlanUnifiedAppConfig(DesiredConfigPlanIntent{ConfigKey: "unified_app:greeting:1.0.0", SourceHash: "sha256:source", Config: json.RawMessage(`{"kind":"unified_app"}`)})
 	if err != nil {
-		t.Fatalf("plan Execution App: %v", err)
+		t.Fatalf("pla Unified App: %v", err)
 	}
-	_, err = client.ApplyExecutionConfig("plan-1", "sha256:source", false)
+	_, err = client.ApplyUnifiedAppConfig("plan-1", "sha256:source", false)
 	if err != nil {
-		t.Fatalf("apply Execution App: %v", err)
+		t.Fatalf("apply Unified App: %v", err)
 	}
-	if len(paths) != 2 || paths[0] != "/execution-config/plan" || paths[1] != "/execution-config/apply" {
-		t.Fatalf("Execution App routes = %#v", paths)
+	if len(paths) != 2 || paths[0] != "/unified-app-config/plan" || paths[1] != "/unified-app-config/apply" {
+		t.Fatalf("Unified App routes = %#v", paths)
 	}
 }

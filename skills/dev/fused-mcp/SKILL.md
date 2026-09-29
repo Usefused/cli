@@ -84,19 +84,6 @@ and does not load an MCP app to infer credential routing.
 `select_all: true` is the alternative to listing `operations` explicitly --
 exactly one of the two is required (see `fused-sdk`; the validation and
 sync-freezing behavior described there is the same struct shared with SDK).
-A top-level `unified_operations` map uses the same graph, mapping, dependency,
-rollback, and output authoring contract as an SDK; read
-`fused-unified-operations`. MCP sets no `language`, so plan skips only generated
-TypeScript/Python symbol checks, then runs the same Engine compiler after
-physical selections are pinned. Apply persists the same immutable private v3
-definitions and hashes, while the credential-free descriptor remains in the
-applied plan. Do not create an MCP-specific graph shape or authorization scope.
-At session start, Engine adds each fully token-authorized descriptor to the
-existing `search_docs` catalogue under its exact authored name. The server still
-exposes only `search_docs` and `execute`; an exact physical/Unified name collision
-fails closed. Discovery returns public schemas and graph names only, never
-private mappings, internal UUIDs, selectors, or values.
-
 MCP creation may opt into `fused-intelligent-classifier: true`, or
 `fused-cli init --mcp --fused-intelligent-classifier`. Omission
 keeps local search. This is immutable version metadata: changing or removing it
@@ -112,9 +99,8 @@ in an MCP config or bucket.
 Treat a non-empty `search_docs` query as a concise capability intent, such as
 `send email attachment`, rather than forwarding the conversation. Intent search
 returns the three best matches by default and accepts at most five. Ranked
-results pack only call construction: physical `params_schema` or Unified `input`
-and `targets`; exact or section lookup supplies other detail. Prefer
-a complete Unified Operation when it covers the whole goal. If no returned
+results pack only physical call construction through `params_schema`; exact or
+section lookup supplies other detail. If no returned
 operation safely supports the request, retry at most once with more specific
 service and action terms; never guess an operation ID.
 
@@ -126,8 +112,7 @@ query text. Every `search_docs` result is bounded to 64 KiB of UTF-8 JSON. Check
 Physical `params_schema` is the flat `call(operationId, params)` object. For
 extra documentation, compare `schema_status.included_sections` with
 `available_sections` and retrieve only the needed physical `params_schema`,
-`parameters`, `request`, or `response:<status>` section, or Unified `input`,
-`targets`, or `output` section. Use
+`parameters`, `request`, or `response:<status>` section. Use
 `schemaPath` JSON Pointer retrieval only when a smaller nested schema is needed.
 Do not pre-emptively load every response schema because the actual provider
 response arrives through `execute`.
@@ -160,16 +145,9 @@ response bytes, duration, outcome, and actor type, but never the raw query,
 operation ID, returned schema, schema pointer, private mapping, or
 credential-bearing value.
 
-Inside an `execute` script, call a discovered Unified operation with
-`await call(operationId, {input, targets, selectors?, pagination?, idempotencyKey?})`.
-Use TypeScript camelCase selector and pagination fields, keep `targets`
-dependency-closed, and omit `idempotencyKey` only when a new SDK-equivalent UUID
-is appropriate. Engine reauthenticates the session and sends every selected
-forward and active rollback through the canonical Unified coordinator; catalogue
-visibility never grants execution scope.
-Physical-target pagination inside a Unified operation must stay target-keyed in
-that documented Unified `pagination` parameter. Never move it into the separate
-third argument used only by direct physical calls.
+Inside an `execute` script, call discovered physical operations through
+`call(operationId, params, options?)`. Engine reauthenticates the session for
+each call; catalogue visibility never grants execution scope.
 An MCP config may attach one applied `kind: webhook` registration and select
 explicit provider event names. The first event surface intentionally rejects
 `webhooks_select_all: true`: every selected event must have a finite resource
@@ -310,8 +288,7 @@ undeprecate command; do not invent one.
 
 Use `mcp operations <name@version-or-version-id>` when a user needs every
 public `operationId` callable through one immutable MCP version. It expands
-physical `select_all` selections from Engine-local contract snapshots and adds
-Unified Operations from the exact applied plan. A bare MCP name is invalid;
+physical `select_all` selections from Engine-local contract snapshots. A bare MCP name is invalid;
 use `--json` when another command or agent needs the MCP/Version IDs, operation
 kind, and physical service/version provenance.
 
@@ -586,8 +563,7 @@ continuation output, and stop condition. Pass the documented page input in
 that stop condition. Never infer page, cursor, offset, or termination semantics
 from field names. Every manual page consumes the execute call and deadline
 budgets. A supported one-page policy has `caller_bound_supported: false`,
-because no positive lower bound exists. Unified calls retain their target-keyed
-`pagination` inside the documented Unified invocation object.
+because no positive lower bound exists.
 
 A physical pagination-intent rejection is a pre-provider argument correction
 only when no earlier or concurrent call in the same `execute` may have
@@ -597,8 +573,7 @@ or a non-lowering bound returns `execute_request: correct_arguments` with
 dispatched, the outer `execute` must instead return
 `execute_request: do_not_replay` with `provider_execution: unknown`, because the
 script may already have provider side effects. Inspect external state before
-issuing new work. Invalid target-keyed physical pagination on a Unified call
-uses the same rule: it is a pre-provider correction only when isolated.
+issuing new work.
 
 If automatic traversal reaches an Engine pagination limit before provider
 termination, narrow the provider query or deliberately choose a smaller caller

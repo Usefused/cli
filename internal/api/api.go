@@ -2069,9 +2069,10 @@ func (c *Client) PlanSDKConfig(intent DesiredConfigPlanIntent) (*SDKConfigPlanRe
 	return c.planDesiredConfig("sdk", intent)
 }
 
-// PlanExecutionConfig pins hosted TypeScript provenance through the distinct Execution App route.
-func (c *Client) PlanExecutionConfig(intent DesiredConfigPlanIntent) (*SDKConfigPlanResponse, error) {
-	return c.planDesiredConfig("execution", intent)
+// PlanUnifiedAppConfig pins hosted TypeScript provenance through the distinct Unified App route.
+func (c *Client) PlanUnifiedAppConfig(intent DesiredConfigPlanIntent) (*SDKConfigPlanResponse, error) {
+	// The HTTP route uses a hyphen while the persisted config kind uses an underscore.
+	return c.planDesiredConfig("unified-app", intent)
 }
 
 // PlanMCPConfig plans an Engine runtime without invoking Registry generation.
@@ -2286,9 +2287,10 @@ func (c *Client) ApplySDKConfig(planID, sourceHash string, skipToken bool) (*SDK
 	return c.applyAppConfig("sdk", planID, sourceHash, skipToken)
 }
 
-// ApplyExecutionConfig publishes one hosted App version without requesting Registry SDK generation.
-func (c *Client) ApplyExecutionConfig(planID, sourceHash string, skipToken bool) (*SDKConfigApplyResponse, error) {
-	return c.applyAppConfig("execution", planID, sourceHash, skipToken)
+// ApplyUnifiedAppConfig publishes one hosted App version without requesting Registry SDK generation.
+func (c *Client) ApplyUnifiedAppConfig(planID, sourceHash string, skipToken bool) (*SDKConfigApplyResponse, error) {
+	// Apply must address the same named route used when the plan was created.
+	return c.applyAppConfig("unified-app", planID, sourceHash, skipToken)
 }
 
 // applyAppConfig sends the same immutable plan receipt to its kind-specific Engine route.

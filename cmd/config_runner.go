@@ -58,7 +58,7 @@ type configKindFilter string
 const (
 	filterAll       configKindFilter = ""
 	filterSDK       configKindFilter = "sdk"
-	filterExecution configKindFilter = "execution"
+	filterUnified   configKindFilter = "unified_app"
 	filterMCP       configKindFilter = "mcp"
 	filterWorkspace configKindFilter = "workspace"
 	filterWebhook   configKindFilter = "webhook"
@@ -322,12 +322,12 @@ func planOneConfig(client *api.Client, cfg *configfile.ParsedConfig, engineURL, 
 			credentialReadiness: resp.CredentialReadiness,
 			requiredPermissions: resp.RequiredPermissions,
 		}, nil
-	case configfile.KindExecution:
+	case configfile.KindUnifiedApp:
 		// Compiler provenance travels in the same desired-state envelope under a separate route.
-		raw, _ := json.Marshal(cfg.Execution)
-		resp, err := client.PlanExecutionConfig(desiredConfigPlanIntent(cfg, raw, ownerTeamSlug))
+		raw, _ := json.Marshal(cfg.UnifiedApp)
+		resp, err := client.PlanUnifiedAppConfig(desiredConfigPlanIntent(cfg, raw, ownerTeamSlug))
 		if err != nil {
-			return plannedConfig{}, fmt.Errorf("failed to plan Execution App %s: %w", cfg.Execution.Name, err)
+			return plannedConfig{}, fmt.Errorf("failed to plan Unified App %s: %w", cfg.UnifiedApp.Name, err)
 		}
 		return plannedConfig{
 			receipt: newPlanReceipt(resp.PlanID, cfg.ConfigKey, cfg.SourceHash, engineURL),
@@ -597,8 +597,8 @@ func applyConfigs(client *api.Client, configs []*configfile.ParsedConfig, opts a
 	}
 	if opts.jsonOut {
 		// Execution receipts use App identity labels rather than SDK package labels.
-		if len(prepared) > 0 && prepared[0].config.Kind == configfile.KindExecution {
-			return applyExecutionConfigsJSON(client, prepared, opts)
+		if len(prepared) > 0 && prepared[0].config.Kind == configfile.KindUnifiedApp {
+			return applyUnifiedAppConfigsJSON(client, prepared, opts)
 		}
 		return applySDKConfigsJSON(client, prepared, opts)
 	}
@@ -870,7 +870,7 @@ func applyPreparedConfig(client *api.Client, item preparedConfigApply, download 
 		return applyWorkspaceConfig(client, cfg, receipt, item.workspacePayload)
 	case configfile.KindSDK:
 		return applyPreparedSDK(client, cfg, receipt, download)
-	case configfile.KindExecution:
+	case configfile.KindUnifiedApp:
 		return applyPreparedExecution(client, cfg, receipt)
 	case configfile.KindMCP:
 		return applyPreparedMCP(client, cfg, receipt)

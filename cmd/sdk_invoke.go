@@ -21,8 +21,7 @@ const (
 	defaultSDKTokenEnvironment = "FUSED_SDK_TOKEN"
 	maxSDKInvokeInputBytes     = 1 << 20
 	maxSDKInvokeSelectorBytes  = 256
-	maxSDKInvokeTargets        = 16
-	maxSDKInvokeResponseBytes  = (maxSDKInvokeTargets + 1) * maxSDKInvokeInputBytes
+	maxSDKInvokeResponseBytes  = 17 * maxSDKInvokeInputBytes
 )
 
 var (
@@ -31,9 +30,7 @@ var (
 	sdkInvokeTokenStdin     bool
 	sdkInvokeEnvironment    string
 	sdkInvokeIdempotencyKey string
-	sdkInvokeTargets        []string
 	sdkInvokeSelector       string
-	sdkInvokeSelectors      string
 )
 
 var sdkInvokeCmd = &cobra.Command{
@@ -59,11 +56,9 @@ type sdkInvokeSelectorValue struct {
 }
 
 type sdkInvokeRequest struct {
-	Operation string                            `json:"operation"`
-	Input     json.RawMessage                   `json:"input"`
-	Targets   []string                          `json:"targets,omitempty"`
-	Selector  *sdkInvokeSelectorValue           `json:"selector,omitempty"`
-	Selectors map[string]sdkInvokeSelectorValue `json:"selectors,omitempty"`
+	Operation string                  `json:"operation"`
+	Input     json.RawMessage         `json:"input"`
+	Selector  *sdkInvokeSelectorValue `json:"selector,omitempty"`
 }
 
 type preparedSDKInvocation struct {
@@ -75,25 +70,21 @@ type preparedSDKInvocation struct {
 }
 
 type sdkInvokeHTTPResponse struct {
-	AppID      string           `json:"app_id"`
-	Operation  string           `json:"operation"`
-	Kind       string           `json:"kind"`
-	StatusCode int              `json:"status_code,omitempty"`
-	Results    []any            `json:"results"`
-	Rollbacks  []any            `json:"rollbacks,omitempty"`
-	Output     *json.RawMessage `json:"-"`
+	AppID      string `json:"app_id"`
+	Operation  string `json:"operation"`
+	Kind       string `json:"kind"`
+	StatusCode int    `json:"status_code,omitempty"`
+	Results    []any  `json:"results"`
 }
 
 type sdkInvokeOutput struct {
-	AppID          string           `json:"app_id"`
-	Operation      string           `json:"operation"`
-	Kind           string           `json:"kind"`
-	StatusCode     int              `json:"status_code,omitempty"`
-	Results        []any            `json:"results,omitempty"`
-	Rollbacks      *[]any           `json:"rollbacks,omitempty"`
-	Output         *json.RawMessage `json:"output,omitempty"`
-	ElapsedMS      float64          `json:"elapsed_ms"`
-	EngineEndpoint string           `json:"engine_endpoint"`
+	AppID          string  `json:"app_id"`
+	Operation      string  `json:"operation"`
+	Kind           string  `json:"kind"`
+	StatusCode     int     `json:"status_code,omitempty"`
+	Results        []any   `json:"results,omitempty"`
+	ElapsedMS      float64 `json:"elapsed_ms"`
+	EngineEndpoint string  `json:"engine_endpoint"`
 }
 
 type sdkInvokeError struct {
@@ -232,12 +223,10 @@ func init() {
 	sdkInvokeCmd.Flags().BoolVar(&sdkInvokeTokenStdin, "token-stdin", false, "Read the SDK execution token from stdin")
 	sdkInvokeCmd.Flags().StringVar(&sdkInvokeEnvironment, "environment", "", "Physical operation environment selector")
 	sdkInvokeCmd.Flags().StringVar(&sdkInvokeIdempotencyKey, "idempotency-key", "", "Stable logical-request idempotency key (generated when omitted)")
-	sdkInvokeCmd.Flags().StringArrayVar(&sdkInvokeTargets, "target", nil, "Unified target to execute (required 1-16 times; values must be unique)")
 	sdkInvokeCmd.Flags().StringVar(&sdkInvokeSelector, "selector", "", "Physical execution selector as a strict JSON object or @file")
-	sdkInvokeCmd.Flags().StringVar(&sdkInvokeSelectors, "selectors", "", "Unified service selectors as a strict target-keyed JSON object or @file")
 }
 
-// runSDKInvoke performs one measured REST execution and renders its inferred shape.
+// runSDKInvoke performs one measured physical REST execution and renders its response.
 func runSDKInvoke(cmd *cobra.Command, target sdkDownloadTarget, operation string) error {
 	operation = strings.TrimSpace(operation)
 	if operation == "" {
@@ -252,14 +241,9 @@ func runSDKInvoke(cmd *cobra.Command, target sdkDownloadTarget, operation string
 	if err != nil {
 		return err
 	}
-	var rollbacks *[]any
-	if response.Kind == "unified" && response.Output == nil {
-		// Only all-settled Unified responses have rollback details; authored output is an exact root value.
-		rollbacks = &response.Rollbacks
-	}
 	output := sdkInvokeOutput{
 		AppID: prepared.AppID, Operation: operation, Kind: response.Kind,
-		StatusCode: response.StatusCode, Results: response.Results, Rollbacks: rollbacks, Output: response.Output,
+		StatusCode: response.StatusCode, Results: response.Results,
 		ElapsedMS: float64(time.Since(started).Microseconds()) / 1000, EngineEndpoint: endpoint,
 	}
 	return writeSDKInvocationOutput(cmd, output)
@@ -293,13 +277,9 @@ func prepareSDKInvocation(cmd *cobra.Command, target sdkDownloadTarget, operatio
 	}, nil
 }
 
-// buildSDKInvokeRequest admits only the public execution fields supported by Engine REST.
+// buildSDKInvokeRequest admits the physical execution fields supported by Engine REST.
 func buildSDKInvokeRequest(operation string, stdin io.Reader) (sdkInvokeRequest, error) {
 	input, err := readSDKInvokeParams(sdkInvokeParams, sdkInvokeTokenStdin, stdin)
-	if err != nil {
-		return sdkInvokeRequest{}, err
-	}
-	targets, err := normalizedSDKInvokeTargets(sdkInvokeTargets)
 	if err != nil {
 		return sdkInvokeRequest{}, err
 	}
@@ -307,40 +287,11 @@ func buildSDKInvokeRequest(operation string, stdin io.Reader) (sdkInvokeRequest,
 	if err != nil {
 		return sdkInvokeRequest{}, err
 	}
-	selectors, err := readSDKInvokeSelectors(sdkInvokeSelectors)
+	selector, err = mergeSDKInvokeEnvironment(selector, sdkInvokeEnvironment)
 	if err != nil {
 		return sdkInvokeRequest{}, err
 	}
-	selector, err = mergeSDKInvokeEnvironment(selector, selectors, sdkInvokeEnvironment)
-	if err != nil {
-		return sdkInvokeRequest{}, err
-	}
-	if selector != nil && len(selectors) > 0 {
-		// Why: physical and Unified selectors are disjoint namespaces; sending both would make kind inference ambiguous.
-		return sdkInvokeRequest{}, errors.New("--selector cannot be combined with --selectors")
-	}
-	return sdkInvokeRequest{Operation: operation, Input: input, Targets: targets, Selector: selector, Selectors: selectors}, nil
-}
-
-// normalizedSDKInvokeTargets trims repeatable target flags and rejects duplicate graph steps.
-func normalizedSDKInvokeTargets(values []string) ([]string, error) {
-	if len(values) > maxSDKInvokeTargets {
-		return nil, fmt.Errorf("at most %d --target values are allowed", maxSDKInvokeTargets)
-	}
-	seen := make(map[string]struct{}, len(values))
-	targets := make([]string, 0, len(values))
-	for _, value := range values {
-		target := strings.TrimSpace(value)
-		if target == "" {
-			return nil, errors.New("--target cannot be empty")
-		}
-		if _, exists := seen[target]; exists {
-			return nil, fmt.Errorf("--target %q is duplicated", target)
-		}
-		seen[target] = struct{}{}
-		targets = append(targets, target)
-	}
-	return targets, nil
+	return sdkInvokeRequest{Operation: operation, Input: input, Selector: selector}, nil
 }
 
 // readSDKInvokeSelector decodes the closed physical selector vocabulary.
@@ -362,30 +313,6 @@ func readSDKInvokeSelector(raw string) (*sdkInvokeSelectorValue, error) {
 	return &selector, nil
 }
 
-// readSDKInvokeSelectors decodes Unified selectors keyed only by public service target.
-func readSDKInvokeSelectors(raw string) (map[string]sdkInvokeSelectorValue, error) {
-	if strings.TrimSpace(raw) == "" {
-		return nil, nil
-	}
-	data, err := loadSDKInvokeJSONOption(raw)
-	if err != nil {
-		return nil, fmt.Errorf("read --selectors: %w", err)
-	}
-	var selectors map[string]sdkInvokeSelectorValue
-	if err := decodeStrictSDKInvokeJSON(data, &selectors); err != nil || selectors == nil {
-		return nil, errors.New("--selectors must contain one strict target-keyed selector object")
-	}
-	for target, selector := range selectors {
-		if strings.TrimSpace(target) == "" {
-			return nil, errors.New("--selectors target cannot be empty")
-		}
-		if err := validateSDKInvokeSelector(selector); err != nil {
-			return nil, fmt.Errorf("--selectors target %q: %w", target, err)
-		}
-	}
-	return selectors, nil
-}
-
 // validateSDKInvokeSelector bounds every non-secret routing selector before transport.
 func validateSDKInvokeSelector(selector sdkInvokeSelectorValue) error {
 	values := []string{selector.Environment, selector.EndUserRef, selector.AuthName, selector.ResourceID}
@@ -405,14 +332,11 @@ func validateSDKInvokeSelector(selector sdkInvokeSelectorValue) error {
 	return errors.New("selector auth_type is unsupported")
 }
 
-// mergeSDKInvokeEnvironment preserves --environment as physical selector sugar without overriding JSON.
-func mergeSDKInvokeEnvironment(selector *sdkInvokeSelectorValue, selectors map[string]sdkInvokeSelectorValue, raw string) (*sdkInvokeSelectorValue, error) {
+// mergeSDKInvokeEnvironment preserves --environment as selector sugar without overriding JSON.
+func mergeSDKInvokeEnvironment(selector *sdkInvokeSelectorValue, raw string) (*sdkInvokeSelectorValue, error) {
 	environment := strings.TrimSpace(raw)
 	if environment == "" {
 		return selector, nil
-	}
-	if len(selectors) > 0 {
-		return nil, errors.New("--environment is physical selector sugar and cannot be combined with --selectors")
 	}
 	if len(environment) > maxSDKInvokeSelectorBytes {
 		return nil, fmt.Errorf("--environment cannot exceed %d bytes", maxSDKInvokeSelectorBytes)
@@ -539,54 +463,20 @@ func sdkInvokeTransportError(cause error) error {
 	}
 }
 
-// decodeSDKInvokeHTTPResult selects exact-root or envelope decoding from the request and response contracts.
+// decodeSDKInvokeHTTPResult verifies that the physical response matches the selected app and operation.
 func decodeSDKInvokeHTTPResult(statusCode int, body []byte, prepared preparedSDKInvocation) (sdkInvokeHTTPResponse, error) {
 	if statusCode < http.StatusOK || statusCode >= http.StatusMultipleChoices {
 		return sdkInvokeHTTPResponse{}, decodeSDKInvokeHTTPError(statusCode, body)
-	}
-	// Authored Unified output is the exact JSON root; only selected Unified targets can use that contract.
-	if len(prepared.Request.Targets) != 0 && !isSDKInvokeEnvelope(body) {
-		return decodeSDKInvokeRootOutput(body)
 	}
 	decoded, err := decodeSDKInvokeHTTPResponse(body)
 	if err != nil {
 		return sdkInvokeHTTPResponse{}, err
 	}
-	// A transformed root intentionally carries no envelope identity; the request already used the resolved exact app route.
-	if decoded.Output == nil && (decoded.AppID != prepared.AppID || decoded.Operation != prepared.Request.Operation) {
+	// The response identity must match the exact SDK version resolved before transport.
+	if decoded.AppID != prepared.AppID || decoded.Operation != prepared.Request.Operation {
 		return sdkInvokeHTTPResponse{}, invalidSDKInvokeHTTPResponse("Engine returned mismatched execution identity", nil)
 	}
 	return decoded, nil
-}
-
-// isSDKInvokeEnvelope keeps the existing all-settled and physical response validation for recognizable wrappers.
-func isSDKInvokeEnvelope(data []byte) bool {
-	var fields map[string]json.RawMessage
-	// Scalar and malformed JSON cannot declare envelope fields, so the root decoder handles validation.
-	if json.Unmarshal(data, &fields) != nil {
-		return false
-	}
-	// Complete wrapper identity remains an envelope even if its kind is unknown and must fail validation.
-	if fields["app_id"] != nil && fields["operation"] != nil && fields["results"] != nil {
-		return true
-	}
-	var kind string
-	// Unknown kinds belong to the root value unless the complete wrapper identity above proves otherwise.
-	if json.Unmarshal(fields["kind"], &kind) != nil || (kind != "physical" && kind != "unified") {
-		return false
-	}
-	// A kind paired with wrapper identity or results signals an Engine envelope, even when another required field is missing.
-	return fields["app_id"] != nil || fields["operation"] != nil || fields["results"] != nil
-}
-
-// decodeSDKInvokeRootOutput retains the complete authored JSON value, including scalar and null results.
-func decodeSDKInvokeRootOutput(data []byte) (sdkInvokeHTTPResponse, error) {
-	var output json.RawMessage
-	// The Engine's transformed response must be exactly one valid JSON value.
-	if err := decodeStrictSDKInvokeJSON(data, &output); err != nil {
-		return sdkInvokeHTTPResponse{}, invalidSDKInvokeHTTPResponse("Engine returned an invalid Unified output", err)
-	}
-	return sdkInvokeHTTPResponse{Kind: "unified", Output: &output}, nil
 }
 
 // rejectSDKInvokeRedirect prevents a family execution token from crossing to another route or origin.
@@ -594,9 +484,9 @@ func rejectSDKInvokeRedirect(_ *http.Request, _ []*http.Request) error {
 	return http.ErrUseLastResponse
 }
 
-// readBoundedSDKInvokeResponse prevents an Engine or proxy response from exhausting CLI memory.
+// readBoundedSDKInvokeResponse preserves the existing result allowance while bounding CLI memory.
 func readBoundedSDKInvokeResponse(reader io.Reader) ([]byte, error) {
-	// Why: Unified can aggregate one bounded JSON result per target plus its envelope, while input remains capped at 1 MiB.
+	// Physical provider results can exceed input size, so retain the established response cap.
 	data, err := io.ReadAll(io.LimitReader(reader, maxSDKInvokeResponseBytes+1))
 	if err != nil {
 		return nil, err
@@ -607,7 +497,7 @@ func readBoundedSDKInvokeResponse(reader io.Reader) ([]byte, error) {
 	return data, nil
 }
 
-// decodeSDKInvokeHTTPResponse validates the inferred physical or Unified success envelope.
+// decodeSDKInvokeHTTPResponse validates the physical success envelope.
 func decodeSDKInvokeHTTPResponse(data []byte) (sdkInvokeHTTPResponse, error) {
 	var response sdkInvokeHTTPResponse
 	if err := decodeStrictSDKInvokeJSON(data, &response); err != nil {
@@ -616,28 +506,17 @@ func decodeSDKInvokeHTTPResponse(data []byte) (sdkInvokeHTTPResponse, error) {
 	if _, err := uuid.Parse(response.AppID); err != nil || strings.TrimSpace(response.Operation) == "" || response.Results == nil {
 		return sdkInvokeHTTPResponse{}, invalidSDKInvokeHTTPResponse("Engine returned an incomplete execution response", nil)
 	}
-	switch response.Kind {
-	case "physical":
-		return response, validateSDKInvokePhysicalResponse(response)
-	case "unified":
-		return response, validateSDKInvokeUnifiedResponse(response)
-	default:
+	// The SDK invoke route serves physical selections only.
+	if response.Kind != "physical" {
 		return sdkInvokeHTTPResponse{}, invalidSDKInvokeHTTPResponse("Engine returned an unknown execution kind", nil)
 	}
+	return response, validateSDKInvokePhysicalResponse(response)
 }
 
-// validateSDKInvokePhysicalResponse requires one successful JSON provider document and no rollback field.
+// validateSDKInvokePhysicalResponse requires one successful JSON provider document.
 func validateSDKInvokePhysicalResponse(response sdkInvokeHTTPResponse) error {
-	if response.StatusCode == 0 || len(response.Results) != 1 || response.Rollbacks != nil {
+	if response.StatusCode == 0 || len(response.Results) != 1 {
 		return invalidSDKInvokeHTTPResponse("Engine returned an invalid physical execution response", nil)
-	}
-	return nil
-}
-
-// validateSDKInvokeUnifiedResponse requires ordered results and an explicit rollback array without physical status.
-func validateSDKInvokeUnifiedResponse(response sdkInvokeHTTPResponse) error {
-	if response.Rollbacks == nil || response.StatusCode != 0 {
-		return invalidSDKInvokeHTTPResponse("Engine returned an invalid Unified execution response", nil)
 	}
 	return nil
 }
@@ -717,35 +596,19 @@ func genericSDKInvokeHTTPError(statusCode int) error {
 	return &sdkInvokeError{code: code, message: message, category: category, details: map[string]any{"http_status": statusCode}}
 }
 
-// writeSDKInvocationOutput renders physical status, Unified rollbacks, or authored output without the execution token.
+// writeSDKInvocationOutput renders physical results without the execution token.
 func writeSDKInvocationOutput(cmd *cobra.Command, output sdkInvokeOutput) error {
 	if wantsJSON(cmd) {
 		return writeJSON(cmd, output)
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "Kind: %s\nEngine: %s\n", output.Kind, output.EngineEndpoint)
-	// Authored output is one JSON value; printing it once preserves the root without inventing target results.
-	if output.Output != nil {
-		// Propagate writer failures so CLI automation does not treat truncated output as success.
-		if err := writeSDKInvokeValue(cmd.OutOrStdout(), output.Output); err != nil {
-			return err
-		}
-	}
 	for _, result := range output.Results {
+		// Propagate writer failures so CLI automation does not treat truncated output as success.
 		if err := writeSDKInvokeValue(cmd.OutOrStdout(), result); err != nil {
 			return err
 		}
 	}
-	if output.Kind == "physical" {
-		fmt.Fprintf(cmd.OutOrStdout(), "Status: %d\n", output.StatusCode)
-	}
-	if output.Rollbacks != nil {
-		for _, rollback := range *output.Rollbacks {
-			fmt.Fprint(cmd.OutOrStdout(), "Rollback: ")
-			if err := writeSDKInvokeValue(cmd.OutOrStdout(), rollback); err != nil {
-				return err
-			}
-		}
-	}
+	fmt.Fprintf(cmd.OutOrStdout(), "Status: %d\n", output.StatusCode)
 	fmt.Fprintf(cmd.OutOrStdout(), "Elapsed: %.2f ms\n", output.ElapsedMS)
 	return nil
 }

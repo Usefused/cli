@@ -66,10 +66,6 @@ type scaffoldRequest struct {
 	generateSet                bool
 	skipConfirmation           bool
 	webhookSecrets             map[string]string
-	unifiedOperations          map[string]configfile.UnifiedOperation
-	workflowIDs                []string
-	workflowSources            []configfile.WorkflowSource
-	workflowPins               map[string]workflowServicePin
 }
 
 type scaffoldService struct {
@@ -349,8 +345,8 @@ func scaffoldTargetPath(kind configfile.ConfigKind, name, explicit string) (stri
 		directory = "mcps"
 	}
 	// Hosted code has its own discovered desired-state directory.
-	if kind == configfile.KindExecution {
-		directory = "executions"
+	if kind == configfile.KindUnifiedApp {
+		directory = "unified_app"
 	}
 	// Ingress bundles must be discovered as webhooks rather than app configs.
 	if kind == configfile.KindWebhook {
@@ -826,7 +822,7 @@ func mergeScaffoldField(current *string, requested string, provided bool, field 
 	return false, fmt.Errorf("cannot extend config: existing %s %q conflicts with %q", field, *current, requested)
 }
 
-// mergeAppSelections adds explicit capabilities and compositions without replacing authored selections.
+// mergeAppSelections adds explicit capabilities without replacing authored selections.
 func mergeAppSelections(config *configfile.AppConfig, request scaffoldRequest) (bool, error) {
 	changed, err := mergeAppServices(config, request.services)
 	// Service conflicts invalidate all dependent operation additions.
@@ -848,13 +844,7 @@ func mergeAppSelections(config *configfile.AppConfig, request scaffoldRequest) (
 	if err != nil {
 		return false, err
 	}
-	unifiedChanged, err := mergePromptUnifiedOperations(config, request.unifiedOperations)
-	// Provenance is merged only after executable definitions have passed conflict checks.
-	if err != nil {
-		return false, err
-	}
-	sourcesChanged, err := mergeWorkflowSources(config, request.workflowSources)
-	return anyScaffoldChange(changed, operationsChanged, selectAllChanged, eventsChanged, unifiedChanged, sourcesChanged), err
+	return anyScaffoldChange(changed, operationsChanged, selectAllChanged, eventsChanged), nil
 }
 
 // enrichAppScaffold adds only missing routing bindings after all create or

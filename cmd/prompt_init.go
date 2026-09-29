@@ -42,16 +42,15 @@ func newPromptInitCommand() *cobra.Command {
 	opts := &promptInitOptions{version: defaultScaffoldVersion}
 	command := &cobra.Command{
 		Use:   "describe <goal>",
-		Short: "Create an Execution App, SDK, MCP server, or REST app from a natural-language goal",
-		Long: `Create an Execution App from a natural-language goal by default, or explicitly request SDK, MCP, or REST output.
+		Short: "Create a Unified App, SDK, MCP server, or REST app from a natural-language goal",
+		Long: `Create a Unified App from a natural-language goal by default, or explicitly request SDK, MCP, or REST output.
 
-Execution App describe drafts TypeScript using exact selected operation contracts, shows the
+Unified App describe drafts TypeScript using exact selected operation contracts, shows the
 source for review, then sends the selected App cart to Engine for compilation and deployment.
 
 Use --update <app-name> or name an existing app in an update goal. Updates resolve a local
 config (use -f to disambiguate), preserve its settings, and publish an immutable successor.
-Sequential runtime intent can produce a Unified Operation for TypeScript/Python SDKs or MCP.
-Composition uses exact operation contracts and the Registry's configured drafting model.
+Sequential runtime intent is authored as one Unified App execute function.
 
 Describe uses Jev through Fused Registry to select operations from search intent and operation names/descriptions.
 No additional API key is required. Describe resolves exact selections before showing its proposal.
@@ -91,7 +90,7 @@ Every proposal requires interactive terminal confirmation before changes are app
 			return executePromptInitPlan(cmd, plan)
 		}),
 	}
-	command.Flags().StringVar(&opts.kind, "kind", "", "Constrain the primary output to execution, sdk, mcp, or rest")
+	command.Flags().StringVar(&opts.kind, "kind", "", "Constrain the primary output to unified, sdk, mcp, or rest")
 	command.Flags().StringVar(&opts.update, "update", "", "Update an existing app by name, preserving its local config")
 	command.Flags().StringVarP(&opts.name, "name", "n", "", "Override the suggested app name")
 	command.Flags().StringVarP(&opts.version, "version", "v", defaultScaffoldVersion, "App version")
@@ -153,12 +152,12 @@ func buildPromptInitPlan(cmd *cobra.Command, client *api.Client, goal string, op
 		return promptInitPlan{}, err
 	}
 	// Hosted source uses a separate compiler lifecycle and cannot inherit SDK updates.
-	if mode == unifiedInitModeExecution && target != nil {
-		return promptInitPlan{}, errors.New("Execution App updates require editing its TypeScript source and deploying a reviewed new version")
+	if mode == unifiedInitModeUnified && target != nil {
+		return promptInitPlan{}, errors.New("Unified App updates require editing its TypeScript source and deploying a reviewed new version")
 	}
 	webhookRequested := intent.WebhookRequested || promptIntentHasEvents(intent.Services)
 	// Direct REST execution has no open receiver transport; SDK streams and MCP resource notifications do.
-	if webhookRequested && (mode == unifiedInitModeAPI || mode == unifiedInitModeExecution) {
+	if webhookRequested && (mode == unifiedInitModeAPI || mode == unifiedInitModeUnified) {
 		return promptInitPlan{}, fmt.Errorf("%s apps cannot receive webhook events; request an SDK or MCP app", promptModeLabel(mode))
 	}
 	name := resolvePromptInitName(opts.name, intent.Name, intent.Services, mode)
@@ -219,15 +218,12 @@ func buildPromptInitPlan(cmd *cobra.Command, client *api.Client, goal string, op
 		_, plan.baseVersion, _, _ = unifiedExtendIdentity(target.config)
 	}
 	// Hosted TypeScript expresses the requested sequence directly through execute().
-	if mode == unifiedInitModeExecution {
+	if mode == unifiedInitModeUnified {
 		return finalizePromptExecutionPlan(cmd, client, plan)
 	}
-	// A plain capability list keeps independent methods; only explicit ordered intent enters composition.
+	// Ordered workflows require authored Unified App code so graph definitions cannot reappear through describe.
 	if intent.Sequential {
-		plan.primary.unifiedOperations, err = draftPromptUnifiedOperation(cmd, client, plan)
-		if err != nil {
-			return promptInitPlan{}, err
-		}
+		return promptInitPlan{}, errors.New("sequential workflows require a Unified App; use --kind unified")
 	}
 	// An app without inbound events needs no registration or attachment orchestration.
 	if !webhookRequested {
@@ -267,12 +263,12 @@ func resolvePromptInitMode(override, inferred string) (unifiedInitMode, error) {
 	}
 	// Older intent responses omitted kind; the CLI owns the same default as Registry.
 	if value == "" {
-		value = "execution"
+		value = "unified"
 	}
-	// Execution Apps are the default hosted output; explicit legacy outputs keep their lifecycles.
+	// Unified Apps are the default hosted output; explicit legacy outputs keep their lifecycles.
 	switch value {
-	case "execution", "execution-app":
-		return unifiedInitModeExecution, nil
+	case "unified":
+		return unifiedInitModeUnified, nil
 	case "sdk":
 		return unifiedInitModeSDK, nil
 	case "mcp":
@@ -280,15 +276,15 @@ func resolvePromptInitMode(override, inferred string) (unifiedInitMode, error) {
 	case "rest", "api":
 		return unifiedInitModeAPI, nil
 	default:
-		return "", fmt.Errorf("describe kind must be execution, sdk, mcp, or rest; got %q", value)
+		return "", fmt.Errorf("describe kind must be unified, sdk, mcp, or rest; got %q", value)
 	}
 }
 
 // promptConfigKind maps each describe output to its desired-state kind.
 func promptConfigKind(mode unifiedInitMode) configfile.ConfigKind {
 	// Hosted code is a distinct App kind with a compiler-provenance requirement.
-	if mode == unifiedInitModeExecution {
-		return configfile.KindExecution
+	if mode == unifiedInitModeUnified {
+		return configfile.KindUnifiedApp
 	}
 	// MCP is the only prompt output with a distinct config kind.
 	if mode == unifiedInitModeMCP {
@@ -300,8 +296,8 @@ func promptConfigKind(mode unifiedInitMode) configfile.ConfigKind {
 // promptModeLabel returns the public spelling used in proposal and compatibility errors.
 func promptModeLabel(mode unifiedInitMode) string {
 	// Hosted code is named as an App so the proposal cannot be mistaken for SDK package output.
-	if mode == unifiedInitModeExecution {
-		return "Execution App"
+	if mode == unifiedInitModeUnified {
+		return "Unified App"
 	}
 	// Direct API is presented as REST even though its internal lifecycle mode is api.
 	if mode == unifiedInitModeAPI {
@@ -326,18 +322,18 @@ func resolvePromptInitName(override, inferred string, services []api.IntentServi
 		base = "fused"
 	}
 	// Default hosted names must remain filename-safe even though the proposal uses a spaced label.
-	if mode == unifiedInitModeExecution {
-		return base + "-execution"
+	if mode == unifiedInitModeUnified {
+		return base + "-unified"
 	}
 	return base + "-" + strings.ToLower(promptModeLabel(mode))
 }
 
 // resolvePromptInitLanguage validates package emitters and prevents REST or MCP requests from silently accepting SDK-only overrides.
 func resolvePromptInitLanguage(mode unifiedInitMode, override, inferred string) (string, error) {
-	// Execution App source uses one supported TypeScript sandbox runtime.
-	if mode == unifiedInitModeExecution {
+	// Unified App source uses one supported TypeScript sandbox runtime.
+	if mode == unifiedInitModeUnified {
 		if override != "" && strings.ToLower(strings.TrimSpace(override)) != "typescript" {
-			return "", errors.New("Execution Apps require TypeScript")
+			return "", errors.New("Unified Apps require TypeScript")
 		}
 		return "typescript", nil
 	}
@@ -809,10 +805,6 @@ func printPromptInitPlan(cmd *cobra.Command, plan promptInitPlan) error {
 	// The version transition and retained settings distinguish an additive update from app creation.
 	if plan.primary.extend {
 		fmt.Fprintf(out, "Update %s: %s -> %s (existing settings and selections preserved)\n", plan.primary.path, plan.baseVersion, plan.primary.version)
-	}
-	// Full mappings are part of the approval surface, not hidden model-generated implementation details.
-	if err := printPromptUnifiedOperations(out, plan.primary.unifiedOperations); err != nil {
-		return err
 	}
 	for _, service := range plan.resolved {
 		operations := sdkInitExplicitOperations(plan.primary, service.target.slug)

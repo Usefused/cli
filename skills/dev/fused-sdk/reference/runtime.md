@@ -64,22 +64,6 @@ execution. The requested bound must be strictly below the effective service
 policy maximum; equality is rejected. It cannot carry continuation tokens,
 paths, origins, templates, or next URLs.
 
-Generated Unified calls keep pagination separate from routing selectors:
-
-```typescript
-await sdk.unified.search.run(input, {
-  targets: ['gmail', 'drive'],
-  selectors: { gmail: { endUserRef: 'customer-123' } },
-  pagination: { gmail: { maxPages: 5 }, drive: { maxPages: 3 } },
-});
-```
-
-Python uses the equivalent keyword-only
-`pagination={"gmail": {"max_pages": 5}}`. Unknown targets, targets without an
-effective pagination policy, zero, and values equal to or above the effective
-limit fail at the Engine boundary. Invocation bounds never belong in
-`sdk.yaml`.
-
 ## Shared gRPC channel
 
 Every generated SDK opens exactly one gRPC channel to the Engine when `FusedSDK`

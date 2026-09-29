@@ -12,13 +12,13 @@ type ConfigKind string
 type ConfigAPIVersion string
 
 const (
-	APIVersionV1  ConfigAPIVersion = "fused/v1"
-	KindWorkspace ConfigKind       = "workspace"
-	KindServices  ConfigKind       = "services"
-	KindSDK       ConfigKind       = "sdk"
-	KindMCP       ConfigKind       = "mcp"
-	KindExecution ConfigKind       = "execution"
-	KindWebhook   ConfigKind       = "webhook"
+	APIVersionV1   ConfigAPIVersion = "fused/v1"
+	KindWorkspace  ConfigKind       = "workspace"
+	KindServices   ConfigKind       = "services"
+	KindSDK        ConfigKind       = "sdk"
+	KindMCP        ConfigKind       = "mcp"
+	KindUnifiedApp ConfigKind       = "unified_app"
+	KindWebhook    ConfigKind       = "webhook"
 )
 
 // BaseConfig represents the fields common to all Fused configs.
@@ -200,10 +200,18 @@ type WorkspaceDeprecationDirective struct {
 // AppConfig carries the shared, versioned declaration for generated SDKs
 // and Engine-projected MCP servers. Keeping selection shape shared prevents
 // their plan results from drifting while their executors remain distinct.
+// UnifiedAppReference selects one hosted app version under a caller-defined alias.
+type UnifiedAppReference struct {
+	Name    string `yaml:"name" json:"name"`
+	Version string `yaml:"version" json:"version"`
+}
+
 type AppConfig struct {
-	BaseConfig `yaml:",inline"`
-	Name       string `yaml:"name" json:"name"`
-	Version    string `yaml:"version" json:"version"`
+	// UnifiedApps adds hosted capabilities without embedding source or credentials.
+	UnifiedApps map[string]UnifiedAppReference `yaml:"unified_apps,omitempty" json:"unified_apps,omitempty"`
+	BaseConfig  `yaml:",inline"`
+	Name        string `yaml:"name" json:"name"`
+	Version     string `yaml:"version" json:"version"`
 	// Description is the LLM-authored, server-level capability summary that
 	// MCP hosts receive during initialization; operation detail stays in search_docs.
 	Description string `yaml:"description,omitempty" json:"description,omitempty"`
@@ -225,6 +233,8 @@ type AppConfig struct {
 	BundleDigest string `yaml:"bundle_digest,omitempty" json:"bundle_digest,omitempty"`
 	// Source is compiled by Engine during plan; keeping it in desired state binds review and source_hash to the exact code.
 	Source string `yaml:"source,omitempty" json:"source,omitempty"`
+	// SourcePath is local authoring input; only its bytes enter the Engine cart.
+	SourcePath string `yaml:"source_path,omitempty" json:"-"`
 	// WebhookAttachment names one kind: webhook config (its own top-level
 	// `name:`) this SDK/MCP wants webhook delivery from. Deliberately a
 	// single scalar, not a list, and hoisted here at the app's top
@@ -239,12 +249,6 @@ type AppConfig struct {
 	// delivered/generated for each service.
 	WebhookAttachment string                `yaml:"webhook_attachment,omitempty" json:"webhook_attachment,omitempty"`
 	Services          map[string]AppService `yaml:"services" json:"services"`
-	// UnifiedOperations is shared app-level declarative composition. It stays beside
-	// Services because bindings refer to opaque configured service keys in this
-	// exact immutable app version; Engine resolves those keys during plan.
-	UnifiedOperations map[string]UnifiedOperation `yaml:"unified_operations,omitempty" json:"unified_operations,omitempty"`
-	// WorkflowSources records provenance only; it never substitutes for the installed definitions.
-	WorkflowSources []WorkflowSource `yaml:"workflow_sources,omitempty" json:"workflow_sources,omitempty"`
 }
 
 // AppMCPDelivery supplies immutable hosted discovery metadata for a combined App.
@@ -255,7 +259,7 @@ type AppMCPDelivery struct {
 
 type SDKConfig = AppConfig
 type MCPConfig = AppConfig
-type ExecutionConfig = AppConfig
+type UnifiedAppConfig = AppConfig
 
 // AppService represents the requested immutable provider version and
 // selected surface shared by SDK and MCP app declarations.
@@ -314,41 +318,6 @@ type AppConnect struct {
 
 type SDKService = AppService
 
-// UnifiedOperation declares one typed SDK wrapper over selected provider
-// operations. Input is JSON Schema while output is the recursive projection
-// authoring tree compiled by Engine plan.
-type UnifiedOperation struct {
-	Description string                             `yaml:"description,omitempty" json:"description,omitempty"`
-	Input       map[string]DynamicValue            `yaml:"input" json:"input"`
-	Bindings    map[string]UnifiedOperationBinding `yaml:"bindings" json:"bindings"`
-	Output      *UnifiedOperationOutput            `yaml:"output,omitempty" json:"output,omitempty"`
-}
-
-// UnifiedOperationBinding supports either the compact operationId scalar or
-// an expanded alias that can select a service independently of the binding key.
-type UnifiedOperationBinding struct {
-	Service   string                    `yaml:"service,omitempty" json:"service,omitempty"`
-	Operation string                    `yaml:"operation" json:"operation"`
-	Input     map[string]DynamicValue   `yaml:"input,omitempty" json:"input,omitempty"`
-	DependsOn []string                  `yaml:"depends_on,omitempty" json:"depends_on,omitempty"`
-	Rollback  *UnifiedOperationRollback `yaml:"rollback,omitempty" json:"rollback,omitempty"`
-	Output    *UnifiedOperationOutput   `yaml:"output,omitempty" json:"output,omitempty"`
-	compact   bool
-}
-
-// UnifiedOperationRollback declares the same-service operation used to
-// compensate a successful binding when a direct dependent fails.
-type UnifiedOperationRollback struct {
-	Operation string                  `yaml:"operation" json:"operation"`
-	Input     map[string]DynamicValue `yaml:"input,omitempty" json:"input,omitempty"`
-}
-
-// UnifiedOperationOutput preserves one recursive typed result definition.
-// Custom marshaling keeps property shorthand on the wire without a wrapper.
-type UnifiedOperationOutput struct {
-	Fields map[string]DynamicValue `yaml:"-" json:"-"`
-}
-
 // ParsedConfig is a container for the parsed configuration.
 type ParsedConfig struct {
 	Kind       ConfigKind
@@ -358,7 +327,7 @@ type ParsedConfig struct {
 	Workspace  *WorkspaceConfig
 	SDK        *SDKConfig
 	MCP        *MCPConfig
-	Execution  *ExecutionConfig
+	UnifiedApp *UnifiedAppConfig
 	Webhook    *WebhookConfig
 }
 
@@ -388,11 +357,4 @@ type WebhookRelaySource struct {
 	Bucket         string `yaml:"bucket" json:"bucket"`
 	ConnectionID   string `yaml:"connection_id" json:"connection_id"`
 	RegistrationID string `yaml:"registration_id" json:"registration_id"`
-}
-
-// WorkflowSource pins a deliberately imported library release without granting any execution authority.
-type WorkflowSource struct {
-	ID      string `yaml:"id" json:"id"`
-	Version string `yaml:"version" json:"version"`
-	Hash    string `yaml:"hash" json:"hash"`
 }

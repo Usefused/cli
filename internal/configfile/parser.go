@@ -13,6 +13,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+var canonicalSHA256Pattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+
 // LoadRun loads the config files required for a CLI run.
 // If path is empty, it discovers from the .fused/ directory.
 func LoadRun(path string) (*Run, error) {
@@ -51,8 +53,12 @@ func loadFusedDirectory() (*Run, error) {
 	if err := appendDesiredConfigs(run, filepath.Join(fusedDir, "sdks"), KindSDK); err != nil {
 		return nil, err
 	}
-	// Execution App declarations retain their own family identity and directory.
-	if err := appendDesiredConfigs(run, filepath.Join(fusedDir, "executions"), KindExecution); err != nil {
+	// Unified App declarations retain their own family identity and directory.
+	if err := appendDesiredConfigs(run, filepath.Join(fusedDir, "unified_app"), KindUnifiedApp); err != nil {
+		return nil, err
+	}
+	// Older generated carts remain discoverable so a source-directory rename cannot hide deployed intent.
+	if err := appendDesiredConfigs(run, filepath.Join(fusedDir, "unified"), KindUnifiedApp); err != nil {
 		return nil, err
 	}
 	if err := appendDesiredConfigs(run, filepath.Join(fusedDir, "mcps"), KindMCP); err != nil {
@@ -291,7 +297,7 @@ func isYAMLFile(name string) bool {
 func rejectDuplicateConfigIdentities(configs []*ParsedConfig) error {
 	seenKeys := make(map[string]string)
 	for _, cfg := range configs {
-		if cfg.Kind != KindSDK && cfg.Kind != KindMCP && cfg.Kind != KindExecution && cfg.Kind != KindWebhook {
+		if cfg.Kind != KindSDK && cfg.Kind != KindMCP && cfg.Kind != KindUnifiedApp && cfg.Kind != KindWebhook {
 			continue
 		}
 		if existingPath, ok := seenKeys[cfg.ConfigKey]; ok {
@@ -342,11 +348,55 @@ func Parse(data []byte, sourcePath string) (*ParsedConfig, error) {
 		return nil, err
 	}
 
+	// A linked source file must join the same reviewed content identity as the YAML.
+	if err := resolveExecutionSourcePath(parsed, data); err != nil {
+		return nil, err
+	}
+
 	if err := validateConfig(parsed); err != nil {
 		return nil, err
 	}
 
 	return parsed, nil
+}
+
+// resolveExecutionSourcePath loads local TypeScript before validation and hashes both authoring inputs.
+func resolveExecutionSourcePath(parsed *ParsedConfig, document []byte) error {
+	// Other config kinds cannot gain file-reading behavior through a shared app shape.
+	if parsed.Kind != KindUnifiedApp || parsed.UnifiedApp.SourcePath == "" {
+		return nil
+	}
+	app := parsed.UnifiedApp
+	// One source authority keeps a plan from compiling code different from the reviewed declaration.
+	if app.Source != "" || app.BundleDigest != "" {
+		return fmt.Errorf("unified_app source_path cannot be combined with source or bundle_digest")
+	}
+	// Relative TypeScript paths are portable with their YAML file and avoid accidental absolute-file uploads.
+	if filepath.IsAbs(app.SourcePath) || (filepath.Ext(app.SourcePath) != ".ts" && filepath.Ext(app.SourcePath) != ".tsx") {
+		return fmt.Errorf("unified_app source_path must be a relative .ts or .tsx file")
+	}
+	path := filepath.Join(filepath.Dir(parsed.Path), app.SourcePath)
+	info, err := os.Stat(path)
+	// A missing or non-file authoring target should fail before any Engine plan is sent.
+	if err != nil {
+		return fmt.Errorf("read unified_app source_path %q: %w", app.SourcePath, err)
+	}
+	if !info.Mode().IsRegular() || info.Size() > 256*1024 {
+		return fmt.Errorf("unified_app source_path must be a regular TypeScript file of at most 256 KiB")
+	}
+	source, err := os.ReadFile(path)
+	// Preserve the authoring path in errors without leaking source contents.
+	if err != nil {
+		return fmt.Errorf("read unified_app source_path %q: %w", app.SourcePath, err)
+	}
+	app.Source = string(source)
+	// A changed .ts file must invalidate an earlier plan receipt even when YAML is unchanged.
+	hasher := sha256.New()
+	_, _ = hasher.Write(document)
+	_, _ = hasher.Write([]byte{0})
+	_, _ = hasher.Write(source)
+	parsed.SourceHash = fmt.Sprintf("sha256:%x", hasher.Sum(nil))
+	return nil
 }
 
 // effectiveConfigKind maps the local-only type: services discriminator onto the existing workspace execution path.
@@ -386,8 +436,8 @@ func parseTypedConfig(data []byte, kind ConfigKind, parsed *ParsedConfig) error 
 		}
 		parsed.SDK = &sdkConfig
 		parsed.ConfigKey = appConfigKey(KindSDK, sdkConfig.Name, sdkConfig.Version)
-	case KindExecution:
-		return parseExecutionConfig(data, parsed)
+	case KindUnifiedApp:
+		return parseUnifiedAppConfig(data, parsed)
 	case KindMCP:
 		// MCP and SDK share the app shape but keep distinct key prefixes so
 		// Engine can route each desired state to its own executor without legacy targets.
@@ -413,14 +463,14 @@ func parseTypedConfig(data []byte, kind ConfigKind, parsed *ParsedConfig) error 
 	return nil
 }
 
-// parseExecutionConfig keeps the hosted App shape shared while its config key remains distinct.
-func parseExecutionConfig(data []byte, parsed *ParsedConfig) error {
-	var config ExecutionConfig
+// parseUnifiedAppConfig keeps the hosted App shape shared while its config key remains distinct.
+func parseUnifiedAppConfig(data []byte, parsed *ParsedConfig) error {
+	var config UnifiedAppConfig
 	if err := strictUnmarshal(data, &config); err != nil {
-		return fmt.Errorf("failed to parse execution config: %w", err)
+		return fmt.Errorf("failed to parse Unified App config: %w", err)
 	}
-	parsed.Execution = &config
-	parsed.ConfigKey = appConfigKey(KindExecution, config.Name, config.Version)
+	parsed.UnifiedApp = &config
+	parsed.ConfigKey = appConfigKey(KindUnifiedApp, config.Name, config.Version)
 	return nil
 }
 
@@ -429,8 +479,8 @@ func validateConfig(parsed *ParsedConfig) error {
 	switch parsed.Kind {
 	case KindSDK:
 		return validateSDKConfig(parsed.SDK)
-	case KindExecution:
-		return validateAppConfig(parsed.Execution, KindExecution)
+	case KindUnifiedApp:
+		return validateAppConfig(parsed.UnifiedApp, KindUnifiedApp)
 	case KindMCP:
 		return validateMCPConfig(parsed.MCP)
 	case KindWorkspace:
@@ -480,10 +530,6 @@ func validateMCPConfig(cfg *MCPConfig) error { return validateAppConfig(cfg, Kin
 // validateAppConfig centralizes shared identity, selection, and auth
 // policy checks so SDK and MCP files cannot drift.
 func validateAppConfig(cfg *AppConfig, kind ConfigKind) error {
-	// Provenance must be well-formed even when the config is authored without the library installer.
-	if err := validateWorkflowSources(cfg.WorkflowSources); err != nil {
-		return err
-	}
 	// Every app identity needs a stable human-readable name before deeper validation.
 	if cfg.Name == "" {
 		return fmt.Errorf("%s config requires a name", kind)
@@ -496,15 +542,19 @@ func validateAppConfig(cfg *AppConfig, kind ConfigKind) error {
 	if err := validateAppKindFields(cfg, kind); err != nil {
 		return err
 	}
-	// All App kinds require reviewed provider operations or webhook selections.
-	if len(cfg.Services) == 0 {
+	// Hosted references are explicit capabilities, but cannot create recursive Unified Apps.
+	if err := validateUnifiedAppReferences(cfg, kind); err != nil {
+		return err
+	}
+	// Empty consumers cannot publish a runtime with no selected capabilities.
+	if len(cfg.Services) == 0 && len(cfg.UnifiedApps) == 0 {
 		return fmt.Errorf("%s config requires at least one service", kind)
 	}
 	// Per-service validation owns webhook and selection invariants for both app kinds.
 	if err := validateAppServices(cfg.Services, kind, cfg.WebhookAttachment); err != nil {
 		return err
 	}
-	return validateUnifiedOperations(cfg, kind)
+	return nil
 }
 
 // validateAppKindFields enforces the small set of SDK- and MCP-specific
@@ -514,9 +564,9 @@ func validateAppKindFields(cfg *AppConfig, kind ConfigKind) error {
 	if kind == KindSDK {
 		return validateSDKKindFields(cfg)
 	}
-	// Authored code is admitted only for the distinct hosted Execution App kind.
-	if kind == KindExecution {
-		return validateExecutionKindFields(cfg)
+	// Authored code is admitted only for the distinct hosted Unified App kind.
+	if kind == KindUnifiedApp {
+		return validateUnifiedAppKindFields(cfg)
 	}
 	// MCP is the only remaining app kind with hosted-runtime-only fields.
 	if kind == KindMCP {
@@ -561,24 +611,29 @@ func validateSDKKindFields(cfg *AppConfig) error {
 // validateSDKBundleDigest binds authored code only to the supported runtime and exact compiler bytes.
 func validateSDKBundleDigest(cfg *AppConfig) error {
 	// SDK package identity never owns a compiler bundle; that is a separate App family kind.
-	if cfg.BundleDigest != "" || cfg.Source != "" {
-		return fmt.Errorf("source and bundle_digest require kind: execution")
+	if cfg.BundleDigest != "" || cfg.Source != "" || cfg.SourcePath != "" {
+		return fmt.Errorf("source, source_path, and bundle_digest require kind: unified_app")
 	}
 	return nil
 }
 
-// validateExecutionKindFields admits one immutable compiler bundle under its own hosted App kind.
-func validateExecutionKindFields(cfg *AppConfig) error {
+// validateUnifiedAppKindFields admits one immutable compiler bundle under its own hosted App kind.
+func validateUnifiedAppKindFields(cfg *AppConfig) error {
 	// The Engine bundle route compares exact emitted bytes to this planned compiler identity.
-	if cfg.Language != "typescript" || cfg.Generate == nil || *cfg.Generate {
-		return fmt.Errorf("execution config requires TypeScript and generate: false")
+	// The runtime is TypeScript by kind; legacy explicit declarations remain valid.
+	if cfg.Language != "" && cfg.Language != "typescript" {
+		return fmt.Errorf("Unified App config supports only TypeScript")
+	}
+	// Unified Apps never emit SDK packages, so an explicit true would promise unsupported output.
+	if cfg.Generate != nil && *cfg.Generate {
+		return fmt.Errorf("Unified App config cannot generate an SDK package")
 	}
 	if err := validateExecutionCodeSource(cfg); err != nil {
 		return err
 	}
-	// A declarative graph would introduce a second execute contract for the same App version.
-	if len(cfg.UnifiedOperations) != 0 || cfg.FusedIntelligentClassifier || strings.TrimSpace(cfg.Description) != "" {
-		return fmt.Errorf("execution config must not set unified_operations or MCP-only discovery fields")
+	// MCP discovery metadata belongs to hosted MCP config, not the authored execute kind.
+	if cfg.FusedIntelligentClassifier || strings.TrimSpace(cfg.Description) != "" {
+		return fmt.Errorf("Unified App config must not set MCP-only discovery fields")
 	}
 	if err := validateExecutionDeliveryFields(cfg); err != nil {
 		return err
@@ -597,7 +652,7 @@ func validateExecutionCodeSource(cfg *AppConfig) error {
 	}
 	// Manual precompiled workflows retain immutable digest admission.
 	if !canonicalSHA256Pattern.MatchString(cfg.BundleDigest) {
-		return fmt.Errorf("execution config requires source or canonical bundle_digest")
+		return fmt.Errorf("Unified App config requires source or canonical bundle_digest")
 	}
 	return nil
 }
@@ -606,7 +661,7 @@ func validateExecutionCodeSource(cfg *AppConfig) error {
 func validateExecutionDeliveryFields(cfg *AppConfig) error {
 	// Provider credentials remain scoped to one declared bucket.
 	if strings.TrimSpace(cfg.Bucket) == "" {
-		return fmt.Errorf("execution config requires a bucket")
+		return fmt.Errorf("Unified App config requires a bucket")
 	}
 	// Optional MCP delivery reuses the existing server metadata contract.
 	if cfg.MCP != nil && (strings.TrimSpace(cfg.MCP.Description) == "" || len(cfg.MCP.Description) > maxMCPServerDescriptionLength) {
@@ -621,18 +676,18 @@ func validateExecutionOperationScope(services map[string]AppService) error {
 	for _, service := range services {
 		// The authored operation owns the public execute name across REST and MCP.
 		if service.SelectAll {
-			return fmt.Errorf("execution config requires explicit operations so execute cannot be selected as a raw operation")
+			return fmt.Errorf("Unified App config requires explicit operations so execute cannot be selected as a raw operation")
 		}
 		for _, operation := range service.Operations {
 			if operation == "execute" {
-				return fmt.Errorf("execution config reserves raw operation execute")
+				return fmt.Errorf("Unified App config reserves raw operation execute")
 			}
 			operationCount++
 		}
 	}
 	// The compiler and Engine accept exactly 1–64 raw operations for one authored App.
 	if operationCount == 0 || operationCount > 64 {
-		return fmt.Errorf("execution config requires 1 to 64 selected operations")
+		return fmt.Errorf("Unified App config requires 1 to 64 selected operations")
 	}
 	return nil
 }
@@ -640,8 +695,8 @@ func validateExecutionOperationScope(services map[string]AppService) error {
 // validateMCPKindFields admits only fields consumed by the hosted MCP runtime.
 func validateMCPKindFields(cfg *AppConfig) error {
 	// Authored execution code belongs to the separate hosted App family kind.
-	if cfg.Source != "" {
-		return fmt.Errorf("source requires kind: execution")
+	if cfg.Source != "" || cfg.SourcePath != "" {
+		return fmt.Errorf("source and source_path require kind: unified_app")
 	}
 	// A standalone MCP config cannot recursively request another hosted delivery.
 	if cfg.MCP != nil {

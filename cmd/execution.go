@@ -10,32 +10,57 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var executionCmd = &cobra.Command{Use: "execution", Short: "Manage hosted Execution Apps", Args: cobra.NoArgs, RunE: requireSubcommand}
+var unifiedCmd = &cobra.Command{Use: "unified-app", Short: "Manage hosted Unified Apps", Args: cobra.NoArgs, RunE: requireSubcommand}
 
-var executionPlanCmd = &cobra.Command{
-	Use: "plan", Short: "Plan an Execution App", Args: cobra.NoArgs,
-	RunE: WithTelemetry("cli.execution.plan", func(cmd *cobra.Command, _ []string) error {
+var unifiedPlanCmd = &cobra.Command{
+	Use: "plan", Short: "Plan a Unified App", Args: cobra.NoArgs,
+	RunE: WithTelemetry("cli.unified.plan", func(cmd *cobra.Command, _ []string) error {
+		changed, err := syncUnifiedAppSources(effectiveConfigFile(), false)
+		if err != nil {
+			return err
+		}
+		// Local source extraction is a user-triggered write and belongs in the same audit trail as apply.
+		if changed > 0 {
+			recordAppliedChange(cmd.Context(), cmd.CommandPath(), "unified_app.source")
+		}
 		jsonOut, _ := cmd.Flags().GetBool("json")
 		receiptOut, _ := cmd.Flags().GetString("receipt-out")
 		ownerTeam, _ := cmd.Flags().GetString("owner-team")
-		return runConfigPlan(planOptions{filter: filterExecution, jsonOut: jsonOut, receiptOut: receiptOut, ownerTeamSlug: ownerTeam,
+		return runConfigPlan(planOptions{filter: filterUnified, jsonOut: jsonOut, receiptOut: receiptOut, ownerTeamSlug: ownerTeam,
 			output: cmd.OutOrStdout(), auditCtx: cmd.Context(), auditAction: cmd.CommandPath()})
 	}),
 }
 
-var executionApplyCmd = &cobra.Command{
-	Use: "apply", Short: "Apply an Execution App plan", Args: cobra.NoArgs,
-	RunE: WithTelemetry("cli.execution.apply", func(cmd *cobra.Command, _ []string) error {
+// unifiedSyncCmd externalizes local authoring source without changing the deployed App version.
+var unifiedSyncCmd = &cobra.Command{
+	Use: "sync", Short: "Create editable TypeScript files for local Unified App configs", Args: cobra.NoArgs,
+	RunE: WithTelemetry("cli.unified.sync", func(cmd *cobra.Command, _ []string) error {
+		changed, err := syncUnifiedAppSources(effectiveConfigFile(), true)
+		if err != nil {
+			return err
+		}
+		// Sync records only actual local mutations so no-op reads do not appear as changes.
+		if changed > 0 {
+			recordAppliedChange(cmd.Context(), cmd.CommandPath(), "unified_app.source")
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "Synchronized %d Unified App source file(s).\n", changed)
+		return nil
+	}),
+}
+
+var unifiedApplyCmd = &cobra.Command{
+	Use: "apply", Short: "Apply a Unified App plan", Args: cobra.NoArgs,
+	RunE: WithTelemetry("cli.unified.apply", func(cmd *cobra.Command, _ []string) error {
 		jsonOut, _ := cmd.Flags().GetBool("json")
 		planID, _ := cmd.Flags().GetString("plan-id")
 		receiptPath, _ := cmd.Flags().GetString("receipt")
-		return runConfigApply(withApplyAudit(cmd, applyOptions{filter: filterExecution, jsonOut: jsonOut,
+		return runConfigApply(withApplyAudit(cmd, applyOptions{filter: filterUnified, jsonOut: jsonOut,
 			planID: planID, receiptPath: receiptPath, output: cmd.OutOrStdout()}))
 	}),
 }
 
-// executionApplyOutput reports App identity and one-time token without SDK package terminology.
-type executionApplyOutput struct {
+// unifiedApplyOutput reports App identity and one-time token without SDK package terminology.
+type unifiedApplyOutput struct {
 	ConfigKey        string                `json:"config_key"`
 	PlanID           string                `json:"plan_id"`
 	Status           string                `json:"status"`
@@ -47,13 +72,13 @@ type executionApplyOutput struct {
 }
 
 // applyExecutionVersion sends the exact plan receipt to Engine and retains the one-time token only in output.
-func applyExecutionVersion(client *api.Client, cfg *configfile.ParsedConfig, receipt planReceipt) (executionApplyOutput, error) {
-	resp, err := client.ApplyExecutionConfig(receipt.PlanID, receipt.SourceHash, receipt.NoToken)
+func applyExecutionVersion(client *api.Client, cfg *configfile.ParsedConfig, receipt planReceipt) (unifiedApplyOutput, error) {
+	resp, err := client.ApplyUnifiedAppConfig(receipt.PlanID, receipt.SourceHash, receipt.NoToken)
 	// An uncertain mutation cannot be reported as a safe retry.
 	if err != nil {
-		return executionApplyOutput{}, fmt.Errorf("failed to apply Execution App %s: %w", cfg.Execution.Name, err)
+		return unifiedApplyOutput{}, fmt.Errorf("failed to apply Unified App %s: %w", cfg.UnifiedApp.Name, err)
 	}
-	result := executionApplyOutput{ConfigKey: cfg.ConfigKey, PlanID: resp.PlanID, Status: resp.Status,
+	result := unifiedApplyOutput{ConfigKey: cfg.ConfigKey, PlanID: resp.PlanID, Status: resp.Status,
 		AppFamilyID: resp.AppFamilyID, AppID: resp.AppID, ExecutionToken: resp.ExecutionToken, HostedMCP: resp.HostedMCP}
 	// The optional transport shares this exact App version and family token.
 	if resp.HostedMCP {
@@ -68,7 +93,7 @@ func applyPreparedExecution(client *api.Client, cfg *configfile.ParsedConfig, re
 	if err != nil {
 		return err
 	}
-	fmt.Printf("Applied Execution App %s (version %s).\n", cfg.Execution.Name, result.AppID)
+	fmt.Printf("Applied Unified App %s (version %s).\n", cfg.UnifiedApp.Name, result.AppID)
 	// Plaintext tokens cannot be recovered from Engine after this response.
 	if result.ExecutionToken != "" {
 		fmt.Printf("  Execution token (shown once): %s\n", result.ExecutionToken)
@@ -76,13 +101,13 @@ func applyPreparedExecution(client *api.Client, cfg *configfile.ParsedConfig, re
 	return nil
 }
 
-// applyExecutionConfigsJSON keeps structured deployment output independent of SDK package fields.
-func applyExecutionConfigsJSON(client *api.Client, prepared []preparedConfigApply, opts applyOptions) error {
-	results := make([]executionApplyOutput, 0, len(prepared))
+// applyUnifiedAppConfigsJSON keeps structured deployment output independent of SDK package fields.
+func applyUnifiedAppConfigsJSON(client *api.Client, prepared []preparedConfigApply, opts applyOptions) error {
+	results := make([]unifiedApplyOutput, 0, len(prepared))
 	for _, item := range prepared {
 		// A mixed apply must not quietly produce one kind's JSON schema for another.
-		if item.config.Kind != configfile.KindExecution {
-			return fmt.Errorf("structured execution apply requires only execution configs")
+		if item.config.Kind != configfile.KindUnifiedApp {
+			return fmt.Errorf("structured unified-app apply requires only unified_app configs")
 		}
 		result, err := applyExecutionVersion(client, item.config, item.receipt)
 		if err != nil {
@@ -100,12 +125,12 @@ func applyExecutionConfigsJSON(client *api.Client, prepared []preparedConfigAppl
 
 // init registers the dedicated hosted App workflow beside SDK and MCP commands.
 func init() {
-	RootCmd.AddCommand(executionCmd)
-	executionCmd.AddCommand(executionPlanCmd, executionApplyCmd)
-	executionPlanCmd.Flags().Bool("json", false, "Print plan result JSON")
-	executionPlanCmd.Flags().String("receipt-out", "", "Write the plan receipt to this path")
-	executionPlanCmd.Flags().String("owner-team", "", "Optional owning team slug")
-	executionApplyCmd.Flags().Bool("json", false, "Print apply receipt as JSON")
-	executionApplyCmd.Flags().String("plan-id", "", "Apply a specific remote plan ID")
-	executionApplyCmd.Flags().String("receipt", "", "Read a plan receipt from this path")
+	RootCmd.AddCommand(unifiedCmd)
+	unifiedCmd.AddCommand(unifiedPlanCmd, unifiedApplyCmd, unifiedSyncCmd)
+	unifiedPlanCmd.Flags().Bool("json", false, "Print plan result JSON")
+	unifiedPlanCmd.Flags().String("receipt-out", "", "Write the plan receipt to this path")
+	unifiedPlanCmd.Flags().String("owner-team", "", "Optional owning team slug")
+	unifiedApplyCmd.Flags().Bool("json", false, "Print apply receipt as JSON")
+	unifiedApplyCmd.Flags().String("plan-id", "", "Apply a specific remote plan ID")
+	unifiedApplyCmd.Flags().String("receipt", "", "Read a plan receipt from this path")
 }

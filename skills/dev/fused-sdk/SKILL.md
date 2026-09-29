@@ -1,6 +1,6 @@
 ---
 name: fused-sdk
-description: "Build, generate, configure, manage, or call a typed Fused SDK directly inside a coding agent using fused-cli sdk or the Engine execution REST API. Use when the user gives Codex, Claude Code, Cursor, Windsurf, or Antigravity a business goal for an SDK; when editing a kind: sdk config; when constructing a physical or Unified Engine operation request; or when selecting operations, receiving webhooks, scoping auth, managing immutable versions/runtime tokens, or running SDK plan/apply/validate/download/sync commands. This is the coding-agent entry point. For Engine-hosted MCP runtime behavior read fused-mcp instead."
+description: "Build, generate, configure, manage, or call a typed Fused SDK directly inside a coding agent using fused-cli sdk or the Engine execution REST API. Use when the user gives Codex, Claude Code, Cursor, Windsurf, or Antigravity a business goal for an SDK; when editing a kind: sdk config; when constructing a physical Engine operation request; or when selecting operations, receiving webhooks, scoping auth, managing immutable versions/runtime tokens, or running SDK plan/apply/validate/download/sync commands. This is the coding-agent entry point. For Engine-hosted MCP runtime behavior read fused-mcp instead."
 ---
 
 # SDK package config
@@ -50,9 +50,9 @@ services:
         value: ${bucket.env.MY_VAR}           # Supports ${bucket.env.*}, ${bucket.values.*} (identical alias), and ${bucket.secrets.*}
 ```
 
-For a hosted Execution App, declare one default-exported `buildExecutionApp({ input, output, execute, fetch? })` TypeScript source in a distinct `kind: execution` config. Include top-level `source`, `language: typescript`, `generate: false`, a bucket, and at least one explicit selected service operation. Run `fused-cli execution plan --json` and `fused-cli execution apply --json`; Engine resolves operation IDs, compiles the source in its own sandbox, and deploys the bundle. Existing precompiled configs can still use canonical `bundle_digest` and explicit bundle attach; never set `source` and `bundle_digest` together. Execution Apps cannot declare `unified_operations`, select all raw operations, or select a raw operation named `execute`. Registry SDK generation does not build an Execution App package.
+For a hosted TypeScript Unified App, use `fused-unified-app`. It owns `kind: unified_app`, `buildUnifiedApp`, and `fused-cli unified-app` plan/apply. Registry SDK generation does not build a Unified App package.
 
-`fused-cli describe '<goal>'` defaults to this hosted Execution App lifecycle: it shows drafted TypeScript for approval, then Engine compiles and deploys it. Pass `--kind sdk` for a generated SDK package.
+`fused-cli describe '<goal>'` defaults to this hosted Unified App lifecycle: it shows drafted TypeScript for approval, then Engine compiles and deploys it. Pass `--kind sdk` for a generated SDK package.
 
 `injections[].value` tags always resolve against *this SDK's own* `bucket:` -- there's no way to name a different bucket here, unlike `kind: webhook`'s `${bucket.<name>.secret.<key>}` (see `fused-webhook`). A value can also merge a tag with surrounding text (e.g. `"Bearer ${bucket.secrets.API_KEY}"`), which a webhook's secret field cannot. Writing a webhook-style named-bucket reference here (e.g. `${bucket.prod.secrets.API_KEY}`) is rejected at dispatch time with an explicit error naming the unsupported reference, rather than one of the three ambient forms above.
 
@@ -106,13 +106,6 @@ operation ID to match it.
 `select_all: true` is the alternative to listing `operations`; exactly one is
 required. `sdk sync` freezes the current selection into a sorted explicit list,
 so it does not preserve `select_all: true` textually.
-
-## Unified Operations
-TypeScript and Python SDK configs and `kind: mcp` configs may declare top-level
-`unified_operations` over operations in the same immutable app version; Go SDKs cannot.
-Read `fused-unified-operations` for graph, mapping, selector, and output rules.
-A configured root `output` is the exact success value with no wrapper; only an
-operation without it returns the all-settled `{results, rollbacks}` envelope.
 
 ## Identity, versions, and authentication
 
@@ -202,7 +195,7 @@ Use it for generated SDK versions. For direct REST APIs created with `init
 openapi` with the exact API version reference instead. The two commands share
 the immutable export and validation contract; structured output uses `sdk` for
 generated SDKs and `api` for direct APIs.
-It atomically writes YAML or JSON; `--operation` is one exact physical or Unified name.
+It atomically writes YAML or JSON; `--operation` is one exact physical name.
 `--json` reports metadata only: `operation_count` and `sha256:<64 lowercase hex>` of final file bytes.
 Before replacement it accepts only OpenAPI 3.1.x with matching `x-fused-app-id`,
 the real POST path and matching `app_id` enum, and count-consistent request branches.
@@ -217,17 +210,14 @@ the SDK execution token as `Authorization: Bearer`. Place that token in
 `FUSED_SDK_TOKEN` by default; `--token-env` selects another variable and
 `--token-stdin` avoids environment storage. Never pass the CLI key, License Key,
 or a provider credential as the execution token. Pass one duplicate-free JSON
-value with `--params` (physical operations require an object), a
-physical selector with `--selector`, or Unified targets and service selectors
-with 1–16 repeatable, explicit, unique `--target` values plus `--selectors`;
-Unified execution never defaults to every declared target. Each JSON option
-also accepts an `@file`. `--environment` is backward-compatible physical
-`selector.environment` sugar. This REST command supports one buffered JSON
-provider document up to 1 MiB and a bounded 17 MiB Unified aggregate; generated
-SDKs retain their broader gRPC transports. The command produces one logical
-Engine execution and does not implement local provider retries or redirects. For direct HTTP request construction, read [reference/engine-execution-api.md](reference/engine-execution-api.md).
-`sdk invoke --json` returns configured Unified JSON under `output` (including `null`), without `results` or `rollbacks`; physical and all-settled fields stay unchanged.
-Because the endpoint does not label roots, an object mimicking an envelope (`app_id`, `operation`, `results`, `kind`) is parsed as one; use the generated SDK or direct REST for that schema.
+value with `--params` (physical operations require an object) and a physical
+selector with `--selector`. Each JSON option also accepts an `@file`.
+`--environment` is backward-compatible `selector.environment` sugar. This
+REST command supports one buffered JSON provider document up to 1 MiB;
+generated SDKs retain their broader gRPC transports. The command produces one
+logical Engine execution and does not implement local provider retries or
+redirects. For direct HTTP request construction, read
+[reference/engine-execution-api.md](reference/engine-execution-api.md).
 
 `sdk activity` reads the canonical Engine execution receipts for one exact SDK
 version. Use `--all-versions` only when SDK-wide history is intended, and
@@ -301,10 +291,8 @@ Generated SDK calls only ever carry Fused selectors (`endUserRef`, `authType`, `
 Pagination comes from the endpoint and effective service-version policy. Do not
 put strategy or invocation bounds in `sdk.yaml`. Generated clients make one
 Engine call; Engine owns continuation and aggregation. Physical calls may only
-lower the limit with `fused.pagination.maxPages`/`max_pages`; Unified uses a
-target-keyed `pagination` map beside `targets` and `selectors`. It remains one
-buffered graph call whose success is the configured output or, without one,
-the all-settled envelope. Never loop pages or pass continuation tokens locally.
+lower the limit with `fused.pagination.maxPages`/`max_pages`. Never loop pages
+or pass continuation tokens locally.
 
 Quota, concurrency, and retry v3 policy is inherited and enforced only by Engine. Generated TypeScript and Python clients never maintain local windows,
 buckets, semaphores, retry loops, jitter, or sleeps. Do not add those policy fields to SDK config or replay provider calls: Engine coordinates identities,

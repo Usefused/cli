@@ -38,8 +38,8 @@ type skillSpec struct {
 // skillSpecs is every skill this CLI ships. fused-cli is the entry point
 // (setup, access management, global config, and an index); fused-workspace/
 // fused-sdk/fused-mcp/fused-webhook/fused-bucket each own one config kind's
-// commands and shape; fused-unified-operations owns the multi-service SDK
-// contract; fused-config holds cross-cutting config owned by no single kind
+// commands and shape; fused-unified-app owns hosted TypeScript apps;
+// fused-config holds cross-cutting config owned by no single kind
 // (execution policy, connection profiles, and their OpenAPI/Postman
 // equivalent); fused-notifications explains plan/apply notices. Domain skills
 // link to one another instead of duplicating details.
@@ -69,8 +69,8 @@ var skillSpecs = []skillSpec{
 		},
 	},
 	{
-		name:    "fused-unified-operations",
-		summary: "Defining multi-service SDK methods: mappings, dependencies, rollback, outputs, and selectors",
+		name:    "fused-unified-app",
+		summary: "Building and deploying hosted TypeScript Unified Apps with selected service operations",
 		manifest: []string{
 			"SKILL.md",
 		},

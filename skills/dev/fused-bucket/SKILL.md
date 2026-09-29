@@ -311,6 +311,9 @@ callback exchange, managed refresh, SDK readiness, and MCP readiness all use
 the same exact resolver, so rotation reaches every consumer without copying
 credentials or publishing another app version.
 
+For a concrete Jira OAuth setup using an official operation slice, see
+[reference/jira-oauth.md](reference/jira-oauth.md).
+
 ## Starting an OAuth/OIDC connection
 
 ```shell

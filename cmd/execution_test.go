@@ -2,9 +2,9 @@ package cmd
 
 import "testing"
 
-// TestExecutionCommandsRegistered keeps the user workflow under the distinct hosted App command.
-func TestExecutionCommandsRegistered(t *testing.T) {
-	for _, parts := range [][]string{{"execution", "plan"}, {"execution", "apply"}, {"execution", "bundle", "attach"}} {
+// TestUnifiedAppCommandsRegistered keeps the user workflow under the distinct hosted App command.
+func TestUnifiedAppCommandsRegistered(t *testing.T) {
+	for _, parts := range [][]string{{"unified-app", "plan"}, {"unified-app", "apply"}, {"unified-app", "sync"}, {"unified-app", "bundle", "attach"}} {
 		command, remaining, err := RootCmd.Find(parts)
 		// Exact subcommands must resolve without falling back to an SDK or root command.
 		if err != nil || len(remaining) != 0 || command == nil || command.Name() != parts[len(parts)-1] {

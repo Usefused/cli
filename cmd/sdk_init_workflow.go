@@ -16,9 +16,8 @@ import (
 )
 
 type sdkInitResolvedService struct {
-	target            workspaceServiceAddTarget
-	version           string
-	workflowVersionID string
+	target  workspaceServiceAddTarget
+	version string
 }
 
 type sdkInitWorkspaceDraft struct {
@@ -394,17 +393,12 @@ func resolveSDKInitServices(request scaffoldRequest, client *api.Client) (scaffo
 			aliases[requested] = target.slug
 		}
 	}
-	// Published identities must agree with live resolution before any workspace plan is constructed.
-	if err := bindWorkflowPins(request.workflowPins, resolved); err != nil {
-		return scaffoldRequest{}, nil, err
-	}
 	request.services = make([]scaffoldService, 0, len(resolved))
 	for _, service := range resolved {
 		request.services = append(request.services, scaffoldService{name: service.target.slug, version: service.version})
 	}
 	request.operations = rewriteSDKInitOperations(request.operations, aliases)
 	// Binding step names remain stable while their provider selectors follow canonical workspace aliases.
-	request.unifiedOperations = rewriteSDKInitUnifiedServices(request.unifiedOperations, aliases)
 	request.selectAll = rewriteSDKInitNames(request.selectAll, aliases)
 	request.events = rewriteSDKInitEvents(request.events, aliases)
 	return request, resolved, nil
@@ -673,10 +667,6 @@ func planSDKInitWorkspace(client *api.Client, services []sdkInitResolvedService)
 	if err := mergeWorkspaceServiceAdditions(config, additions); err != nil {
 		return nil, err
 	}
-	// Exact release pins fence reused labels and survive the normal plan/apply receipt boundary.
-	if err := pinWorkflowWorkspaceVersions(config, services); err != nil {
-		return nil, err
-	}
 	data, err := yaml.Marshal(config)
 	// The plan must consume the exact canonical bytes that will later be published locally.
 	if err != nil {
@@ -700,8 +690,7 @@ func sdkInitWorkspaceAdditions(services []sdkInitResolvedService) []workspaceSer
 	additions := make([]workspaceServiceConfigAddition, 0, len(services))
 	for _, service := range services {
 		// An exact enabled version already has execution authority and must not create another workspace plan.
-		// Published pins are revalidated by a workspace plan even when the display version is already enabled.
-		if service.workflowVersionID == "" && containsString(service.target.enabledVersions, service.version) {
+		if containsString(service.target.enabledVersions, service.version) {
 			continue
 		}
 		additions = append(additions, workspaceServiceConfigAddition{

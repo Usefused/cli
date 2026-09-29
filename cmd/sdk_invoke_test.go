@@ -57,21 +57,20 @@ func resetSDKInvokeTestState(t *testing.T) {
 	oldTimeout := RequestTimeout
 	oldParams, oldTokenEnv, oldTokenStdin := sdkInvokeParams, sdkInvokeTokenEnv, sdkInvokeTokenStdin
 	oldEnvironment, oldIdempotency := sdkInvokeEnvironment, sdkInvokeIdempotencyKey
-	oldTargets := append([]string(nil), sdkInvokeTargets...)
-	oldSelector, oldSelectors := sdkInvokeSelector, sdkInvokeSelectors
+	oldSelector := sdkInvokeSelector
 	t.Cleanup(func() {
 		EngineURL, APIKey, RequestID, RequestTimeout = oldEngineURL, oldAPIKey, oldRequestID, oldTimeout
 		sdkInvokeParams, sdkInvokeTokenEnv, sdkInvokeTokenStdin = oldParams, oldTokenEnv, oldTokenStdin
 		sdkInvokeEnvironment, sdkInvokeIdempotencyKey = oldEnvironment, oldIdempotency
-		sdkInvokeTargets, sdkInvokeSelector, sdkInvokeSelectors = oldTargets, oldSelector, oldSelectors
+		sdkInvokeSelector = oldSelector
 	})
 	sdkInvokeParams, sdkInvokeTokenEnv, sdkInvokeTokenStdin = "{}", defaultSDKTokenEnvironment, false
 	sdkInvokeEnvironment, sdkInvokeIdempotencyKey = "", ""
-	sdkInvokeTargets, sdkInvokeSelector, sdkInvokeSelectors = nil, "", ""
+	sdkInvokeSelector = ""
 	RequestID, RequestTimeout = "", 5*time.Second
 }
 
-// TestReadSDKInvokeParamsAcceptsOneDuplicateFreeJSONValue verifies Unified input shapes remain reachable.
+// TestReadSDKInvokeParamsAcceptsOneDuplicateFreeJSONValue verifies bounded JSON parsing remains strict.
 func TestReadSDKInvokeParamsAcceptsOneDuplicateFreeJSONValue(t *testing.T) {
 	for _, valid := range []string{`{"count":1}`, `[1,"two",null]`, `"query"`, `42`, `true`, `null`} {
 		data, err := readSDKInvokeParams(valid, false, strings.NewReader(""))
@@ -134,12 +133,9 @@ func TestSDKInvokeSelectorParsingIsClosedAndFileBacked(t *testing.T) {
 	if _, err := readSDKInvokeSelector(`{"credentials":{"token":"secret"}}`); err == nil {
 		t.Fatal("expected credential-bearing selector field to be rejected")
 	}
-	if _, err := readSDKInvokeSelectors(`{"jira":{"unknown":"value"}}`); err == nil {
-		t.Fatal("expected unknown Unified selector field to be rejected")
-	}
 }
 
-// TestBuildSDKInvokeRequestMergesEnvironmentAndRejectsNamespaceConflict verifies backward-compatible selector sugar.
+// TestBuildSDKInvokeRequestMergesEnvironment verifies selector sugar and detects conflicts.
 func TestBuildSDKInvokeRequestMergesEnvironmentAndRejectsNamespaceConflict(t *testing.T) {
 	resetSDKInvokeTestState(t)
 	sdkInvokeSelector = `{"end_user_ref":"user-1","environment":"staging"}`
@@ -151,10 +147,6 @@ func TestBuildSDKInvokeRequestMergesEnvironmentAndRejectsNamespaceConflict(t *te
 	sdkInvokeEnvironment = "production"
 	if _, err := buildSDKInvokeRequest("issues.list", strings.NewReader("")); err == nil {
 		t.Fatal("expected conflicting environment selectors to fail")
-	}
-	sdkInvokeEnvironment, sdkInvokeSelector, sdkInvokeSelectors = "", `{}`, `{"jira":{}}`
-	if _, err := buildSDKInvokeRequest("issues.list", strings.NewReader("")); err == nil {
-		t.Fatal("expected physical and Unified selectors to conflict")
 	}
 }
 
@@ -203,162 +195,6 @@ func decodeSDKInvokeTestRequest(t *testing.T, request *http.Request) sdkInvokeRe
 		t.Fatalf("decode execution request: %v", err)
 	}
 	return body
-}
-
-// TestSDKInvokeUnifiedSendsTargetsSelectorsAndDecodesRollbacks covers the Unified REST shape.
-func TestSDKInvokeUnifiedSendsTargetsSelectorsAndDecodesRollbacks(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-		assertSDKInvokeRuntimeHeaders(t, request, "runtime-token", "unified-idempotency", "control-token")
-		body := decodeSDKInvokeTestRequest(t, request)
-		if len(body.Targets) != 1 || body.Targets[0] != "jira_projects" || body.Selector != nil {
-			t.Fatalf("Unified targets = %#v, selector = %#v", body.Targets, body.Selector)
-		}
-		if body.Selectors["jira"].EndUserRef != "jira-user" {
-			t.Fatalf("Unified selectors = %#v", body.Selectors)
-		}
-		_, _ = w.Write([]byte(`{"app_id":"` + sdkInvokeTestAppID + `","operation":"research.run","kind":"unified","results":[{"target":"jira_projects","status":"success","data":{"values":[]},"error_code":null,"auth_action":null}],"rollbacks":[]}`))
-	}))
-	defer server.Close()
-	prepared := preparedSDKInvocation{
-		EngineURL: server.URL, AppID: sdkInvokeTestAppID, Token: "runtime-token", IdempotencyKey: "unified-idempotency",
-		Request: sdkInvokeRequest{
-			Operation: "research.run", Input: json.RawMessage(`{"query":"jira"}`), Targets: []string{"jira_projects"},
-			Selectors: map[string]sdkInvokeSelectorValue{"jira": {EndUserRef: "jira-user", AuthType: "oauth", AuthName: "JiraOAuth"}},
-		},
-	}
-	response, endpoint, err := executeSDKInvocation(context.Background(), prepared)
-	if err != nil {
-		t.Fatalf("execute Unified SDK invoke: %v", err)
-	}
-	if response.Kind != "unified" || len(response.Results) != 1 || len(response.Rollbacks) != 0 || !strings.HasSuffix(endpoint, "/executions") {
-		t.Fatalf("Unified response = %#v, endpoint = %q", response, endpoint)
-	}
-}
-
-// TestSDKInvokeUnifiedDecodesAuthoredRootOutput verifies the shared Engine route returns configured JSON directly.
-func TestSDKInvokeUnifiedDecodesAuthoredRootOutput(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-		assertSDKInvokeRuntimeHeaders(t, request, "runtime-token", "root-output-key", "control-token")
-		body := decodeSDKInvokeTestRequest(t, request)
-		// The request must retain selected bindings even though the response has no execution envelope.
-		if body.Operation != "greetings.pair" || len(body.Targets) != 2 {
-			t.Fatalf("Unified request = %#v", body)
-		}
-		_, _ = w.Write([]byte(`{"first":"Hello AdaRest","second":"Hello Hello AdaRest","large":9007199254740993}`))
-	}))
-	defer server.Close()
-	prepared := preparedSDKInvocation{
-		EngineURL: server.URL, AppID: sdkInvokeTestAppID, Token: "runtime-token", IdempotencyKey: "root-output-key",
-		Request: sdkInvokeRequest{Operation: "greetings.pair", Input: json.RawMessage(`{"name":"Ada"}`), Targets: []string{"first", "second"}},
-	}
-	response, _, err := executeSDKInvocation(context.Background(), prepared)
-	// A root response must be accepted without inventing target results.
-	if err != nil || response.Kind != "unified" || response.Output == nil || len(response.Results) != 0 {
-		t.Fatalf("authored root response = %#v, error = %v", response, err)
-	}
-	// Raw JSON avoids losing large provider identifiers in CLI output.
-	if string(*response.Output) != `{"first":"Hello AdaRest","second":"Hello Hello AdaRest","large":9007199254740993}` {
-		t.Fatalf("authored root output = %s", *response.Output)
-	}
-	command := &cobra.Command{Use: "test"}
-	addJSONOutputFlag(command)
-	// The structured renderer is the user-facing smoke-test contract.
-	if err := command.Flags().Set(jsonOutputFlag, "true"); err != nil {
-		t.Fatalf("enable JSON output: %v", err)
-	}
-	var rendered bytes.Buffer
-	command.SetOut(&rendered)
-	// The renderer must carry the authored value through its metadata wrapper.
-	if err := writeSDKInvocationOutput(command, sdkInvokeOutput{
-		AppID: prepared.AppID, Operation: prepared.Request.Operation, Kind: response.Kind, Output: response.Output,
-	}); err != nil {
-		t.Fatalf("render authored root: %v", err)
-	}
-	var output map[string]json.RawMessage
-	// A parseable JSON document lets automation inspect the exact root value.
-	if err := json.Unmarshal(rendered.Bytes(), &output); err != nil {
-		t.Fatalf("decode rendered output: %v", err)
-	}
-	// The CLI adds invocation metadata but must not invent all-settled fields around authored output.
-	if output["output"] == nil || output["results"] != nil || output["rollbacks"] != nil {
-		t.Fatalf("rendered authored output = %s", rendered.Bytes())
-	}
-}
-
-// TestSDKInvokeUnifiedRootOutputAcceptsJSONValues retains every valid configured JSON root, including null.
-func TestSDKInvokeUnifiedRootOutputAcceptsJSONValues(t *testing.T) {
-	prepared := preparedSDKInvocation{AppID: sdkInvokeTestAppID, Request: sdkInvokeRequest{Operation: "root.run", Targets: []string{"first"}}}
-	// Authored projection schemas may legitimately choose any JSON root type.
-	for _, value := range []string{`"ok"`, `42`, `true`, `null`, `[1,2]`, `{"kind":"unified","value":1}`} {
-		response, err := decodeSDKInvokeHTTPResult(http.StatusOK, []byte(value), prepared)
-		// The decoder must preserve the exact value rather than coercing it into a result list.
-		if err != nil || response.Output == nil || string(*response.Output) != value {
-			t.Fatalf("root %s = %#v, %v", value, response, err)
-		}
-		encoded, err := json.Marshal(sdkInvokeOutput{Kind: response.Kind, Output: response.Output})
-		// A nonnil pointer keeps even a JSON null visible as an authored output.
-		if err != nil || !bytes.Contains(encoded, []byte(`"output":`+value)) {
-			t.Fatalf("rendered root %s = %s, %v", value, encoded, err)
-		}
-	}
-	// Malformed or concatenated documents must not become successful execution output.
-	for _, invalid := range []string{"", `{"value":1} {"value":2}`, `{"value":`} {
-		// The REST success boundary still requires exactly one complete JSON value.
-		if _, err := decodeSDKInvokeHTTPResult(http.StatusOK, []byte(invalid), prepared); err == nil {
-			t.Fatalf("invalid root %q succeeded", invalid)
-		}
-	}
-}
-
-// TestSDKInvokeUnifiedRejectsMalformedEnvelope retains strict validation when Engine advertises an all-settled wrapper.
-func TestSDKInvokeUnifiedRejectsMalformedEnvelope(t *testing.T) {
-	prepared := preparedSDKInvocation{AppID: sdkInvokeTestAppID, Request: sdkInvokeRequest{Operation: "root.run", Targets: []string{"first"}}}
-	// Wrapper-like responses keep identity and shape validation despite the root-output fallback.
-	for _, body := range []string{
-		fmt.Sprintf(`{"app_id":%q,"operation":"root.run","kind":"unified","results":[]}`, sdkInvokeTestAppID),
-		fmt.Sprintf(`{"app_id":%q,"operation":"other.run","kind":"unified","results":[],"rollbacks":[]}`, sdkInvokeTestAppID),
-		fmt.Sprintf(`{"app_id":%q,"operation":"root.run","kind":"unknown","results":[],"rollbacks":[]}`, sdkInvokeTestAppID),
-	} {
-		// A malformed Engine wrapper should never masquerade as a valid authored value.
-		if _, err := decodeSDKInvokeHTTPResult(http.StatusOK, []byte(body), prepared); err == nil {
-			t.Fatalf("malformed or mismatched envelope %s succeeded", body)
-		}
-	}
-	// A physical request has no authored-output contract, so the same root must still fail.
-	prepared.Request.Targets = nil
-	if _, err := decodeSDKInvokeHTTPResult(http.StatusOK, []byte(`{"value":1}`), prepared); err == nil {
-		t.Fatal("physical request accepted a bare root response")
-	}
-}
-
-// TestWriteSDKInvocationJSONPreservesKindSpecificRollbacks verifies Unified emits [] while physical omits the field.
-func TestWriteSDKInvocationJSONPreservesKindSpecificRollbacks(t *testing.T) {
-	emptyRollbacks := []any{}
-	for _, test := range []struct {
-		name          string
-		output        sdkInvokeOutput
-		wantRollbacks bool
-	}{
-		{name: "physical", output: sdkInvokeOutput{Kind: "physical", Results: []any{map[string]any{}}, StatusCode: 200}},
-		{name: "Unified", output: sdkInvokeOutput{Kind: "unified", Results: []any{}, Rollbacks: &emptyRollbacks}, wantRollbacks: true},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			command := &cobra.Command{Use: "test"}
-			addJSONOutputFlag(command)
-			if err := command.Flags().Set(jsonOutputFlag, "true"); err != nil {
-				t.Fatalf("enable JSON output: %v", err)
-			}
-			var output bytes.Buffer
-			command.SetOut(&output)
-			if err := writeSDKInvocationOutput(command, test.output); err != nil {
-				t.Fatalf("write SDK invocation: %v", err)
-			}
-			hasRollbacks := bytes.Contains(output.Bytes(), []byte(`"rollbacks"`))
-			if hasRollbacks != test.wantRollbacks || (test.wantRollbacks && !bytes.Contains(output.Bytes(), []byte(`"rollbacks":[]`))) {
-				t.Fatalf("JSON output = %s", output.Bytes())
-			}
-		})
-	}
 }
 
 // TestSDKInvokeHTTPErrorResponsesAreStructuredAndAuthOpaque covers reviewed and untrusted failures.
@@ -431,9 +267,6 @@ func TestSDKInvokeRejectsRedirectWithoutForwardingBearer(t *testing.T) {
 func TestDecodeSDKInvokeHTTPResponseEnforcesKindSpecificShape(t *testing.T) {
 	for _, invalid := range []string{
 		fmt.Sprintf(`{"app_id":%q,"operation":"op","kind":"physical","status_code":200,"results":[]}`, sdkInvokeTestAppID),
-		fmt.Sprintf(`{"app_id":%q,"operation":"op","kind":"physical","status_code":200,"results":[{}],"rollbacks":[]}`, sdkInvokeTestAppID),
-		fmt.Sprintf(`{"app_id":%q,"operation":"op","kind":"unified","status_code":200,"results":[],"rollbacks":[]}`, sdkInvokeTestAppID),
-		fmt.Sprintf(`{"app_id":%q,"operation":"op","kind":"unified","results":[]}`, sdkInvokeTestAppID),
 		`{"app_id":"not-a-uuid","operation":"op","kind":"physical","status_code":200,"results":[{}]}`,
 	} {
 		if _, err := decodeSDKInvokeHTTPResponse([]byte(invalid)); err == nil {
@@ -549,30 +382,7 @@ func TestDecodeSDKInvokeConnectionRequiredBuildsSafeCommandForHumanAndJSON(t *te
 	}
 }
 
-// TestReadBoundedSDKInvokeResponseAllowsUnifiedAggregate verifies multiple bounded results may exceed the input cap.
-func TestReadBoundedSDKInvokeResponseAllowsUnifiedAggregate(t *testing.T) {
-	resultPayload := strings.Repeat("x", 600<<10)
-	encoded, err := json.Marshal(map[string]any{
-		"app_id": sdkInvokeTestAppID, "operation": "aggregate.run", "kind": "unified",
-		"results": []any{
-			map[string]any{"target": "first", "data": resultPayload},
-			map[string]any{"target": "second", "data": resultPayload},
-		},
-		"rollbacks": []any{},
-	})
-	if err != nil || len(encoded) <= maxSDKInvokeInputBytes {
-		t.Fatalf("aggregate fixture bytes = %d, marshal error = %v", len(encoded), err)
-	}
-	bounded, err := readBoundedSDKInvokeResponse(bytes.NewReader(encoded))
-	if err != nil {
-		t.Fatalf("read aggregate response: %v", err)
-	}
-	if _, err := decodeSDKInvokeHTTPResponse(bounded); err != nil {
-		t.Fatalf("decode aggregate response: %v", err)
-	}
-}
-
-// TestReadBoundedSDKInvokeResponseRejectsAggregateOverCap verifies the distinct response memory bound.
+// TestReadBoundedSDKInvokeResponseRejectsAggregateOverCap verifies the response memory bound.
 func TestReadBoundedSDKInvokeResponseRejectsAggregateOverCap(t *testing.T) {
 	oversized := make([]byte, maxSDKInvokeResponseBytes+1)
 	if _, err := readBoundedSDKInvokeResponse(bytes.NewReader(oversized)); err == nil {
@@ -585,14 +395,10 @@ func TestSDKInvokeUsesGlobalEngineRESTFlags(t *testing.T) {
 	if sdkInvokeCmd.Flags().Lookup("grpc-url") != nil {
 		t.Fatal("sdk invoke must not expose --grpc-url")
 	}
-	for _, name := range []string{"target", "selector", "selectors", "environment", "idempotency-key"} {
+	for _, name := range []string{"selector", "environment", "idempotency-key"} {
 		if sdkInvokeCmd.Flags().Lookup(name) == nil {
 			t.Fatalf("sdk invoke flag --%s is missing", name)
 		}
-	}
-	targetUsage := sdkInvokeCmd.Flags().Lookup("target").Usage
-	if !strings.Contains(targetUsage, "required 1-16") || !strings.Contains(targetUsage, "unique") {
-		t.Fatalf("--target help does not state the Unified contract: %q", targetUsage)
 	}
 	if got, err := validateSDKInvokeEngineURL("https://engine.example.com/base/"); err != nil || got != "https://engine.example.com/base" {
 		t.Fatalf("Engine REST URL = %q, %v", got, err)

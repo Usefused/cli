@@ -79,6 +79,7 @@ fused-cli skill install --for codex
 
 # Or install one skill only.
 fused-cli skill install --for codex --skill fused-sdk
+fused-cli skill install --for codex --skill fused-unified-app
 ```
 
 Supported targets are `codex`, `claude`, `antigravity`, `cursor`, and
@@ -241,13 +242,13 @@ fused-cli describe --update billing-sdk \
   "Add one operation that creates a Stripe customer, then creates an invoice for that customer"
 ```
 
-`describe` creates a hosted TypeScript Execution App by default. It shows the
+`describe` creates a hosted TypeScript Unified App by default. It shows the
 source and selected operations for review, then Engine compiles and deploys the
 App after confirmation. Use `--kind sdk|mcp|rest` for another output. For one
 App with SDK, MCP, and REST delivery, use `init` without a method flag.
 `describe` always requires interactive proposal review. See
-[`buildExecutionApp`](docs/EXECUTION_APPS.md) for the function contract and
-the [Execution App example](docs/execution-apps/example.md) for `describe`,
+[`buildUnifiedApp`](docs/UNIFIED_APPS.md) for the function contract and
+the [Unified App example](docs/unified-apps/example.md) for `describe`,
 config, and REST calls.
 
 You can also name an existing SDK, MCP, or REST app in the goal: `Update billing-sdk to add Stripe invoice lookup`.
@@ -255,23 +256,20 @@ Those updates resolve an existing local config; pass `-f <path>` when names are 
 They preserve existing selections, language, bucket, auth, and service versions.
 A changed config receives the next minor version, or the version you provide with
 `--version`. An unchanged proposal keeps its current version. Missing update targets
-never fall back to creating an app. To update an Execution App, edit its source
-config and deploy a new version.
+never fall back to creating an app. To update a Unified App, edit its
+`.fused/unified_app/<app>.tsx` source file and deploy a new version.
 
-Explicit sequential runtime intent produces one Unified Operation for a TypeScript
-or Python SDK, or an MCP server. A list of independent capabilities joined by “and”
-does not imply a sequence. The proposal shows the exact operation order, typed
-inputs, dependency mappings, and output before confirmation. Unsupported or ambiguous
-mappings require a clearer goal; Fused does not invent intermediate decisions,
-loops, or rollback calls. Existing Unified Operations are preserved; a different
-definition needs a new operation name.
+For sequential cross-service behavior, author a Unified App in
+`.fused/unified_app/<app>.tsx` and deploy a new immutable version. SDK and MCP
+configs select physical operations; they do not define a sequence of provider
+calls.
 
 Jev selects operation names through the licensed Fused Registry endpoint. Intent
-parsing and composition use Registry's configured language model. Composition reads
-the selected immutable operation contracts; it does not send provider credentials or
-execution payloads. These processing disclosures appear before the corresponding
-requests. Applying the proposal publishes configuration; it does not execute the
-composed provider calls. SDK consumers still need to use the new package version.
+parsing uses Registry's configured language model and the selected immutable
+operation contracts; it does not send provider credentials or execution
+payloads. The processing disclosure appears before the request. Applying the
+proposal publishes configuration; it does not execute provider calls. SDK
+consumers still need to use the new package version.
 
 ## Control an existing app explicitly
 

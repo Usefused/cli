@@ -72,12 +72,12 @@ func TestResolvePromptInitModeRestrictsPrimaryOutputs(t *testing.T) {
 		want     unifiedInitMode
 		wantErr  string
 	}{
-		{name: "omitted defaults to execution", want: unifiedInitModeExecution},
-		{name: "execution default", inferred: "execution", want: unifiedInitModeExecution},
+		{name: "omitted defaults to unified", want: unifiedInitModeUnified},
+		{name: "unified default", inferred: "unified", want: unifiedInitModeUnified},
 		{name: "sdk", inferred: "sdk", want: unifiedInitModeSDK},
 		{name: "rest", inferred: "rest", want: unifiedInitModeAPI},
-		{name: "override", override: "mcp", inferred: "execution", want: unifiedInitModeMCP},
-		{name: "webhook rejected", inferred: "webhook", wantErr: "execution, sdk, mcp, or rest"},
+		{name: "override", override: "mcp", inferred: "unified", want: unifiedInitModeMCP},
+		{name: "webhook rejected", inferred: "webhook", wantErr: "unified, sdk, mcp, or rest"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

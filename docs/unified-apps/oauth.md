@@ -1,6 +1,6 @@
-# OAuth in Execution Apps
+# OAuth in Unified Apps
 
-An Execution App uses a connection in its configured bucket. The TypeScript
+A Unified App uses a connection in its configured bucket. The TypeScript
 receives a stable user reference, not provider tokens.
 
 ## 1. Connect the user
@@ -58,4 +58,4 @@ The standalone connection command does not infer the app's `auth.ref`. See the
 [config reference](../CONFIG_AS_CODE.md) for the auth field shape.
 
 For the complete config and deployment commands, see the
-[Execution App example](example.md).
+[Unified App example](example.md).

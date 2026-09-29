@@ -50,7 +50,7 @@ Send exactly these request properties:
 POST {ENGINE_URL}/v1/apps/{APP_ID}/executions
 Authorization: Bearer {SDK_EXECUTION_TOKEN}
 Content-Type: application/json
-Idempotency-Key: {STABLE_KEY}  # required for Unified; optional for physical
+Idempotency-Key: {STABLE_KEY}  # optional for physical calls
 ```
 
 The bearer value must be an execution token created for that SDK:
@@ -130,65 +130,6 @@ For a mutating physical operation, provide one stable `Idempotency-Key` across
 retries when the exported operation contract supports safe idempotency. Never
 blindly replay a timed-out provider mutation with a newly generated key.
 
-## Unified operation request
-
-A Unified request has `operation`, its declared input, an explicit nonempty
-target list, and service-keyed selectors:
-
-```json
-{
-  "operation": "research.createJiraTicket",
-  "input": {
-    "query": "Fused OAuth architecture",
-    "issueSummary": "Review the OAuth findings"
-  },
-  "targets": [
-    "jira_projects",
-    "jira_issue_types",
-    "nimble",
-    "jira"
-  ],
-  "selectors": {
-    "jira": {
-      "end_user_ref": "customer-123"
-    }
-  },
-  "target_pagination": {
-    "jira_projects": {
-      "max_pages": 3
-    }
-  }
-}
-```
-
-Targets are binding keys selected for this call. Selectors are keyed by the
-configured service selector namespace, not by provider IDs or response keys.
-One service selector is reused by every selected binding that executes that
-service. Do not add selector entries for binding aliases unless the exported
-contract declares them as service keys.
-
-`target_pagination` is keyed by selected binding target, not by the selector
-service namespace. Each value accepts exactly `{ "max_pages": 3 }` with a
-positive integer. Every requested value must be strictly below that target's
-effective pagination-policy maximum; equality is rejected. Omit targets that
-do not need a tighter bound. Unknown targets, non-paginated targets, and
-provider continuation fields fail at the Engine boundary.
-
-Unified execution requires exactly one bounded, stable `Idempotency-Key`:
-
-```shell
-curl --fail-with-body --silent --show-error \
-  --request POST \
-  --url "$FUSED_ENGINE_URL/v1/apps/$FUSED_APP_ID/executions" \
-  --header "Authorization: Bearer $FUSED_SDK_TOKEN" \
-  --header "Content-Type: application/json" \
-  --header "Idempotency-Key: customer-123-research-ticket-42" \
-  --data-binary @unified-request.json
-```
-
-Reuse that key for retries of the same logical request. Use a new key only for
-a genuinely new operation; otherwise a mutating dependency may run twice.
-
 ## Interpret the response
 
 A successful physical wrapper has this shape:
@@ -205,30 +146,6 @@ A successful physical wrapper has this shape:
 
 The HTTP wrapper can be successful while `status_code` records the provider
 status. Inspect both the Engine HTTP status and the physical status field.
-
-A Unified Operation with root `output` returns that exact configured JSON value
-on success. It has no `kind`, `data`, `results`, or `rollbacks` wrapper. For
-example, the request above may return:
-
-```json
-{
-  "issueId": "10068",
-  "issueKey": "SCRUM-5",
-  "issueTypeId": "10001",
-  "projectKey": "SCRUM"
-}
-```
-
-Validate this body against the operation's exported response schema. Do not
-look for per-target statuses after a transformed success; Engine has already
-mapped and validated the complete graph result.
-
-When the Unified Operation has no root output, success instead uses the
-all-settled wrapper with `kind: "unified"`, a `results` array containing one
-entry per selected target, and optional `rollbacks`. Check every target's
-`status` and `error_code`; do not infer whole-graph success from HTTP 200 alone.
-An `auth_action` means the selected user needs a bounded connect, reconnect, or
-resource-selection action before dispatch can continue.
 
 Request-level failures use:
 
@@ -255,13 +172,11 @@ Before reporting the call complete, verify:
 - the path app ID matches the intended immutable SDK version;
 - the token is an SDK execution token and appears only in the header;
 - the operation and input match the exported OpenAPI branch;
-- physical calls use only `selector`, while Unified calls use `targets` and
-  service-keyed `selectors`;
-- physical `pagination` and Unified `target_pagination` contain only strict
-  maximum-page bounds below the effective policy maximum;
-- Unified and retried mutations use one stable idempotency key;
-- every physical status was checked; for Unified, validate the configured root
-  output or inspect every target result when root output is absent;
+- physical calls use only `selector`;
+- `pagination` contains only a strict maximum-page bound below the effective
+  policy maximum;
+- retried mutations use one stable idempotency key;
+- the physical status was checked;
 - no provider credential, access token, authorization URL, or other secret was
   printed or committed; ordinary provider results remain available for the
   user-requested inspection.

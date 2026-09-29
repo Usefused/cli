@@ -155,7 +155,7 @@ and an explicit enrichment decision instead of opening selectors).
 ## Command surface drifts faster than these skills -- verify with `--help`
 
 Every command list in this skill and its eight domain skills
-(`fused-workspace`, `fused-sdk`, `fused-unified-operations`, `fused-mcp`,
+(`fused-workspace`, `fused-sdk`, `fused-unified-app`, `fused-mcp`,
 `fused-webhook`, `fused-bucket`, `fused-config`, `fused-notifications`) reflects
 the subcommands/flags that existed when that file was last
 updated -- not a live source of truth. Before running any subcommand you
@@ -187,7 +187,7 @@ skill documents a stable alternative.
 `fused-cli sdk openapi <sdk-name@version-or-version-id>` resolves one exact
 immutable SDK version with the ordinary control credential and `app.sdk.read`, then
 GETs `/apps/{app_id}/openapi`. It always atomically writes YAML (or JSON with
-`--format json`); `--operation` filters one exact physical or Unified name,
+`--format json`); `--operation` filters one exact physical name,
 `--out` selects the file, and `--json` prints metadata rather than the document.
 The export pins the real `POST /v1/apps/{app_id}/executions` route, whose Bearer
 credential is the SDK-wide execution token—not the CLI control key. Output is
@@ -858,8 +858,8 @@ workspace/bucket/connect steps above do not change.
 | Skill | Covers |
 |---|---|
 | `fused-workspace` | The service allowlist: enabling services/versions, execution policy, deprecations |
-| `fused-sdk` | Generating a typed SDK package and constructing physical or Unified Engine execution API calls |
-| `fused-unified-operations` | Defining one generated SDK operation across multiple services: mappings, dependencies, rollback, outputs, call-time targets, and connected-auth selectors |
+| `fused-sdk` | Generating a typed SDK package and constructing physical Engine execution API calls |
+| `fused-unified-app` | Building and deploying a hosted TypeScript Unified App, including connected-user routing |
 | `fused-mcp` | Generating an Engine-hosted MCP server from selected operations and explicit provider event resources |
 | `fused-webhook` | Registering inbound webhook ingress (`kind: webhook`) and attaching it to an SDK or MCP app via `webhook_attachment` |
 | `fused-bucket` | Credential containers: secrets, static values, registering a service's OAuth/OIDC app, starting an OAuth connect session, managing a connected user's resources |
@@ -880,14 +880,17 @@ as selecting all operations. Use explicit complete-catalogue language when that
 scope is intended. Each proposal still requires interactive review before apply.
 This creation-time selection does not enable an MCP's runtime intelligent search.
 
-Describe creates a hosted TypeScript Execution App by default. It drafts one
-`buildExecutionApp` source draft from exact Registry operation contracts and
+Describe creates a hosted TypeScript Unified App by default. It drafts one
+`buildUnifiedApp` source draft from exact Registry operation contracts and
 shows the full source and operation scope for review. It saves the selected
-cart and source in `.fused/executions/<name>.yaml`, then sends that config to
-Engine through the regular Execution App plan/apply lifecycle. Engine resolves
+cart in `.fused/unified_app/<name>.yaml` and source in
+`.fused/unified_app/<name>.tsx`, then sends the resolved config to
+Engine through the regular Unified App plan/apply lifecycle. Engine resolves
 operation IDs, compiles TypeScript, and deploys the bundle. No local compiler
 or `FUSED_EXECUTION_BUILD` variable is needed.
 `--kind sdk`, `--kind mcp`, and `--kind rest` retain their existing output paths.
-Execution App describe currently requires 1 to 16 explicit operations and a
-creation goal. To change an existing Execution App, edit the config source and
-deploy a reviewed new version with `fused-cli execution plan/apply`.
+Unified App describe currently requires 1 to 16 explicit operations and a
+creation goal. To change an existing Unified App, edit the linked TypeScript
+file and deploy a reviewed new version with `fused-cli unified-app plan/apply`.
+`fused-cli unified-app sync` converts legacy inline source into the canonical
+TypeScript file and rewrites the YAML to use `source_path`.

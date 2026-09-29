@@ -310,14 +310,14 @@ func TestMCPVersionsJSONRetainsTypedTransportEndpoints(t *testing.T) {
 	}
 }
 
-// TestMCPOperationsListsPhysicalAndUnifiedOperations verifies human discovery remains exact-version scoped.
-func TestMCPOperationsListsPhysicalAndUnifiedOperations(t *testing.T) {
+// TestMCPOperationsListsPhysicalOperations verifies human discovery remains exact-version scoped.
+func TestMCPOperationsListsPhysicalOperations(t *testing.T) {
 	server := httptest.NewServer(mcpOperationsTestHandler(t))
 	defer server.Close()
 
 	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"mcp", "operations", "support@2.0.0"})
-	// Both runtime operation categories must be visible under their public invocation names.
-	for _, expected := range []string{"OPERATION_ID", "KIND", "tickets.list", "physical", "support.resolve", "unified"} {
+	// Physical operations must be visible under their public invocation names.
+	for _, expected := range []string{"OPERATION_ID", "KIND", "tickets.list", "physical"} {
 		// Every header and operation value is independently required in the human table.
 		if !strings.Contains(out, expected) {
 			t.Fatalf("MCP operations output %q is missing %q", out, expected)
@@ -337,7 +337,7 @@ func TestMCPOperationsJSONPreservesExactCatalogue(t *testing.T) {
 		t.Fatalf("decode MCP operations JSON %q: %v", out, err)
 	}
 	// JSON is the complete Engine response rather than a lossy table projection.
-	if catalogue.VersionID != "mcp-version-1" || catalogue.Total != 2 || len(catalogue.Operations) != 2 || catalogue.Operations[0].ServiceID != "service-1" || catalogue.Operations[1].Kind != "unified" {
+	if catalogue.VersionID != "mcp-version-1" || catalogue.Total != 1 || len(catalogue.Operations) != 1 || catalogue.Operations[0].ServiceID != "service-1" {
 		t.Fatalf("unexpected MCP operations JSON: %#v", catalogue)
 	}
 }
@@ -369,7 +369,7 @@ func mcpOperationsTestHandler(t *testing.T) http.Handler {
 		if !strings.Contains(body.Query, "mcpAppOperations") || body.Variables["appId"] != "mcp-version-1" {
 			t.Fatalf("unexpected MCP operation catalogue request: %#v", body)
 		}
-		_, _ = w.Write([]byte(`{"data":{"mcpAppOperations":{"mcp_id":"mcp-1","version_id":"mcp-version-1","name":"support","version":"2.0.0","total":2,"operations":[{"operation_id":"tickets.list","kind":"physical","service_id":"service-1","service_version_id":"service-version-1"},{"operation_id":"support.resolve","kind":"unified","service_id":"","service_version_id":""}]}}}`))
+		_, _ = w.Write([]byte(`{"data":{"mcpAppOperations":{"mcp_id":"mcp-1","version_id":"mcp-version-1","name":"support","version":"2.0.0","total":1,"operations":[{"operation_id":"tickets.list","kind":"physical","service_id":"service-1","service_version_id":"service-version-1"}]}}}`))
 	})
 }
 

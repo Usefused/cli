@@ -14,7 +14,6 @@ import (
 )
 
 type unifiedExtendOptions struct {
-	workflowIDs []string
 	services    []string
 	operations  []string
 	selectAll   []string
@@ -60,7 +59,6 @@ next minor release; pass --version to choose a different immutable successor.`,
 		}),
 	}
 
-	command.Flags().StringSliceVar(&opts.workflowIDs, "workflow", nil, "Exact Registry workflow release UUID; repeat to bundle workflows")
 	command.Flags().StringSliceVar(&opts.services, "service", nil, "Registry service as <service>[@<version>]; comma-separated or repeatable")
 	command.Flags().StringSliceVar(&opts.operations, "operation", nil, "Selected operation as <service>=<operationId>; repeatable")
 	command.Flags().StringSliceVar(&opts.selectAll, "select-all", nil, "Service whose complete operation surface should be selected; repeatable")
@@ -243,7 +241,7 @@ func buildUnifiedExtendRequest(cmd *cobra.Command, target unifiedExtendTarget, o
 
 // parseUnifiedExtendSelections reuses physical flag parsing and inherits omitted provider pins from the existing app.
 func parseUnifiedExtendSelections(target unifiedExtendTarget, opts *unifiedExtendOptions) (scaffoldRequest, error) {
-	request := scaffoldRequest{workflowIDs: opts.workflowIDs}
+	request := scaffoldRequest{}
 	var err error
 	request.services, err = parseScaffoldServices(opts.services, false)
 	// Malformed service references must not be inherited into the existing config.
@@ -282,14 +280,14 @@ func validateUnifiedExtendOverrides(cmd *cobra.Command, target unifiedExtendTarg
 
 // completeUnifiedExtendSelections opens the existing selector only when no deterministic extension was supplied.
 func completeUnifiedExtendSelections(request *scaffoldRequest, target unifiedExtendTarget) error {
-	hasIntent := len(request.services)+len(request.operations)+len(request.selectAll)+len(request.workflowIDs) > 0
+	hasIntent := len(request.services)+len(request.operations)+len(request.selectAll) > 0
 	// Version-only or description-only updates are also explicit changes.
 	if hasIntent || request.versionSet || request.descriptionSet {
 		return nil
 	}
 	// Noninteractive extension requires deterministic user intent.
 	if nonInteractive() {
-		return errors.New("--no-input extend requires --service, --operation, --select-all, --workflow, --version, or an MCP --description")
+		return errors.New("--no-input extend requires --service, --operation, --select-all, --version, or an MCP --description")
 	}
 	request.services = unifiedExtendSelectableServices(target.config)
 	// An empty existing app offers no safe provider selection to infer.
