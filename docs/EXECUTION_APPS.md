@@ -22,6 +22,12 @@ export default buildExecutionApp({
 });
 ```
 
+To deploy this TypeScript, place the complete source under `source: |` in an
+Execution App YAML config, then run `fused-cli execution plan` and
+`fused-cli execution apply`. The [step-by-step apply guide](execution-apps/example.md)
+shows the file and commands. The Engine compiles the source during plan; no
+local TypeScript build is required.
+
 ## Builder parts
 
 | Part | Purpose |

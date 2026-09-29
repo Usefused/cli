@@ -1,37 +1,12 @@
 # OAuth in Execution Apps
 
-An Execution App uses the selected workspace operation's connection through
-its configured bucket. Connect each end user to the service before invoking
-an operation on that user's behalf. The app source receives a stable user
-reference, never the provider's access or refresh token.
+An Execution App uses a connection in its configured bucket. The TypeScript
+receives a stable user reference, not provider tokens.
 
-## Connect a user
+## 1. Connect the user
 
-Choose an OAuth application for the exact service and auth scheme. If a Fused
-Managed App is available, select it explicitly in the Execution App's service
-config:
-
-```yaml
-services:
-  crm:
-    version: "2026-01-01"
-    operations: [getCustomer]
-    auth:
-      type: oauth
-      name: crmOAuth
-      ref: "${fused.bucket.auth.crm.crmOAuth}"
-```
-
-Check availability with `fused-cli workspace managed-auth status`. If you use
-your own provider app instead, store its client pair in the same bucket:
-
-```bash
-printf '%s' 'client_id=...;client_secret=...' |
-  fused-cli secret set crm --bucket default \
-    --type oauth --auth-name crmOAuth --value-stdin
-```
-
-For your own provider app, start a connection for a stable end-user reference:
+First, configure the service's OAuth application in the bucket. Then start
+consent for the user the app will act for:
 
 ```bash
 fused-cli workspace service connect crm \
@@ -39,71 +14,48 @@ fused-cli workspace service connect crm \
   --type oauth --auth-name crmOAuth
 ```
 
-For the Managed App option, include the same managed reference in the
-standalone connection command. It does not infer the app config's `auth.ref`:
-
-```bash
-fused-cli workspace service connect crm \
-  --bucket default --user-ref customer-42 \
-  --type oauth --auth-name crmOAuth \
-  --auth-ref '${fused.bucket.auth.crm.crmOAuth}'
-```
-
-The command starts the service's consent flow. Replace the service and scheme
-with the exact names configured in your workspace. If the service has just one
-compatible OAuth/OIDC scheme, `--type` and `--auth-name` may be omitted
-together. To inspect connection status without reading credentials:
+Use the service and auth scheme selected in your app config. After the user
+completes consent, check the connection:
 
 ```bash
 fused-cli bucket connections default --service crm --user customer-42
 ```
 
-The [CLI command reference](../COMMANDS.md) covers bucket and connection
-commands, and the [config reference](../CONFIG_AS_CODE.md) covers `auth.ref`.
-Engine refreshes eligible connected tokens; keep the same user reference when
-reconnecting.
+## 2. Use the reference in TypeScript
 
-## Route app calls to that connection
-
-Select the operation in the app's `services` config. Inside `execute`, bind a
-reference to calls through a helper:
+Select `getCustomer` for `crm` in the app config. Declare `userRef` and
+`customerId` in the app's Zod input schema, then call the selected operation
+inside `execute`:
 
 ```ts
-const crm = fused.forUserRef(input.userRef);
-const customer = await crm.fetch({
-  service: "crm",
-  operation: "getCustomer",
-  input: { id: input.customerId },
-  selector: { authType: "oauth", authName: "crmOAuth" },
-});
-```
-
-`fused.forUserRef(ref)` uses one reference for every service called through
-that helper. When services use different references, bind each service:
-
-```ts
-const connected = fused.forServiceUserRefs({
-  crm: input.crmUserRef,
-  billing: input.billingUserRef,
-});
-const customer = await connected.fetch({
+const customer = await fused.forUserRef(input.userRef).fetch({
   service: "crm",
   operation: "getCustomer",
   input: { id: input.customerId },
 });
 ```
 
-Declare these user-reference fields in the app's Zod `input` schema, and
-connect each reference in the same bucket as the app. The helpers reject a
-conflicting `selector.endUserRef` on an individual call. They do not create a
-connection or grant new provider permissions. A direct `fused.fetch` call can
-instead set `selector.endUserRef` explicitly.
+For the connection above, the request's `userRef` is `customer-42`. The helper
+does not create a connection; it routes the call through the one already
+stored in the app's bucket. For different user references per service, use
+`fused.forServiceUserRefs({ crm: input.crmUserRef, billing: input.billingUserRef })`.
 
-For a selected operation with an Engine pagination policy, a bound call can
-also specify `pagination: { maxPages: 2 }`. The value must be a positive
-integer below that operation's configured page limit; without it, the
-operation's automatic pagination policy applies.
+## OAuth application setup
 
-See the [`buildExecutionApp` guide](../EXECUTION_APPS.md) for the function's
-contract and the [complete example](example.md) for the config and apply
-commands.
+If your workspace uses its own provider application, store its client pair
+before running `workspace service connect`:
+
+```bash
+printf '%s' 'client_id=...;client_secret=...' |
+  fused-cli secret set crm --bucket default \
+    --type oauth --auth-name crmOAuth --value-stdin
+```
+
+If your service supports a Fused Managed App, set the service's `auth.ref` to
+`"${fused.bucket.auth.crm.crmOAuth}"` in the app config and add
+`--auth-ref '${fused.bucket.auth.crm.crmOAuth}'` to the connection command.
+The standalone connection command does not infer the app's `auth.ref`. See the
+[config reference](../CONFIG_AS_CODE.md) for the auth field shape.
+
+For the complete config and deployment commands, see the
+[Execution App example](example.md).

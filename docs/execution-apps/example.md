@@ -4,7 +4,12 @@ This example selects one workspace operation, stores a searchable customer ID,
 and returns a typed output. Replace `crm`, its version, and `createCustomer`
 with an operation enabled in your workspace. Use a bucket you can access.
 
-Create `.fused/executions/customer-app.yaml`:
+## 1. Put the TypeScript in the config
+
+Create `.fused/executions/customer-app.yaml`. The `source: |` block is the
+TypeScript entry point, and every source line is indented by two spaces. If
+you draft the code in a separate `.ts` file, copy its complete contents into
+this block before planning:
 
 ```yaml
 apiVersion: fused/v1
@@ -35,19 +40,23 @@ source: |
   });
 ```
 
-Plan and apply the config:
+## 2. Compile and host it
+
+Run these commands from the directory containing `.fused/`:
 
 ```bash
 fused-cli execution plan -f .fused/executions/customer-app.yaml --json
 fused-cli execution apply -f .fused/executions/customer-app.yaml --json
 ```
 
-The CLI sends the source and selected-operation cart to the Engine. The Engine
-resolves the operations and compiles the TypeScript during plan, then publishes
-the bundle during apply. Save the returned App ID and one-time family execution
-token securely. `fused-cli describe '<goal>'` can draft and deploy an Execution
-App through an interactive review; this YAML path is useful when you want to
-edit the source directly.
+`execution plan` sends the YAML's source and selected operations to the
+Engine, where the TypeScript is validated and compiled. `execution apply`
+uses that plan to host the compiled bundle and activate the App. There is no
+local `tsc` step or separate `.ts` upload command. Save the returned App ID and
+one-time family execution token securely. `fused-cli describe '<goal>'` can
+draft and deploy an Execution App through an interactive review.
+
+## 3. Execute the deployed App
 
 Call the same Engine REST route used for SDK apps:
 
