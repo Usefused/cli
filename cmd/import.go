@@ -119,7 +119,7 @@ func init() {
 	importPlanCmd.Flags().StringVar(&importPlanVersion, "version", "", "Source provider version fallback when the specification does not declare one")
 	importPlanCmd.Flags().StringVar(&importPlanDestinationVersion, "destination-version", "", "Existing provider version to augment (requires --target webhooks)")
 	importPlanCmd.Flags().StringVar(&importPlanTarget, "target", "endpoints", "Contract content to import: all, endpoints, or webhooks")
-	importPlanCmd.Flags().BoolVar(&importPlanPublic, "public", false, "Registry visibility: for a brand-new service, marks the service (and its first version) public -- default private if omitted. For a new version of an existing service, stages just that version's visibility -- default public (matching prior versions) if omitted, so existing automation that never passes this flag is unaffected.")
+	importPlanCmd.Flags().BoolVar(&importPlanPublic, "public", false, "Registry visibility: a new service defaults private; its first version is available when the service is public. For a new version of an existing service, defaults public unless --public=false. Re-importing an existing version preserves its visibility.")
 	importPlanCmd.Flags().StringVar(&importPlanCategory, "category", "", "Category for a new service")
 	importPlanCmd.Flags().StringVar(&importPlanOverlay, "overlay", "", "Local overlay file applied by the Registry during planning")
 	importPlanCmd.Flags().StringVar(&importPlanReceiptOut, "receipt-out", "", "Write the plan receipt to a specific path")
