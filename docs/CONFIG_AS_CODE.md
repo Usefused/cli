@@ -1,7 +1,7 @@
 # Config as code
 
-Fused can manage workspace services, Apps with SDK, MCP, and REST delivery,
-and webhook registrations through YAML stored under `.fused/`.
+Fused can manage workspace services, Execution Apps, Apps with SDK, MCP, and
+REST delivery, and webhook registrations through YAML stored under `.fused/`.
 
 ## Create or extend a config
 
@@ -79,6 +79,30 @@ JSON scaffold output with `generated_binding_count`; use each key written into
 the config with `fused-cli value set`. The `fused-config` OpenAPI/Postman
 reference contains the single canonical Sendbird setup example and routing
 safety rules.
+
+## Execution App configuration
+
+An Execution App is a distinct `kind: execution` resource. Its config selects
+explicit workspace operations and includes one TypeScript `source` export using
+`buildExecutionApp({ input, output, execute, fetch? })`. Input and output use
+Zod. Set `language: typescript` and `generate: false`; the CLI sends source to
+Engine, which compiles it during `execution plan` and publishes the bundle
+during `execution apply`. The CLI does not compile or attach a bundle for an
+inline-source config.
+
+Store the config under `.fused/executions/` and run:
+
+```bash
+fused-cli execution plan -f .fused/executions/customer-app.yaml --json
+fused-cli execution apply -f .fused/executions/customer-app.yaml --json
+```
+
+Engine returns the immutable App version ID and shows its family execution
+token once. A new source revision needs a new App version. `source` and a
+precompiled `bundle_digest` are mutually exclusive; `select_all` and
+`unified_operations` are not valid for Execution Apps. See
+[Execution Apps](EXECUTION_APPS.md) for a complete YAML example, provider
+calls, stored results, replay, rerun, and the shared REST route.
 
 ## SDK configuration
 

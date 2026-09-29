@@ -212,13 +212,15 @@ Sendbird binding and bucket-value setup.
 
 ## `describe <goal>`
 
-Turn a natural-language goal into a reviewable App proposal. `describe` selects
-an SDK, MCP server, or direct REST app from the goal; use `--kind sdk|mcp|rest`
-to constrain that choice. Use `init` without a method flag when you want one
-App with all three delivery methods by default.
+Turn a natural-language goal into a reviewable Execution App by default.
+`describe` shows the drafted TypeScript source and exact selected operations,
+then sends that cart to Engine for compilation and deployment after approval.
+Use `--kind sdk|mcp|rest` to request another output. Use `init` without a method
+flag when you want one App with SDK, MCP, and REST delivery.
 
 ```bash
-fused-cli describe 'Create a TypeScript SDK for Stripe customer lookup'
+fused-cli describe 'Create a customer onboarding app using Stripe'
+fused-cli describe --kind sdk 'Create a TypeScript SDK for Stripe customer lookup'
 fused-cli describe --kind mcp 'Help support teams find and update Jira issues'
 fused-cli describe --update billing-sdk 'Add Stripe invoice lookup'
 ```
@@ -231,11 +233,13 @@ Registry's configured language model. The CLI discloses those requests before
 sending them. SDK and MCP proposals can attach provider webhook events; direct
 REST apps have no event receiver.
 
-`--update <app-name>` uses an existing local App config and publishes an
-immutable successor when the reviewed proposal changes it. Use `-f <path>`
-when a name is ambiguous. `--name`, `--version`, `--language`, and `--bucket`
-constrain creation; updates preserve omitted settings. A missing update target
-stops before creating anything.
+Execution App creation needs 1–16 explicit operations. Edit its TypeScript
+config and deploy a new version to update it. `--update <app-name>` applies to
+existing SDK, MCP, and REST configs and publishes an immutable successor when
+the reviewed proposal changes it. Use `-f <path>` when a name is ambiguous.
+`--name`, `--version`, `--language`, and `--bucket` constrain creation; updates
+preserve omitted settings. A missing update target stops before creating
+anything. See [Execution Apps](EXECUTION_APPS.md) for config and API examples.
 
 ## `workspace init`
 

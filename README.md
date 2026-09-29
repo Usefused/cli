@@ -234,22 +234,27 @@ non-SemVer versions require an explicit successor.
 Use `describe` in an interactive terminal to review and apply a natural-language request:
 
 ```bash
-fused-cli describe "Create a TypeScript SDK for Stripe customer lookup"
+fused-cli describe "Create a customer onboarding app using Stripe"
+fused-cli describe --kind sdk "Create a TypeScript SDK for Stripe customer lookup"
 fused-cli describe --update billing-sdk "Add Stripe invoice lookup"
 fused-cli describe --update billing-sdk \
   "Add one operation that creates a Stripe customer, then creates an invoice for that customer"
 ```
 
-`describe` selects an SDK, MCP, or REST outcome from the goal; use `--kind` to
-constrain it. For one App with all three delivery methods, use `init` without
-a method flag. `describe` always requires interactive proposal review.
+`describe` creates a hosted TypeScript Execution App by default. It shows the
+source and selected operations for review, then Engine compiles and deploys the
+App after confirmation. Use `--kind sdk|mcp|rest` for another output. For one
+App with SDK, MCP, and REST delivery, use `init` without a method flag.
+`describe` always requires interactive proposal review. See
+[Execution Apps](docs/EXECUTION_APPS.md) for the config and REST lifecycle.
 
-You can also name the existing app in the goal: `Update billing-sdk to add Stripe invoice lookup`.
-Updates resolve an existing local config; pass `-f <path>` when names are ambiguous.
+You can also name an existing SDK, MCP, or REST app in the goal: `Update billing-sdk to add Stripe invoice lookup`.
+Those updates resolve an existing local config; pass `-f <path>` when names are ambiguous.
 They preserve existing selections, language, bucket, auth, and service versions.
 A changed config receives the next minor version, or the version you provide with
 `--version`. An unchanged proposal keeps its current version. Missing update targets
-never fall back to creating an app.
+never fall back to creating an app. To update an Execution App, edit its source
+config and deploy a new version.
 
 Explicit sequential runtime intent produces one Unified Operation for a TypeScript
 or Python SDK, or an MCP server. A list of independent capabilities joined by “and”
