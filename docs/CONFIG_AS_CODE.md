@@ -101,8 +101,9 @@ Engine returns the immutable App version ID and shows its family execution
 token once. A new source revision needs a new App version. `source` and a
 precompiled `bundle_digest` are mutually exclusive; `select_all` and
 `unified_operations` are not valid for Execution Apps. See
-[Execution Apps](EXECUTION_APPS.md) for a complete YAML example, provider
-calls, stored results, replay, rerun, and the shared REST route.
+the [`buildExecutionApp` guide](EXECUTION_APPS.md) for the function contract,
+or the [complete example](execution-apps/example.md) for YAML, apply, and API
+calls.
 
 ## SDK configuration
 

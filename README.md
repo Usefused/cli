@@ -246,7 +246,8 @@ source and selected operations for review, then Engine compiles and deploys the
 App after confirmation. Use `--kind sdk|mcp|rest` for another output. For one
 App with SDK, MCP, and REST delivery, use `init` without a method flag.
 `describe` always requires interactive proposal review. See
-[Execution Apps](docs/EXECUTION_APPS.md) for the config and REST lifecycle.
+[`buildExecutionApp`](docs/EXECUTION_APPS.md) for the function contract and
+the [complete example](docs/execution-apps/example.md) for config and REST calls.
 
 You can also name an existing SDK, MCP, or REST app in the goal: `Update billing-sdk to add Stripe invoice lookup`.
 Those updates resolve an existing local config; pass `-f <path>` when names are ambiguous.

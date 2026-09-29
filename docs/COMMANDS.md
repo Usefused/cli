@@ -239,7 +239,9 @@ existing SDK, MCP, and REST configs and publishes an immutable successor when
 the reviewed proposal changes it. Use `-f <path>` when a name is ambiguous.
 `--name`, `--version`, `--language`, and `--bucket` constrain creation; updates
 preserve omitted settings. A missing update target stops before creating
-anything. See [Execution Apps](EXECUTION_APPS.md) for config and API examples.
+anything. See the [`buildExecutionApp` guide](EXECUTION_APPS.md) for the
+function contract and the [complete example](execution-apps/example.md) for
+config and API calls.
 
 ## `workspace init`
 
