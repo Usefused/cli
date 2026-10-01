@@ -459,9 +459,9 @@ func TestDevAppSkillsDocumentExactSelectionSchemaVersion(t *testing.T) {
 	}
 }
 
+// TestCLISkillsUseCurrentCommandLanguage rejects obsolete CLI selectors while permitting canonical API fields such as app_family_id.
 func TestCLISkillsUseCurrentCommandLanguage(t *testing.T) {
 	stale := []string{
-		"family",
 		"fused-cli bucket <",
 		"fused-cli secret <",
 		"fused-cli connect <",
@@ -485,13 +485,9 @@ func TestCLISkillsUseCurrentCommandLanguage(t *testing.T) {
 			return readErr
 		}
 		content := string(data)
-		lower := strings.ToLower(content)
 		for _, token := range stale {
-			candidate := content
-			if token == "family" {
-				candidate = lower
-			}
-			if strings.Contains(candidate, token) {
+			// Canonical API identities are valid; only the obsolete command forms are prohibited.
+			if strings.Contains(content, token) {
 				t.Errorf("%s contains stale or internal command language %q", path, token)
 			}
 		}

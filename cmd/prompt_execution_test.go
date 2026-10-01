@@ -92,6 +92,10 @@ func TestDeployPromptExecutionSendsCartToEngine(t *testing.T) {
 	if strings.Join(paths, ",") != "/unified-app-config/plan,/unified-app-config/apply" || !strings.Contains(output.String(), "Execution token (shown once): once") {
 		t.Fatalf("routes=%#v output=%q", paths, output.String())
 	}
+	// Deploy output must offer the stable invocation URL rather than the newly published version UUID.
+	if !strings.Contains(output.String(), server.URL+"/v1/apps/family-1/executions") || strings.Contains(output.String(), "/v1/apps/"+appID+"/executions") {
+		t.Fatalf("unstable execution URL: %s", output.String())
+	}
 	parsed, err := configfile.ParseFile(request.path)
 	if err != nil || parsed.Kind != configfile.KindUnifiedApp || parsed.UnifiedApp.Source != source || parsed.UnifiedApp.SourcePath != "billing.tsx" {
 		t.Fatalf("published config=%#v err=%v", parsed, err)

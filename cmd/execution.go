@@ -66,12 +66,13 @@ type unifiedApplyOutput struct {
 	Status           string                `json:"status"`
 	AppFamilyID      string                `json:"app_family_id"`
 	AppID            string                `json:"app_id"`
+	ExecutionURL     string                `json:"execution_url"`
 	ExecutionToken   string                `json:"execution_token,omitempty"`
 	HostedMCP        bool                  `json:"hosted_mcp,omitempty"`
 	MCPTransportURLs *api.MCPTransportURLs `json:"mcp_transport_urls,omitempty"`
 }
 
-// applyExecutionVersion sends the exact plan receipt to Engine and retains the one-time token only in output.
+// applyExecutionVersion retains deployment identity while advertising only the stable family execution URL.
 func applyExecutionVersion(client *api.Client, cfg *configfile.ParsedConfig, receipt planReceipt) (unifiedApplyOutput, error) {
 	resp, err := client.ApplyUnifiedAppConfig(receipt.PlanID, receipt.SourceHash, receipt.NoToken)
 	// An uncertain mutation cannot be reported as a safe retry.
@@ -79,7 +80,7 @@ func applyExecutionVersion(client *api.Client, cfg *configfile.ParsedConfig, rec
 		return unifiedApplyOutput{}, fmt.Errorf("failed to apply Unified App %s: %w", cfg.UnifiedApp.Name, err)
 	}
 	result := unifiedApplyOutput{ConfigKey: cfg.ConfigKey, PlanID: resp.PlanID, Status: resp.Status,
-		AppFamilyID: resp.AppFamilyID, AppID: resp.AppID, ExecutionToken: resp.ExecutionToken, HostedMCP: resp.HostedMCP}
+		AppFamilyID: resp.AppFamilyID, AppID: resp.AppID, ExecutionURL: sdkInvokeEndpoint(client.BaseURL, resp.AppFamilyID), ExecutionToken: resp.ExecutionToken, HostedMCP: resp.HostedMCP}
 	// The optional transport shares this exact App version and family token.
 	if resp.HostedMCP {
 		result.MCPTransportURLs = &resp.MCPTransportURLs
@@ -87,13 +88,14 @@ func applyExecutionVersion(client *api.Client, cfg *configfile.ParsedConfig, rec
 	return result, nil
 }
 
-// applyPreparedExecution prints only deployment metadata and the token Engine returns once.
+// applyPreparedExecution advertises stable invocation identity separately from the deployed version label.
 func applyPreparedExecution(client *api.Client, cfg *configfile.ParsedConfig, receipt planReceipt) error {
 	result, err := applyExecutionVersion(client, cfg, receipt)
 	if err != nil {
 		return err
 	}
-	fmt.Printf("Applied Unified App %s (version %s).\n", cfg.UnifiedApp.Name, result.AppID)
+	fmt.Printf("Applied Unified App %s (version %s).\n", cfg.UnifiedApp.Name, cfg.UnifiedApp.Version)
+	fmt.Printf("  App ID: %s\n  Execution URL: %s\n", result.AppFamilyID, result.ExecutionURL)
 	// Plaintext tokens cannot be recovered from Engine after this response.
 	if result.ExecutionToken != "" {
 		fmt.Printf("  Execution token (shown once): %s\n", result.ExecutionToken)

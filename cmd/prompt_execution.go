@@ -153,7 +153,8 @@ func deployPromptExecution(cmd *cobra.Command, client *api.Client, plan promptIn
 		return fmt.Errorf("%w; retry with fused-cli unified-app apply -f %s", err, plan.primary.path)
 	}
 	recordAppliedChange(cmd.Context(), cmd.CommandPath(), "unified_app")
-	fmt.Fprintf(cmd.OutOrStdout(), "Deployed Unified App %s (%s) with %d operation(s).\n", plan.primary.name, result.AppID, len(plan.primary.operations))
+	fmt.Fprintf(cmd.OutOrStdout(), "Deployed Unified App %s (%s) with %d operation(s).\n", plan.primary.name, result.AppFamilyID, len(plan.primary.operations))
+	fmt.Fprintf(cmd.OutOrStdout(), "Execution URL: %s\n", result.ExecutionURL)
 	// Engine returns the initial family token exactly once after deployment.
 	if result.ExecutionToken != "" {
 		fmt.Fprintf(cmd.OutOrStdout(), "Execution token (shown once): %s\n", result.ExecutionToken)

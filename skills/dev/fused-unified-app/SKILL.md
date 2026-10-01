@@ -29,13 +29,13 @@ Create `customer-app.tsx` next to that YAML file:
 ```ts
 import * as z from "zod/mini";
 import { buildUnifiedApp } from "@fused/unified-app";
-import { services } from "@fused/operations";
+import { fused } from "@fused/operations";
 
 export default buildUnifiedApp({
   input: z.object({ name: z.string() }),
   output: z.object({ customerId: z.string() }),
   async execute({ input }) {
-    const customer = await services.crm.createCustomer({ name: input.name });
+    const customer = await fused.crm.createCustomer({ name: input.name });
     return { customerId: customer.id };
   },
 });
@@ -48,7 +48,7 @@ fused-cli unified-app plan -f .fused/unified_app/customer-app.yaml --json
 fused-cli unified-app apply -f .fused/unified_app/customer-app.yaml --json
 ```
 
-Engine compiles the linked TypeScript during plan and hosts it on apply. Save the returned App ID and one-time execution token securely. `fused-cli unified-app sync -f <config>` moves older inline source into a linked TypeScript file. `bundle_digest` and `unified-app bundle attach` are only for code compiled separately; never combine `bundle_digest` with `source_path`.
+Engine compiles the linked TypeScript during plan and hosts it on apply. Save the returned `app_family_id` and one-time execution token securely. Call `POST /v1/apps/{app_family_id}/executions` with that token and `{"operation":"execute","input":{...}}`. The response exposes `appFamilyId` and the executed `version`; exact version IDs stay in internal receipts and version management. `fused-cli unified-app sync -f <config>` moves older inline source into a linked TypeScript file. `bundle_digest` and `unified-app bundle attach` are only for code compiled separately; never combine `bundle_digest` with `source_path`.
 
 ## Switch traffic to an existing version
 
@@ -62,11 +62,11 @@ fused-cli unified-app promote -f .fused/unified_app/customer-app.yaml --version 
 
 An explicit app name takes precedence over config selection and needs no local file. Without a name, the CLI reads the top-level `name` from the selected `kind: unified_app` config. Config discovery must select exactly one Unified App; use `-f` to disambiguate. Always pass `--version`; the YAML `version` does not select the traffic destination. Promotion leaves the YAML and linked TypeScript unchanged and does not rebuild the app.
 
-Only a retained, runnable version can receive traffic. Promotion requires `app.unified_app.read` and `app.unified_app.manage`. It switches new executions while preserving historical results. Clients using an exact version URL must call the selected version's URL; the hosted MCP family URL follows the active version, and previous-version MCP sessions must reconnect. If another deployment changes traffic concurrently, inspect the current destination before retrying; do not blindly repeat a failed mutation. Add `--json` for a receipt containing `name`, `version`, `app_family_id`, and `active_app_id`.
+Only a retained, runnable version can receive traffic. Promotion requires `app.unified_app.read` and `app.unified_app.manage`. It switches new executions while preserving historical results. The stable REST family URL and token follow each traffic switch without client changes; exact Unified App version IDs are rejected as runtime URLs. Historical reads use that family URL and their original read handle. Rerun/replay require the source version to remain current; the hosted MCP family URL follows the active version, and previous-version MCP sessions must reconnect. If another deployment changes traffic concurrently, inspect the current destination before retrying; do not blindly repeat a failed mutation. Add `--json` for a receipt containing `name`, `version`, `app_family_id`, and `active_app_id`.
 
 ## OAuth and user references
 
-Connect a user to each provider service in the app's selected bucket before calling that service. Pass a stable user reference in the request input, then use `fused.forUserRef(input.userRef).fetch(...)` in TypeScript. For a person with different references across services, use `fused.forServiceUserRefs({ crm: input.crmUserRef, billing: input.billingUserRef })`. The references route through existing bucket connections; the app does not receive provider tokens. Use `fused-bucket` for OAuth application credentials and connecting users, and `fused-config` for auth selection. A fixed reference can be held in app code or config when all executions intentionally use the same connected user.
+Connect a user to each provider service in the app's selected bucket before calling that service. Pass a stable user reference in the request input, then use `fused.forUserRef(input.userRef).serviceName.operationName(input)` in TypeScript. For a person with different references across services, use `fused.forServiceUserRefs({ crm: input.crmUserRef, billing: input.billingUserRef })`. The references route through existing bucket connections; the app does not receive provider tokens. Use `fused-bucket` for OAuth application credentials and connecting users, and `fused-config` for auth selection. A fixed reference can be held in app code or config when all executions intentionally use the same connected user.
 
 ## Permissions and team access
 
