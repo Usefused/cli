@@ -558,7 +558,7 @@ func validateAppConfig(cfg *AppConfig, kind ConfigKind) error {
 }
 
 // validateAppKindFields enforces the small set of SDK- and MCP-specific
-// package fields before shared service and Unified-operation validation.
+// package fields before shared service and Unified App attachment validation.
 func validateAppKindFields(cfg *AppConfig, kind ConfigKind) error {
 	// Kind-specific helpers keep this shared boundary below the complexity budget as the contracts diverge.
 	if kind == KindSDK {

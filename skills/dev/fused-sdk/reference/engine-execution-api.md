@@ -130,6 +130,24 @@ For a mutating physical operation, provide one stable `Idempotency-Key` across
 retries when the exported operation contract supports safe idempotency. Never
 blindly replay a timed-out provider mutation with a newly generated key.
 
+## Attached Unified App request
+
+Use the immutable SDK version and its execution token to invoke an approved
+`unified_apps` attachment. The attachment alias selects the hosted capability;
+its authored schema defines `input`:
+
+```json
+{
+  "operation": "unified_app:customer_lookup",
+  "input": { "email": "customer@example.com" }
+}
+```
+
+Use only an alias admitted by this SDK's configuration. The example input must
+be replaced with values matching that app's authored schema. Engine validates
+the consumer's access before running the app. Inspect the returned execution
+`status` and `output`; failures do not authorize an automatic retry.
+
 ## Interpret the response
 
 A successful physical wrapper has this shape:

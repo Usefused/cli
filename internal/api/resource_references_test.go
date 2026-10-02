@@ -194,21 +194,21 @@ func TestListMCPAppOperationsUsesExactAppID(t *testing.T) {
 		if request.Variables["appId"] != "mcp-version-1" {
 			t.Fatalf("unexpected MCP app ID: %#v", request.Variables)
 		}
-		// Physical provenance and kind let automation distinguish direct operations from Unified Operations.
+		// Physical provenance preserves the selected service authority in catalogue responses.
 		for _, field := range []string{"operation_id", "kind", "service_id", "service_version_id"} {
 			// Omitting any typed field would make the JSON command response lossy.
 			if !strings.Contains(request.Query, field) {
 				t.Fatalf("MCP operation query does not request %s: %s", field, request.Query)
 			}
 		}
-		_, _ = w.Write([]byte(`{"data":{"mcpAppOperations":{"mcp_id":"mcp-1","version_id":"mcp-version-1","name":"support","version":"2.0.0","total":2,"operations":[{"operation_id":"tickets.list","kind":"physical","service_id":"service-1","service_version_id":"service-version-1"},{"operation_id":"support.resolve","kind":"unified","service_id":"","service_version_id":""}]}}}`))
+		_, _ = w.Write([]byte(`{"data":{"mcpAppOperations":{"mcp_id":"mcp-1","version_id":"mcp-version-1","name":"support","version":"2.0.0","total":2,"operations":[{"operation_id":"tickets.list","kind":"physical","service_id":"service-1","service_version_id":"service-version-1"},{"operation_id":"tickets.resolve","kind":"physical","service_id":"service-1","service_version_id":"service-version-1"}]}}}`))
 	}))
 	defer server.Close()
 
 	client := NewClient(server.URL, "test-key")
 	catalogue, err := client.ListMCPAppOperations("mcp-version-1")
-	// Typed decoding must preserve the exact version and both operation categories.
-	if err != nil || catalogue.VersionID != "mcp-version-1" || catalogue.Total != 2 || len(catalogue.Operations) != 2 || catalogue.Operations[1].Kind != "unified" {
+	// Typed decoding must preserve the exact version and operation provenance.
+	if err != nil || catalogue.VersionID != "mcp-version-1" || catalogue.Total != 2 || len(catalogue.Operations) != 2 || catalogue.Operations[1].Kind != "physical" {
 		t.Fatalf("ListMCPAppOperations = %#v, %v", catalogue, err)
 	}
 }

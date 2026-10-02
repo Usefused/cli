@@ -148,7 +148,7 @@ func (c *Client) ListAppServices(appID string) ([]AppServiceSummary, error) {
 	return response.Services, err
 }
 
-// ListMCPAppOperations reads the complete physical and Unified operation catalogue for one exact MCP version.
+// ListMCPAppOperations reads the complete selected service operation catalogue for one exact MCP version.
 func (c *Client) ListMCPAppOperations(appID string) (*MCPAppOperationCatalogue, error) {
 	query := `query MCPAppOperations($appId: String!) {
 		mcpAppOperations(app_id: $appId) {

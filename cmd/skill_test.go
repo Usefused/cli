@@ -127,7 +127,8 @@ func TestFusedSDKSkillShipsEngineExecutionAPIReference(t *testing.T) {
 		"POST {ENGINE_URL}/v1/apps/{APP_ID}/executions",
 		"Authorization: Bearer {SDK_EXECUTION_TOKEN}",
 		"Physical operation request",
-		"Unified operation request",
+		"Attached Unified App request",
+		"unified_app:customer_lookup",
 		"Idempotency-Key",
 	} {
 		if !strings.Contains(string(data), contract) {
@@ -421,9 +422,8 @@ func TestMCPDevSkillDocumentsPhysicalPaginationDiscovery(t *testing.T) {
 		"guidance for `gmail.users.messages.list` cannot authorize a third argument for `gmail.users.messages.get`",
 		"Only when exact detail for that same `operationId` reports `caller_bound_supported: true`", "Never derive a numeric bound or third argument from a ranked query result",
 		"reports `caller_bound_supported: false`, must use the two-argument form `call(operationId, params)`",
-		"Physical-target pagination inside a Unified operation must stay target-keyed", "Never move it into the separate third argument",
 		"pre-provider argument correction only when no earlier or concurrent call", "`execute_request: correct_arguments` with `provider_execution: not_started`",
-		"`execute_request: do_not_replay` with `provider_execution: unknown`", "pre-provider correction only when isolated",
+		"`execute_request: do_not_replay` with `provider_execution: unknown`",
 		"Engine makes one provider request", "Never infer page, cursor, offset",
 	} {
 		// Every marker changes how a fresh agent formats physical call pagination.
