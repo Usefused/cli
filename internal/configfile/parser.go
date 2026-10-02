@@ -631,9 +631,13 @@ func validateUnifiedAppKindFields(cfg *AppConfig) error {
 	if err := validateExecutionCodeSource(cfg); err != nil {
 		return err
 	}
-	// MCP discovery metadata belongs to hosted MCP config, not the authored execute kind.
-	if cfg.FusedIntelligentClassifier || strings.TrimSpace(cfg.Description) != "" {
+	// Classifier consent has no effect on authored execution and must not enter its immutable state.
+	if cfg.FusedIntelligentClassifier {
 		return fmt.Errorf("Unified App config must not set MCP-only discovery fields")
+	}
+	// The browser editor includes a human-readable summary; keep it bounded like other app metadata.
+	if len(cfg.Description) > maxMCPServerDescriptionLength {
+		return fmt.Errorf("Unified App description must be at most %d bytes", maxMCPServerDescriptionLength)
 	}
 	if err := validateExecutionDeliveryFields(cfg); err != nil {
 		return err
@@ -670,9 +674,10 @@ func validateExecutionDeliveryFields(cfg *AppConfig) error {
 	return nil
 }
 
-// validateExecutionOperationScope mirrors Engine's finite manifest cap before a local plan request is sent.
+// validateExecutionOperationScope mirrors Engine's finite manifest cap and event-only trigger rule.
 func validateExecutionOperationScope(services map[string]AppService) error {
 	operationCount := 0
+	eventCount := 0
 	for _, service := range services {
 		// The authored operation owns the public execute name across REST and MCP.
 		if service.SelectAll {
@@ -684,10 +689,15 @@ func validateExecutionOperationScope(services map[string]AppService) error {
 			}
 			operationCount++
 		}
+		eventCount += len(service.Webhooks)
+		// An explicit all-event selector is sufficient evidence for an event-only app.
+		if service.WebhooksSelectAll {
+			eventCount++
+		}
 	}
-	// The compiler and Engine accept exactly 1–64 raw operations for one authored App.
-	if operationCount == 0 || operationCount > 64 {
-		return fmt.Errorf("Unified App config requires 1 to 64 selected operations")
+	// Hosted code may react to provider events without calling a physical operation.
+	if operationCount > 64 || (operationCount == 0 && eventCount == 0) {
+		return fmt.Errorf("Unified App config requires an event or 1 to 64 selected operations")
 	}
 	return nil
 }

@@ -1,6 +1,6 @@
 ---
 name: fused-unified-app
-description: "Build, configure, deploy, or call a hosted Fused Unified App. Use for `kind: unified_app`, `buildUnifiedApp`, `.fused/unified_app/`, `fused-cli unified-app`, selected operations, connected-user routing, and Unified App OAuth. For generated SDK packages use fused-sdk; for credential setup use fused-bucket."
+description: "Build, configure, deploy, or call a hosted Fused Unified App. Use for `kind: unified_app`, `buildUnifiedApp`, `.fused/unified_app/`, `fused-cli unified-app`, selected operations, webhook events, connected-user routing, and Unified App OAuth. For generated SDK packages use fused-sdk; for credential setup use fused-bucket."
 ---
 
 # Unified Apps
@@ -9,7 +9,7 @@ A Unified App is hosted TypeScript that calls selected provider operations throu
 
 ## Create and deploy
 
-Use `fused-cli describe '<goal>'` to draft a new app from exact Registry operations. Review the generated source and config before applying. To write one directly, create `.fused/unified_app/customer-app.yaml`:
+Use `fused-cli describe '<goal>' --kind unified` to draft a new app from exact Registry operations and webhook events. When the goal needs inbound provider events, describe reuses a compatible registration or provisions one before deploying the app. Review the generated source, event scope, and registration before confirmation. To write one directly, create `.fused/unified_app/customer-app.yaml`:
 
 ```yaml
 apiVersion: fused/v1
@@ -41,7 +41,9 @@ export default buildUnifiedApp({
 });
 ```
 
-Select at least one exact operation; `select_all` is invalid. `source_path` is relative to the YAML file. The top-level bucket supplies default credentials; `services.<name>.bucket` overrides it for one service. Do not put provider secrets in source or config. Each source change needs a new immutable version.
+Select at least one exact operation or webhook event; operation `select_all` is invalid. `source_path` is relative to the YAML file. The top-level bucket supplies default credentials; `services.<name>.bucket` overrides it for one service. Do not put provider secrets in source or config. Each source change needs a new immutable version.
+
+For provider events, add `webhook_attachment: <registration>` at the top level and `webhooks: [<exact-event-name>]` under each selected service. An event-only app can use `operations: []`. The hosted `execute({ input })` receives the normalized envelope `{body, headers, query, path:{urlSlug,eventName}}`; validate the selected `eventName` and payload before effects. Register ingress first when authoring config directly with `fused-cli webhook apply -f <webhook-config>`; the Unified App plan checks attachment coverage. The browser Unified App editor also lets you select events and name an existing registration.
 
 ```sh
 fused-cli unified-app plan -f .fused/unified_app/customer-app.yaml --json

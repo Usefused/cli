@@ -23,7 +23,7 @@ func TestPromptUnifiedAppConfigProducesEngineCompiledCart(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(".fused", "unified_app"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	request := scaffoldRequest{name: "billing", version: "1.0.0", bucket: "main", services: []scaffoldService{{name: "crm", version: "v1"}}, operations: []scaffoldOperation{{service: "crm", operation: "createCustomer"}}}
+	request := scaffoldRequest{name: "billing", version: "1.0.0", bucket: "main", services: []scaffoldService{{name: "crm", version: "v1"}}, operations: []scaffoldOperation{{service: "crm", operation: "createCustomer"}}, events: []scaffoldEvent{{service: "crm", event: "customer.created"}}, webhookAttachment: "billing-webhooks"}
 	source := "export default buildUnifiedApp({});"
 	if err := os.WriteFile(filepath.Join(".fused", "unified_app", "billing.tsx"), []byte(source), 0o600); err != nil {
 		t.Fatal(err)
@@ -40,6 +40,10 @@ func TestPromptUnifiedAppConfigProducesEngineCompiledCart(t *testing.T) {
 	}
 	if got := parsed.UnifiedApp.Services["crm"]; len(got.Operations) != 1 || got.Operations[0] != "createCustomer" {
 		t.Fatalf("operation scope = %#v", got)
+	}
+	// The source and trigger must travel in the same immutable Engine cart.
+	if got := parsed.UnifiedApp.Services["crm"]; parsed.UnifiedApp.WebhookAttachment != "billing-webhooks" || len(got.Webhooks) != 1 || got.Webhooks[0] != "customer.created" {
+		t.Fatalf("trigger scope = %#v", parsed.UnifiedApp)
 	}
 }
 
@@ -64,6 +68,17 @@ func TestPromptExecutionDraftSelectionsPinsRegistryIdentity(t *testing.T) {
 	got, err := promptExecutionDraftSelections(plan)
 	if err != nil || len(got) != 1 || got[0] != (api.PromptOperationSelection{Service: "crm", ServiceID: serviceID, Version: "v1", Operation: "create"}) {
 		t.Fatalf("draft selections = %#v, %v", got, err)
+	}
+}
+
+// TestPromptExecutionDraftSelectionsPinsEvents proves webhook input evidence never grants an operation binding.
+func TestPromptExecutionDraftSelectionsPinsEvents(t *testing.T) {
+	serviceID := uuid.New().String()
+	plan := promptInitPlan{primary: scaffoldRequest{events: []scaffoldEvent{{service: "crm", event: "customer.created"}}}, resolved: []sdkInitResolvedService{{target: workspaceServiceAddTarget{slug: "crm", serviceID: serviceID}, version: "v1"}}}
+	got, err := promptExecutionDraftSelections(plan)
+	// The exact event enters Registry composition even when the app calls no provider operation.
+	if err != nil || len(got) != 1 || got[0] != (api.PromptOperationSelection{Service: "crm", ServiceID: serviceID, Version: "v1", Event: "customer.created"}) {
+		t.Fatalf("event selections = %#v, %v", got, err)
 	}
 }
 

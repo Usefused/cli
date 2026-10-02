@@ -42,3 +42,24 @@ services:
 		t.Fatalf("trigger change lost source identity: %v", err)
 	}
 }
+
+// TestUnifiedAppWebhookOnlyConfig admits a hosted event handler with no unnecessary provider operation grant.
+func TestUnifiedAppWebhookOnlyConfig(t *testing.T) {
+	const document = `apiVersion: fused/v1
+kind: unified_app
+name: issue-handler
+version: 1.0.0
+bucket: default
+source: 'export default buildUnifiedApp({})'
+webhook_attachment: team-events
+services:
+  jira:
+    version: v1
+    webhooks: [issue.created]
+`
+	parsed, err := Parse([]byte(document), "issue-handler.yaml")
+	// Event-only source still has a finite inbound capability and must survive local validation.
+	if err != nil || parsed.UnifiedApp == nil || len(parsed.UnifiedApp.Services["jira"].Operations) != 0 {
+		t.Fatalf("event-only config = %#v, %v", parsed, err)
+	}
+}

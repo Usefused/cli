@@ -5,15 +5,16 @@ import (
 	"fmt"
 )
 
-// PromptOperationSelection pins a classified operation for Registry-owned composition grounding.
+// PromptOperationSelection pins a classified operation or event for Registry-owned composition grounding.
 type PromptOperationSelection struct {
 	Service   string `json:"service"`
 	ServiceID string `json:"service_id"`
 	Version   string `json:"version"`
-	Operation string `json:"operation"`
+	Operation string `json:"operation,omitempty"`
+	Event     string `json:"event,omitempty"`
 }
 
-// DraftPromptUnifiedApp asks Registry to author TypeScript against exact operation contracts.
+// DraftPromptUnifiedApp asks Registry to author TypeScript against exact operation and event contracts.
 func (c *Client) DraftPromptUnifiedApp(goal string, selections []PromptOperationSelection) (string, error) {
 	encoded, err := json.Marshal(selections)
 	// The bounded exact selection document is the only model grounding sent by the CLI.

@@ -22,9 +22,10 @@ type promptExecutionDraft struct {
 
 // finalizePromptExecutionPlan grounds source and service scope before the user authorizes deployment.
 func finalizePromptExecutionPlan(cmd *cobra.Command, client *api.Client, plan promptInitPlan) (promptInitPlan, error) {
-	// The Registry drafter accepts a finite exact operation set, never a changing select-all catalogue.
-	if len(plan.primary.selectAll) != 0 || len(plan.primary.operations) == 0 || len(plan.primary.operations) > 16 {
-		return promptInitPlan{}, errors.New("Unified App describe requires 1 to 16 specific operations; select-all is not supported")
+	// The Registry drafter accepts finite exact capabilities, never a changing select-all catalogue.
+	count := len(plan.primary.operations) + len(plan.primary.events)
+	if len(plan.primary.selectAll) != 0 || count == 0 || count > 16 {
+		return promptInitPlan{}, errors.New("Unified App describe requires 1 to 16 specific operations or events; select-all is not supported")
 	}
 	source, err := draftPromptExecutionSource(cmd, client, plan)
 	if err != nil {
@@ -61,13 +62,13 @@ func draftPromptExecutionSource(cmd *cobra.Command, client *api.Client, plan pro
 	return decodePromptExecutionDraft(raw)
 }
 
-// promptExecutionDraftSelections maps only exact classified Registry operations to the model request.
+// promptExecutionDraftSelections maps exact classified operations and events to the model request.
 func promptExecutionDraftSelections(plan promptInitPlan) ([]api.PromptOperationSelection, error) {
 	byService := make(map[string]sdkInitResolvedService, len(plan.resolved))
 	for _, service := range plan.resolved {
 		byService[service.target.slug] = service
 	}
-	selections := make([]api.PromptOperationSelection, 0, len(plan.primary.operations))
+	selections := make([]api.PromptOperationSelection, 0, len(plan.primary.operations)+len(plan.primary.events))
 	for _, operation := range plan.primary.operations {
 		service, ok := byService[operation.service]
 		// Model-authored source may only call operations grounded in an exact Registry version.
@@ -77,6 +78,17 @@ func promptExecutionDraftSelections(plan promptInitPlan) ([]api.PromptOperationS
 		selections = append(selections, api.PromptOperationSelection{
 			Service: operation.service, ServiceID: service.target.serviceID,
 			Version: service.version, Operation: operation.operation,
+		})
+	}
+	for _, event := range plan.primary.events {
+		service, ok := byService[event.service]
+		// Event input evidence must come from the same exact Registry service version as its trigger.
+		if !ok {
+			return nil, fmt.Errorf("unresolved Unified App event %s.%s", event.service, event.event)
+		}
+		selections = append(selections, api.PromptOperationSelection{
+			Service: event.service, ServiceID: service.target.serviceID,
+			Version: service.version, Event: event.event,
 		})
 	}
 	return selections, nil
@@ -117,7 +129,7 @@ func executePromptExecutionPlan(cmd *cobra.Command, plan promptInitPlan) error {
 	return deployPromptExecution(cmd, client, plan, workspaceApplied)
 }
 
-// deployPromptExecution submits source and selected operations through Engine's normal App plan/apply lifecycle.
+// deployPromptExecution submits source and selected capabilities through Engine's normal App plan/apply lifecycle.
 func deployPromptExecution(cmd *cobra.Command, client *api.Client, plan promptInitPlan, workspaceApplied bool) error {
 	sourceFile, sourceRef, err := unifiedAppSourcePaths(plan.primary.path, plan.primary.name)
 	if err != nil {
@@ -153,7 +165,7 @@ func deployPromptExecution(cmd *cobra.Command, client *api.Client, plan promptIn
 		return fmt.Errorf("%w; retry with fused-cli unified-app apply -f %s", err, plan.primary.path)
 	}
 	recordAppliedChange(cmd.Context(), cmd.CommandPath(), "unified_app")
-	fmt.Fprintf(cmd.OutOrStdout(), "Deployed Unified App %s (%s) with %d operation(s).\n", plan.primary.name, result.AppFamilyID, len(plan.primary.operations))
+	fmt.Fprintf(cmd.OutOrStdout(), "Deployed Unified App %s (%s) with %d operation(s) and %d webhook event(s).\n", plan.primary.name, result.AppFamilyID, len(plan.primary.operations), len(plan.primary.events))
 	fmt.Fprintf(cmd.OutOrStdout(), "Execution URL: %s\n", result.ExecutionURL)
 	// Engine returns the initial family token exactly once after deployment.
 	if result.ExecutionToken != "" {
@@ -190,7 +202,7 @@ func publishPromptExecutionPlan(path string, data []byte, parsed *configfile.Par
 	return writePlanReceiptFile(defaultReceiptPath(parsed.ConfigKey), planned.receipt)
 }
 
-// promptUnifiedAppConfig preserves a source-file reference in YAML while Engine receives its resolved bytes.
+// promptUnifiedAppConfig preserves reviewed event scope and source-file identity in the Engine cart.
 func promptUnifiedAppConfig(request scaffoldRequest, sourcePath string) configfile.AppConfig {
 	services := make(map[string]configfile.AppService, len(request.services))
 	for _, service := range request.services {
@@ -201,9 +213,14 @@ func promptUnifiedAppConfig(request scaffoldRequest, sourcePath string) configfi
 		selected.Operations = append(selected.Operations, operation.operation)
 		services[operation.service] = selected
 	}
+	for _, event := range request.events {
+		selected := services[event.service]
+		selected.Webhooks = append(selected.Webhooks, event.event)
+		services[event.service] = selected
+	}
 	return configfile.AppConfig{
 		BaseConfig: configfile.BaseConfig{APIVersion: configfile.APIVersionV1, Kind: configfile.KindUnifiedApp},
 		Name:       request.name, Version: request.version,
-		Bucket: request.bucket, SourcePath: sourcePath, Services: services,
+		Bucket: request.bucket, SourcePath: sourcePath, WebhookAttachment: request.webhookAttachment, Services: services,
 	}
 }

@@ -54,8 +54,8 @@ Sequential runtime intent is authored as one Unified App execute function.
 
 Describe uses Jev through Fused Registry to select operations from search intent and operation names/descriptions.
 No additional API key is required. Describe resolves exact selections before showing its proposal.
-If an SDK or MCP goal asks to receive provider events, describe also creates or reuses a webhook
-registration and attaches it to the app. Direct REST apps cannot receive webhook events.
+If a Unified App, SDK, or MCP goal asks to receive provider events, describe also creates or reuses
+a webhook registration and attaches it to the app. Direct REST apps cannot receive webhook events.
 Every proposal requires interactive terminal confirmation before changes are applied.`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: WithTelemetry("cli.describe", func(cmd *cobra.Command, args []string) error {
@@ -156,9 +156,9 @@ func buildPromptInitPlan(cmd *cobra.Command, client *api.Client, goal string, op
 		return promptInitPlan{}, errors.New("Unified App updates require editing its TypeScript source and deploying a reviewed new version")
 	}
 	webhookRequested := intent.WebhookRequested || promptIntentHasEvents(intent.Services)
-	// Direct REST execution has no open receiver transport; SDK streams and MCP resource notifications do.
-	if webhookRequested && (mode == unifiedInitModeAPI || mode == unifiedInitModeUnified) {
-		return promptInitPlan{}, fmt.Errorf("%s apps cannot receive webhook events; request an SDK or MCP app", promptModeLabel(mode))
+	// Direct REST execution has no receiver; hosted Unified Apps run their own durable trigger worker.
+	if webhookRequested && mode == unifiedInitModeAPI {
+		return promptInitPlan{}, fmt.Errorf("%s apps cannot receive webhook events; request a Unified App, SDK, or MCP app", promptModeLabel(mode))
 	}
 	name := resolvePromptInitName(opts.name, intent.Name, intent.Services, mode)
 	// An update retains the stable family name, never the parser's suggested new name.
@@ -217,40 +217,38 @@ func buildPromptInitPlan(cmd *cobra.Command, client *api.Client, goal string, op
 		plan.baseHash = target.config.SourceHash
 		_, plan.baseVersion, _, _ = unifiedExtendIdentity(target.config)
 	}
-	// Hosted TypeScript expresses the requested sequence directly through execute().
+	// Ordered workflows require authored Unified App code so graph definitions cannot reappear through describe.
+	if mode != unifiedInitModeUnified && intent.Sequential {
+		return promptInitPlan{}, errors.New("sequential workflows require a Unified App; use --kind unified")
+	}
+	// An event-bearing app needs one reviewed attachment regardless of its execution adapter.
+	if webhookRequested {
+		attachment, reuse, err := resolvePromptWebhookAttachment(client, name, resolved, webhookServices)
+		// Registration lookup failures cannot be treated as proof that a new webhook should be created.
+		if err != nil {
+			return promptInitPlan{}, err
+		}
+		plan.primary.webhookAttachment = attachment
+		plan.primary.webhookAttachmentSet = true
+		plan.reusesWebhook = reuse
+		// Missing common coverage requires a separate registration before the app can be planned.
+		if !reuse {
+			webhookPath, err := scaffoldTargetPath(configfile.KindWebhook, attachment, "")
+			// The secondary config always uses webhook discovery paths, even when -f overrides the primary app path.
+			if err != nil {
+				return promptInitPlan{}, err
+			}
+			webhookRequest := scaffoldRequest{
+				kind: configfile.KindWebhook, name: attachment, path: webhookPath,
+				services: promptWebhookScaffoldServices(resolved, webhookServices), webhookSecrets: map[string]string{}, skipConfirmation: true,
+			}
+			plan.webhook = &webhookRequest
+		}
+	}
+	// Hosted TypeScript expresses event handling and requested sequencing through execute().
 	if mode == unifiedInitModeUnified {
 		return finalizePromptExecutionPlan(cmd, client, plan)
 	}
-	// Ordered workflows require authored Unified App code so graph definitions cannot reappear through describe.
-	if intent.Sequential {
-		return promptInitPlan{}, errors.New("sequential workflows require a Unified App; use --kind unified")
-	}
-	// An app without inbound events needs no registration or attachment orchestration.
-	if !webhookRequested {
-		return finalizePromptPlan(client, plan)
-	}
-	attachment, reuse, err := resolvePromptWebhookAttachment(client, name, resolved, webhookServices)
-	// Registration lookup failures cannot be treated as proof that a new webhook should be created.
-	if err != nil {
-		return promptInitPlan{}, err
-	}
-	plan.primary.webhookAttachment = attachment
-	plan.primary.webhookAttachmentSet = true
-	plan.reusesWebhook = reuse
-	// Existing coverage is attached directly; only a missing common registration needs its own init lifecycle.
-	if reuse {
-		return finalizePromptPlan(client, plan)
-	}
-	webhookPath, err := scaffoldTargetPath(configfile.KindWebhook, attachment, "")
-	// The secondary config always uses webhook discovery paths, even when -f overrides the primary app path.
-	if err != nil {
-		return promptInitPlan{}, err
-	}
-	webhookRequest := scaffoldRequest{
-		kind: configfile.KindWebhook, name: attachment, path: webhookPath,
-		services: promptWebhookScaffoldServices(resolved, webhookServices), webhookSecrets: map[string]string{}, skipConfirmation: true,
-	}
-	plan.webhook = &webhookRequest
 	return finalizePromptPlan(client, plan)
 }
 
@@ -733,7 +731,7 @@ func resolvePromptWebhookAttachment(client *api.Client, appName string, resolved
 	return label, false, nil
 }
 
-// promptWebhookAttachment asks which existing registration bundle should receive the generated SDK attachment.
+// promptWebhookAttachment asks which existing registration bundle should receive the generated app attachment.
 func promptWebhookAttachment(labels []string) (string, error) {
 	// Non-interactive ambiguity cannot be resolved safely by choosing a registration arbitrarily.
 	if err := requireInteractive("multiple webhook registrations match; rerun in a terminal to choose one"); err != nil {
@@ -744,7 +742,7 @@ func promptWebhookAttachment(labels []string) (string, error) {
 	for _, label := range labels {
 		options = append(options, huh.NewOption(label, label))
 	}
-	err := huh.NewSelect[string]().Title("Which webhook registration should the SDK use?").Options(options...).Value(&selected).Run()
+	err := huh.NewSelect[string]().Title("Which webhook registration should the app use?").Options(options...).Value(&selected).Run()
 	return selected, err
 }
 
@@ -844,15 +842,11 @@ func promptInitConfirmation(message string) (bool, error) {
 	return confirmed, err
 }
 
-// executePromptInitPlan applies a missing webhook registration before the SDK that references it.
+// executePromptInitPlan applies a missing webhook registration before any app that references it.
 func executePromptInitPlan(cmd *cobra.Command, plan promptInitPlan) error {
 	// Creation requires absence; updates require the exact local baseline the user reviewed.
 	if err := validatePromptPlanBaseline(plan); err != nil {
 		return err
-	}
-	// Hosted source has a compiler, plan, apply, and attachment sequence of its own.
-	if plan.execution != nil {
-		return executePromptExecutionPlan(cmd, plan)
 	}
 	// A missing attachment is the only case that introduces the registration lifecycle.
 	if plan.webhook != nil {
@@ -860,10 +854,19 @@ func executePromptInitPlan(cmd *cobra.Command, plan promptInitPlan) error {
 		if err := ensureUnifiedInitTargetAbsent(plan.webhook.path); err != nil {
 			return err
 		}
-		// SDK planning requires attachment coverage, so webhook apply is the first ordered commit boundary.
+		// App planning requires attachment coverage, so webhook apply is the first ordered commit boundary.
 		if err := runUnifiedInitLifecycle(cmd, unifiedInitModeWebhook, *plan.webhook); err != nil {
 			return fmt.Errorf("create webhook attachment %s: %w", plan.webhook.name, err)
 		}
+	}
+	// Hosted source uses its own compiler lifecycle after the shared attachment is ready.
+	if plan.execution != nil {
+		err := executePromptExecutionPlan(cmd, plan)
+		// A committed registration remains available for a later reviewed Unified App retry.
+		if err != nil && plan.webhook != nil {
+			return fmt.Errorf("webhook attachment %s was created, but Unified App deployment did not complete: %w", plan.webhook.name, err)
+		}
+		return err
 	}
 	// The primary lifecycle revalidates exact selections and performs its normal plan/apply behavior.
 	if err := runUnifiedInitLifecycle(cmd, plan.mode, plan.primary); err != nil {
