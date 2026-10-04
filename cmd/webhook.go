@@ -8,16 +8,11 @@ import (
 	"github.com/Usefused/cli/internal/configfile"
 )
 
-// webhookCmd remains separate from apps because kind: webhook
-// has no operations/webhooks-selection surface of its own (that lives on
-// whichever kind: sdk/kind: mcp app declares webhook_attachment) and no
-// generated package or deployed runtime -- it only reconciles rows in
-// fused_workspace_webhooks, so plan/apply/validate is the whole surface. See
-// plans/plan-webhook-kind.md's CLI section.
+// webhookCmd manages registration configuration and exposes read-only workspace discovery.
 var webhookCmd = &cobra.Command{
 	Use:   "webhook",
-	Short: "Manage Fused webhook registration configuration",
-	Long:  `Manage kind: webhook config files (named bundles of webhook ingress registrations spanning one or more services) and plan/apply their changes.`,
+	Short: "Manage Fused webhook registrations",
+	Long:  `List or search workspace webhook registrations, or manage kind: webhook config files (named bundles of webhook ingress registrations spanning one or more services) and plan/apply their changes.`,
 	Args:  cobra.NoArgs,
 	RunE:  requireSubcommand,
 }

@@ -893,18 +893,15 @@ func readWorkspaceServiceOperations(cmd *cobra.Command, client *cliapi.Client, s
 	return client.ServiceOperations(serviceID, version)
 }
 
-// runWorkspaceServiceWebhooks is the read-only visibility command
-// (engine_owned_webhooks_plan.md, Task 8): it looks up a service's webhook
-// registrations without requiring a workspace apply, and reconstructs each
-// display URL the same way applyOneConfig's output does (Task 5) --
-// appliedWebhookURL -- since the server only ever returns the opaque slug,
-// never a full URL.
+// runWorkspaceServiceWebhooks shares the UI registration page API while retaining service-scoped CLI output.
 func runWorkspaceServiceWebhooks(cmd *cobra.Command, serviceSlug string) error {
 	client, err := getAPIClient()
+	// Missing local connection settings must fail before discovery.
 	if err != nil {
 		return err
 	}
 	serviceID, err := resolveServiceIDFromSlug(client, serviceSlug)
+	// Registration reads require an unambiguous service identity.
 	if err != nil {
 		return err
 	}
@@ -914,15 +911,18 @@ func runWorkspaceServiceWebhooks(cmd *cobra.Command, serviceSlug string) error {
 	if _, err := workspaceServiceByID(client, serviceID, serviceSlug); err != nil {
 		return err
 	}
-	webhooks, err := client.ListWorkspaceWebhooks(serviceID)
+	page, err := client.ListWorkspaceWebhookPage(serviceID, workspaceWebhookListQuery, workspaceWebhookListFlags.pageOptions())
+	// A failed authorized page read must not appear as an empty service.
 	if err != nil {
 		return err
 	}
-	results := workspaceWebhookResults(client.BaseURL, serviceSlug, webhooks)
+	results := workspaceWebhookResults(page.Items)
+	// Preserve the service command's existing JSON array shape.
 	if wantsJSON(cmd) {
 		return writeJSON(cmd, results)
 	}
-	if len(results) == 0 {
+	// A zero total is an empty service; an empty later page may simply exceed the result range.
+	if len(results) == 0 && page.Total == 0 {
 		fmt.Fprintf(cmd.OutOrStdout(), "No webhook registrations for service %s.\n", serviceSlug)
 		return nil
 	}
@@ -934,7 +934,11 @@ func runWorkspaceServiceWebhooks(cmd *cobra.Command, serviceSlug string) error {
 	for _, webhook := range results {
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", webhook.Label, webhook.URL, webhook.Signature, webhook.CreatedAt)
 	}
-	w.Flush()
+	// Surface output failures before reporting a complete page.
+	if err := w.Flush(); err != nil {
+		return err
+	}
+	printWebhookPageSummary(cmd, page, workspaceWebhookListFlags.Offset)
 	return nil
 }
 
@@ -945,11 +949,11 @@ type workspaceWebhookResult struct {
 	CreatedAt string `json:"created_at"`
 }
 
-func workspaceWebhookResults(baseURL, serviceSlug string, webhooks []cliapi.WorkspaceWebhook) []workspaceWebhookResult {
+// workspaceWebhookResults uses only Engine-projected public URLs; managed delivery never gets a fabricated ingress URL.
+func workspaceWebhookResults(webhooks []cliapi.WorkspaceWebhookListing) []workspaceWebhookResult {
 	results := make([]workspaceWebhookResult, 0, len(webhooks))
 	for _, webhook := range webhooks {
-		url := appliedWebhookURL(baseURL, cliapi.AppliedWebhookConfig{ServiceKey: serviceSlug, Label: webhook.Label, Slug: webhook.Slug})
-		results = append(results, workspaceWebhookResult{Label: webhook.Label, URL: url, Signature: webhook.Signature, CreatedAt: webhook.CreatedAt})
+		results = append(results, workspaceWebhookResult{Label: webhook.Label, URL: webhook.CallbackURL, Signature: webhook.Signature, CreatedAt: webhook.CreatedAt})
 	}
 	return results
 }

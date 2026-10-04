@@ -97,7 +97,8 @@ func TestPrintAppliedWebhooks_NoOutputWhenNoWebhooks(t *testing.T) {
 
 // ─── Task 8: `workspace service webhooks <slug>` visibility command ───────
 
-func TestWorkspaceServiceWebhooks_ListsRegistrationsWithReconstructedURL(t *testing.T) {
+// TestWorkspaceServiceWebhooks_ListsEngineURLs keeps canonical public URLs independent of the CLI connection address.
+func TestWorkspaceServiceWebhooks_ListsEngineURLs(t *testing.T) {
 	dir := t.TempDir()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		handleWorkspaceWebhookListRequest(t, w, r)
@@ -106,10 +107,10 @@ func TestWorkspaceServiceWebhooks_ListsRegistrationsWithReconstructedURL(t *test
 
 	out := runCommandInDirOutput(t, dir, server.URL, []string{"workspace", "service", "webhooks", "github"})
 
-	if !strings.Contains(out, "repo-a") || !strings.Contains(out, server.URL+"/webhook/slugaaaaaaaaaaaaaaaaa-github") {
+	if !strings.Contains(out, "repo-a") || !strings.Contains(out, "https://public.example/webhook/repo-a") {
 		t.Fatalf("expected repo-a URL line, got:\n%s", out)
 	}
-	if !strings.Contains(out, "repo-b") || !strings.Contains(out, server.URL+"/webhook/slugbbbbbbbbbbbbbbbbb-github") {
+	if !strings.Contains(out, "repo-b") || !strings.Contains(out, "https://public.example/webhook/repo-b") {
 		t.Fatalf("expected repo-b URL line, got:\n%s", out)
 	}
 	// The endpoint never sends a signing secret back, so there is nothing to
@@ -155,11 +156,12 @@ func writeEngineWebhookListResponse(t *testing.T, w http.ResponseWriter, r *http
 		_, _ = w.Write([]byte(`{"data":{"workspaceServicePage":{"data":[{"service_id":"svc-github","service_name":"GitHub REST API","version":"2026-07-01"}],"total":1}}}`))
 		return
 	}
-	if strings.Contains(body.Query, "workspaceWebhooks") {
-		_, _ = w.Write([]byte(`{"data":{"workspaceWebhooks":[
-			{"label":"repo-a","slug":"slugaaaaaaaaaaaaaaaaa","created_at":"2026-07-18T00:00:00Z"},
-			{"label":"repo-b","slug":"slugbbbbbbbbbbbbbbbbb","created_at":"2026-07-18T00:00:00Z"}
-		]}}`))
+	// Registration visibility uses the same paged resolver as the UI.
+	if strings.Contains(body.Query, "workspaceWebhookPage") {
+		_, _ = w.Write([]byte(`{"data":{"workspaceWebhookPage":{"total":2,"items":[
+			{"label":"repo-a","slug":"slugaaaaaaaaaaaaaaaaa","callback_url":"https://public.example/webhook/repo-a","created_at":"2026-07-18T00:00:00Z"},
+			{"label":"repo-b","slug":"slugbbbbbbbbbbbbbbbbb","callback_url":"https://public.example/webhook/repo-b","created_at":"2026-07-18T00:00:00Z"}
+		]}}}`))
 		return
 	}
 	t.Fatalf("unexpected engine graphql query: %s", body.Query)
@@ -180,8 +182,9 @@ func TestWorkspaceServiceWebhooks_NoRegistrations_PrintsMessage(t *testing.T) {
 				_, _ = w.Write([]byte(`{"data":{"workspaceServicePage":{"data":[{"service_id":"svc-github","service_name":"GitHub REST API","version":"2026-07-01"}],"total":1}}}`))
 				return
 			}
-			if strings.Contains(body.Query, "workspaceWebhooks") {
-				_, _ = w.Write([]byte(`{"data":{"workspaceWebhooks":[]}}`))
+			// Registration visibility uses the same paged resolver as the UI.
+			if strings.Contains(body.Query, "workspaceWebhookPage") {
+				_, _ = w.Write([]byte(`{"data":{"workspaceWebhookPage":{"total":0,"items":[]}}}`))
 				return
 			}
 			t.Fatalf("unexpected engine graphql query: %s", body.Query)

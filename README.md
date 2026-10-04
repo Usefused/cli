@@ -215,6 +215,20 @@ To receive events in an SDK, set `webhook_attachment: alerts` and explicitly
 select that SDK's webhook events. To update the registration later, edit its
 file and use `webhook plan` / `webhook apply`.
 
+List or search registered webhooks through the same Engine API as the UI:
+
+```bash
+fused-cli webhook list --q invoice --limit 20 --offset 0 --json
+fused-cli webhook list --service-id <service-uuid>
+fused-cli workspace service webhooks github --q repo --limit 20 --offset 0
+```
+
+Search and pagination run on Engine within your service permissions. `webhook list --json`
+returns `{ "items": [...], "total": ... }`; the service-scoped command
+keeps its JSON array format. Receiving URLs come from Engine's public URL settings;
+managed registrations do not get an invented ingress URL. These commands require
+an Engine exposing `workspaceWebhookPage`.
+
 To extend an existing app without creating another file, use `extend`. It reads
 the existing YAML to infer SDK, API, or MCP mode. A real change advances a
 stable SemVer version to its next minor, while an idempotent extension keeps the
