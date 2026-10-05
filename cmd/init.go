@@ -102,7 +102,10 @@ method or ingress registration. --api is an alias for --rest.
 App modes select operations; webhook mode registers inbound delivery.
 The command enables missing services, writes the config, plans, applies, and returns the
 runtime outcome. Pass --no-apply to write validated local desired state and
-retain available plan receipts without applying Engine state.`,
+retain available plan receipts without applying Engine state.
+When SDK/MCP credentials are missing, interactive init offers secure setup,
+bucket setup in the browser, rechecking, proceeding anyway, or cancellation.
+Non-interactive runs print readiness warnings without prompting or storing secrets.`,
 		Args: cobra.ExactArgs(1),
 		RunE: WithTelemetry("cli.init", func(cmd *cobra.Command, args []string) error {
 			mode, err := resolveUnifiedInitMode(opts)
@@ -559,6 +562,8 @@ func createPlanApplyUnifiedInit(cmd *cobra.Command, client *api.Client, mode uni
 	planOpts := planOptions{
 		interactive: !nonInteractive(), output: cmd.OutOrStdout(),
 		auditCtx: cmd.Context(), auditAction: cmd.CommandPath(),
+		// SDK, MCP and combined creation require an explicit missing-credential choice before publication.
+		reviewCredentials: mode == unifiedInitModeSDK || mode == unifiedInitModeMCP || mode == unifiedInitModeApp,
 	}
 	plan, err := planUnifiedInitCandidate(cmd, client, mode, request, workspaceApplied, parsed, planOpts)
 	// Planning and its one bounded repair complete before either local artifact is published.

@@ -58,7 +58,9 @@ output and stderr receives one JSON object before the CLI exits non-zero:
     "details": {
       "bucket_id": "11111111-1111-4111-8111-111111111111",
       "service_id": "22222222-2222-4222-8222-222222222222",
-      "command": "fused-cli secret set 22222222-2222-4222-8222-222222222222 --bucket 11111111-1111-4111-8111-111111111111 --type api_key --auth-name providerKey"
+      "service_slug": "stripe",
+      "bucket_name": "production",
+      "command": "fused-cli secret set 'stripe' --bucket 'production' --type 'api_key' --auth-name 'providerKey' --interactive"
     },
     "trace_id": "...",
     "http_status": 409,
@@ -202,6 +204,24 @@ SDK mode writes `kind: sdk` with `generate: true`, applies it, and downloads the
 package. API mode writes the same resource with `generate: false`, applies it,
 and prints a central execution REST request template. MCP mode writes `kind:
 mcp`, applies it, and reports the deployed Engine URL and token.
+
+If an SDK, MCP or combined App plan reports missing credentials, interactive
+`init` names each service, auth scheme and resolved bucket before publication.
+Choose **Set up credentials here** (the ordinary masked, confirmed secret
+collector), **Open bucket setup in the browser**, **Recheck credentials and
+continue**, **Proceed anyway**, or **Cancel app creation**. Browser setup opens
+the selected Engine's bucket page without sending credentials in the URL;
+bucket permissions still apply. Rechecking creates a fresh plan for the same
+config. It does not invoke provider operations. Cancelling stops before app
+apply or publishing the candidate app file; any already-applied workspace
+activation or explicitly saved credentials remain and are not rolled back.
+
+Readiness checks cover stored required credential material, not provider
+validity or every connected user's OAuth token. Per-service bucket overrides
+are preserved. `--no-input` and `CI=true` keep their non-interactive behavior:
+warnings and exact setup commands are printed, and publication can continue
+without secret writes or browser prompts. `--no-apply` does not enter the
+new publication-choice menu.
 
 App scaffolding adds only missing required bucket-backed
 `server_variable` injections. Existing injections remain authoritative, and

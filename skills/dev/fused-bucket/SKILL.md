@@ -284,6 +284,13 @@ reported auth requirement, ask for confirmation before storage, and retry
 planning once. It never creates a bucket or selects a different one. Declining, JSON,
 CI, and `--no-input` runs preserve the valid plan without mutating secrets.
 
+SDK/MCP `init` also offers an explicit setup/proceed/cancel menu. Current Engine
+responses carry `buckets` plus `bucket_id`/`bucket_name` on each missing requirement;
+use those exact per-service targets, including overrides. The older single
+`bucket` response remains supported. Validate the complete target list before
+collecting credentials. Browser setup opens the existing bucket and requires
+the user's normal bucket permissions; it does not grant access or create a bucket.
+
 Prefer bucket secrets/values over local `_env`/`$VAR` handoffs for anything
 committed to source control -- a bucket secret is resolved server-side by
 the Engine, not read off the machine running `apply`. This covers static

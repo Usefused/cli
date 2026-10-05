@@ -13,20 +13,14 @@ import (
 // remediateSDKPlanReadiness optionally applies the successful plan's typed
 // warning through the same secure secret mutation path used by secret set.
 func remediateSDKPlanReadiness(client *api.Client, cfg *configfile.ParsedConfig, readiness *api.CredentialReadiness, opts planOptions) error {
-	// A successful plan must still supply a complete typed target before prompting can mutate credentials.
-	if readiness == nil || readiness.Bucket == nil || len(readiness.MissingCredentials) == 0 {
-		return errors.New("Engine returned incomplete credential readiness metadata")
-	}
-	bucket, err := validateSDKPlanCredentialTarget(cfg, readiness.Bucket)
+	targets, err := credentialReadinessTargets(cfg, readiness)
+	// All current and legacy target metadata must validate before the first credential is collected.
 	if err != nil {
 		return err
 	}
-	requirements, err := validateMissingCredentialRequirements(readiness.MissingCredentials)
-	if err != nil {
-		return err
-	}
-	for _, requirement := range requirements {
-		if err := applySDKPlanCredentialRequirement(client, bucket, requirement, opts); err != nil {
+	for _, target := range targets {
+		// Storage denial or cancellation stops this setup attempt without falling back to another bucket.
+		if err := applySDKPlanCredentialRequirement(client, &target.bucket, target.requirement, opts); err != nil {
 			return err
 		}
 	}
@@ -35,6 +29,12 @@ func remediateSDKPlanReadiness(client *api.Client, cfg *configfile.ParsedConfig,
 
 // validateSDKPlanCredentialTarget proves readiness authorizes writes only to the YAML-selected Engine bucket.
 func validateSDKPlanCredentialTarget(cfg *configfile.ParsedConfig, bucket *api.MissingCredentialBucket) (*api.MissingCredentialBucket, error) {
+	// The legacy target still needs an app config and cannot infer an unrelated credential destination.
+	app := readinessAppConfig(cfg)
+	if app == nil || bucket == nil {
+		return nil, errors.New("credential readiness requires an app and bucket")
+	}
+	// Remote IDs must be valid before entering a storage request.
 	if _, err := uuid.Parse(strings.TrimSpace(bucket.ID)); err != nil {
 		return nil, errors.New("Engine returned an invalid credential bucket ID")
 	}
@@ -44,22 +44,25 @@ func validateSDKPlanCredentialTarget(cfg *configfile.ParsedConfig, bucket *api.M
 	}
 	// An explicit YAML bucket must match the Engine's authoritative resolution.
 	// When omitted, the typed Engine target is the existing default-bucket result.
-	yamlBucket := strings.TrimSpace(cfg.SDK.Bucket)
+	yamlBucket := strings.TrimSpace(app.Bucket)
 	if yamlBucket != "" && resolvedName != yamlBucket {
 		return nil, fmt.Errorf("Engine resolved bucket %q but SDK YAML selects %q; no credentials were changed", bucket.Name, yamlBucket)
 	}
 	return bucket, nil
 }
 
+// validateMissingCredentialRequirements rejects ambiguous writes while keeping identical schemes in distinct buckets separate.
 func validateMissingCredentialRequirements(requirements []api.MissingCredentialRequirement) ([]api.MissingCredentialRequirement, error) {
 	seen := make(map[string]bool, len(requirements))
 	unique := make([]api.MissingCredentialRequirement, 0, len(requirements))
 	for _, requirement := range requirements {
 		requirement.AuthType = canonicalSecretTypeName(requirement.AuthType)
+		// Every row must agree with the shared secret storage contract.
 		if err := validateMissingCredentialRequirement(requirement); err != nil {
 			return nil, err
 		}
-		key := requirement.ServiceID + "\x00" + requirement.AuthType + "\x00" + requirement.AuthName
+		key := requirement.BucketID + "\x00" + requirement.ServiceID + "\x00" + requirement.AuthType + "\x00" + requirement.AuthName
+		// Repeated rows must not prompt twice or overwrite the same credential in one review.
 		if seen[key] {
 			return nil, errors.New("Engine returned duplicate credential remediation requirements")
 		}

@@ -404,3 +404,13 @@ func TestSDKInvokeUsesGlobalEngineRESTFlags(t *testing.T) {
 		t.Fatalf("Engine REST URL = %q, %v", got, err)
 	}
 }
+
+// TestSDKInvokeCredentialNamesRemainShellArguments preserves readable recovery without trusting a remote shell command.
+func TestSDKInvokeCredentialNamesRemainShellArguments(t *testing.T) {
+	details := map[string]any{"service_id": uuid.NewString(), "bucket_id": uuid.NewString(), "service_slug": "@stripe/payments", "bucket_name": "team's $(bucket)", "auth_type": "basic", "auth_name": "basicAuth", "command": "untrusted"}
+	command := sdkInvokeCredentialCommand("bucket_credentials_missing", details)
+	// Quotes must enclose the complete imported name, including command substitution characters.
+	if !strings.Contains(command, "secret set '@stripe/payments' --bucket 'team'\"'\"'s $(bucket)'") || strings.Contains(command, "untrusted") {
+		t.Fatalf("unexpected command: %s", command)
+	}
+}

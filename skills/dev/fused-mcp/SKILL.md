@@ -24,6 +24,15 @@ Let MCP plan/apply check `bucket.use` on that exact candidate. On denial, stop
 and report it; never create a fallback. Follow `fused-bucket` for the narrow
 conditions that permit creation.
 
+Interactive `fused-cli init <name> --mcp` reports missing credentials before
+publication and offers secure terminal setup, opening the exact bucket in the
+browser, rechecking, proceeding anyway, or cancelling. Setup uses the same
+masked secret collector and bucket permissions as SDK init. Rechecking plans
+the same config again; it never calls the provider. Cancellation stops MCP
+publication, while prior workspace activation or confirmed credential writes
+remain. `--no-input` and CI print readiness guidance and continue without prompts
+or secret writes. Ordinary `mcp plan` remains a read-only readiness report.
+
 ```yaml
 apiVersion: fused/v1
 kind: mcp

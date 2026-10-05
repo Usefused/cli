@@ -374,6 +374,8 @@ type MissingCredentialBucket struct {
 type MissingCredentialRequirement struct {
 	ServiceID         string                   `json:"service_id"`
 	Service           string                   `json:"service,omitempty"`
+	BucketID          string                   `json:"bucket_id,omitempty"`
+	BucketName        string                   `json:"bucket_name,omitempty"`
 	AuthType          string                   `json:"auth_type"`
 	AuthName          string                   `json:"auth_name"`
 	BasicPasswordMode BasicPasswordMode        `json:"basic_password_mode,omitempty"`
@@ -1989,7 +1991,9 @@ type SDKConfigPlanResponse struct {
 // CredentialReadiness describes mutable provider material that is absent but
 // no longer blocks publication of an otherwise valid app plan.
 type CredentialReadiness struct {
-	Bucket             *MissingCredentialBucket       `json:"bucket"`
+	// Bucket accepts older Engine responses; current Engines resolve a bucket per requirement.
+	Bucket             *MissingCredentialBucket       `json:"bucket,omitempty"`
+	Buckets            []MissingCredentialBucket      `json:"buckets,omitempty"`
 	MissingCredentials []MissingCredentialRequirement `json:"missing_credentials"`
 }
 

@@ -35,7 +35,8 @@ func TestPrintPlanResultIncludesEngineSummary(t *testing.T) {
 		credentialReadiness: &api.CredentialReadiness{
 			Bucket: &api.MissingCredentialBucket{ID: "22222222-2222-4222-8222-222222222222", Name: "production"},
 			MissingCredentials: []api.MissingCredentialRequirement{{
-				ServiceID: "33333333-3333-4333-8333-333333333333", Service: "Okta", AuthType: "api_key",
+				ServiceID: "33333333-3333-4333-8333-333333333333", Service: "Okta", AuthType: "api_key", AuthName: "oktaKey",
+				RequiredFields: []api.MissingCredentialField{{Name: "api_key", SecretKey: "oktaKey"}},
 			}},
 		},
 	}}
@@ -50,8 +51,8 @@ func TestPrintPlanResultIncludesEngineSummary(t *testing.T) {
 		"Plan summary:", `"type": "add_service"`, `"service_id": "service-1"`,
 		"Required permissions:", `Ability to manage service "GitHub"`,
 		"Ability to use the selected bucket",
-		`Credential readiness for workspace: 1 authentication requirement(s) are missing from bucket "production".`,
-		"fused-cli secret set '33333333-3333-4333-8333-333333333333' --bucket '22222222-2222-4222-8222-222222222222' --interactive",
+		`Credential readiness for workspace: 1 authentication requirement(s) are missing.`,
+		"fused-cli secret set 'Okta' --bucket 'production' --type 'api_key' --auth-name 'oktaKey' --interactive",
 	} {
 		if !strings.Contains(out, expected) {
 			t.Fatalf("expected %q in plan output:\n%s", expected, out)

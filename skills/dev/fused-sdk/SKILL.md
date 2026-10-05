@@ -81,6 +81,14 @@ Before collecting OAuth application credentials, offer a **Managed service** if 
 For OAuth/OIDC, use target `auth.type`/`auth.name`, optional `auth.ref`, and sibling `connect.scopes`. The source need not be selected by the SDK, but must be enabled with that named pair in its bucket; one Engine resolver owns readiness, consent, callback, execution, and refresh. `ref` may instead name `${fused.bucket.auth...}` for a Fused Managed App -- see `fused-bucket`.
 In a terminal, `sdk plan` may return `credential_readiness`: show the exact YAML-resolved bucket, offer to securely store the reported static secret or OAuth/OIDC application credential fields, and retry once after a confirmed write. Declining, `--json`, `--no-input`, and `CI=true` leave credentials unchanged while the valid plan remains usable. Never collect an end-user provider token, create/substitute a bucket, or self-grant access (see `fused-bucket`).
 
+`fused-cli init <name> --sdk` and combined App init use an explicit missing-credential
+menu before publication: secure terminal setup, open bucket setup in the browser,
+recheck and continue, proceed anyway, or cancel. Engine's per-service bucket
+targets and named auth schemes remain authoritative. Rechecking replaces the plan
+receipt for the same config; cancellation stops app publication but does not undo
+earlier workspace activation or confirmed secret writes. Automation prints the
+warning and setup commands without opening a browser or collecting secrets.
+
 The selected operation's imported `security_requirements` is authoritative:
 alternatives are OR, schemes within one alternative are AND, and an empty
 alternative permits anonymous execution. Do not collapse an AND alternative

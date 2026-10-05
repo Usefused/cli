@@ -65,14 +65,15 @@ const (
 )
 
 type planOptions struct {
-	filter        configKindFilter
-	jsonOut       bool
-	receiptOut    string
-	ownerTeamSlug string
-	interactive   bool
-	output        io.Writer
-	auditCtx      context.Context
-	auditAction   string
+	filter            configKindFilter
+	jsonOut           bool
+	receiptOut        string
+	ownerTeamSlug     string
+	interactive       bool
+	reviewCredentials bool
+	output            io.Writer
+	auditCtx          context.Context
+	auditAction       string
 }
 
 type applyOptions struct {
@@ -266,15 +267,23 @@ func runConfigPlan(opts planOptions) error {
 	return printPlanResult(planned, opts.jsonOut)
 }
 
-// planConfigWithRemediation optionally fills successful SDK readiness warnings and replans once.
+// planConfigWithRemediation reviews init readiness or offers ordinary SDK-plan setup without changing automation behavior.
 func planConfigWithRemediation(client *api.Client, cfg *configfile.ParsedConfig, engineURL string, opts planOptions) (plannedConfig, error) {
 	result, err := planOneConfig(client, cfg, engineURL, opts.ownerTeamSlug)
 	// A failed plan is authoritative and cannot be reinterpreted as mutable credential absence.
 	if err != nil {
 		return plannedConfig{}, err
 	}
-	// Non-interactive and non-SDK planning publish without credential mutation.
-	if !opts.interactive || cfg.Kind != configfile.KindSDK || result.credentialReadiness == nil {
+	// Automation never opens a browser, prompts, or writes secrets; ready plans need no review.
+	if !opts.interactive || opts.jsonOut || result.credentialReadiness == nil || len(result.credentialReadiness.MissingCredentials) == 0 {
+		return result, nil
+	}
+	// Init shares one explicit setup/proceed/cancel choice across SDK and MCP creation.
+	if opts.reviewCredentials {
+		return reviewInitCredentialReadiness(client, cfg, engineURL, result, opts)
+	}
+	// Standalone MCP planning retains its existing non-mutating readiness output.
+	if cfg.Kind != configfile.KindSDK {
 		return result, nil
 	}
 	remediationErr := remediateSDKPlanReadiness(client, cfg, result.credentialReadiness, opts)
@@ -469,29 +478,52 @@ func printCredentialReadiness(out io.Writer, configKey string, readiness *api.Cr
 	if readiness == nil || len(readiness.MissingCredentials) == 0 {
 		return
 	}
-	bucket := "the selected bucket"
-	// A named Engine-resolved bucket is useful display context; %q keeps terminal controls escaped.
-	if readiness.Bucket != nil && strings.TrimSpace(readiness.Bucket.Name) != "" {
-		bucket = fmt.Sprintf("bucket %q", strings.TrimSpace(readiness.Bucket.Name))
-	}
-	fmt.Fprintf(out, "Credential readiness for %s: %d authentication requirement(s) are missing from %s.\n", configKey, len(readiness.MissingCredentials), bucket)
-	// Exact value-free IDs let non-interactive users enter the secure prompt later without another discovery request.
-	if readiness.Bucket != nil {
-		bucketID := safeWorkspaceServiceID(readiness.Bucket.ID)
-		// Each missing auth family gets its own secure prompt because secret set resolves and validates that family independently.
-		for _, requirement := range readiness.MissingCredentials {
-			serviceID := safeWorkspaceServiceID(requirement.ServiceID)
-			// Malformed remote identity cannot be promoted into a copy-ready mutation command.
-			if serviceID == workspaceServiceSafeID || bucketID == workspaceServiceSafeID {
-				continue
-			}
-			fmt.Fprintf(out, "- %q (%q): `fused-cli secret set %s --bucket %s --interactive`\n",
-				strings.TrimSpace(requirement.Service), strings.TrimSpace(requirement.AuthType),
-				shellQuoteWorkspaceServiceArg(serviceID), shellQuoteWorkspaceServiceArg(bucketID),
-			)
+	fmt.Fprintf(out, "Credential readiness for %s: %d authentication requirement(s) are missing.\n", configKey, len(readiness.MissingCredentials))
+	for _, requirement := range readiness.MissingCredentials {
+		bucket := readinessDisplayBucket(readiness, requirement)
+		fmt.Fprintf(out, "- %q · %q (%q) · bucket %q\n", credentialServiceDisplay(requirement), requirement.AuthName, requirement.AuthType, bucket.Name)
+		// Malformed remote metadata may be shown as escaped text but cannot become a copy-ready write command.
+		if safeWorkspaceServiceID(requirement.ServiceID) == workspaceServiceSafeID || safeWorkspaceServiceID(bucket.ID) == workspaceServiceSafeID || validateMissingCredentialRequirement(requirement) != nil {
+			continue
 		}
+		service := readinessCommandName(requirement.Service, requirement.ServiceID)
+		bucketName := readinessCommandName(bucket.Name, bucket.ID)
+		fmt.Fprintf(out, "  fused-cli secret set %s --bucket %s --type %s", shellQuoteWorkspaceServiceArg(service), shellQuoteWorkspaceServiceArg(bucketName), shellQuoteWorkspaceServiceArg(requirement.AuthType))
+		// Named alternatives must remain exact when several schemes share one auth type.
+		if requirement.AuthName != "" {
+			fmt.Fprintf(out, " --auth-name %s", shellQuoteWorkspaceServiceArg(requirement.AuthName))
+		}
+		fmt.Fprintln(out, " --interactive")
 	}
 	fmt.Fprintln(out, "Publication can continue, but affected calls will fail until credentials are set.")
+}
+
+// readinessDisplayBucket renders both current multi-bucket and legacy single-bucket metadata without inferring a write destination.
+func readinessDisplayBucket(readiness *api.CredentialReadiness, requirement api.MissingCredentialRequirement) api.MissingCredentialBucket {
+	// Current Engine metadata pins the requirement directly to its resolved bucket.
+	if requirement.BucketID != "" {
+		for _, bucket := range readiness.Buckets {
+			if bucket.ID == requirement.BucketID {
+				return bucket
+			}
+		}
+		return api.MissingCredentialBucket{ID: requirement.BucketID, Name: requirement.BucketName}
+	}
+	// Older Engines supplied a single family-default bucket for every requirement.
+	if readiness.Bucket != nil {
+		return *readiness.Bucket
+	}
+	return api.MissingCredentialBucket{Name: "selected bucket"}
+}
+
+// readinessCommandName favors readable service/bucket names while rejecting terminal control characters.
+func readinessCommandName(name, fallback string) string {
+	name = strings.TrimSpace(name)
+	// Invalid display names must never split a printed shell command across terminal lines.
+	if name == "" || strings.ContainsFunc(name, func(r rune) bool { return r < 32 || r == 127 }) {
+		return fallback
+	}
+	return name
 }
 
 // printNotificationInbox renders the Engine-filtered workspace notification set to the caller's selected output stream.

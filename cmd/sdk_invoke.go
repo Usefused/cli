@@ -117,7 +117,7 @@ func (err *sdkInvokeError) Error() string {
 }
 
 // sdkInvokeCredentialCommand validates UUID and auth metadata before producing
-// a local copyable remediation instead of trusting a server-supplied shell string.
+// a local copyable remediation, preferring quoted readable targets over UUIDs.
 func sdkInvokeCredentialCommand(code string, details map[string]any) string {
 	// Connected-user failures have a distinct safe command whose arguments come only from UUID fields.
 	if code == "connection_required" {
@@ -136,6 +136,14 @@ func sdkInvokeCredentialCommand(code string, details map[string]any) string {
 	// Closed identity and auth-family checks prevent malformed response metadata from becoming shell guidance.
 	if !serviceOK || !bucketOK || !typeOK || !nameOK || !serviceUUID || !bucketUUID || !sdkInvokeConfigurableAuthType(authType) || invalidSDKInvokeAuthName(authName) {
 		return ""
+	}
+	// Friendly names are presentation metadata; invalid or absent values retain the verified UUID fallback.
+	if slug, ok := details["service_slug"].(string); ok && !invalidSDKInvokeAuthName(slug) && !strings.HasPrefix(slug, "-") {
+		canonicalServiceID = shellQuoteSDKInvokeArgument(slug)
+	}
+	// Quote the bucket name locally rather than executing a server-provided command string.
+	if name, ok := details["bucket_name"].(string); ok && !invalidSDKInvokeAuthName(name) && !strings.HasPrefix(name, "-") {
+		canonicalBucketID = shellQuoteSDKInvokeArgument(name)
 	}
 	return fmt.Sprintf("fused-cli secret set %s --bucket %s --type %s --auth-name %s --interactive",
 		canonicalServiceID, canonicalBucketID, shellQuoteSDKInvokeArgument(authType), shellQuoteSDKInvokeArgument(authName))

@@ -559,7 +559,7 @@ func TestUnifiedInitPrintsPlanReadinessAndNotifications(t *testing.T) {
 	command.SetOut(&output)
 	err := createPlanApplyUnifiedInit(command, api.NewClient(server.URL, "test-key"), unifiedInitModeSDK, unifiedInitFailureTestRequest(filepath.Join(directory, "support-sdk.yaml")), false, false, noOpScaffoldRequirements, defaultTestScaffoldBucket)
 	// Combined init must not hide readiness or notifications that ordinary plan users receive.
-	if err != nil || !strings.Contains(output.String(), "Credential readiness for sdk:support-sdk:1.0.0") || !strings.Contains(output.String(), "fused-cli secret set '22222222-2222-4222-8222-222222222222' --bucket '11111111-1111-4111-8111-111111111111' --interactive") || !strings.Contains(output.String(), "registry_notifications_unavailable") {
+	if err != nil || !strings.Contains(output.String(), "Credential readiness for sdk:support-sdk:1.0.0") || !strings.Contains(output.String(), "fused-cli secret set 'Linear' --bucket 'default' --type 'api_key' --auth-name 'linearKey' --interactive") || !strings.Contains(output.String(), "registry_notifications_unavailable") {
 		t.Fatalf("error=%v output=%q", err, output.String())
 	}
 }
