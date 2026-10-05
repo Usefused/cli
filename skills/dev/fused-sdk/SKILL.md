@@ -65,8 +65,12 @@ Register handlers through `FusedWebhooks.listen`/`registerReceiver`, close the r
 `api_key`, `oauth`, `oidc`, `mtls` -- the same list `fused-config` documents
 for workspace `auth`); `auth.name` disambiguates two schemes of the same
 type. An explicit selector must occur in a valid alternative for every secured
-selected operation. Without one, Engine chooses each operation's first
-provider-declared OR alternative. The immutable SDK definition records every
+selected operation. Without one, Engine selects a unique compatible scheme with
+complete credentials in the service's selected bucket during planning. Multiple
+ready schemes require an explicit choice. If none is ready, the provider-declared
+order remains and the plan reports missing credentials. The reviewed choice is
+pinned; apply and execution do not switch it when bucket contents change.
+The immutable SDK definition records every
 scheme in those chosen alternatives, and bucket readiness checks the full AND
 sets from metadata without decrypting values. Anonymous-only and webhook-only
 selections record no required auth and perform no credential read.

@@ -205,6 +205,14 @@ package. API mode writes the same resource with `generate: false`, applies it,
 and prints a central execution REST request template. MCP mode writes `kind:
 mcp`, applies it, and reports the deployed Engine URL and token.
 
+When service `auth` is omitted, Engine planning checks the selected bucket for
+complete credentials compatible with the selected operations. A single ready
+scheme is selected and shown in the plan summary; multiple ready schemes require
+explicit `auth.type` and `auth.name`. If none is ready, planning retains provider
+ordering and reports missing credentials. This applies to SDK, MCP, and Unified
+App plans, including per-service bucket overrides. Explicit auth remains
+authoritative, and apply uses the saved choice rather than selecting again.
+
 If an SDK, MCP or combined App plan reports missing credentials, interactive
 `init` names each service, auth scheme and resolved bucket before publication.
 Choose **Set up credentials here** (the ordinary masked, confirmed secret

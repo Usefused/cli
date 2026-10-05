@@ -7,6 +7,13 @@ description: "Build, configure, deploy, or call a hosted Fused Unified App. Use 
 
 A Unified App is hosted TypeScript that calls selected provider operations through Engine. Keep its YAML config and a default-exported `buildUnifiedApp` source file in `.fused/unified_app/`. Use `fused-cli unified-app --help` to check the installed command surface.
 
+When service auth is omitted, Engine planning selects a unique compatible scheme
+with complete credentials in that service's bucket. Multiple ready schemes require
+`services.<service>.auth.type` and `auth.name`; none ready produces the ordinary
+missing-credentials warning. Review the resolved auth in the plan summary. It is
+saved with the immutable version and does not change when bucket credentials change.
+Explicit auth and managed references always take precedence.
+
 ## Create and deploy
 
 Use `fused-cli describe '<goal>' --kind unified` to draft a new app from exact Registry operations and webhook events. When the goal needs inbound provider events, describe reuses a compatible registration or provisions one before deploying the app. Review the generated source, event scope, and registration before confirmation. To write one directly, create `.fused/unified_app/customer-app.yaml`:

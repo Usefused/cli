@@ -73,6 +73,11 @@ substitute generic compatibility prose when it is absent.
 On extension, omitted `--description` preserves the YAML value. An explicit
 value replaces the complete description on the successor; never append fragments.
 
+When auth is omitted, Engine planning selects a unique compatible scheme with
+complete credentials in the selected bucket. Multiple ready schemes require an
+explicit `auth.type` and `auth.name`; none ready retains provider ordering and
+reports missing credentials. The reviewed choice is pinned to the app version.
+
 Keep OAuth/OIDC selection to the target `auth.type`/`auth.name`, an optional
 complete-pair `auth.ref`, and sibling service-specific `connect.scopes`. The ref
 resolves the source service/auth name in this MCP server's selected bucket; the
