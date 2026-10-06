@@ -36,11 +36,11 @@ output.
 Plan and apply allow 20 minutes by default for large reviewed specifications.
 Use `--timeout 30m` (or another explicit duration) when the deployment needs a
 larger bound. If apply times out, its outcome is unknown because the Registry
-may have committed before the Engine proxy lost the response. Do not replay the
+may have committed before Fused proxy lost the response. Do not replay the
 same one-shot receipt automatically. Run the exact `fused-cli import status
 <operation-id>` recovery printed by the CLI.
 
-Registry publication and Engine workspace activation are two phases of the
+Registry publication and Fused workspace activation are two phases of the
 composite apply. If publication commits but activation fails, the CLI exits
 non-zero with `phase=workspace_activation` and `commit_state=committed`. The
 service already exists: do not repeat the import. Run the reported
@@ -83,7 +83,7 @@ agent workflows.
 `import discover` first resolves and validates a machine-readable source. If no
 unique valid source exists, Registry crawls a bounded same-site documentation
 frontier and presents exact operations for review. An interactive terminal
-shows the operation selector, opens the Engine's browser review when the draft
+shows the operation selector, opens Fused's browser review when the draft
 is ready, and waits while the browser submits the review. Pass `--no-browser`
 to print the same review URL and wait without opening it, which is useful over
 SSH or when the browser is on another device.
@@ -112,7 +112,7 @@ identity, crawl, or worker inputs.
 
 Google Discovery adapter v2 automatically publishes the credential-free OAuth
 settings required for durable delegated access: `access_type=offline`,
-`prompt=consent`, and `refresh_token_required=true`. Consumer Engines receive
+`prompt=consent`, and `refresh_token_required=true`. Consumer Fused deployments receive
 those settings with a public Gmail or Drive service; SDK YAML should declare
 only the required scopes and routing selectors. Do not copy these authorization
 parameters into SDK configuration or application code.
@@ -159,8 +159,8 @@ disposition, required capability, and provenance.
 
 Every imported service version carries an execution-contract envelope.
 `contract_version` identifies the wire shape and `required_capabilities`
-declares behaviours an Engine must support. Registry publication and Engine
-snapshot materialization fail closed if the target Engine cannot execute the
+declares behaviours a Fused deployment must support. Registry publication and Fused
+snapshot materialization fail closed if the target Fused cannot execute the
 contract. Additive documentation fields do not require a capability.
 
 The CLI transports this contract without deciding compatibility. It also
@@ -176,7 +176,7 @@ same provider version creates a new internal revision, while a different
 provider version creates that version.
 
 The plan reports SDK and workspace usage of a changed version without blocking
-apply. After a successful apply, Engine best-effort registers the service in
+apply. After a successful apply, Fused best-effort registers the service in
 its workspace. If that registration fails, the Registry import remains valid;
 use the file-free `fused-cli workspace service add <slug>` command explicitly.
 

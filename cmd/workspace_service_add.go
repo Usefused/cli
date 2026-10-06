@@ -507,8 +507,9 @@ func workspaceServiceTargetFromResults(query string, services []api.WorkspaceSer
 		services = []api.WorkspaceService{selected}
 	}
 	service := services[0]
+	// A service without identity cannot be safely linked into workspace configuration.
 	if strings.TrimSpace(service.ServiceID) == "" {
-		return workspaceServiceAddTarget{}, false, errors.New("Engine returned a workspace service without an ID")
+		return workspaceServiceAddTarget{}, false, errors.New("Fused returned a workspace service without an ID")
 	}
 	slug := strings.TrimSpace(service.ServiceSlug)
 	if slug == "" {

@@ -24,7 +24,7 @@ var newCLIIdentityClient = func(engineURL, apiKey string, options api.ClientOpti
 
 var whoAmICmd = &cobra.Command{
 	Use:   "whoami",
-	Short: "Show the identity used for Engine requests",
+	Short: "Show the identity used for Fused requests",
 	Args:  cobra.NoArgs,
 	RunE: WithTelemetry("cli.whoami", func(cmd *cobra.Command, _ []string) error {
 		return runWhoAmI(cmd)
@@ -36,7 +36,7 @@ var logoutCmd = &cobra.Command{
 	Short: "Revoke and remove the saved CLI login",
 	Long: `Revoke and remove the managed credential created by fused-cli login.
 
-Logout always uses the Engine URL and credential stored by login. Inherited
+Logout always uses the Fused URL and credential stored by login. Inherited
 --key, --engine-url, and credential environment variables cannot retarget it.`,
 	Args: cobra.NoArgs,
 	RunE: WithTelemetry("cli.logout", func(cmd *cobra.Command, _ []string) error {
@@ -81,10 +81,11 @@ type whoAmIResult struct {
 	Identity              *api.WhoAmIResponse `json:"identity"`
 }
 
+// writeWhoAmI labels the human-readable workspace identity while leaving JSON field names stable.
 func writeWhoAmI(cmd *cobra.Command, engineURL, localSource string, identity *api.WhoAmIResponse) {
 	output := cmd.OutOrStdout()
 	fmt.Fprintln(output, "Authenticated: yes")
-	fmt.Fprintln(output, "Engine:", printableIdentityValue(engineURL))
+	fmt.Fprintln(output, "Fused:", printableIdentityValue(engineURL))
 	fmt.Fprintln(output, "Identity:", identityLabel(identity))
 	if identity.Email != "" {
 		fmt.Fprintln(output, "Email:", printableIdentityValue(identity.Email))
@@ -133,6 +134,7 @@ func printableIdentityValue(value string) string {
 	return value
 }
 
+// runCLILogout revokes only the saved managed credential and preserves the workspace address.
 func runCLILogout(cmd *cobra.Command) error {
 	cfg, err := config.Load()
 	if err != nil {
@@ -152,7 +154,7 @@ func runCLILogout(cmd *cobra.Command) error {
 		return fmt.Errorf("remove saved CLI credential: %w", err)
 	}
 	recordAppliedChangeIf(cmd.Context(), cmd.CommandPath(), "cli_login", changed)
-	fmt.Fprintln(cmd.OutOrStdout(), "✅ Logged out. The saved CLI credential was removed; the Engine URL was preserved.")
+	fmt.Fprintln(cmd.OutOrStdout(), "✅ Logged out. The saved CLI credential was removed; the Fused URL was preserved.")
 	writeEnvironmentCredentialWarning(cmd)
 	return nil
 }

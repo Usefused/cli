@@ -33,10 +33,10 @@ type Client struct {
 const DefaultTimeout = time.Minute
 
 var (
-	errGraphQLResponseMalformed = &APIError{Code: "graphql_response_malformed", Message: "Engine returned a malformed GraphQL response", Category: "dependency", Retryable: true, Remediation: "Retry or check Engine logs."}
-	errGraphQLDependencyFailed  = &APIError{Code: "graphql_dependency_failed", Message: "Engine could not complete the GraphQL request", Category: "dependency", Retryable: true, Remediation: "Retry the command or check Engine availability and logs."}
-	errGraphQLRequestRejected   = &APIError{Code: "graphql_request_rejected", Message: "Engine rejected the GraphQL request", Category: "validation", Remediation: "Check command inputs and workspace permissions."}
-	errGraphQLDataMalformed     = &APIError{Code: "graphql_data_malformed", Message: "Engine returned malformed GraphQL data", Category: "dependency", Retryable: true, Remediation: "Retry or check Engine logs."}
+	errGraphQLResponseMalformed = &APIError{Code: "graphql_response_malformed", Message: "Fused returned a malformed GraphQL response", Category: "dependency", Retryable: true, Remediation: "Retry or check Fused logs."}
+	errGraphQLDependencyFailed  = &APIError{Code: "graphql_dependency_failed", Message: "Fused could not complete the GraphQL request", Category: "dependency", Retryable: true, Remediation: "Retry the command or check Fused availability and logs."}
+	errGraphQLRequestRejected   = &APIError{Code: "graphql_request_rejected", Message: "Fused rejected the GraphQL request", Category: "validation", Remediation: "Check command inputs and workspace permissions."}
+	errGraphQLDataMalformed     = &APIError{Code: "graphql_data_malformed", Message: "Fused returned malformed GraphQL data", Category: "dependency", Retryable: true, Remediation: "Retry or check Fused logs."}
 	errGraphQLResourceNotFound  = &APIError{Code: "resource_not_found", Message: "resource was not found", Category: "not_found", Remediation: "Use its name, slug, email, or full UUID."}
 	errGraphQLResourceAmbiguous = &APIError{Code: "resource_ambiguous", Message: "name exists as both an SDK and MCP server", Category: "validation", Remediation: "use the full UUID."}
 )
@@ -137,16 +137,16 @@ func (c *Client) doRequest(req *http.Request) (*http.Response, error) {
 // safeControlPlaneTransportError hides transport internals while retaining the
 // original cause for errors.Is cancellation and deadline checks.
 func safeControlPlaneTransportError(cause error) error {
-	apiErr := &APIError{Code: "engine_unavailable", Message: "Engine is unavailable", Category: "dependency", Retryable: true, Remediation: "Check Engine availability and retry.", cause: cause}
+	apiErr := &APIError{Code: "engine_unavailable", Message: "Fused is unavailable", Category: "dependency", Retryable: true, Remediation: "Check Fused availability and retry.", cause: cause}
 	// Cancellation is a caller decision rather than evidence of an Engine outage.
 	if errors.Is(cause, context.Canceled) {
-		apiErr.Code, apiErr.Message, apiErr.Category, apiErr.Retryable, apiErr.Remediation = "request_cancelled", "Engine request was cancelled", "cancellation", false, "Retry when ready."
+		apiErr.Code, apiErr.Message, apiErr.Category, apiErr.Retryable, apiErr.Remediation = "request_cancelled", "Fused request was cancelled", "cancellation", false, "Retry when ready."
 		return apiErr
 	}
 	// Deadlines are retryable but need distinct automation semantics from a
 	// connection failure, while the wrapped cause preserves errors.Is behavior.
 	if errors.Is(cause, context.DeadlineExceeded) {
-		apiErr.Code, apiErr.Message, apiErr.Category, apiErr.Remediation = "request_timed_out", "Engine request timed out", "timeout", "Check Engine availability and retry."
+		apiErr.Code, apiErr.Message, apiErr.Category, apiErr.Remediation = "request_timed_out", "Fused request timed out", "timeout", "Check Fused availability and retry."
 	}
 	return apiErr
 }
@@ -598,7 +598,7 @@ func genericHTTPError(status int) *APIError {
 	apiErr := &APIError{HTTPStatus: status}
 	switch status {
 	case http.StatusBadRequest, http.StatusUnprocessableEntity:
-		apiErr.Code, apiErr.Message, apiErr.Category, apiErr.Remediation = "request_rejected", "Engine rejected the request", "validation", "Check command inputs."
+		apiErr.Code, apiErr.Message, apiErr.Category, apiErr.Remediation = "request_rejected", "Fused rejected the request", "validation", "Check command inputs."
 	case http.StatusUnauthorized:
 		apiErr.Code, apiErr.Message, apiErr.Category, apiErr.Remediation = "authentication_failed", "authentication failed", "authentication", "Provide a valid Fused credential."
 	case http.StatusForbidden:
@@ -610,7 +610,7 @@ func genericHTTPError(status int) *APIError {
 	case http.StatusTooManyRequests:
 		apiErr.Code, apiErr.Message, apiErr.Category, apiErr.Retryable, apiErr.Remediation = "request_rate_limited", "request rate limited", "rate_limit", true, "Retry later."
 	default:
-		apiErr.Code, apiErr.Message, apiErr.Category, apiErr.Retryable, apiErr.Remediation = "engine_request_failed", "Engine request failed", "dependency", status >= 500, "Check Engine logs and retry."
+		apiErr.Code, apiErr.Message, apiErr.Category, apiErr.Retryable, apiErr.Remediation = "engine_request_failed", "Fused request failed", "dependency", status >= 500, "Check Fused logs and retry."
 	}
 	return apiErr
 }
@@ -621,7 +621,7 @@ func formatPermissionDenied(missing []PermissionRequirement) string {
 	items := safePermissionDescriptions(missing)
 	// Empty or malformed metadata is not evidence that the caller needs a role change.
 	if len(items) == 0 {
-		return "permission denied; Engine did not identify a missing permission. Check your identity with `fused-cli whoami`, and verify the selected workspace and config references"
+		return "permission denied; Fused did not identify a missing permission. Check your identity with `fused-cli whoami`, and verify the selected workspace and config references"
 	}
 	// A concrete owning-team requirement has its own actionable access remedy.
 	if containsPermission(missing, "access.manage") {
@@ -2335,7 +2335,7 @@ func (c *Client) applyAppConfig(kind, planID, sourceHash string, skipToken bool)
 	// A malformed success body arrives after Engine accepted the mutation request, so decoding failure cannot prove non-commit.
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return nil, &APIError{
-			Code: "sdk_apply_response_invalid", Message: "Engine returned an invalid app apply response",
+			Code: "sdk_apply_response_invalid", Message: "Fused returned an invalid app apply response",
 			Category: "indeterminate", Retryable: false, Phase: "apply",
 			OperationID: safeErrorMetadataToken(planID), CommitState: "unknown", cause: err,
 		}

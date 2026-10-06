@@ -10,15 +10,15 @@ All commands support the following global flags:
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
-| `--key` | | Engine credential (overrides saved login, `FUSED_API_KEY`, and `FUSED_LICENSE_KEY`) | `""` |
-| `--engine-url` | | Fused Engine URL (overrides config & `FUSED_ENGINE_URL`) | `""` |
+| `--key` | | Fused credential (overrides saved login, `FUSED_API_KEY`, and `FUSED_LICENSE_KEY`) | `""` |
+| `--engine-url` | | Fused URL (overrides config & `FUSED_ENGINE_URL`) | `""` |
 | `--file` | `-f` | Path to a Fused config file (disables `.fused/` discovery) | `""` |
 | `--no-input` | | Fail instead of prompting; also enabled by `CI=true` | `false` |
-| `--timeout` | | Maximum duration for an Engine request; spec imports use `20m0s` unless explicitly set | `1m0s` |
-| `--request-id` | | Attach an audit correlation ID to every Engine request | `""` |
+| `--timeout` | | Maximum duration for a Fused request; spec imports use `20m0s` unless explicitly set | `1m0s` |
+| `--request-id` | | Attach an audit correlation ID to every Fused request | `""` |
 | `--readme` | | Print the concise CLI onboarding README and exit | `false` |
 
-All Engine requests have a finite timeout and are cancelled when the CLI
+All Fused requests have a finite timeout and are cancelled when the CLI
 receives SIGINT or SIGTERM. `CI=true` and `FUSED_NO_UPDATE_CHECK=1` disable
 release update checks. A command that would prompt fails with remediation when
 `--no-input` or `CI=true` is active.
@@ -69,7 +69,7 @@ output and stderr receives one JSON object before the CLI exits non-zero:
 }
 ```
 
-Fields unavailable for a particular failure are omitted. Engine errors retain
+Fields unavailable for a particular failure are omitted. Fused errors retain
 their safe structured fields through CLI wrapping; untrusted response bodies
 are still excluded. Cobra usage failures use `invalid_arguments`; other local
 CLI failures use `command_failed` with the original message and a help-oriented
@@ -78,9 +78,9 @@ recording remote messages or command input.
 
 ## `login`
 
-Open the selected Engine's sign-in page and save a subject-scoped CLI
+Open the selected Fused's sign-in page and save a subject-scoped CLI
 credential after browser approval. The page supports managed Fused Auth and an
-existing Engine API key. The generated credential never passes through the
+existing Fused API key. The generated credential never passes through the
 browser and is not printed.
 
 | Argument | Short | Description | Default |
@@ -89,18 +89,18 @@ browser and is not printed.
 
 ## `whoami`
 
-Show the non-secret Engine identity used by the effective credential. The
+Show the non-secret Fused identity used by the effective credential. The
 command follows normal `--key` / saved config / environment resolution and
 prints identity, account, workspace, credential source, authentication method,
 and expiry when reported.
 
-Pass `--json` for the Engine URL, local credential source, and non-secret
+Pass `--json` for Fused URL, local credential source, and non-secret
 identity response as structured fields.
 
 ## `logout`
 
-Revoke an Engine-issued managed CLI login and remove its saved local
-credential. Logout deliberately uses the saved Engine URL and saved credential,
+Revoke a Fused-issued managed CLI login and remove its saved local
+credential. Logout deliberately uses the saved Fused URL and saved credential,
 not `--key` or environment overrides. A failed remote revocation preserves the
 local login for retry; an already-inactive login is cleared locally. The saved
 `engine-url` remains configured. Manually saved API keys are left unchanged
@@ -112,7 +112,7 @@ Manage your local CLI configuration (`set`, `get`, `list`, `reset`). Inherits gl
 ## `init <app-name>`
 
 Create one App with SDK, MCP, and REST delivery by default. Explicit method
-flags create only a typed SDK, a direct Engine REST app, or an Engine-hosted MCP
+flags create only a typed SDK, a direct Fused REST app, or a Fused-hosted MCP
 server. Top-level init composes the existing workspace and app plan/apply
 functions; it does not introduce a new resource kind or receipt boundary.
 
@@ -187,7 +187,7 @@ flow remains applied under its separate receipt.
 For generated SDK delivery, including the default combined App,
 `generation_contract_pin_unavailable` starts one bounded legacy-snapshot
 repair. The CLI resolves every selected active
-`service@version` before changing anything, visibly refreshes each exact Engine
+`service@version` before changing anything, visibly refreshes each exact Fused
 snapshot, and retries the unchanged app plan once. `--no-input` follows the
 same deterministic path without prompting. The CLI never substitutes a runtime
 hash, selects a newer version, or bypasses the Registry-retained generation pin.
@@ -196,16 +196,16 @@ API mode, MCP mode, and unrelated failures do not trigger this repair.
 If exact resolution or refresh fails, init does not retry the plan. If the one
 retry fails, no app config or app receipt is created and the error reports any
 snapshot refreshes that already completed. A repeated missing-pin response
-directs you to the Engine and Registry logs or another enabled version.
+directs you to Fused and Registry logs or another enabled version.
 Changing credentials or operation selection does not repair a generation-pin
 failure.
 
 SDK mode writes `kind: sdk` with `generate: true`, applies it, and downloads the
 package. API mode writes the same resource with `generate: false`, applies it,
 and prints a central execution REST request template. MCP mode writes `kind:
-mcp`, applies it, and reports the deployed Engine URL and token.
+mcp`, applies it, and reports the deployed Fused URL and token.
 
-When service `auth` is omitted, Engine planning checks the selected bucket for
+When service `auth` is omitted, Fused planning checks the selected bucket for
 complete credentials compatible with the selected operations. A single ready
 scheme is selected and shown in the plan summary; multiple ready schemes require
 explicit `auth.type` and `auth.name`. If none is ready, planning retains provider
@@ -218,7 +218,7 @@ If an SDK, MCP or combined App plan reports missing credentials, interactive
 Choose **Set up credentials here** (the ordinary masked, confirmed secret
 collector), **Open bucket setup in the browser**, **Recheck credentials and
 continue**, **Proceed anyway**, or **Cancel app creation**. Browser setup opens
-the selected Engine's bucket page without sending credentials in the URL;
+the selected Fused's bucket page without sending credentials in the URL;
 bucket permissions still apply. Rechecking creates a fresh plan for the same
 config. It does not invoke provider operations. Cancelling stops before app
 apply or publishing the candidate app file; any already-applied workspace
@@ -242,7 +242,7 @@ Sendbird binding and bucket-value setup.
 
 Turn a natural-language goal into a reviewable Unified App by default.
 `describe` shows the drafted TypeScript source and exact selected operations,
-then sends that cart to Engine for compilation and deployment after approval.
+then sends that cart to Fused for compilation and deployment after approval.
 Use `--kind sdk|mcp|rest` to request another output. Use `init` without a method
 flag when you want one App with SDK, MCP, and REST delivery.
 
@@ -278,7 +278,7 @@ config and API calls.
 Create an editable aggregate workspace skeleton at `.fused/workspace.yaml`, or
 at the global `--file` path. Creation refuses to replace an existing file;
 `--extend` adds service selections without duplicating existing entries. This
-local authoring command does not activate or remove Engine services.
+local authoring command does not activate or remove Fused services.
 
 ```bash
 fused-cli workspace init
@@ -361,7 +361,7 @@ Search workspace and Registry services together for read-only browsing. Pass a
 non-empty `--q <provider-or-product>` and optionally `--json`. Results already
 enabled in the workspace are listed first with `workspace_status: enabled`;
 Registry-only results use `workspace_status: available_to_add`. The CLI uses
-Registry's existing bounded search, then one Engine lookup limited to that
+Registry's existing bounded search, then one Fused deployment lookup limited to that
 query/result set—it does not load the full workspace. This combined view
 requires both `catalogue.read` and `service.read`.
 
@@ -436,7 +436,7 @@ scheme. Interactive mode selects the exact scheme directly.
 > Without `--value-stdin`, a terminal supplies both fields through protected prompts.
 
 OAuth/OIDC application credentials are encrypted bucket secrets, separate from
-each connected user's access, refresh, and ID tokens. The Engine derives the
+each connected user's access, refresh, and ID tokens. Fused derives the
 callback from its canonical public URL; `redirect_uri` is never accepted as
 credential input.
 
@@ -469,7 +469,7 @@ Delete a workspace secret. Use `--bucket <bucket-name-or-id>` for an override se
 Create a new bucket for storing overrides and secrets.
 
 ## `bucket list`
-List workspace buckets from the Engine GraphQL page used by the UI.
+List workspace buckets from Fused GraphQL page used by the UI.
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
@@ -522,7 +522,7 @@ List non-secret values in a bucket.
 | `--offset` | | Rows to skip before reading | `0` |
 
 ## `bucket connections <bucket-name-or-id>`
-List connected users in a bucket. Filters are sent to Engine GraphQL.
+List connected users in a bucket. Filters are sent to Fused GraphQL.
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
@@ -559,7 +559,7 @@ service slugs are accepted at their respective resource boundaries. App access
 mutations require the `SDK_ID` or `MCP_ID` displayed by list commands because
 the generic `app` command cannot infer SDK versus MCP from a potentially shared
 name. Kind-specific SDK/MCP commands can resolve names safely. List
-operations are paginated by the Engine; use `--limit` and `--offset` rather
+operations are paginated by Fused; use `--limit` and `--offset` rather
 than fetching an entire workspace into the CLI.
 
 Provider connection and discovered-resource IDs remain opaque IDs because
@@ -649,7 +649,7 @@ Revoke a personal credential.
 Preview SDK package or MCP server changes. Each command reads only its matching
 config kind, so an MCP plan never generates SDK code and an SDK plan never
 deploys an MCP server. Plan runs the same local/offline validation as
-`validate` before its first Engine request.
+`validate` before its first Fused request.
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
@@ -668,10 +668,10 @@ planning reports the same non-blocking readiness but does not prompt.
 ## `sdk apply` / `mcp apply`
 Apply an SDK generation plan or deploy an MCP server plan.
 
-Generated-SDK apply returns after Engine durably queues the non-runnable build;
-package generation continues in Engine's background finalizer. Use `sdk show
+Generated-SDK apply returns after Fused durably queues the non-runnable build;
+package generation continues in Fused's background finalizer. Use `sdk show
 <name@version-or-version-id>` to inspect `generation_status`. `--download`
-waits through Engine-local Version ID status reads before downloading, without
+waits through Fused-local Version ID status reads before downloading, without
 replaying apply or depending on a Registry event stream.
 
 | Argument | Short | Description | Default |
@@ -685,7 +685,7 @@ replaying apply or depending on a Registry event stream.
 
 Plan a `kind: unified_app` config with selected workspace operations and a
 TypeScript `source_path`. The CLI reads the source file, validates the config,
-and sends the reviewed cart to Engine for compilation. If the config still has
+and sends the reviewed cart to Fused for compilation. If the config still has
 inline `source: |`, plan first writes an editable `.tsx` file and updates the
 YAML reference. The plan receipt is used by `unified-app apply`.
 
@@ -697,7 +697,7 @@ YAML reference. The plan receipt is used by `unified-app apply`.
 
 ## `unified-app apply`
 
-Apply a Unified App plan and publish its immutable version. Engine returns the
+Apply a Unified App plan and publish its immutable version. Fused returns the
 App IDs and shows the initial execution token once.
 
 | Argument | Description |
@@ -734,7 +734,7 @@ Public execution errors contain stable codes. Detailed exceptions and captured b
 
 ## `unified-app bundle attach <app-version-id>`
 
-You usually do not need this command. With `source_path`, Engine compiles the
+You usually do not need this command. With `source_path`, Fused compiles the
 TypeScript during `unified-app plan`.
 
 Use `bundle attach` only if you compiled the code yourself. Put the compiled
@@ -753,15 +753,15 @@ with different contents are left untouched and reported as conflicts.
 
 Usage: `fused-cli unified-app sync -f .fused/unified_app/<app>.yaml`. Omit `-f` to
 sync all discovered local Unified App configs. `unified-app plan` performs the
-inline-source conversion automatically before sending the cart to Engine.
+inline-source conversion automatically before sending the cart to Fused.
 
 ## `sdk sync`
-Full-mirror a local SDK config from the exact Engine app version declared in that file. There is no implicit latest lookup or sync-time version upgrade.
+Full-mirror a local SDK config from the exact Fused app version declared in that file. There is no implicit latest lookup or sync-time version upgrade.
 
 Usage: `fused-cli sdk sync <sdk-name> -f .fused/sdks/<sdk-name>.yaml`
 
 ## `sdk validate` / `mcp validate`
-Validate only the matching SDK or MCP configuration files without an Engine
+Validate only the matching SDK or MCP configuration files without a Fused deployment
 request. This remains useful for offline checks; `plan` already performs this
 validation first. Inherits global flags.
 
@@ -781,7 +781,7 @@ one exact immutable version.
 ## `sdk list`
 List each SDK or direct API application once by canonical name and stable
 `SDK_ID`, with a version count and latest published version. `--limit` (default 20) and `--offset` (default 0)
-paginate applications in name order using Engine-owned grouping and authorized totals.
+paginate applications in name order using Fused-owned grouping and authorized totals.
 `--json` returns the usual pagination envelope with `app_family_id`, `name`, and
 `version_count`, plus `latest_version` and its exact `latest_version_id`. Latest is catalogue metadata; runtime and lifecycle commands still require an exact version.
 Use `sdk versions [sdk-or-api-name-or-id]` for exact version rows and status;
@@ -794,24 +794,24 @@ URLs. Applications without a promoted version remain listed with no stable URL;
 the CLI does not select a newer sibling automatically.
 
 `--limit` (default 20) and `--offset` (default 0) paginate applications in name
-order, using Engine-owned grouping and authorized totals. `--json` uses the
+order, using Fused-owned grouping and authorized totals. `--json` uses the
 usual `items`/`total` pagination envelope with application-level fields:
 `app_family_id`, `name`, `version_count`, `latest_version`, `latest_version_id`, optional `stable_version`,
 `stable_version_id`, `default_transport`, and stable `transport_urls`.
 For the previous version-level output, use `mcp versions --json`.
 
-Application listing requires Engine support for the `appFamilies` GraphQL query.
-Upgrade Engine alongside this CLI change. The UI uses the same family catalogue and keeps `app`/`appVersions` for exact-version details.
+Application listing requires Fused support for the `appFamilies` GraphQL query.
+Upgrade Fused alongside this CLI change. The UI uses the same family catalogue and keeps `app`/`appVersions` for exact-version details.
 
 ## `sdk show <sdk-name@version-or-version-id>`
-Show one exact SDK version from the Engine.
+Show one exact SDK version from Fused.
 
 ## `sdk services <sdk-name@version-or-version-id>`
 List services selected by one exact SDK version.
 
 ## `mcp operations <mcp-name@version-or-version-id>`
 List every operation ID callable through one exact MCP server version. The
-Engine expands `select_all` from its immutable local service-contract snapshots.
+Fused expands `select_all` from its immutable local service-contract snapshots.
 Human output shows `OPERATION_ID` and `KIND` (`physical`); `--json`
 returns the MCP and Version IDs plus exact physical service provenance. A bare
 MCP name without `@version` is rejected so the result cannot float to another
@@ -826,7 +826,7 @@ Deactivate exactly one MCP server version. Human-readable references must use
 implicit latest version.
 
 ## `sdk download <sdk-name@version-or-version-id>`
-Download one exact generated SDK version through the Engine. Human-readable
+Download one exact generated SDK version through Fused. Human-readable
 references must use `name@version`; a version ID can identify the version
 directly. There is no implicit latest version.
 
@@ -858,8 +858,8 @@ credential.
 
 The command always atomically writes a file and never writes the document to
 stdout. YAML is the default; JSON is available for consumers that require it.
-The generated server URL is the configured Engine URL. Redirects are rejected,
-and the CLI accepts at most 16 MiB from the Engine. Before replacing the file,
+The generated server URL is the configured Fused URL. Redirects are rejected,
+and the CLI accepts at most 16 MiB from Fused. Before replacing the file,
 the CLI verifies that the document identifies the resolved Version ID and
 contains the actual app-execution POST path with the matching `app_id` enum and
 a request-branch count consistent with the declared operation count.
@@ -883,7 +883,7 @@ fused-cli api openapi billing-api@1.2.0 --out billing-api.openapi.yaml
 
 The export has the same immutable-version resolution, `app.api.read` control
 credential, operation filtering, atomic file writing, size bound, and document
-validation described for `sdk openapi`. It describes the same Engine execution
+validation described for `sdk openapi`. It describes the same Fused execution
 route and runtime Bearer token contract. Its generated filename and `--json`
 metadata identify the resource as an API instead of an SDK.
 
@@ -896,7 +896,7 @@ metadata identify the resource as an API instead of an SDK.
 
 ## `sdk invoke <sdk-name@version-or-version-id> <operation>`
 
-Invoke one JSON operation through the Engine REST execution route configured by
+Invoke one JSON operation through the Fused REST execution route configured by
 the global `--engine-url` / `FUSED_ENGINE_URL` setting. The SDK execution token
 comes from `FUSED_SDK_TOKEN`, a variable named by `--token-env`, or stdin with
 `--token-stdin`; management and provider credentials are never substituted.
@@ -911,11 +911,11 @@ accepts only buffered JSON provider responses up to 1 MiB.
 | `--environment` | | Provider environment selector; sugar for `--selector` | `""` |
 | `--selector` | | Strict selector JSON object or `@file` | `""` |
 | `--idempotency-key` | | Stable logical-request key; generated when omitted | `""` |
-| `--json` | | Print Engine endpoint, physical results, status, and timing | `false` |
+| `--json` | | Print Fused endpoint, physical results, status, and timing | `false` |
 
 ## `sdk activity <sdk-name@version-or-version-id>`
 
-List canonical Engine execution receipts. Use `--all-versions` for the entire
+List canonical Fused execution receipts. Use `--all-versions` for the entire
 SDK and `--status`, `--start`, or `--end` to narrow the page. Requires both
 `app.sdk.read` and `audit.read`.
 
@@ -1012,7 +1012,7 @@ Apply a generated plan to activate Workspace changes.
 | `--receipt` | | Read a specific plan receipt | `""` |
 
 ## `workspace sync`
-Pull selected non-secret service configuration from the Engine into local files. With no scope flag, sync refreshes only services already declared in `.fused/workspace.yaml` and `.fused/services/**/*.yaml`. A local declaration absent from the Engine is retained and reported, never deleted.
+Pull selected non-secret service configuration from Fused into local files. With no scope flag, sync refreshes only services already declared in `.fused/workspace.yaml` and `.fused/services/**/*.yaml`. A local declaration absent from Fused is retained and reported, never deleted.
 
 ```bash
 fused-cli workspace sync
@@ -1022,7 +1022,7 @@ fused-cli workspace sync --service stripe@v1,github@v3 --file .fused/services/pa
 fused-cli workspace sync --all
 ```
 
-`--service <service>[@<version>]` accepts comma-separated values or repeated flags. An omitted version pulls every active version; an exact version pulls only that active version while retaining unselected local versions. With `--file`, every selected service is created or updated in that one file; declarations already owned by another local file are transferred to the requested destination while preserving authored policy. Without `--file`, an undeclared service gets its own `.fused/services/<service-slug>.yaml` `type: services` document; colliding readable slugs receive a stable service-identity suffix. `--all` is the only full import. Sync is Engine-to-local only: it never changes Engine state, and local paths are never sent to the Engine.
+`--service <service>[@<version>]` accepts comma-separated values or repeated flags. An omitted version pulls every active version; an exact version pulls only that active version while retaining unselected local versions. With `--file`, every selected service is created or updated in that one file; declarations already owned by another local file are transferred to the requested destination while preserving authored policy. Without `--file`, an undeclared service gets its own `.fused/services/<service-slug>.yaml` `type: services` document; colliding readable slugs receive a stable service-identity suffix. `--all` is the only full import. Sync is Fused-to-local only: it never changes Fused state, and local paths are never sent to Fused.
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
@@ -1032,7 +1032,7 @@ fused-cli workspace sync --all
 
 ## `workspace access list`
 List buckets and SDK/MCP permission scopes shared for bounded workspace-wide use. The
-Engine filters and paginates this collection; the CLI does not load the full
+Fused filters and paginates this collection; the CLI does not load the full
 workspace and filter it locally.
 
 | Argument | Short | Description | Default |
@@ -1090,9 +1090,9 @@ Usage: `fused-cli workspace has <service-name>`
 ## `workspace service add <service-query-or-slug> [service-query-or-slug...]`
 Resolve enabled workspace services first, then fall back to Registry search.
 Without `--file`, the command immediately activates only the resolved services
-through Engine's scoped additive boundary and does not read, create, or update
+through Fused's scoped additive boundary and does not read, create, or update
 local workspace files. It prints each canonical service slug and a direct
-Engine UI link backed by its stable service ID.
+Fused UI link backed by its stable service ID.
 
 Find and add a service to the workspace. The command first checks the
 access-filtered workspace service list. If there is no exact name or slug match,
@@ -1120,11 +1120,11 @@ read-only browsing, but is not a prerequisite.
 If a later scoped activation fails, the error lists committed, failed, and
 unattempted services and prints a stable code, failed phase, composite request
 ID, whether the failed target may have committed, and exact ID-pinned recovery
-commands. Re-running those commands is safe because the scoped Engine addition
+commands. Re-running those commands is safe because the scoped Fused addition
 is idempotent.
 
 One `--version` value applies to every positional service reference. Omit it to
-let Engine resolve each service's current public version, or run separate add
+let Fused resolve each service's current public version, or run separate add
 commands when the services need different explicit versions.
 
 | Argument | Short | Description | Default |
@@ -1237,7 +1237,7 @@ exact `fused-cli import status <operation-id>` command reported by the error.
 Reapplying the exact plan ID and review hash is idempotent and returns the
 stored committed result instead of mutating Registry again.
 
-Registry publication may commit before Engine workspace activation fails. In
+Registry publication may commit before Fused workspace activation fails. In
 that case the command exits non-zero with the structured code
 `import_workspace_activation_failed`, phase `workspace_activation`, commit state
 `committed`, the request and operation IDs, and an exact pinned
@@ -1271,7 +1271,7 @@ Resolve a machine-readable specification or crawl provider documentation, review
 Usage: `fused-cli import discover (--url <http(s)-provider-url> --name <service-name> --slug <service-slug> | --session <session-id>) [--all | --select METHOD:/path]`
 
 In an interactive terminal, the command shows the operation selector, opens
-the Engine's browser review when the draft is ready, and waits for that review
+Fused's browser review when the draft is ready, and waits for that review
 to finish. `--no-browser` prints the review URL and waits without opening it.
 Global `--no-input` uses only flags and typed actions: pass `--all` or repeat
 `--select`, then repeat `--accept-proposal` or pass `--reject-enrichment`.
@@ -1325,6 +1325,6 @@ Validates the syntax and references for all Fused configurations in the target d
 | `--plan-id` | | Apply a specific remote plan ID for a single config | `""` |
 | `--receipt` | | Read a specific plan receipt for a single config | `""` |
 
-Plan output includes the Engine's required permission checks. Human output
+Plan output includes Fused's required permission checks. Human output
 prints them under `Required permissions`; `--json` exposes them as
 `required_permissions` for agents and CI policy checks.

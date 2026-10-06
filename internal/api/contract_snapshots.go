@@ -92,7 +92,7 @@ func (c *Client) RefreshServiceContract(serviceID, serviceVersionID string) (*Re
 	}
 	// A successful response must prove that Engine refreshed the same immutable identity the client requested.
 	if result.Status != "refreshed" || result.ServiceID != serviceID || result.ServiceVersionID != serviceVersionID || strings.TrimSpace(result.ContractHash) == "" {
-		return nil, fmt.Errorf("Engine returned an invalid refreshed workspace service contract identity")
+		return nil, fmt.Errorf("Fused returned an invalid refreshed workspace service contract identity")
 	}
 	return &result, nil
 }

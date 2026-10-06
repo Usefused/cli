@@ -211,7 +211,7 @@ func TestSDKInvokeHTTPErrorResponsesAreStructuredAndAuthOpaque(t *testing.T) {
 		{name: "auth opaque", status: http.StatusUnauthorized, body: `{"error":{"code":"app_not_found","message":"app secret-app exists","details":{}}}`, wantCode: "sdk_authentication_failed", wantMessage: "SDK execution token was rejected", forbidden: "secret-app"},
 		{name: "authorization structured", status: http.StatusForbidden, body: `{"error":{"code":"operation_not_allowed","message":"operation is outside this token policy","details":{"operation":"items.list"}}}`, wantCode: "operation_not_allowed", wantMessage: "outside this token policy"},
 		{name: "authorization opaque", status: http.StatusForbidden, body: `not json`, wantCode: "sdk_authorization_failed", wantMessage: "SDK execution is not allowed"},
-		{name: "proxy opaque", status: http.StatusBadGateway, body: `provider leaked token fsk_private`, wantCode: "sdk_engine_failed", wantMessage: "Engine could not complete", forbidden: "fsk_private"},
+		{name: "proxy opaque", status: http.StatusBadGateway, body: `provider leaked token fsk_private`, wantCode: "sdk_engine_failed", wantMessage: "Fused could not complete", forbidden: "fsk_private"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

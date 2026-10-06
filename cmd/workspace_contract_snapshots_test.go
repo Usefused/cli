@@ -136,8 +136,8 @@ func TestMissingContractFailureMessageGuidesOlderClients(t *testing.T) {
 	}{
 		{code: "runtime_contract_rejected", want: "Re-import the service"},
 		{code: "runtime_contract_fetch_failed", want: "check that Registry is reachable"},
-		{code: "runtime_contract_store_failed", want: "check Engine storage"},
-		{code: "unknown_failure", want: "check Engine and Registry logs"},
+		{code: "runtime_contract_store_failed", want: "check Fused storage"},
+		{code: "unknown_failure", want: "check Fused and Registry logs"},
 	}
 	for _, test := range tests {
 		message := missingContractFailureMessage(test.code, "")

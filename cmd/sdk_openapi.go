@@ -288,8 +288,9 @@ func exactSDKOpenAPIOperation(cmd *cobra.Command, operation string) (string, err
 // normalizedSDKOpenAPIServerURL validates the public Engine base embedded in the exported document.
 func normalizedSDKOpenAPIServerURL(raw string) (string, error) {
 	parsed, err := url.Parse(strings.TrimSpace(raw))
+	// OpenAPI discovery must use an explicit credential-free web origin.
 	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
-		return "", errors.New("Engine URL must be an absolute http or https URL without credentials, query, or fragment")
+		return "", errors.New("Fused URL must be an absolute http or https URL without credentials, query, or fragment")
 	}
 	parsed.Path = strings.TrimRight(parsed.Path, "/")
 	parsed.RawPath = strings.TrimRight(parsed.RawPath, "/")
@@ -319,11 +320,13 @@ func decodeSDKOpenAPIDocument(payload []byte, appID string) (map[string]any, int
 	decoder := json.NewDecoder(bytes.NewReader(payload))
 	decoder.UseNumber()
 	var document map[string]any
+	// Only a complete JSON object can describe an execution contract.
 	if err := decoder.Decode(&document); err != nil || document == nil {
-		return nil, 0, errors.New("Engine returned an invalid OpenAPI document")
+		return nil, 0, errors.New("Fused returned an invalid OpenAPI document")
 	}
+	// Reject trailing content rather than silently accepting a partial document.
 	if err := ensureSDKOpenAPIJSONEOF(decoder); err != nil {
-		return nil, 0, errors.New("Engine returned trailing OpenAPI data")
+		return nil, 0, errors.New("Fused returned trailing OpenAPI data")
 	}
 	execution, err := validateSDKOpenAPIDocumentIdentity(document, appID)
 	if err != nil {
@@ -334,19 +337,22 @@ func decodeSDKOpenAPIDocument(payload []byte, appID string) (map[string]any, int
 		return nil, 0, err
 	}
 	branchCount, err := sdkOpenAPIRequestBranchCount(execution)
+	// The declared operation count must agree with the executable branches.
 	if err != nil || operationCount != branchCount {
-		return nil, 0, errors.New("Engine returned an inconsistent OpenAPI operation count")
+		return nil, 0, errors.New("Fused returned an inconsistent OpenAPI operation count")
 	}
 	return document, operationCount, nil
 }
 
 // validateSDKOpenAPIDocumentIdentity binds the supported document version and execution path to the resolved app.
 func validateSDKOpenAPIDocumentIdentity(document map[string]any, appID string) (map[string]any, error) {
+	// Unsupported schema versions cannot drive reliable client generation.
 	if version, ok := document["openapi"].(string); !ok || !supportedSDKOpenAPIVersion(version) {
-		return nil, errors.New("Engine returned an unsupported OpenAPI version")
+		return nil, errors.New("Fused returned an unsupported OpenAPI version")
 	}
+	// A returned schema must belong to the requested immutable app version.
 	if document["x-fused-app-id"] != appID {
-		return nil, errors.New("Engine returned OpenAPI for a different SDK Version ID")
+		return nil, errors.New("Fused returned OpenAPI for a different SDK Version ID")
 	}
 	return validateSDKOpenAPIExecutionPath(document, appID)
 }
@@ -368,19 +374,23 @@ func supportedSDKOpenAPIVersion(version string) bool {
 // validateSDKOpenAPIExecutionPath requires the real exact-app execution POST rather than a synthetic route.
 func validateSDKOpenAPIExecutionPath(document map[string]any, appID string) (map[string]any, error) {
 	paths, ok := document["paths"].(map[string]any)
+	// An executable document must expose its paths explicitly.
 	if !ok {
-		return nil, errors.New("Engine returned an OpenAPI document without paths")
+		return nil, errors.New("Fused returned an OpenAPI document without paths")
 	}
 	execution, ok := paths["/v1/apps/{app_id}/executions"].(map[string]any)
+	// The app execution route must exist before inspecting its operation.
 	if !ok {
-		return nil, errors.New("Engine returned OpenAPI without the app execution path")
+		return nil, errors.New("Fused returned OpenAPI without the app execution path")
 	}
 	post, ok := execution["post"].(map[string]any)
+	// The execution operation must be declared rather than inferred.
 	if !ok {
-		return nil, errors.New("Engine returned OpenAPI without the app execution operation")
+		return nil, errors.New("Fused returned OpenAPI without the app execution operation")
 	}
+	// The route must bind the exact app version requested by the caller.
 	if !sdkOpenAPIPathBindsAppID(post, appID) {
-		return nil, errors.New("Engine returned OpenAPI without the exact Version ID path binding")
+		return nil, errors.New("Fused returned OpenAPI without the exact Version ID path binding")
 	}
 	return post, nil
 }
@@ -422,12 +432,14 @@ func sdkOpenAPIRequestBranchCount(post map[string]any) (int, error) {
 // sdkOpenAPIOperationCount admits the positive exact integer published by the Engine document.
 func sdkOpenAPIOperationCount(value any) (int, error) {
 	number, ok := value.(json.Number)
+	// An absent operation count cannot be inferred from incomplete metadata.
 	if !ok {
-		return 0, errors.New("Engine returned OpenAPI without an operation count")
+		return 0, errors.New("Fused returned OpenAPI without an operation count")
 	}
 	count, err := strconv.ParseInt(number.String(), 10, 32)
+	// Only positive integral operation counts describe a callable app.
 	if err != nil || count < 1 {
-		return 0, errors.New("Engine returned an invalid OpenAPI operation count")
+		return 0, errors.New("Fused returned an invalid OpenAPI operation count")
 	}
 	return int(count), nil
 }

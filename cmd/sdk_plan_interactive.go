@@ -36,17 +36,19 @@ func validateSDKPlanCredentialTarget(cfg *configfile.ParsedConfig, bucket *api.M
 	}
 	// Remote IDs must be valid before entering a storage request.
 	if _, err := uuid.Parse(strings.TrimSpace(bucket.ID)); err != nil {
-		return nil, errors.New("Engine returned an invalid credential bucket ID")
+		return nil, errors.New("Fused returned an invalid credential bucket ID")
 	}
 	resolvedName := strings.TrimSpace(bucket.Name)
+	// Unnamed buckets cannot be matched to authored credential selectors.
 	if resolvedName == "" {
-		return nil, errors.New("Engine returned an unnamed credential bucket")
+		return nil, errors.New("Fused returned an unnamed credential bucket")
 	}
 	// An explicit YAML bucket must match the Engine's authoritative resolution.
 	// When omitted, the typed Engine target is the existing default-bucket result.
 	yamlBucket := strings.TrimSpace(app.Bucket)
+	// Credential setup must not write to a different bucket than the YAML selects.
 	if yamlBucket != "" && resolvedName != yamlBucket {
-		return nil, fmt.Errorf("Engine resolved bucket %q but SDK YAML selects %q; no credentials were changed", bucket.Name, yamlBucket)
+		return nil, fmt.Errorf("Fused resolved bucket %q but SDK YAML selects %q; no credentials were changed", bucket.Name, yamlBucket)
 	}
 	return bucket, nil
 }
@@ -64,7 +66,7 @@ func validateMissingCredentialRequirements(requirements []api.MissingCredentialR
 		key := requirement.BucketID + "\x00" + requirement.ServiceID + "\x00" + requirement.AuthType + "\x00" + requirement.AuthName
 		// Repeated rows must not prompt twice or overwrite the same credential in one review.
 		if seen[key] {
-			return nil, errors.New("Engine returned duplicate credential remediation requirements")
+			return nil, errors.New("Fused returned duplicate credential remediation requirements")
 		}
 		seen[key] = true
 		unique = append(unique, requirement)
@@ -72,15 +74,19 @@ func validateMissingCredentialRequirements(requirements []api.MissingCredentialR
 	return unique, nil
 }
 
+// validateMissingCredentialRequirement admits only credential metadata that matches the supported write contract.
 func validateMissingCredentialRequirement(requirement api.MissingCredentialRequirement) error {
+	// Remediation must identify a concrete service before any credential write.
 	if _, err := uuid.Parse(strings.TrimSpace(requirement.ServiceID)); err != nil {
-		return errors.New("Engine returned an invalid service ID for credential remediation")
+		return errors.New("Fused returned an invalid service ID for credential remediation")
 	}
+	// Only supported auth shapes with explicit fields can drive secure prompts.
 	if !supportedSDKPlanAuthType(requirement.AuthType) || len(requirement.RequiredFields) == 0 {
-		return errors.New("Engine returned incomplete credential remediation metadata")
+		return errors.New("Fused returned incomplete credential remediation metadata")
 	}
+	// Basic credentials must declare a supported password handling mode.
 	if requirement.AuthType == "basic" && !validBasicPasswordMode(requirement.BasicPasswordMode) {
-		return errors.New("Engine returned an invalid Basic password mode")
+		return errors.New("Fused returned an invalid Basic password mode")
 	}
 	return validateMissingCredentialFields(requirement)
 }
@@ -96,7 +102,7 @@ func validateMissingCredentialFields(requirement api.MissingCredentialRequiremen
 	for _, field := range requirement.RequiredFields {
 		// Readiness metadata is untrusted input and must never choose an arbitrary secret key.
 		if invalidRemediationSecretKey(field.SecretKey) {
-			return fmt.Errorf("Engine returned invalid %s credential field %q", requirement.AuthType, field.Name)
+			return fmt.Errorf("Fused returned invalid %s credential field %q", requirement.AuthType, field.Name)
 		}
 	}
 	expected := expectedSecretFields(missingCredentialAuth(requirement))
@@ -105,7 +111,7 @@ func validateMissingCredentialFields(requirement api.MissingCredentialRequiremen
 		name := canonicalSecretTypeName(field.Name)
 		// Rejecting unknown or mismatched keys prevents Engine metadata from creating ad-hoc secrets.
 		if expected[name] == "" || field.SecretKey != expected[name] {
-			return fmt.Errorf("Engine returned invalid %s credential field %q", requirement.AuthType, field.Name)
+			return fmt.Errorf("Fused returned invalid %s credential field %q", requirement.AuthType, field.Name)
 		}
 	}
 	return nil

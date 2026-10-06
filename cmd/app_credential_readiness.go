@@ -38,7 +38,7 @@ func credentialReadinessTargets(cfg *configfile.ParsedConfig, readiness *api.Cre
 	app := readinessAppConfig(cfg)
 	// A typed app and missing requirements are required before setup can collect any credentials.
 	if app == nil || readiness == nil || len(readiness.MissingCredentials) == 0 {
-		return nil, errors.New("Engine returned incomplete credential readiness metadata")
+		return nil, errors.New("Fused returned incomplete credential readiness metadata")
 	}
 	buckets := make(map[string]api.MissingCredentialBucket)
 	allowed := map[string]bool{strings.TrimSpace(app.Bucket): true}
@@ -51,14 +51,15 @@ func credentialReadinessTargets(cfg *configfile.ParsedConfig, readiness *api.Cre
 	for _, bucket := range readiness.Buckets {
 		// Bucket identity and name must both be usable before presenting a secure write target.
 		if _, err := uuid.Parse(bucket.ID); err != nil || strings.TrimSpace(bucket.Name) == "" {
-			return nil, errors.New("Engine returned invalid credential bucket metadata")
+			return nil, errors.New("Fused returned invalid credential bucket metadata")
 		}
+		// Duplicate bucket identities make a readiness receipt ambiguous.
 		if _, duplicate := buckets[bucket.ID]; duplicate {
-			return nil, errors.New("Engine returned duplicate credential buckets")
+			return nil, errors.New("Fused returned duplicate credential buckets")
 		}
 		// An omitted legacy default delegates its name to Engine; explicit names and overrides remain exact.
 		if !allowed[bucket.Name] && strings.TrimSpace(app.Bucket) != "" {
-			return nil, fmt.Errorf("Engine resolved bucket %q outside the app config; no credentials were changed", bucket.Name)
+			return nil, fmt.Errorf("Fused resolved bucket %q outside the app config; no credentials were changed", bucket.Name)
 		}
 		buckets[bucket.ID] = bucket
 	}
@@ -78,8 +79,9 @@ func credentialReadinessTargets(cfg *configfile.ParsedConfig, readiness *api.Cre
 			requirement.BucketID = readiness.Bucket.ID
 		}
 		bucket, found := buckets[requirement.BucketID]
+		// Credential requirements must resolve to the same reviewed bucket identity and name.
 		if !found || (requirement.BucketName != "" && requirement.BucketName != bucket.Name) {
-			return nil, errors.New("Engine returned an unresolved credential bucket; no credentials were changed")
+			return nil, errors.New("Fused returned an unresolved credential bucket; no credentials were changed")
 		}
 		requirement.BucketName = bucket.Name
 		requirement.AuthType = canonicalSecretTypeName(requirement.AuthType)

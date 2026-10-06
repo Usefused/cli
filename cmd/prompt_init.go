@@ -46,7 +46,7 @@ func newPromptInitCommand() *cobra.Command {
 		Long: `Create a Unified App from a natural-language goal by default, or explicitly request SDK, MCP, or REST output.
 
 Unified App describe drafts TypeScript using exact selected operation contracts, shows the
-source for review, then sends the selected App cart to Engine for compilation and deployment.
+source for review, then sends the selected App cart to Fused for compilation and deployment.
 
 Use --update <app-name> or name an existing app in an update goal. Updates resolve a local
 config (use -f to disambiguate), preserve its settings, and publish an immutable successor.
@@ -798,7 +798,7 @@ func printPromptInitPlan(cmd *cobra.Command, plan promptInitPlan) error {
 	fmt.Fprintf(out, "Describe proposal: %s %s version %s\n", promptModeLabel(plan.mode), plan.primary.name, plan.primary.version)
 	// The full generated code is part of the approval boundary for hosted execution.
 	if plan.execution != nil {
-		fmt.Fprintf(out, "TypeScript source (Engine compiled):\n%s\n", plan.execution.source)
+		fmt.Fprintf(out, "TypeScript source (Fused compiled):\n%s\n", plan.execution.source)
 	}
 	// The version transition and retained settings distinguish an additive update from app creation.
 	if plan.primary.extend {

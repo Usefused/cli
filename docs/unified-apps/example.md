@@ -8,7 +8,7 @@ can access.
 
 ## Start with `fused-cli describe`
 
-In an interactive terminal connected to your Engine, describe the outcome and
+In an interactive terminal connected to your Fused deployment, describe the outcome and
 name the services you want to use:
 
 ```bash
@@ -23,7 +23,7 @@ apply the proposal. Review the provider calls and output schema. If they do
 not match your goal, cancel and make the request more specific.
 
 After confirmation, the CLI saves `.fused/unified_app/customer-onboarding.tsx`,
-sends its source to Engine for compilation, plans the App, saves
+sends its source to Fused for compilation, plans the App, saves
 `.fused/unified_app/customer-onboarding.yaml`, and applies
 the plan. A successful run prints the App ID and one-time execution token.
 `describe` requires terminal review; it cannot run unattended in CI. To
@@ -96,14 +96,14 @@ fused-cli unified-app apply -f .fused/unified_app/customer-app.yaml --json
 ```
 
 `unified-app plan` reads the linked TypeScript and sends its bytes and selected operations to the
-Engine, where the TypeScript is validated and compiled. `unified-app apply`
+Fused, where the TypeScript is validated and compiled. `unified-app apply`
 uses that plan to host the compiled bundle and activate the App. There is no
 local `tsc` step or separate `.ts` upload command. Save the returned App ID and
 one-time family execution token securely.
 
 ## Execute the deployed App
 
-Call the Engine REST route used for both SDK apps and Unified Apps. Use the
+Call the Fused REST route used for both SDK apps and Unified Apps. Use the
 version's App ID (a UUID), not its name, in the URL:
 
 ```bash
@@ -167,7 +167,7 @@ curl -X POST -H "Authorization: Bearer $FUSED_APP_TOKEN" \
 A Unified App needs at least one explicit selected operation. `select_all`
 is invalid for this kind. A source change needs a new
 immutable version; only one version in the App family receives new traffic.
-`source_path` uses Engine compilation. `bundle_digest` is for code compiled
+`source_path` uses Fused compilation. `bundle_digest` is for code compiled
 separately and uploaded with `unified-app bundle attach`; use one or the other.
 Source is limited to 256 KiB, and authored imports are limited to
 `@fused/unified-app`, `@fused/operations`, `zod`, and `zod/mini`.

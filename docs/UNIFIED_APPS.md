@@ -5,7 +5,7 @@ operations. It can coordinate calls across services and expose the result
 through an SDK, MCP server, or REST API.
 
 The entry point is a default export created with
-`buildUnifiedApp`. The Engine compiles the source and runs it in an isolated
+`buildUnifiedApp`. Fused compiles the source and runs it in an isolated
 worker. The app is its own App kind; it does not need a generated SDK package.
 
 ```ts
@@ -29,18 +29,18 @@ Save this TypeScript as `.fused/unified_app/customer-app.tsx` and set
 `source_path: customer-app.tsx` in the App YAML. Run `fused-cli unified-app plan`
 and `fused-cli unified-app apply`. The [step-by-step apply guide](unified-apps/example.md)
 shows the files and commands. The CLI reads the file into the plan cart; the
-Engine compiles it during plan.
+Fused compiles it during plan.
 
 ## Builder parts
 
 | Part | Purpose |
 | --- | --- |
-| `input` | Required Zod schema. The Engine validates the request before calling `execute`. |
+| `input` | Required Zod schema. Fused validates the request before calling `execute`. |
 | `output` | Required Zod schema for the object returned by `execute`. |
 | `execute({ input })` | Required synchronous or asynchronous function. `input` is typed from the input schema; its return value is typed from the output schema. |
-| `fetch.searchable` | Optional list of paths in the stored data document that callers may search. Omit it to allow only Engine metadata searches. |
+| `fetch.searchable` | Optional list of paths in the stored data document that callers may search. Omit it to allow only Fused metadata searches. |
 
-`execute` returns the authored output object. The Engine adds the execution ID,
+`execute` returns the authored output object. Fused adds the execution ID,
 status, and other metadata to the API response; these are not fields in the
 authored `output` schema. The stored data document is not returned with the
 output. Every invocation has its own execution record. Its result remains
@@ -51,7 +51,7 @@ for the shared SDK and Unified App route and their different response shapes.
 
 The selected workspace operations are available through typed
 `services.<service>.<operation>(input)` methods or `fused.fetch({ service,
-operation, input })`. Both run through the Engine's connection and execution
+operation, input })`. Both run through Fused's connection and execution
 policy. App code can call only operations selected in its config; it cannot
 send an arbitrary URL request. The optional `selector` in `fused.fetch`
 chooses an environment, connected user, auth scheme, or resource when needed.

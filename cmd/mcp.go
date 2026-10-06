@@ -200,7 +200,7 @@ func runMCPOperations(cmd *cobra.Command, target string) error {
 	}
 	// The response must remain bound to the exact version resolved immediately before this read.
 	if strings.TrimSpace(catalogue.VersionID) != appID {
-		return fmt.Errorf("list MCP operations: Engine returned a different MCP version")
+		return fmt.Errorf("list MCP operations: Fused returned a different MCP version")
 	}
 	// Structured output retains exact identity and provenance for automation consumers.
 	if wantsJSON(cmd) {

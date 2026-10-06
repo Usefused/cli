@@ -910,7 +910,7 @@ func canonicalScaffoldRequirements(requirements []api.AppScaffoldRequirement) ([
 		sorted[index].Variable = strings.TrimSpace(sorted[index].Variable)
 		// Missing correlation metadata would otherwise silently omit a required binding.
 		if sorted[index].Service == "" || sorted[index].Variable == "" {
-			return nil, errors.New("Engine returned an invalid scaffold requirement")
+			return nil, errors.New("Fused returned an invalid scaffold requirement")
 		}
 	}
 	sort.Slice(sorted, func(left, right int) bool {
@@ -945,7 +945,7 @@ func validateScaffoldRequirementKeys(requirements []api.AppScaffoldRequirement) 
 		previous, exists := variablesByKey[key]
 		// Distinct targets must never silently share one generated provider value.
 		if exists && previous != requirement.Variable {
-			return errors.New("Engine returned scaffold requirements with colliding generated keys")
+			return errors.New("Fused returned scaffold requirements with colliding generated keys")
 		}
 		variablesByKey[key] = requirement.Variable
 	}
@@ -958,7 +958,7 @@ func addScaffoldRequirement(config *configfile.AppConfig, requirement api.AppSca
 	service, exists := config.Services[requirement.Service]
 	// Engine responses must remain correlated to the submitted selection batch.
 	if !exists {
-		return false, errors.New("Engine returned scaffold requirements for an unselected service")
+		return false, errors.New("Fused returned scaffold requirements for an unselected service")
 	}
 	// User-authored routing policy remains authoritative during additive init.
 	if hasServerVariableInjection(service.Injections, requirement.Variable) {
@@ -967,7 +967,7 @@ func addScaffoldRequirement(config *configfile.AppConfig, requirement api.AppSca
 	key := scaffoldBucketValueKey(requirement.Service, requirement.Variable)
 	// Canonical Registry variable names should always yield one safe ASCII key.
 	if key == "" {
-		return false, errors.New("Engine returned an invalid scaffold requirement")
+		return false, errors.New("Fused returned an invalid scaffold requirement")
 	}
 	service.Injections = append(service.Injections, configfile.InjectionConfig{
 		Location: "server_variable", Name: requirement.Variable,

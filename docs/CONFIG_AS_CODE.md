@@ -55,7 +55,7 @@ service. Top-level init does not support `--json`.
 Use `--no-apply` when initialization is only preparing files for later review.
 The CLI still resolves concrete service versions, operation selections,
 buckets, and required local workspace additions, then writes semantically
-validated config and saves available plan receipts. It does not apply Engine
+validated config and saves available plan receipts. It does not apply Fused
 state, generate an SDK, or download a package. If a missing workspace service
 prevents the app plan, the workspace plan is saved first and app planning is
 listed after workspace apply. Otherwise the app receipt is ready for apply.
@@ -64,7 +64,7 @@ The command prints the exact remaining commands; generated SDKs finish with
 command before apply.
 
 `fused-cli init <name> --api` uses the same `kind: sdk` execution resource with
-`generate: false`, then prints a central Engine REST request template instead of
+`generate: false`, then prints a central Fused REST request template instead of
 downloading a package. The hidden `sdk init` and `mcp init` compatibility
 commands remain callable for scripts that only need the older scaffold flow.
 
@@ -85,7 +85,7 @@ safety rules.
 A Unified App is a distinct `kind: unified_app` resource. Its config selects
 explicit workspace operations and links one TypeScript `source_path` export using
 `buildUnifiedApp({ input, output, execute, fetch? })`. Input and output use
-Zod. The CLI reads the `.tsx` file and sends its bytes to Engine, which
+Zod. The CLI reads the `.tsx` file and sends its bytes to Fused, which
 compiles them during `unified-app plan` and publishes the bundle during
 `unified-app apply`. `unified-app sync` moves legacy inline `source: |` into a `.tsx`
 file and updates the YAML. `language` and `generate` are unnecessary here.
@@ -97,9 +97,9 @@ fused-cli unified-app plan -f .fused/unified_app/customer-app.yaml --json
 fused-cli unified-app apply -f .fused/unified_app/customer-app.yaml --json
 ```
 
-Engine returns the immutable App version ID and shows its family execution
+Fused returns the immutable App version ID and shows its family execution
 token once. A new source revision needs a new App version. `source_path` and a
-`bundle_digest` for code compiled outside Engine are mutually exclusive;
+`bundle_digest` for code compiled outside Fused are mutually exclusive;
 `select_all` is not valid for Unified Apps. See
 the [`buildUnifiedApp` guide](UNIFIED_APPS.md) for the function contract,
 or the [complete example](unified-apps/example.md) for YAML, apply, and API
@@ -153,7 +153,7 @@ services:
 ```
 
 Run `fused-cli sdk plan` and `fused-cli sdk apply --download`. Apply returns one
-App ID and token plus the Engine-owned MCP URLs. The MCP route becomes callable
+App ID and token plus Fused-owned MCP URLs. The MCP route becomes callable
 when package generation completes. This App uses both the SDK and MCP family
 allowances. A successor version keeps the same family identity and can change
 its MCP description or selected operations through a new reviewed config.
@@ -174,7 +174,7 @@ fused-cli sdk operation add okta listLogEvents getUser -f .fused/sdks/my-sdk.yam
 fused-cli sdk plan -f .fused/sdks/my-sdk.yaml --json
 ```
 
-`sdk plan` performs the same local validation first, before its Engine request.
+`sdk plan` performs the same local validation first, before its Fused request.
 The standalone `sdk validate` command remains available for offline-only checks.
 
 ## Workspace configuration
@@ -212,8 +212,8 @@ sparse workspace plan. A service may be declared in only one local file.
 Omitting or deleting a local declaration does not remove the active service;
 explicit service/version removal remains a separately reviewed operation.
 
-Service keys are Registry slugs. Engine resolves slugs and version identities
-during planning. If versions are omitted, the Engine resolves the latest public
+Service keys are Registry slugs. Fused resolves slugs and version identities
+during planning. If versions are omitted, Fused resolves the latest public
 version during planning and records its exact identity.
 
 Each version entry can carry `public`, `execution_policy`, and
@@ -231,24 +231,24 @@ fused-cli sdk plan -f .fused/sdks/my-sdk.yaml
 fused-cli sdk apply -f .fused/sdks/my-sdk.yaml --json
 ```
 
-Generated-SDK apply returns once Engine has atomically stored the app, token,
+Generated-SDK apply returns once Fused has atomically stored the app, token,
 and queued package job. The app remains non-runnable while
-`generation_status` is `pending`; Engine activates it only after background
+`generation_status` is `pending`; Fused activates it only after background
 generation completes. Add `--download` when the same command should wait by
 exact Version ID and fetch the package.
 
 For terminal setup, `fused-cli sdk plan -f .fused/sdks/my-sdk.yaml` securely
-fills only credentials Engine reports missing from that file's resolved
+fills only credentials Fused reports missing from that file's resolved
 `bucket`, confirms the immediate bucket write, and retries once. Declining
 keeps the valid plan, and the app can still be published. It never creates or
 falls back to another bucket. Automation should pass `--no-input` or `--json`
 and inspect non-blocking `credential_readiness`; an affected runtime call later
 returns `bucket_credentials_missing` with the exact safe setup command.
 
-Plan output contains the complete Engine change summary. A saved receipt is
-bound to the exact config content and normalized Engine URL. Apply validates
+Plan output contains the complete Fused change summary. A saved receipt is
+bound to the exact config content and normalized Fused URL. Apply validates
 every selected config before its first remote mutation and rejects stale,
-unbound, or cross-Engine receipts.
+unbound, or cross-Fused receipts.
 
 CLI-managed config files and receipts are replaced atomically. Existing file
 permissions are preserved, and structured content is validated before it
@@ -265,7 +265,7 @@ fused-cli workspace sync --all
 fused-cli sdk sync my-sdk -f .fused/sdks/my-sdk.yaml
 ```
 
-Workspace sync is a non-destructive Engine-to-local pull. By default it refreshes
+Workspace sync is a non-destructive Fused-to-local pull. By default it refreshes
 only services already declared in local aggregate or `type: services` files;
 `--file` scopes that set to one file. `--service <service>[@<version>]` accepts
 comma-separated values or repeated flags and creates or refreshes selected
@@ -276,7 +276,7 @@ disambiguates colliding slugs. An omitted version pulls all active versions; an
 exact version pulls only that version without deleting unselected local
 versions. Only `--all` imports every active service. Removing a service from a
 local file does not remove it from the workspace, and sync retains declarations
-the Engine no longer reports. SDK sync mirrors one exact generated SDK version,
+Fused no longer reports. SDK sync mirrors one exact generated SDK version,
 including selected services, versions, and operation names.
 
 ## Execution policy ownership
@@ -314,17 +314,17 @@ services:
           max_duration_ms: 120000
 ```
 
-The policy always affects the local Engine. `execution_policy.public: true`
+The policy always affects the local Fused. `execution_policy.public: true`
 also publishes it when the caller owns the service. Version policy overrides
 the service-level default, while endpoint policy remains more specific.
 
 Version 3 supports composed token, offset, page, RFC Link, next-URL,
-conditional path, derived cursor, and GraphQL pagination strategies. Engine
+conditional path, derived cursor, and GraphQL pagination strategies. Fused
 validates origins, termination, repeated values, and hard limits, then returns
 one aggregate document after the provider page loop succeeds. A generated SDK
 invocation may only lower the maximum page count for that call. Quota,
-concurrency, and retry policies follow the same Engine-owned boundary;
-generated clients make one logical Engine request.
+concurrency, and retry policies follow the same Fused-owned boundary;
+generated clients make one logical Fused request.
 
 See the bundled `fused-config`, `fused-workspace`, `fused-sdk`, and `fused-mcp`
 skills for task-specific guidance,

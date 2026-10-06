@@ -420,8 +420,9 @@ func discoveryReviewURL(engineURL, sessionID string) (string, error) {
 		return "", err
 	}
 	parsed, err := url.Parse(strings.TrimSpace(engineURL))
+	// Browser review must stay on an explicit web origin without embedded credentials.
 	if err != nil || parsed.Host == "" || parsed.Hostname() == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.User != nil || parsed.Opaque != "" {
-		return "", errors.New("Engine returned an invalid browser review base URL")
+		return "", errors.New("Fused returned an invalid browser review base URL")
 	}
 	parsed.Path = strings.TrimRight(parsed.Path, "/") + "/integrations"
 	parsed.RawPath, parsed.RawQuery, parsed.Fragment = "", "", ""

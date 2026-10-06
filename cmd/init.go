@@ -102,7 +102,7 @@ method or ingress registration. --api is an alias for --rest.
 App modes select operations; webhook mode registers inbound delivery.
 The command enables missing services, writes the config, plans, applies, and returns the
 runtime outcome. Pass --no-apply to write validated local desired state and
-retain available plan receipts without applying Engine state.
+retain available plan receipts without applying Fused state.
 When SDK/MCP credentials are missing, interactive init offers secure setup,
 bucket setup in the browser, rechecking, proceeding anyway, or cancellation.
 Non-interactive runs print readiness warnings without prompting or storing secrets.`,
@@ -129,7 +129,7 @@ Non-interactive runs print readiness warnings without prompting or storing secre
 	command.Flags().BoolVar(&opts.sdk, "sdk", false, "Create a generated typed SDK and download its package")
 	command.Flags().BoolVar(&opts.api, "api", false, "Create a direct REST unified app without generating a package")
 	command.Flags().BoolVar(&opts.rest, "rest", false, "Create a direct REST unified app without generating a package")
-	command.Flags().BoolVar(&opts.mcp, "mcp", false, "Create and deploy an Engine-hosted MCP server")
+	command.Flags().BoolVar(&opts.mcp, "mcp", false, "Create and deploy a Fused-hosted MCP server")
 	command.Flags().BoolVar(&opts.webhook, "webhook", false, "Create and apply an inbound webhook registration")
 	command.Flags().StringArrayVar(&opts.secrets, "secret", nil, "Webhook signing reference as <service>=${bucket.<name>.secret.<key>}; repeatable")
 	command.Flags().BoolVar(&opts.extend, "extend", false, "Compatibility alias for 'fused-cli extend'; use --version for an applied successor")
@@ -496,7 +496,7 @@ func createUnifiedInitWithoutApply(cmd *cobra.Command, mode unifiedInitMode, lif
 
 // printUnifiedInitDeferredNextSteps shows the receipt-aware commands that complete a planned initialization later.
 func printUnifiedInitDeferredNextSteps(cmd *cobra.Command, mode unifiedInitMode, appPath string, workspaceDraft *sdkInitWorkspaceDraft, appPlanned bool) {
-	fmt.Fprintln(cmd.OutOrStdout(), "Initialization planned. No Engine changes were applied.")
+	fmt.Fprintln(cmd.OutOrStdout(), "Initialization planned. No Fused changes were applied.")
 	fmt.Fprintln(cmd.OutOrStdout(), "When ready, run:")
 	// A missing service version must consume its existing receipt before the app can acquire a runtime-backed plan.
 	if workspaceDraft != nil {
@@ -715,7 +715,7 @@ func finalizeUnifiedInitApply(cmd *cobra.Command, request scaffoldRequest, resul
 	if rollbackErr := rollbackUnifiedInitPublications(state.configPublication, state.receiptPublication); rollbackErr != nil {
 		return fmt.Errorf("%w (local config and receipt rollback failed: %v)", applyErr, rollbackErr)
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "Reverted local config %s and plan receipt because Engine proved the app apply did not commit.\n", request.path)
+	fmt.Fprintf(cmd.OutOrStdout(), "Reverted local config %s and plan receipt because Fused proved the app apply did not commit.\n", request.path)
 	return applyErr
 }
 
@@ -1027,11 +1027,11 @@ func unifiedInitFailureRecoveryAfterRefresh(cause error, refreshCompleted bool) 
 	var apiErr *api.APIError
 	// Only a repeated missing-pin response needs different guidance after a proven exact refresh.
 	if errors.As(cause, &apiErr) && apiErr.Code == "generation_contract_pin_unavailable" {
-		return "the exact selected snapshot refresh completed, but Engine still did not retain the immutable API contract required for generation; inspect this workspace's Engine and Registry logs, or select another enabled version, then retry. This is not a credential or operation-selection failure"
+		return "the exact selected snapshot refresh completed, but Fused still did not retain the immutable API contract required for generation; inspect this workspace's Fused and Registry logs, or select another enabled version, then retry. This is not a credential or operation-selection failure"
 	}
 	// A repeated OpenAPI projection failure after refresh indicates retained contract corruption or an incompatible immutable source.
 	if errors.As(cause, &apiErr) && apiErr.Code == "app_openapi_schema_unavailable" {
-		return "the exact selected snapshot refresh completed, but Engine still could not project the immutable REST API schemas; inspect this workspace's Engine and Registry logs, or select another enabled version, then retry. No schema fallback was generated"
+		return "the exact selected snapshot refresh completed, but Fused still could not project the immutable REST API schemas; inspect this workspace's Fused and Registry logs, or select another enabled version, then retry. No schema fallback was generated"
 	}
 	return unifiedInitFailureRecovery(cause)
 }
@@ -1106,7 +1106,7 @@ func unifiedInitFailureRecovery(cause error) string {
 	}
 	// GraphQL dependency failures belong in the mono-workspace Engine/Registry path, where workspace owners can inspect complete logs safely.
 	if apiErr.Code == "graphql_dependency_failed" {
-		return "confirm the Engine can reach Registry, inspect this workspace's Engine logs for the dependency failure, and retry"
+		return "confirm Fused can reach Registry, inspect this workspace's Fused logs for the dependency failure, and retry"
 	}
 	return ""
 }

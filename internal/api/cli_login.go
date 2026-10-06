@@ -36,6 +36,7 @@ func (c *Client) StartCLILogin(input CLILoginStartRequest) (CLILoginStartRespons
 	return response, err
 }
 
+// PollCLILogin distinguishes pending consent from a complete managed credential receipt.
 func (c *Client) PollCLILogin(transactionID, pollToken string) (CLILoginPollResponse, error) {
 	var response CLILoginPollResponse
 	status, err := c.cliLoginRequestStatus(http.MethodPost, "/auth/cli/poll", map[string]string{
@@ -47,8 +48,9 @@ func (c *Client) PollCLILogin(transactionID, pollToken string) (CLILoginPollResp
 	if status == http.StatusAccepted && response.Status == "pending" {
 		return CLILoginPollResponse{}, ErrCLILoginPending
 	}
+	// Pending or incomplete responses must never be saved as a successful login.
 	if status != http.StatusOK || response.Status != "authenticated" || response.CredentialID == "" || response.ExpiresAt.IsZero() {
-		return CLILoginPollResponse{}, errors.New("Engine returned an invalid CLI login response")
+		return CLILoginPollResponse{}, errors.New("Fused returned an invalid CLI login response")
 	}
 	return response, nil
 }
@@ -88,7 +90,7 @@ func (c *Client) cliLoginRequestStatus(method, path string, input, output any) (
 	}
 	// Success payloads are bounded independently from the smaller error envelope.
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 16<<10)).Decode(output); err != nil {
-		return resp.StatusCode, errors.New("Engine returned an invalid CLI login response")
+		return resp.StatusCode, errors.New("Fused returned an invalid CLI login response")
 	}
 	return resp.StatusCode, nil
 }

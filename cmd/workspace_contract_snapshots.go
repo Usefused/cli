@@ -67,10 +67,10 @@ func missingContractFailureMessage(code, message string) string {
 		return "runtime_contract_fetch_failed: Fused could not download this API contract from Registry. Ask your Fused administrator to check that Registry is reachable, then try again."
 	case "runtime_contract_store_failed":
 		// Store failures point administrators to Engine persistence without exposing database details.
-		return "runtime_contract_store_failed: Fused could not save this API contract. Ask your Fused administrator to check Engine storage, then try again."
+		return "runtime_contract_store_failed: Fused could not save this API contract. Ask your Fused administrator to check Fused storage, then try again."
 	default:
 		// Unknown legacy codes retain a useful escalation path instead of printing an unexplained enum.
-		return "runtime_contract_refresh_failed: Fused could not refresh this service. Ask your Fused administrator to check Engine and Registry logs, then try again."
+		return "runtime_contract_refresh_failed: Fused could not refresh this service. Ask your Fused administrator to check Fused and Registry logs, then try again."
 	}
 }
 

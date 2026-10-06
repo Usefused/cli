@@ -69,11 +69,13 @@ func sdkOpenAPIEndpoint(baseURL, appID, operation string) (string, error) {
 // parseSDKOpenAPIBaseURL admits only an absolute credential-free Engine base.
 func parseSDKOpenAPIBaseURL(raw string) (*url.URL, error) {
 	endpoint, err := url.Parse(strings.TrimSpace(raw))
+	// Reject ambiguous origins before attaching the control credential.
 	if err != nil || endpoint.Scheme == "" || endpoint.Host == "" || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" {
-		return nil, errors.New("Engine URL must be an absolute URL without credentials, query, or fragment")
+		return nil, errors.New("Fused URL must be an absolute URL without credentials, query, or fragment")
 	}
+	// OpenAPI retrieval is restricted to supported web transports.
 	if endpoint.Scheme != "http" && endpoint.Scheme != "https" {
-		return nil, errors.New("Engine URL must use http or https")
+		return nil, errors.New("Fused URL must use http or https")
 	}
 	return endpoint, nil
 }
@@ -100,8 +102,9 @@ func readSDKOpenAPIResponse(reader io.Reader, limit int64) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Reject oversized documents before retaining them in client memory.
 	if int64(len(data)) > limit {
-		return nil, errors.New("Engine OpenAPI response exceeds the supported size")
+		return nil, errors.New("Fused OpenAPI response exceeds the supported size")
 	}
 	return data, nil
 }

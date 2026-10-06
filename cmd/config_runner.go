@@ -858,16 +858,20 @@ func canonicalEngineURLOrRaw(raw string) string {
 	return canonical
 }
 
+// canonicalEngineURL normalizes workspace addresses before comparing a receipt with the selected target.
 func canonicalEngineURL(raw string) (string, error) {
 	parsed, err := url.Parse(strings.TrimSpace(raw))
+	// Malformed targets cannot participate in receipt identity checks.
 	if err != nil {
-		return "", fmt.Errorf("invalid Engine URL %q: %w", raw, err)
+		return "", fmt.Errorf("invalid Fused URL %q: %w", raw, err)
 	}
+	// Relative URLs cannot identify a deployment independently of the caller.
 	if parsed.Scheme == "" || parsed.Host == "" {
-		return "", fmt.Errorf("invalid Engine URL %q: absolute http(s) URL required", raw)
+		return "", fmt.Errorf("invalid Fused URL %q: absolute http(s) URL required", raw)
 	}
+	// Receipt targets must use a supported HTTP transport.
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return "", fmt.Errorf("invalid Engine URL %q: http(s) URL required", raw)
+		return "", fmt.Errorf("invalid Fused URL %q: http(s) URL required", raw)
 	}
 	parsed.Scheme = strings.ToLower(parsed.Scheme)
 	parsed.Host = strings.ToLower(parsed.Host)
@@ -877,9 +881,11 @@ func canonicalEngineURL(raw string) (string, error) {
 	return parsed.String(), nil
 }
 
+// validateReceiptEngineURL prevents applying a reviewed receipt to a different workspace.
 func validateReceiptEngineURL(receiptURL, engineURL string) error {
+	// An unbound receipt must be replanned before any remote mutation.
 	if strings.TrimSpace(receiptURL) == "" {
-		return errors.New("receipt has no engine_url; run plan again against the intended Engine")
+		return errors.New("receipt has no engine_url; run plan again against the intended Fused workspace")
 	}
 	receiptTarget, err := canonicalEngineURL(receiptURL)
 	if err != nil {
@@ -889,8 +895,9 @@ func validateReceiptEngineURL(receiptURL, engineURL string) error {
 	if err != nil {
 		return err
 	}
+	// A reviewed plan cannot be applied to another workspace.
 	if receiptTarget != activeTarget {
-		return fmt.Errorf("receipt targets %s, active Engine is %s; run plan again", receiptTarget, activeTarget)
+		return fmt.Errorf("receipt targets %s, active Fused URL is %s; run plan again", receiptTarget, activeTarget)
 	}
 	return nil
 }
@@ -1210,7 +1217,7 @@ func pollSDKGeneration(client *api.Client, appID string, pollInterval, timeout t
 		}
 		// Engine must echo the exact immutable identity to prevent readiness from crossing versions.
 		if strings.TrimSpace(status.AppID) != appID {
-			return status, fmt.Errorf("Engine returned SDK generation status for unexpected Version ID %q", status.AppID)
+			return status, fmt.Errorf("Fused returned SDK generation status for unexpected Version ID %q", status.AppID)
 		}
 		switch status.Status {
 		// Pending work remains durable in Engine; wait before the next bounded read.
@@ -1228,10 +1235,10 @@ func pollSDKGeneration(client *api.Client, appID string, pollInterval, timeout t
 			return status, nil
 		// Failed is terminal but Engine deliberately exposes no upstream error prose at this boundary.
 		case "failed":
-			return status, fmt.Errorf("Engine reported SDK generation failed; inspect `%s` before retrying package download", "fused-cli sdk show "+appID)
+			return status, fmt.Errorf("Fused reported SDK generation failed; inspect `%s` before retrying package download", "fused-cli sdk show "+appID)
 		// Unknown states fail closed so CLI never downloads a package whose readiness it cannot prove.
 		default:
-			return status, fmt.Errorf("Engine returned invalid SDK generation status %q", status.Status)
+			return status, fmt.Errorf("Fused returned invalid SDK generation status %q", status.Status)
 		}
 	}
 }

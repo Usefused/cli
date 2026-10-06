@@ -111,7 +111,7 @@ func (c *Client) postSDKBundle(appID, sourceHash string, script []byte, manifest
 	var result SDKBundleAttachResult
 	// A malformed success is not proof the immutable artifact was accepted.
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1024)).Decode(&result); err != nil || result.Status != "attached" || result.AppID != appID {
-		return nil, errors.New("Engine returned an invalid SDK bundle receipt")
+		return nil, errors.New("Fused returned an invalid SDK bundle receipt")
 	}
 	return &result, nil
 }

@@ -154,7 +154,7 @@ func deployPromptExecution(cmd *cobra.Command, client *api.Client, plan promptIn
 	// Engine compilation and immutable operation resolution must succeed before local app publication.
 	if err != nil {
 		_ = os.Remove(sourceFile)
-		return contextualizeUnifiedInitPrecommitFailure("Unified App plan and Engine compilation", plan.mode, plan.primary, workspaceApplied, err)
+		return contextualizeUnifiedInitPrecommitFailure("Unified App plan and Fused compilation", plan.mode, plan.primary, workspaceApplied, err)
 	}
 	if err := publishPromptExecutionPlan(plan.primary.path, data, parsed, planned); err != nil {
 		return err

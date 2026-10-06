@@ -1,12 +1,14 @@
 # CLI setup and operation
 
-This guide covers Engine authentication, configuration precedence, safe
+This guide covers Fused authentication, configuration precedence, safe
 automation, and the operational commands intentionally omitted from the main
 README.
 
-## Connect to an Engine
+<a id="connect-to-an-engine"></a>
 
-The CLI needs an Engine URL and credential. A small workspace can use its
+## Connect to a Fused deployment
+
+The CLI needs a Fused deployment URL and credential. A small workspace can use its
 `FUSED_LICENSE_KEY` as the bootstrap Owner credential. Workspaces with multiple
 people should use individually attributable CLI credentials.
 
@@ -14,7 +16,7 @@ people should use individually attributable CLI credentials.
 fused-cli --engine-url "http://localhost:8081" login
 ```
 
-The browser flow creates the resulting `fsk_` key locally; the Engine stores
+The browser flow creates the resulting `fsk_` key locally; Fused stores
 only its hash and binds it to the authenticated subject. Use `--no-browser` to
 print the approval URL for an interactive remote session. `login --no-input`
 is valid because browser approval does not require terminal input; combine it
@@ -29,7 +31,7 @@ fused-cli logout
 ```
 
 `logout` removes the saved credential and expiry metadata while preserving the
-Engine URL. It does not unset credential environment variables.
+Fused URL. It does not unset credential environment variables.
 
 You can also configure values directly:
 
@@ -40,8 +42,8 @@ fused-cli config list
 fused-cli workspace services list
 ```
 
-If you do not have an Engine yet, use a release from the
-[Fused Engine repository](https://github.com/Usefused/engine/releases).
+If you do not have a Fused deployment yet, use a release from the
+[Fused repository](https://github.com/Usefused/engine/releases).
 
 ## Configuration precedence
 
@@ -57,7 +59,7 @@ identity remains active after login.
 
 ## Automation-safe execution
 
-Engine requests time out after one minute by default. Reviewed `import plan`
+Fused requests time out after one minute by default. Reviewed `import plan`
 and `import apply` requests use a 20-minute default because large contracts can
 require longer bounded parser and persistence work. Override either default
 with `--timeout`; use `--request-id` for an audit correlation ID. SIGINT and

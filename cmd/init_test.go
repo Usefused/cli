@@ -172,7 +172,7 @@ func TestUnifiedInitNoApplyPlansCombinedAppWithoutApplying(t *testing.T) {
 	}
 	text := output.String()
 	// Completion output consumes the workspace receipt before creating the app receipt and later downloading the SDK.
-	if !strings.Contains(text, "Initialization planned. No Engine changes were applied.") ||
+	if !strings.Contains(text, "Initialization planned. No Fused changes were applied.") ||
 		!strings.Contains(text, "fused-cli workspace apply -f '.fused/workspace.yaml'") ||
 		!strings.Contains(text, "fused-cli sdk plan -f '.fused/sdks/deferred-sdk.yaml'") ||
 		!strings.Contains(text, "fused-cli sdk apply -f '.fused/sdks/deferred-sdk.yaml' --download") ||
@@ -967,7 +967,7 @@ func TestUnifiedInitDependencyRecoveryNamesEngineLogs(t *testing.T) {
 	}, false, cause)
 	message := err.Error()
 	// MCP outcome, selected immutable service, and mono-workspace Engine diagnostics must appear together.
-	if !strings.Contains(message, "MCP initialization") || !strings.Contains(message, "linear@v1") || !strings.Contains(message, "Engine logs") || !strings.Contains(message, "Engine can reach Registry") {
+	if !strings.Contains(message, "MCP initialization") || !strings.Contains(message, "linear@v1") || !strings.Contains(message, "Fused logs") || !strings.Contains(message, "Fused can reach Registry") {
 		t.Fatalf("dependency recovery=%q", message)
 	}
 	var apiErr *api.APIError
@@ -998,7 +998,7 @@ func TestSDKInitCompatibilityPlanFailureLeavesNoConfig(t *testing.T) {
 	err := createAndApplySDKInit(command, api.NewClient(server.URL, "test-key"), request, false, noOpScaffoldRequirements, defaultTestScaffoldBucket)
 	_, statErr := os.Stat(path)
 	// Dependency preflight failure must preserve absence and retain Engine log recovery guidance.
-	if err == nil || !errors.Is(statErr, os.ErrNotExist) || !strings.Contains(err.Error(), "no SDK version was created and no config file was written") || !strings.Contains(err.Error(), "Engine logs") {
+	if err == nil || !errors.Is(statErr, os.ErrNotExist) || !strings.Contains(err.Error(), "no SDK version was created and no config file was written") || !strings.Contains(err.Error(), "Fused logs") {
 		t.Fatalf("error=%v statErr=%v", err, statErr)
 	}
 }

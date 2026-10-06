@@ -77,8 +77,9 @@ func warnIfProductionEnvironment(cmd *cobra.Command) {
 	if err != nil || health == nil || health.Environment == "" {
 		return
 	}
+	// Make the production destination visible before applying workspace changes.
 	if strings.EqualFold(health.Environment, "production") {
-		fmt.Fprintf(cmd.OutOrStdout(), "Warning: applying against a production Engine (environment=%s).\n", health.Environment)
+		fmt.Fprintf(cmd.OutOrStdout(), "Warning: applying against a production Fused workspace (environment=%s).\n", health.Environment)
 	}
 }
 
@@ -1203,11 +1204,11 @@ func runForceRemoveWorkspace(out io.Writer, serviceID, serviceLabel, version str
 	}
 	// Missing target action means the Engine did not understand or preserve the requested destructive scope.
 	if requestedActionID == "" {
-		return workspaceRemovalPreApplyError{cause: fmt.Errorf("Engine did not include the requested workspace removal in its plan; upgrade the Engine and retry")}
+		return workspaceRemovalPreApplyError{cause: fmt.Errorf("Fused did not include the requested workspace removal in its plan; upgrade Fused and retry")}
 	}
 	// The upgraded plan contract must echo its canonical hash; inferring one would weaken receipt binding.
 	if strings.TrimSpace(planResp.SourceHash) == "" {
-		return workspaceRemovalPreApplyError{cause: fmt.Errorf("Engine returned a workspace removal plan without source_hash; upgrade the Engine and retry")}
+		return workspaceRemovalPreApplyError{cause: fmt.Errorf("Fused returned a workspace removal plan without source_hash; upgrade Fused and retry")}
 	}
 	// Every destructive consequence is shown after scope validation and before any decision patch or apply mutation, including unattended runs.
 	if err := printForceRemoveWorkspacePlanEffects(out, actions, serviceID, serviceLabel); err != nil {
@@ -1246,7 +1247,7 @@ func printForceRemoveWorkspacePlanEffects(out io.Writer, actions []map[string]an
 			willArchive, _ := action["will_archive"].(bool)
 			// Older Engines that propose Registry archival are incompatible with workspace-local removal safety.
 			if willArchive {
-				return errors.New("Engine proposed Registry archival for a workspace removal; upgrade the Engine and retry")
+				return errors.New("Fused proposed Registry archival for a workspace removal; upgrade Fused and retry")
 			}
 			// Explicit service removal changes only this workspace and never Registry service lifecycle.
 			if _, err := fmt.Fprintf(out, "Plan effect: remove service %s from this workspace.\n", serviceLabel); err != nil {

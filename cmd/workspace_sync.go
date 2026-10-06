@@ -679,11 +679,11 @@ func sameStringSet(a, b []string) bool {
 // workspaceSyncCmd pulls selected Engine state into local workspace documents without changing the Engine.
 var workspaceSyncCmd = &cobra.Command{
 	Use:   "sync",
-	Short: "Pull selected Engine service configuration into local workspace files",
+	Short: "Pull selected Fused service configuration into local workspace files",
 	Long: `Refreshes only services already declared in discovered workspace files by default.
 Use --file to scope the pull to one document, --service <service>[@<version>]
 to create or update type: services files, or --all to explicitly import every active workspace service.
-Sync never changes Engine state and never deletes a local service declaration.`,
+Sync never changes Fused state and never deletes a local service declaration.`,
 	Args: cobra.NoArgs,
 	RunE: WithTelemetry("cli.workspace.sync", func(cmd *cobra.Command, args []string) error {
 		serviceRefs := append([]string(nil), workspaceSyncServices...)

@@ -35,7 +35,7 @@ type cliLoginAPI interface {
 
 var loginCmd = &cobra.Command{
 	Use:   "login",
-	Short: "Sign in to a Fused Engine",
+	Short: "Sign in to Fused",
 	Args:  cobra.NoArgs,
 	RunE: WithTelemetry("cli.login", func(cmd *cobra.Command, _ []string) error {
 		return runCLILogin(cmd)
@@ -47,6 +47,7 @@ func init() {
 	RootCmd.AddCommand(loginCmd)
 }
 
+// runCLILogin establishes a managed CLI credential through the selected workspace sign-in flow.
 func runCLILogin(cmd *cobra.Command) error {
 	engineURL, err := normalizedLoginEngineURL()
 	if err != nil {
@@ -66,8 +67,9 @@ func runCLILogin(cmd *cobra.Command) error {
 		return fmt.Errorf("start CLI login: %w", err)
 	}
 	verificationURL, err := cliVerificationURL(engineURL, start)
+	// An incomplete login transaction cannot safely authorize browser handoff.
 	if err != nil {
-		return errors.New("Engine returned an invalid CLI login transaction")
+		return errors.New("Fused returned an invalid CLI login transaction")
 	}
 	fmt.Fprintln(cmd.OutOrStdout(), "Open this URL to sign in:")
 	fmt.Fprintln(cmd.OutOrStdout(), verificationURL)

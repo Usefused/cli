@@ -15,11 +15,11 @@ import (
 const maxCLIExecutionBundleBytes = 2 << 20
 const maxCLIExecutionManifestBytes = 1 << 20
 
-var sdkBundleCmd = commandGroup("bundle", "Upload code compiled outside Engine")
+var sdkBundleCmd = commandGroup("bundle", "Upload code compiled outside Fused")
 
 var sdkBundleAttachCmd = &cobra.Command{
 	Use:   "attach <app-version-id>",
-	Short: "Upload code compiled outside Engine to one Unified App version",
+	Short: "Upload code compiled outside Fused to one Unified App version",
 	Args:  cobra.ExactArgs(1),
 	RunE: WithTelemetry("cli.unified.bundle.attach", func(cmd *cobra.Command, args []string) error {
 		return runSDKBundleAttach(cmd, args[0])

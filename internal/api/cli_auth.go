@@ -25,6 +25,7 @@ type WhoAmIResponse struct {
 	ExpiresAt            *time.Time `json:"expires_at"`
 }
 
+// WhoAmI admits only a complete authenticated identity from the selected workspace.
 func (c *Client) WhoAmI() (*WhoAmIResponse, error) {
 	req, err := c.authRequest(http.MethodGet, "/auth/whoami")
 	if err != nil {
@@ -40,11 +41,13 @@ func (c *Client) WhoAmI() (*WhoAmIResponse, error) {
 		return nil, fmt.Errorf("whoami failed (HTTP %d): %w", resp.StatusCode, newHTTPError(resp.StatusCode, body))
 	}
 	var identity WhoAmIResponse
+	// Malformed identity responses cannot establish a trusted sign-in state.
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 16<<10)).Decode(&identity); err != nil {
-		return nil, errors.New("Engine returned an invalid whoami response")
+		return nil, errors.New("Fused returned an invalid whoami response")
 	}
+	// All identity bindings must be present before reporting authenticated access.
 	if !identity.Authenticated || identity.SubjectID == "" || identity.WorkspaceID == "" || identity.CredentialID == "" {
-		return nil, errors.New("Engine returned an incomplete whoami response")
+		return nil, errors.New("Fused returned an incomplete whoami response")
 	}
 	return &identity, nil
 }

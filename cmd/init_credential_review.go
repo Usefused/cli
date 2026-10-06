@@ -81,7 +81,7 @@ func initCredentialBucketURL(engineURL, bucketID string) (string, error) {
 	base, err := url.Parse(engineURL)
 	// Only a configured HTTP origin may receive a value-free bucket navigation target.
 	if err != nil || base.Host == "" || base.User != nil || (base.Scheme != "https" && base.Scheme != "http") {
-		return "", errors.New("invalid Engine URL for bucket setup")
+		return "", errors.New("invalid Fused URL for bucket setup")
 	}
 	base.Path = strings.TrimRight(base.Path, "/") + "/integrations/buckets"
 	base.RawPath = ""

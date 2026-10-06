@@ -266,10 +266,10 @@ func sdkSyncConnect(selection api.AppSelection) *configfile.AppConnect {
 
 var sdkSyncCmd = &cobra.Command{
 	Use:   "sync <sdk-name>",
-	Short: "Full-mirror the local SDK config from its exact Engine app version",
+	Short: "Full-mirror the local SDK config from its exact Fused app version",
 	Long: `Overwrites the local SDK config's services with the selections on the most
-recently applied Engine app version declared by the local config: adds or updates every
-selected service (the Engine's resolved version and operations win on any
+recently applied Fused app version declared by the local config: adds or updates every
+selected service (Fused's resolved version and operations win on any
 conflict) and removes any local service entry the remote SDK no longer
 selects. No implicit latest version is selected.
 

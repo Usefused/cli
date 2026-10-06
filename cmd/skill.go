@@ -77,7 +77,7 @@ var skillSpecs = []skillSpec{
 	},
 	{
 		name:    "fused-mcp",
-		summary: "Deploying an Engine-hosted MCP server: operation selection and calling convention",
+		summary: "Deploying a Fused-hosted MCP server: operation selection and calling convention",
 		manifest: []string{
 			"SKILL.md",
 		},

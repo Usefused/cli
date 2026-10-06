@@ -1205,7 +1205,7 @@ services:
 	defer server.Close()
 
 	errText := runCommandInDirExpectError(t, dir, server.URL, []string{"workspace", "service", "version", "delete", "gmail", "v1", "--force"})
-	if !strings.Contains(errText, "upgrade the Engine") {
+	if !strings.Contains(errText, "upgrade Fused") {
 		t.Fatalf("unexpected old-Engine error %q", errText)
 	}
 	after, err := os.ReadFile(path)

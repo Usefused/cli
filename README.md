@@ -1,8 +1,8 @@
 # Fused CLI
 
 `fused-cli` is the config-as-code and operations CLI for the
-[Fused](https://usefused.com) integration gateway. Use it to connect to an
-Engine, import APIs, generate SDKs, and deploy MCP servers.
+[Fused](https://usefused.com) integration gateway. Use it to connect to
+Fused, import APIs, generate SDKs, and deploy MCP servers.
 
 ## Installation
 
@@ -52,7 +52,9 @@ Alternatively, download the archive for your platform from
 [Releases](https://github.com/Usefused/cli/releases) and place `fused-cli` on
 your `PATH`.
 
-## Connect to an Engine
+<a id="connect-to-an-engine"></a>
+
+## Connect to a Fused deployment
 
 ```bash
 fused-cli --engine-url http://localhost:8081 login
@@ -136,7 +138,7 @@ fused-cli import apply
 When you have a provider URL rather than a known specification, start one
 reviewed discovery session. Fused tries a machine-readable contract first,
 then performs a bounded documentation crawl when necessary. In an interactive
-terminal, the command opens the Engine's browser review when the draft is
+terminal, the command opens Fused's browser review when the draft is
 ready and waits for you to finish that review:
 
 ```bash
@@ -186,7 +188,7 @@ fused-cli init support-agent --mcp \
 With no method flag, init creates one App with SDK, MCP, and REST delivery,
 sharing one version and execution token. `--sdk`, `--rest` (or `--api`), and
 `--mcp` retain single-method creation. The combined App downloads a typed
-package and reports hosted MCP URLs; `--rest` prints a central Engine REST
+package and reports hosted MCP URLs; `--rest` prints a central Fused REST
 request template without generating a package. In automation, pass
 `--no-input` and explicit `--operation` or `--select-all` for every service.
 
@@ -215,7 +217,7 @@ To receive events in an SDK, set `webhook_attachment: alerts` and explicitly
 select that SDK's webhook events. To update the registration later, edit its
 file and use `webhook plan` / `webhook apply`.
 
-List or search registered webhooks through the same Engine API as the UI:
+List or search registered webhooks through the same Fused API as the UI:
 
 ```bash
 fused-cli webhook list --q invoice --limit 20 --offset 0 --json
@@ -223,11 +225,11 @@ fused-cli webhook list --service-id <service-uuid>
 fused-cli workspace service webhooks github --q repo --limit 20 --offset 0
 ```
 
-Search and pagination run on Engine within your service permissions. `webhook list --json`
+Search and pagination run on Fused within your service permissions. `webhook list --json`
 returns `{ "items": [...], "total": ... }`; the service-scoped command
-keeps its JSON array format. Receiving URLs come from Engine's public URL settings;
+keeps its JSON array format. Receiving URLs come from Fused's public URL settings;
 managed registrations do not get an invented ingress URL. These commands require
-an Engine exposing `workspaceWebhookPage`.
+a Fused deployment exposing `workspaceWebhookPage`.
 
 To extend an existing app without creating another file, use `extend`. It reads
 the existing YAML to infer SDK, API, or MCP mode. A real change advances a
@@ -257,7 +259,7 @@ fused-cli describe --update billing-sdk \
 ```
 
 `describe` creates a hosted TypeScript Unified App by default. It shows the
-source and selected operations for review, then Engine compiles and deploys the
+source and selected operations for review, then Fused compiles and deploys the
 App after confirmation. Use `--kind sdk|mcp|rest` for another output. For one
 App with SDK, MCP, and REST delivery, use `init` without a method flag.
 `describe` always requires interactive proposal review. See
@@ -308,7 +310,7 @@ fused-cli sdk apply --json -f .fused/sdks/support-sdk.yaml
 ```
 
 Standalone validation remains available for offline checks, but plan already
-validates before contacting the Engine.
+validates before contacting Fused.
 
 ## More documentation
 

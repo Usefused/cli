@@ -119,11 +119,11 @@ func ensurePromptWorkspace(client *api.Client, target string) error {
 	if !os.IsNotExist(err) {
 		return fmt.Errorf("checking workspace config %s: %w", target, err)
 	}
-	fmt.Println("No local workspace config found. Syncing from Engine...")
+	fmt.Println("No local workspace config found. Syncing from Fused...")
 	// The process execution context lets SIGINT stop the prerequisite
 	// sync instead of leaving an agent waiting on abandoned network work.
 	if _, err := PerformWorkspaceSync(executionContext, client, ConfigFile); err != nil {
-		return fmt.Errorf("syncing workspace config from Engine: %w", err)
+		return fmt.Errorf("syncing workspace config from Fused: %w", err)
 	}
 	return nil
 }

@@ -58,7 +58,7 @@ var workspaceManagedAuthEnableCmd = &cobra.Command{
 // workspaceManagedAuthDisableCmd exposes durable opt-out through the ordinary workspace controls.
 var workspaceManagedAuthDisableCmd = &cobra.Command{
 	Use:   "disable",
-	Short: "Disable Fused Managed Auth and revoke this Engine's broker credential",
+	Short: "Disable Fused Managed Auth and revoke this Fused workspace's broker credential",
 	Args:  cobra.NoArgs,
 	RunE: WithTelemetry("cli.workspace.managed_auth.disable", func(cmd *cobra.Command, args []string) error {
 		client, err := getAPIClient()
@@ -78,7 +78,7 @@ var workspaceManagedAuthDisableCmd = &cobra.Command{
 		fmt.Fprintln(cmd.OutOrStdout(), status.Status)
 		// Broker outages do not undo opt-out; explain remaining cleanup without claiming it finished.
 		if status.RevocationPending {
-			fmt.Fprintln(cmd.OutOrStdout(), "Broker revocation pending; this Engine will retry automatically.")
+			fmt.Fprintln(cmd.OutOrStdout(), "Broker revocation pending; this Fused workspace will retry automatically.")
 		}
 		return nil
 	}),

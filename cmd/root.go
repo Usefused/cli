@@ -43,11 +43,11 @@ var (
 var RootCmd = &cobra.Command{
 	Use:           "fused-cli",
 	Version:       Version,
-	Short:         "Manage Fused Engine, Registry, workspace, and runtime configuration.",
+	Short:         "Manage Fused, Registry, workspace, and runtime configuration.",
 	SilenceErrors: true,
 	SilenceUsage:  true,
 	Long: `Fused CLI is the config-as-code and operations CLI for the Fused
-integration layer. Use it to connect to a Fused Engine, import API services,
+integration layer. Use it to connect to Fused, import API services,
 apply workspace configuration, manage buckets and secrets, configure webhooks,
 generate SDKs, and deploy Unified Apps and MCP servers.`,
 	Run: func(cmd *cobra.Command, args []string) {
@@ -95,13 +95,13 @@ func Execute() {
 
 // init registers global execution options while long-running commands retain their own reviewed defaults.
 func init() {
-	RootCmd.PersistentFlags().StringVar(&APIKey, "key", "", "Engine credential (overrides saved login, FUSED_API_KEY & FUSED_LICENSE_KEY)")
-	RootCmd.PersistentFlags().StringVar(&EngineURL, "engine-url", "", "Fused Engine URL (overrides config & FUSED_ENGINE_URL)")
+	RootCmd.PersistentFlags().StringVar(&APIKey, "key", "", "Fused credential (overrides saved login, FUSED_API_KEY & FUSED_LICENSE_KEY)")
+	RootCmd.PersistentFlags().StringVar(&EngineURL, "engine-url", "", "Fused URL (overrides config & FUSED_ENGINE_URL)")
 	RootCmd.PersistentFlags().StringVarP(&ConfigFile, "file", "f", "", "Path to a Fused config file, or init/extend target (disables .fused/ discovery)")
 	RootCmd.PersistentFlags().BoolVar(&NoInput, "no-input", false, "Fail instead of prompting for input (also enabled by CI=true)")
 	// The root default remains responsive while long-running commands select larger budgets when this flag is absent.
-	RootCmd.PersistentFlags().DurationVar(&RequestTimeout, "timeout", api.DefaultTimeout, "Maximum duration for an Engine request (spec imports default to 20m and contract refresh defaults to 10m unless set)")
-	RootCmd.PersistentFlags().StringVar(&RequestID, "request-id", "", "Attach an audit correlation ID to Engine requests")
+	RootCmd.PersistentFlags().DurationVar(&RequestTimeout, "timeout", api.DefaultTimeout, "Maximum duration for a Fused request (spec imports default to 20m and contract refresh defaults to 10m unless set)")
+	RootCmd.PersistentFlags().StringVar(&RequestID, "request-id", "", "Attach an audit correlation ID to Fused requests")
 	RootCmd.PersistentFlags().BoolVar(&showReadme, "readme", false, "Print the CLI onboarding README and exit")
 }
 

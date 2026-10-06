@@ -243,9 +243,11 @@ func printUserCredentials(cmd *cobra.Command, credentials []cliapi.ControlCreden
 	_ = w.Flush()
 }
 
+// printIssuedCredential displays the one-time key only after confirming the issuance response includes it.
 func printIssuedCredential(cmd *cobra.Command, payload *cliapi.IssuedCredentialPayload) error {
+	// Never acknowledge key issuance when the one-time secret is missing.
 	if payload.Secret == "" {
-		return fmt.Errorf("Engine reported an issued credential without returning its one-time secret")
+		return fmt.Errorf("Fused reported an issued credential without returning its one-time secret")
 	}
 	// The raw key is intentionally written only to the command's requested
 	// output. It is never attached to OTEL, logs, config, or command state.

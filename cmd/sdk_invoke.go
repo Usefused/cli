@@ -35,7 +35,7 @@ var (
 
 var sdkInvokeCmd = &cobra.Command{
 	Use:   "invoke <sdk-name@version-or-version-id> <operation>",
-	Short: "Invoke one JSON operation through the Engine execution API",
+	Short: "Invoke one JSON operation through the Fused execution API",
 	Args: func(cmd *cobra.Command, args []string) error {
 		if err := cobra.ExactArgs(2)(cmd, args); err != nil {
 			return err
@@ -405,8 +405,9 @@ func resolveSDKInvokeEngineURL() (string, error) {
 // validateSDKInvokeEngineURL rejects authority credentials and request-specific URL components.
 func validateSDKInvokeEngineURL(raw string) (string, error) {
 	parsed, err := url.Parse(strings.TrimSpace(raw))
+	// Execution targets must not carry credentials or ambiguous URL suffixes.
 	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
-		return "", errors.New("Engine URL must be an absolute http or https URL without credentials, query, or fragment")
+		return "", errors.New("Fused URL must be an absolute http or https URL without credentials, query, or fragment")
 	}
 	parsed.Path = strings.TrimRight(parsed.Path, "/")
 	parsed.RawPath = strings.TrimRight(parsed.RawPath, "/")
@@ -466,7 +467,7 @@ func newSDKInvokeHTTPRequest(ctx context.Context, prepared preparedSDKInvocation
 // sdkInvokeTransportError hides transport implementation detail behind one stable CLI error.
 func sdkInvokeTransportError(cause error) error {
 	return &sdkInvokeError{
-		code: "sdk_execution_request_failed", message: "could not reach the Engine execution endpoint",
+		code: "sdk_execution_request_failed", message: "could not reach the Fused execution endpoint",
 		category: "dependency", cause: cause, details: map[string]any{"stage": "execute"},
 	}
 }
@@ -482,7 +483,7 @@ func decodeSDKInvokeHTTPResult(statusCode int, body []byte, prepared preparedSDK
 	}
 	// The response identity must match the exact SDK version resolved before transport.
 	if decoded.AppID != prepared.AppID || decoded.Operation != prepared.Request.Operation {
-		return sdkInvokeHTTPResponse{}, invalidSDKInvokeHTTPResponse("Engine returned mismatched execution identity", nil)
+		return sdkInvokeHTTPResponse{}, invalidSDKInvokeHTTPResponse("Fused returned mismatched execution identity", nil)
 	}
 	return decoded, nil
 }
@@ -499,8 +500,9 @@ func readBoundedSDKInvokeResponse(reader io.Reader) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Bound response memory before decoding untrusted execution output.
 	if len(data) > maxSDKInvokeResponseBytes {
-		return nil, errors.New("Engine execution response is too large")
+		return nil, errors.New("Fused execution response is too large")
 	}
 	return data, nil
 }
@@ -508,23 +510,26 @@ func readBoundedSDKInvokeResponse(reader io.Reader) ([]byte, error) {
 // decodeSDKInvokeHTTPResponse validates the physical success envelope.
 func decodeSDKInvokeHTTPResponse(data []byte) (sdkInvokeHTTPResponse, error) {
 	var response sdkInvokeHTTPResponse
+	// Malformed response bodies must not be reported as successful execution.
 	if err := decodeStrictSDKInvokeJSON(data, &response); err != nil {
-		return sdkInvokeHTTPResponse{}, invalidSDKInvokeHTTPResponse("Engine returned an invalid execution response", err)
+		return sdkInvokeHTTPResponse{}, invalidSDKInvokeHTTPResponse("Fused returned an invalid execution response", err)
 	}
+	// Execution receipts require a concrete app, operation, and result collection.
 	if _, err := uuid.Parse(response.AppID); err != nil || strings.TrimSpace(response.Operation) == "" || response.Results == nil {
-		return sdkInvokeHTTPResponse{}, invalidSDKInvokeHTTPResponse("Engine returned an incomplete execution response", nil)
+		return sdkInvokeHTTPResponse{}, invalidSDKInvokeHTTPResponse("Fused returned an incomplete execution response", nil)
 	}
 	// The SDK invoke route serves physical selections only.
 	if response.Kind != "physical" {
-		return sdkInvokeHTTPResponse{}, invalidSDKInvokeHTTPResponse("Engine returned an unknown execution kind", nil)
+		return sdkInvokeHTTPResponse{}, invalidSDKInvokeHTTPResponse("Fused returned an unknown execution kind", nil)
 	}
 	return response, validateSDKInvokePhysicalResponse(response)
 }
 
 // validateSDKInvokePhysicalResponse requires one successful JSON provider document.
 func validateSDKInvokePhysicalResponse(response sdkInvokeHTTPResponse) error {
+	// Physical execution must return exactly one provider receipt with a status.
 	if response.StatusCode == 0 || len(response.Results) != 1 {
-		return invalidSDKInvokeHTTPResponse("Engine returned an invalid physical execution response", nil)
+		return invalidSDKInvokeHTTPResponse("Fused returned an invalid physical execution response", nil)
 	}
 	return nil
 }
@@ -591,15 +596,16 @@ func copySDKInvokeErrorDetails(source map[string]any) map[string]any {
 
 // genericSDKInvokeHTTPError maps untrusted or malformed error bodies to local stable diagnostics.
 func genericSDKInvokeHTTPError(statusCode int) error {
-	code, message, category := "sdk_execution_failed", "Engine rejected the SDK execution", "execution"
+	code, message, category := "sdk_execution_failed", "Fused rejected the SDK execution", "execution"
 	if statusCode == http.StatusUnauthorized {
 		code, message, category = "sdk_authentication_failed", "SDK execution token was rejected", "authentication"
 	}
 	if statusCode == http.StatusForbidden {
 		code, message, category = "sdk_authorization_failed", "SDK execution is not allowed", "authorization"
 	}
+	// Server failures remain dependency failures rather than user input errors.
 	if statusCode >= http.StatusInternalServerError {
-		code, message, category = "sdk_engine_failed", "Engine could not complete the SDK execution", "dependency"
+		code, message, category = "sdk_engine_failed", "Fused could not complete the SDK execution", "dependency"
 	}
 	return &sdkInvokeError{code: code, message: message, category: category, details: map[string]any{"http_status": statusCode}}
 }
@@ -609,7 +615,7 @@ func writeSDKInvocationOutput(cmd *cobra.Command, output sdkInvokeOutput) error 
 	if wantsJSON(cmd) {
 		return writeJSON(cmd, output)
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "Kind: %s\nEngine: %s\n", output.Kind, output.EngineEndpoint)
+	fmt.Fprintf(cmd.OutOrStdout(), "Kind: %s\nFused: %s\n", output.Kind, output.EngineEndpoint)
 	for _, result := range output.Results {
 		// Propagate writer failures so CLI automation does not treat truncated output as success.
 		if err := writeSDKInvokeValue(cmd.OutOrStdout(), result); err != nil {

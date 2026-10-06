@@ -50,7 +50,7 @@ func (c *Client) ListWorkspaceWebhookPage(serviceID, search string, opts PageOpt
 	}
 	// Missing page metadata must not masquerade as a successfully empty registration catalogue.
 	if response.Page == nil || response.Page.Items == nil || response.Page.Total == nil || *response.Page.Total < 0 {
-		return nil, fmt.Errorf("Engine returned an incomplete webhook page")
+		return nil, fmt.Errorf("Fused returned an incomplete webhook page")
 	}
 	return &WorkspaceWebhookPage{Items: *response.Page.Items, Total: *response.Page.Total}, nil
 }
