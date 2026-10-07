@@ -542,7 +542,7 @@ func validateAppConfig(cfg *AppConfig, kind ConfigKind) error {
 	if err := validateAppKindFields(cfg, kind); err != nil {
 		return err
 	}
-	// Hosted references are explicit capabilities, but cannot create recursive Unified Apps.
+	// Hosted references grant only the explicitly named and versioned capabilities.
 	if err := validateUnifiedAppReferences(cfg, kind); err != nil {
 		return err
 	}
@@ -642,7 +642,7 @@ func validateUnifiedAppKindFields(cfg *AppConfig) error {
 	if err := validateExecutionDeliveryFields(cfg); err != nil {
 		return err
 	}
-	return validateExecutionOperationScope(cfg.Services)
+	return validateExecutionOperationScope(cfg.Services, len(cfg.UnifiedApps))
 }
 
 // validateExecutionCodeSource admits either Engine-compiled source or a precompiled digest, never competing authorities.
@@ -675,7 +675,7 @@ func validateExecutionDeliveryFields(cfg *AppConfig) error {
 }
 
 // validateExecutionOperationScope mirrors Engine's finite manifest cap and event-only trigger rule.
-func validateExecutionOperationScope(services map[string]AppService) error {
+func validateExecutionOperationScope(services map[string]AppService, attachmentCount int) error {
 	operationCount := 0
 	eventCount := 0
 	for _, service := range services {
@@ -684,6 +684,7 @@ func validateExecutionOperationScope(services map[string]AppService) error {
 			return fmt.Errorf("Unified App config requires explicit operations so execute cannot be selected as a raw operation")
 		}
 		for _, operation := range service.Operations {
+			// The entry point name cannot be shadowed by a provider operation.
 			if operation == "execute" {
 				return fmt.Errorf("Unified App config reserves raw operation execute")
 			}
@@ -695,9 +696,9 @@ func validateExecutionOperationScope(services map[string]AppService) error {
 			eventCount++
 		}
 	}
-	// Hosted code may react to provider events without calling a physical operation.
-	if operationCount > 64 || (operationCount == 0 && eventCount == 0) {
-		return fmt.Errorf("Unified App config requires an event or 1 to 64 selected operations")
+	// Hosted dependencies and inbound events can supply the entire app capability surface.
+	if operationCount > 64 || (operationCount == 0 && eventCount == 0 && attachmentCount == 0) {
+		return fmt.Errorf("Unified App config requires an attached app, an event, or 1 to 64 selected operations")
 	}
 	return nil
 }

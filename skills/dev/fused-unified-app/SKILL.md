@@ -125,7 +125,15 @@ MCP advertises the attachment through the existing `execute` tool with its autho
 
 For REST, POST the same `operation` and `input` to `/v1/apps/<consumer-version-id>/executions` using the consumer token. Execution records belong to the hosted Unified App and retain the consumer token ID for attribution. Reading historical results requires the Unified App's normal result-access authority; an attachment does not grant access to unrelated execution history.
 
-References do not follow traffic changes. The selected Unified App version must be receiving traffic during plan, apply, and execution. After promotion, publish a new consumer version selecting the new target, or promote the pinned target back. At most 16 attachments are allowed. Aliases use lowercase letters, digits, and underscores, start with a letter, and cannot be reserved language names or collide with another alias's `_sync` method. Unified Apps cannot themselves declare `unified_apps`.
+References do not follow traffic changes. The selected Unified App version must be receiving traffic during plan, apply, and execution. After promotion, publish a new consumer version selecting the new target, or promote the pinned target back. At most 16 attachments are allowed. Aliases use lowercase letters, digits, and underscores, start with a letter, and cannot be reserved language names or collide with another alias's `_sync` method. Unified Apps may declare the same `unified_apps` references.
+
+## Call another Unified App
+
+Add `unified_apps: { child: { name: Child, version: "1.0.0" } }` to a `kind: unified_app` config, then call `await fused.callApp("child", input)` from `@fused/unified-app` or `@fused/operations`. Check the returned `status` before reading `output`. Provider services are optional when the app has a hosted dependency.
+
+The same app-use permissions, exact-version checks and token alias grants apply. Each child uses its own bucket, schemas, data and execution record. Pass connected-user references explicitly in its input. Calls are synchronous, are not automatically retried, and replay uses recorded child responses without executing the child again.
+
+Recursive family calls are rejected. A root execution allows at most 32 nested calls and eight app levels including itself. Each waiting parent retains a worker slot; configure enough `engine.unified_apps.max_concurrency` for the chain. A child fails immediately when no slot is available. Parent cancellation and deadlines also bound child work.
 
 ## Private execution diagnostics
 
