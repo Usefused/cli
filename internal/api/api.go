@@ -1098,6 +1098,16 @@ type InjectionConfig struct {
 
 // ListWorkspaceServices assembles a complete snapshot through Engine's bounded, authorized page resolver.
 func (c *Client) ListWorkspaceServices(names ...string) ([]WorkspaceService, error) {
+	return c.workspaceServicePages(names, "")
+}
+
+// SearchWorkspaceServices uses the same authorized free-text matching as the workspace UI.
+func (c *Client) SearchWorkspaceServices(q string) ([]WorkspaceService, error) {
+	return c.workspaceServicePages(nil, strings.TrimSpace(q))
+}
+
+// workspaceServicePages shares bounded pagination while preserving exact-reference listing for config workflows.
+func (c *Client) workspaceServicePages(names []string, search string) ([]WorkspaceService, error) {
 	const pageSize = 100
 	query := `
   query WorkspaceServices($names: [String], $limit: Int, $offset: Int) {
@@ -1111,6 +1121,16 @@ func (c *Client) ListWorkspaceServices(names ...string) ([]WorkspaceService, err
    }
   }
  `
+	// Only search callers require the new argument; ordinary listing remains compatible with older Engines.
+	if search != "" {
+		query = strings.Replace(query, "$names: [String],", "$q: String, $names: [String],", 1)
+		query = strings.Replace(query, "workspaceServicePage(names:", "workspaceServicePage(q: $q, names:", 1)
+	}
+	variables := map[string]any{"names": names, "limit": pageSize}
+	// Exact-reference queries never acquire fuzzy semantics through an implicit fallback.
+	if search != "" {
+		variables["q"] = search
+	}
 	services := make([]WorkspaceService, 0)
 	seen := make(map[string]bool)
 	total := -1
@@ -1122,8 +1142,9 @@ func (c *Client) ListWorkspaceServices(names ...string) ([]WorkspaceService, err
 				Total    *int                `json:"total"`
 			} `json:"workspaceServicePage"`
 		}
-		// Reuse Engine transport so every page retains the same credentials and server-side name filter.
-		if err := c.EngineGraphQL(query, map[string]any{"names": names, "limit": pageSize, "offset": offset}, &resp); err != nil {
+		// Reuse the same filters and credentials for every page of this snapshot.
+		variables["offset"] = offset
+		if err := c.EngineGraphQL(query, variables, &resp); err != nil {
 			return nil, fmt.Errorf("list workspace services at offset %d: %w", offset, err)
 		}
 		// Missing metadata cannot prove an empty workspace or safe pagination completion.

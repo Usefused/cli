@@ -11,21 +11,25 @@ const (
 	serviceWorkspaceAvailable = "available_to_add"
 )
 
-// addWorkspaceStatusToServiceSearch composes Registry search with one bounded
-// Engine lookup over only the query and Registry matches. This exposes whether
-// each result is already enabled without loading the entire workspace into the
-// CLI or introducing a second service-discovery endpoint.
+// addWorkspaceStatusToServiceSearch combines Engine free-text results with exact Registry membership checks.
 func addWorkspaceStatusToServiceSearch(client *cliapi.Client, query string, registryResults []serviceSearchResult) ([]serviceSearchResult, error) {
-	workspaceServices, err := client.ListWorkspaceServices(workspaceServiceSearchKeys(query, registryResults)...)
+	workspaceServices, err := client.SearchWorkspaceServices(query)
+	// Failed authorization or search must not be reported as an empty workspace.
 	if err != nil {
 		return nil, err
 	}
-	enabledByID := workspaceServiceIDSet(workspaceServices)
+	membership, err := client.ListWorkspaceServices(workspaceServiceSearchKeys(query, registryResults)...)
+	// Registry matches can come from descriptions, so exact membership checks supplement local name/slug search.
+	if err != nil {
+		return nil, err
+	}
+	enabledByID := workspaceServiceIDSet(append(append([]cliapi.WorkspaceService{}, workspaceServices...), membership...))
 	registryIDs := make(map[string]bool, len(registryResults))
 	enabled := make([]serviceSearchResult, 0, len(registryResults))
 	available := make([]serviceSearchResult, 0, len(registryResults))
 	for _, result := range registryResults {
 		registryIDs[result.ServiceID] = true
+		// Workspace membership is authoritative even when the Registry matched a different metadata field.
 		if enabledByID[result.ServiceID] {
 			result.WorkspaceStatus = serviceWorkspaceEnabled
 			enabled = append(enabled, result)
@@ -34,6 +38,8 @@ func addWorkspaceStatusToServiceSearch(client *cliapi.Client, query string, regi
 		result.WorkspaceStatus = serviceWorkspaceAvailable
 		available = append(available, result)
 	}
+	// Exact qualified references may resolve a locally stored bare slug; preserve that lookup compatibility.
+	workspaceServices = append(workspaceServices, exactWorkspaceServiceMatches(query, membership)...)
 	enabled = appendWorkspaceOnlySearchResults(enabled, query, workspaceServices, registryIDs)
 	return append(enabled, available...), nil
 }
@@ -66,12 +72,16 @@ func workspaceServiceIDSet(services []cliapi.WorkspaceService) map[string]bool {
 	return ids
 }
 
+// appendWorkspaceOnlySearchResults trusts Engine matching and deduplicates local and Registry identities.
 func appendWorkspaceOnlySearchResults(results []serviceSearchResult, query string, services []cliapi.WorkspaceService, registryIDs map[string]bool) []serviceSearchResult {
-	for _, service := range exactWorkspaceServiceMatches(query, services) {
+	for _, service := range services {
+		// Repeated identities must appear once regardless of which search found them.
 		if service.ServiceID == "" || registryIDs[service.ServiceID] {
 			continue
 		}
+		registryIDs[service.ServiceID] = true
 		slug := service.ServiceSlug
+		// Legacy memberships without a stored slug retain the user-provided reference.
 		if strings.TrimSpace(slug) == "" {
 			slug = query
 		}

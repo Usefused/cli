@@ -520,7 +520,26 @@ func newWorkspaceServiceDiscoveryServer(t *testing.T, workspaceJSON, registryJSO
 			if !strings.Contains(request.Query, "workspaceServicePage") {
 				t.Errorf("expected workspaceServicePage query, got %q", request.Query)
 			}
-			_, _ = w.Write(workspaceServicePageFixture(t, workspaceJSON))
+			filteredJSON := workspaceJSON
+			// Mirror Engine substring matching so unrelated fixture rows cannot masquerade as search hits.
+			if q, ok := request.Variables["q"].(string); ok && q != "" {
+				var services []api.WorkspaceService
+				// Invalid fixtures should fail the test instead of looking like an empty search.
+				if err := json.Unmarshal([]byte(workspaceJSON), &services); err != nil {
+					t.Error(err)
+					return
+				}
+				matches := []api.WorkspaceService{}
+				for _, service := range services {
+					// Registry-qualified slugs must not match a different provider's local identity.
+					if strings.Contains(strings.ToLower(service.ServiceName), strings.ToLower(q)) || strings.Contains(strings.ToLower(service.ServiceSlug), strings.ToLower(q)) {
+						matches = append(matches, service)
+					}
+				}
+				encoded, _ := json.Marshal(matches)
+				filteredJSON = string(encoded)
+			}
+			_, _ = w.Write(workspaceServicePageFixture(t, filteredJSON))
 		case "/graphql":
 			registryCalls++
 			writeWorkspaceServiceRegistryFixture(t, w, request.Query, request.Variables, registryJSON)
