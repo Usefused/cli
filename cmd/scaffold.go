@@ -39,6 +39,8 @@ type scaffoldOptions struct {
 }
 
 type scaffoldRequest struct {
+	mcpRequests                map[string]mcpSelectOptions
+	mcpSelections              map[string]*configfile.ImportedMCPSelection
 	kind                       configfile.ConfigKind
 	name                       string
 	path                       string
@@ -844,7 +846,12 @@ func mergeAppSelections(config *configfile.AppConfig, request scaffoldRequest) (
 	if err != nil {
 		return false, err
 	}
-	return anyScaffoldChange(changed, operationsChanged, selectAllChanged, eventsChanged), nil
+	importedChanged, err := mergeInitMCPCapabilities(config, request.mcpSelections)
+	// Imported scope is merged before ordinary version inference and plan publication.
+	if err != nil {
+		return false, err
+	}
+	return anyScaffoldChange(changed, operationsChanged, selectAllChanged, eventsChanged, importedChanged), nil
 }
 
 // enrichAppScaffold adds only missing routing bindings after all create or

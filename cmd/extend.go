@@ -14,11 +14,13 @@ import (
 )
 
 type unifiedExtendOptions struct {
-	services    []string
-	operations  []string
-	selectAll   []string
-	version     string
-	description string
+	importedMCP      mcpInitFlags
+	noApply, noToken bool
+	services         []string
+	operations       []string
+	selectAll        []string
+	version          string
+	description      string
 }
 
 type unifiedExtendTarget struct {
@@ -59,6 +61,9 @@ next minor release; pass --version to choose a different immutable successor.`,
 		}),
 	}
 
+	addMCPInitFlags(command, &opts.importedMCP)
+	command.Flags().BoolVar(&opts.noApply, "no-apply", false, "Plan extension without applying, generating, or downloading")
+	command.Flags().BoolVar(&opts.noToken, "no-token", false, "Apply without an auto-issued execution token")
 	command.Flags().StringSliceVar(&opts.services, "service", nil, "Registry service as <service>[@<version>]; comma-separated or repeatable")
 	command.Flags().StringSliceVar(&opts.operations, "operation", nil, "Selected operation as <service>=<operationId>; repeatable")
 	command.Flags().StringSliceVar(&opts.selectAll, "select-all", nil, "Service whose complete operation surface should be selected; repeatable")
@@ -232,6 +237,7 @@ func buildUnifiedExtendRequest(cmd *cobra.Command, target unifiedExtendTarget, o
 		request.version = strings.TrimSpace(opts.version)
 	}
 	request.path, request.extend = target.path, true
+	request.noApply, request.noToken = opts.noApply, opts.noToken
 	if target.mode == unifiedInitModeSDK || target.mode == unifiedInitModeAPI {
 		// Preserve the existing family's immutable package-generation mode.
 		request.generate, request.generateSet = target.mode == unifiedInitModeSDK, true
@@ -255,6 +261,15 @@ func parseUnifiedExtendSelections(target unifiedExtendTarget, opts *unifiedExten
 		return request, err
 	}
 	request.selectAll, err = parseScaffoldNames("--select-all", opts.selectAll)
+	// Physical flag errors remain authoritative before imported selection parsing.
+	if err != nil {
+		return request, err
+	}
+	// Extending a package or REST app cannot introduce an unsupported runtime adapter.
+	if opts.importedMCP.present() && target.mode != unifiedInitModeMCP {
+		return request, errors.New("imported MCP capability flags require an MCP app")
+	}
+	request.mcpRequests, err = parseMCPInitFlags(opts.importedMCP)
 	return request, err
 }
 
@@ -280,14 +295,14 @@ func validateUnifiedExtendOverrides(cmd *cobra.Command, target unifiedExtendTarg
 
 // completeUnifiedExtendSelections opens the existing selector only when no deterministic extension was supplied.
 func completeUnifiedExtendSelections(request *scaffoldRequest, target unifiedExtendTarget) error {
-	hasIntent := len(request.services)+len(request.operations)+len(request.selectAll) > 0
+	hasIntent := len(request.services)+len(request.operations)+len(request.selectAll)+len(request.mcpRequests) > 0
 	// Version-only or description-only updates are also explicit changes.
 	if hasIntent || request.versionSet || request.descriptionSet {
 		return nil
 	}
 	// Noninteractive extension requires deterministic user intent.
 	if nonInteractive() {
-		return errors.New("--no-input extend requires --service, --operation, --select-all, --version, or an MCP --description")
+		return errors.New("--no-input extend requires --service, --operation, --select-all, an MCP capability flag, --version, or an MCP --description")
 	}
 	request.services = unifiedExtendSelectableServices(target.config)
 	// An empty existing app offers no safe provider selection to infer.
@@ -336,8 +351,8 @@ func unifiedExtendSelectableServices(parsed *configfile.ParsedConfig) []scaffold
 	sort.Strings(names)
 	services := make([]scaffoldService, 0, len(names))
 	for _, name := range names {
-		// Services already scoped to every operation need no additional operation selection.
-		if configured[name].SelectAll {
+		// MCP services can still add imported capabilities when every physical endpoint is selected.
+		if configured[name].SelectAll && parsed.MCP == nil {
 			continue
 		}
 		services = append(services, scaffoldService{name: name, version: configured[name].Version})

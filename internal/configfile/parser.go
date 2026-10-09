@@ -783,13 +783,17 @@ func strictUnmarshal(data []byte, target any) error {
 // validateAppService checks capability selection and exact auth intent shared by SDK and MCP configs.
 func validateAppService(name string, svc SDKService, kind ConfigKind) error {
 	// An event-only service is a complete receive capability for both SDK and MCP apps.
-	if len(svc.Operations) == 0 && !svc.SelectAll && len(svc.Webhooks) == 0 && !svc.WebhooksSelectAll {
-		return fmt.Errorf("%s service %q requires at least one operation or webhook", kind, name)
+	if len(svc.Operations) == 0 && !svc.SelectAll && len(svc.Webhooks) == 0 && !svc.WebhooksSelectAll && svc.MCP == nil {
+		return fmt.Errorf("%s service %q requires at least one operation, webhook, or imported MCP capability", kind, name)
 	}
 	// Explicit operation IDs and select-all are competing authorities, so accepting
 	// both would make the generated surface depend on downstream precedence.
 	if len(svc.Operations) > 0 && svc.SelectAll {
 		return fmt.Errorf("%s service %q must select exactly one of operations or select_all: true", kind, name)
+	}
+	// Imported selections must be useful, explicit, and limited to the MCP runtime.
+	if err := ValidateImportedMCP(svc.MCP, kind); err != nil {
+		return fmt.Errorf("service %q: %w", name, err)
 	}
 	return validateAppAuth(name, svc.Auth, kind)
 }

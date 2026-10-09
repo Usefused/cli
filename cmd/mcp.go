@@ -51,7 +51,7 @@ var mcpVersionsCmd = &cobra.Command{
 
 var mcpOperationsCmd = &cobra.Command{
 	Use:   "operations <mcp-name@version-or-version-id>",
-	Short: "List every operation allowed by one exact MCP version",
+	Short: "List selected endpoints, imported MCP capabilities, and Unified operations",
 	Args: func(cmd *cobra.Command, args []string) error {
 		// Operation scope is immutable-version state, so a family name alone must never float to another version.
 		if err := cobra.ExactArgs(1)(cmd, args); err != nil {

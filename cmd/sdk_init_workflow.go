@@ -87,11 +87,12 @@ func prepareSDKInitLifecycle(cmd *cobra.Command, request scaffoldRequest, bucket
 	if err != nil {
 		return sdkInitLifecycle{}, err
 	}
-	resolvedRequest, err = completeSDKInitOperationSelections(cmd, client, resolvedRequest, resolvedServices)
-	// Operation discovery must finish before a workspace plan can imply that the full SDK intent is reviewable.
+	resolvedRequest, err = completeInitCapabilitySelections(cmd, client, resolvedRequest, resolvedServices)
+	// All explicit capability boundaries must be reviewed before either lifecycle plan.
 	if err != nil {
 		return sdkInitLifecycle{}, err
 	}
+
 	// Explicit webhook scope is verified against the same immutable Registry versions before workspace activation.
 	if err := validateSDKInitWebhookSelections(client, resolvedRequest, resolvedServices); err != nil {
 		return sdkInitLifecycle{}, err
@@ -121,7 +122,7 @@ func prepareSDKInitLifecycle(cmd *cobra.Command, request scaffoldRequest, bucket
 // hydrateSDKInitExtendServiceReferences adds existing service pins and operation scope needed to validate selection-only extensions.
 func hydrateSDKInitExtendServiceReferences(request scaffoldRequest) (scaffoldRequest, error) {
 	// Creation already carries every service through --service, while version-only extension has no operation or event scope to hydrate.
-	if !request.extend || (len(request.operations) == 0 && len(request.selectAll) == 0 && len(request.events) == 0) {
+	if !request.extend || (len(request.operations) == 0 && len(request.selectAll) == 0 && len(request.events) == 0 && len(request.mcpRequests) == 0) {
 		return request, nil
 	}
 	data, err := os.ReadFile(request.path)
@@ -138,32 +139,29 @@ func hydrateSDKInitExtendServiceReferences(request scaffoldRequest) (scaffoldReq
 	if len(request.events) > 0 && strings.TrimSpace(request.webhookAttachment) == "" {
 		request.webhookAttachment = strings.TrimSpace(current.WebhookAttachment)
 	}
+	inheritInitServicePins(&request, current, initReferencedServices(request))
+	inheritInitEventOperations(&request, current)
+	return request, nil
+}
+
+// initReferencedServices retains deterministic reference order across independent capability categories.
+func initReferencedServices(request scaffoldRequest) []string {
+	referenced := []string{}
+	for _, operation := range request.operations {
+		referenced = append(referenced, operation.service)
+	}
+	referenced = append(referenced, request.selectAll...)
+	for _, event := range request.events {
+		referenced = append(referenced, event.service)
+	}
+	return append(referenced, sortedMCPRequestServices(request.mcpRequests)...)
+}
+
+// inheritInitServicePins adds each missing authored pin once without overriding explicit service intent.
+func inheritInitServicePins(request *scaffoldRequest, current *configfile.AppConfig, referenced []string) {
 	explicit := make(map[string]struct{}, len(request.services))
 	for _, service := range request.services {
 		explicit[service.name] = struct{}{}
-	}
-	referenced := make([]string, 0, len(request.operations)+len(request.selectAll)+len(request.events))
-	seen := make(map[string]struct{}, cap(referenced))
-	for _, operation := range request.operations {
-		// Preserve first-reference order so Registry resolution and user-facing diagnostics remain deterministic.
-		if _, exists := seen[operation.service]; !exists {
-			seen[operation.service] = struct{}{}
-			referenced = append(referenced, operation.service)
-		}
-	}
-	for _, serviceName := range request.selectAll {
-		// A service referenced by both selection forms needs only one immutable pin for the later mutual-exclusion check.
-		if _, exists := seen[serviceName]; !exists {
-			seen[serviceName] = struct{}{}
-			referenced = append(referenced, serviceName)
-		}
-	}
-	for _, event := range request.events {
-		// An event-qualified service needs its existing immutable pin even when no operation flag accompanies the extension.
-		if _, exists := seen[event.service]; !exists {
-			seen[event.service] = struct{}{}
-			referenced = append(referenced, event.service)
-		}
 	}
 	for _, serviceName := range referenced {
 		// Explicit --service input remains authoritative and will be canonicalized by normal workspace-first resolution.
@@ -178,9 +176,14 @@ func hydrateSDKInitExtendServiceReferences(request scaffoldRequest) (scaffoldReq
 		request.services = append(request.services, scaffoldService{name: serviceName, version: service.Version})
 		explicit[serviceName] = struct{}{}
 	}
+}
+
+// inheritInitEventOperations retains prior endpoint scope when extending only inbound event selections.
+func inheritInitEventOperations(request *scaffoldRequest, current *configfile.AppConfig) {
+
 	for _, event := range request.events {
 		// Event-only extension inherits the existing operation boundary instead of prompting to re-author unrelated SDK scope.
-		if sdkInitServiceHasOperationSelection(request, event.service) {
+		if sdkInitServiceHasOperationSelection(*request, event.service) {
 			continue
 		}
 		service, exists := current.Services[event.service]
@@ -197,7 +200,6 @@ func hydrateSDKInitExtendServiceReferences(request scaffoldRequest) (scaffoldReq
 			request.operations = append(request.operations, scaffoldOperation{service: event.service, operation: operation})
 		}
 	}
-	return request, nil
 }
 
 // completeSDKInitCreateBucket resolves a new app's implicit bucket before any workspace service is applied.
@@ -530,8 +532,12 @@ func validateSDKInitWebhookSelections(client *api.Client, request scaffoldReques
 	return nil
 }
 
-// sdkInitServiceHasOperationSelection reports whether one resolved service already has an explicit capability boundary.
+// sdkInitServiceHasOperationSelection reports whether endpoint or imported scope already supplies a usable capability boundary.
 func sdkInitServiceHasOperationSelection(request scaffoldRequest, serviceName string) bool {
+	// Imported-only services must not be forced to grant unrelated physical operations.
+	if request.mcpSelections[serviceName] != nil {
+		return true
+	}
 	for _, operation := range request.operations {
 		// Any explicit operation for this service satisfies the initial selection requirement.
 		if operation.service == serviceName {
@@ -754,6 +760,8 @@ func sdkInitConfirmationMessage(request scaffoldRequest, services []sdkInitResol
 	if len(request.events) > 0 {
 		selection = fmt.Sprintf("%s and %d webhook event(s) from %s", selection, len(request.events), request.webhookAttachment)
 	}
+	// Imported capabilities are independent grants and must be visible in the final lifecycle review.
+	selection = describeInitMCPSelection(request, selection)
 	appIdentity := request.name
 	// An explicit or prompted successor must remain visible in the same final authorization as its expanded scope.
 	if request.versionSet {

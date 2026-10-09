@@ -7,22 +7,30 @@ type ResolvedResourceReference struct {
 
 const AppSelectionSchemaVersion = 3
 
+// ImportedMCPCapability is a credential-free grant projected from the immutable app version.
+type ImportedMCPCapability struct {
+	Kind        string `json:"kind"`
+	Name        string `json:"name"`
+	OperationID string `json:"operation_id"`
+}
+
 type AppSelection struct {
-	ServiceID        string            `json:"service_id"`
-	ServiceVersionID string            `json:"service_version_id"`
-	SchemaVersion    int               `json:"schema_version"`
-	EndpointIDs      []string          `json:"endpoint_ids"`
-	OperationNames   []string          `json:"operation_names"`
-	WebhookIDs       []string          `json:"webhook_ids"`
-	WebhookNames     []string          `json:"webhook_names"`
-	SelectAll        bool              `json:"select_all"`
-	WebhookSelectAll bool              `json:"webhook_select_all"`
-	AuthType         string            `json:"auth_type"`
-	AuthName         string            `json:"auth_name"`
-	AuthRef          string            `json:"auth_ref"`
-	RequiredAuth     []AppRequiredAuth `json:"required_auth"`
-	ConnectScopes    []string          `json:"connect_scopes"`
-	Injections       []InjectionConfig `json:"injections"`
+	MCPCapabilities  []ImportedMCPCapability `json:"mcp_capabilities,omitempty"`
+	ServiceID        string                  `json:"service_id"`
+	ServiceVersionID string                  `json:"service_version_id"`
+	SchemaVersion    int                     `json:"schema_version"`
+	EndpointIDs      []string                `json:"endpoint_ids"`
+	OperationNames   []string                `json:"operation_names"`
+	WebhookIDs       []string                `json:"webhook_ids"`
+	WebhookNames     []string                `json:"webhook_names"`
+	SelectAll        bool                    `json:"select_all"`
+	WebhookSelectAll bool                    `json:"webhook_select_all"`
+	AuthType         string                  `json:"auth_type"`
+	AuthName         string                  `json:"auth_name"`
+	AuthRef          string                  `json:"auth_ref"`
+	RequiredAuth     []AppRequiredAuth       `json:"required_auth"`
+	ConnectScopes    []string                `json:"connect_scopes"`
+	Injections       []InjectionConfig       `json:"injections"`
 }
 
 // MCPTransportURLs keeps the upgrade-safe family routes distinct from exact
@@ -103,6 +111,7 @@ const appSummaryFields = `
 	selections {
 		service_id service_version_id schema_version
 		endpoint_ids operation_names webhook_ids webhook_names
+		mcp_capabilities { kind name operation_id }
 		select_all webhook_select_all auth_type auth_name auth_ref connect_scopes
 		required_auth { auth_type auth_name basic_password_mode }
 		injections { location name value mode }

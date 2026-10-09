@@ -175,10 +175,12 @@ func TestUnifiedExtendInheritsPinnedServiceVersion(t *testing.T) {
 // TestUnifiedExtendNoInputRequiresExactChange proves automation cannot trigger an interactive operation search.
 func TestUnifiedExtendNoInputRequiresExactChange(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "support.yaml")
+	// The existing app is the authority for extension mode.
 	if err := os.WriteFile(path, []byte(unifiedExtendSDKFixture("support", "")), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	target, err := parseUnifiedExtendTarget(path, "support")
+	// Invalid fixture parsing must not reach command validation.
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +190,7 @@ func TestUnifiedExtendNoInputRequiresExactChange(t *testing.T) {
 	command := newUnifiedExtendCommandWithRunner(nil)
 	_, err = buildUnifiedExtendRequest(command, target, &unifiedExtendOptions{})
 	// The remediation lists every deterministic selection or successor flag accepted by the wrapper.
-	if err == nil || !strings.Contains(err.Error(), "--no-input extend requires --service, --operation, --select-all, --version, or an MCP --description") {
+	if err == nil || !strings.Contains(err.Error(), "--no-input extend requires --service, --operation, --select-all, an MCP capability flag, --version, or an MCP --description") {
 		t.Fatalf("no-input error=%v", err)
 	}
 }

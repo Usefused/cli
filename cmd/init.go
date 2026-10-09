@@ -28,6 +28,7 @@ const (
 )
 
 type unifiedInitOptions struct {
+	importedMCP                mcpInitFlags
 	sdk                        bool
 	mcp                        bool
 	api                        bool
@@ -126,6 +127,7 @@ Non-interactive runs print readiness warnings without prompting or storing secre
 		}),
 	}
 
+	addMCPInitFlags(command, &opts.importedMCP)
 	command.Flags().BoolVar(&opts.sdk, "sdk", false, "Create a generated typed SDK and download its package")
 	command.Flags().BoolVar(&opts.api, "api", false, "Create a direct REST unified app without generating a package")
 	command.Flags().BoolVar(&opts.rest, "rest", false, "Create a direct REST unified app without generating a package")
@@ -275,6 +277,10 @@ func buildUnifiedInitRequest(cmd *cobra.Command, mode unifiedInitMode, name stri
 
 // validateWorkflowInitModeFlags prevents irrelevant flags from silently changing another resource kind.
 func validateWorkflowInitModeFlags(cmd *cobra.Command, mode unifiedInitMode, opts *unifiedInitOptions) error {
+	// Imported dispatch is available only on standalone MCP apps.
+	if opts.importedMCP.present() && mode != unifiedInitModeMCP {
+		return errors.New("imported MCP capability flags require --mcp")
+	}
 	// Only SDK and MCP apps receive provider events.
 	if mode != unifiedInitModeApp && mode != unifiedInitModeSDK && mode != unifiedInitModeMCP {
 		return validateNonReceiverInitFlags(cmd, mode, opts)
@@ -331,6 +337,11 @@ func parseUnifiedInitSelections(opts *unifiedInitOptions) (scaffoldRequest, erro
 		return request, err
 	}
 	request.events, err = parseScaffoldEvents(opts.events)
+	// Malformed event flags cannot be hidden by imported capability parsing.
+	if err != nil {
+		return request, err
+	}
+	request.mcpRequests, err = parseMCPInitFlags(opts.importedMCP)
 	return request, err
 }
 

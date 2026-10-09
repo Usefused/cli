@@ -49,10 +49,10 @@ App uses one `kind: sdk` file with `generate: true` and an `mcp` section. Its
 immutable version and execution token are shared by all three methods.
 If a version is not enabled, the CLI asks once to enable it and create the app; workspace and app changes
 still receive separate plan receipts. `--no-input` and `CI=true` skip prompts
-and require `--operation` or `--select-all` for each
-service. Top-level init does not support `--json`.
+and require explicit selections for each service: `--operation`, `--select-all`,
+or imported capability flags such as `--mcp-tool` for standalone MCP apps. Top-level init does not support `--json`.
 
-Use `--no-apply` when initialization is only preparing files for later review.
+Use `--no-apply` on init or extend when only preparing files for later review.
 The CLI still resolves concrete service versions, operation selections,
 buckets, and required local workspace additions, then writes semantically
 validated config and saves available plan receipts. It does not apply Fused
@@ -68,8 +68,10 @@ command before apply.
 downloading a package. The hidden `sdk init` and `mcp init` compatibility
 commands remain callable for scripts that only need the older scaffold flow.
 
-SDK and MCP validation becomes actionable after each declared service also has
-an operation list or `--select-all`. Init does not create buckets; pass
+SDK and MCP validation becomes actionable after each declared service has an
+explicit capability selection. MCP services may select imported tools, prompts,
+resources, or resource templates instead of physical operations; see
+[Imported MCP capabilities](IMPORTED_MCP.md). Init does not create buckets; pass
 `--bucket` only after choosing an existing bucket the caller may use.
 
 A service-bearing top-level init or extend adds only missing required
