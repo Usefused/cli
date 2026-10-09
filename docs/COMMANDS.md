@@ -378,6 +378,21 @@ The command requests only version identity, status, and execution-contract
 compatibility fields; it does not download documentation or execution policies.
 Pass `--json` to return those bounded summary objects directly.
 
+## `service edit <service-slug>`
+
+Edit the display name or description of a service owned by your account. Requires
+Engine `service.manage` permission; Registry also enforces service ownership.
+Workspace admin access alone does not let you edit another provider's service.
+
+```shell
+fused-cli service edit my-service --name "Customer API" --description "Customer lookup and updates."
+fused-cli service edit my-service --description ""
+```
+
+Omitted fields stay unchanged. An empty description clears it. The slug, service
+ID, and version contracts stay unchanged. Requires a Registry and Engine version
+that supports `PATCH /integrations/{id}/details`.
+
 ## `service show <service-slug>`
 Show the description, base URL, servers, and supported authentication methods
 for a service. Pass `--json` for stable machine-readable metadata, including
