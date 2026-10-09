@@ -149,7 +149,12 @@ flags. `--operation <service>=<operationId>` and `--select-all <service>` are
 repeatable. An omitted provider version resolves to
 the latest enabled workspace version, or the latest public Registry version
 when activation is needed. New SDK/MCP configs default to app version `1.0.0`;
-generated SDKs default to TypeScript. `--bucket` only references an existing
+generated SDKs default to TypeScript. Use `--language go` for a Go module or
+`--language python` for Python. Go requires version 1.24 or later and supports
+typed operations, SSE iteration, mixed response media, connected OAuth helpers,
+durable webhook receivers, and hosted Unified App bindings. Generated Go packages
+include a README with their local module identity and `go mod edit -replace`
+installation instructions. `--bucket` only references an existing
 bucket and is omitted by default—it never creates a bucket.
 
 `--no-apply` writes and validates the same desired state, saves every plan

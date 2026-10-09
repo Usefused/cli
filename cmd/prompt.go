@@ -41,7 +41,7 @@ var promptCmd = &cobra.Command{
 func init() {
 	promptCmd.Flags().StringVarP(&sdkName, "name", "n", "", "Name of the generated SDK (e.g., 'stripe-sdk')")
 	promptCmd.Flags().StringVarP(&appVersion, "version", "v", "1.0.0", "Version of the generated SDK")
-	promptCmd.Flags().StringVarP(&targetLanguage, "language", "l", "typescript", "Target language for the SDK (e.g., 'typescript', 'python')")
+	promptCmd.Flags().StringVarP(&targetLanguage, "language", "l", "typescript", "Target language for the SDK (typescript, python, go)")
 	promptCmd.Flags().BoolVarP(&autoYes, "yes", "y", false, "Skip interactive menu and automatically proceed")
 	promptCmd.Flags().StringVarP(&description, "description", "d", "", "Description of the SDK to create (e.g. 'Create a stripe and plunk sdk')")
 
