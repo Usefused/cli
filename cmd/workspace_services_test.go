@@ -34,7 +34,7 @@ func TestWorkspaceServicesListQueryFiltersVisibleServices(t *testing.T) {
 	}))
 	defer server.Close()
 
-	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"workspace", "services", "list", "--q", "stripe payments"})
+	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"service", "list", "--search", "stripe payments"})
 	if !strings.Contains(out, "Stripe Billing") || !strings.Contains(out, "@stripe/payments") {
 		t.Fatalf("expected matching workspace service, got %q", out)
 	}
@@ -42,7 +42,7 @@ func TestWorkspaceServicesListQueryFiltersVisibleServices(t *testing.T) {
 		t.Fatalf("expected non-matching service to be filtered, got %q", out)
 	}
 
-	noMatch := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"workspace", "services", "list", "--q", "missing"})
+	noMatch := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"service", "list", "--search", "missing"})
 	if !strings.Contains(noMatch, `No visible workspace services found matching "missing".`) {
 		t.Fatalf("expected access-aware no-match output, got %q", noMatch)
 	}

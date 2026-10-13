@@ -195,12 +195,12 @@ func TestUnifiedExtendNoInputRequiresExactChange(t *testing.T) {
 	}
 }
 
-// TestUnifiedInitExtendFlagRemainsHiddenCompatibility proves scripts retain the old spelling without advertising it beside root extend.
-func TestUnifiedInitExtendFlagRemainsHiddenCompatibility(t *testing.T) {
+// TestUnifiedInitRejectsRemovedExtendFlag proves scripts retain the old spelling without advertising it beside root extend.
+func TestUnifiedInitRejectsRemovedExtendFlag(t *testing.T) {
 	command := newUnifiedInitCommandWithRunner(nil)
 	flag := command.Flags().Lookup("extend")
-	// Hidden affects help and completion only; Cobra continues parsing the compatibility flag.
-	if flag == nil || !flag.Hidden {
+	// The old compatibility flag must be absent rather than merely hidden.
+	if flag != nil {
 		t.Fatalf("init --extend flag=%#v", flag)
 	}
 }

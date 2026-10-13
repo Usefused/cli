@@ -43,6 +43,7 @@ func TestBucketListUsesPagedEngineGraphQL(t *testing.T) {
 	}
 }
 
+// TestServiceOperationsSearchUsesServerPagination verifies that service operations search uses server pagination.
 func TestServiceOperationsSearchUsesServerPagination(t *testing.T) {
 	var sawSearchVars map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -66,7 +67,7 @@ func TestServiceOperationsSearchUsesServerPagination(t *testing.T) {
 	}))
 	defer server.Close()
 
-	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"service", "operations", "github", "--q", "issue", "--limit", "5", "--offset", "10"})
+	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"service", "operation", "list", "--registry", "github", "--search", "issue", "--limit", "5", "--offset", "10"})
 	if sawSearchVars["limit"] != float64(5) || sawSearchVars["offset"] != float64(10) || sawSearchVars["q"] != "issue" {
 		t.Fatalf("unexpected search variables: %#v", sawSearchVars)
 	}
@@ -102,7 +103,7 @@ func TestWorkspaceServiceOperationsUsesServerPaginationWithoutQuery(t *testing.T
 	}))
 	defer server.Close()
 
-	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"workspace", "service", "operations", "github", "--version", "v1", "--limit", "5", "--offset", "10"})
+	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"service", "operation", "list", "github", "--version", "v1", "--limit", "5", "--offset", "10"})
 	if sawSearchVars["limit"] != float64(5) || sawSearchVars["offset"] != float64(10) || sawSearchVars["q"] != "" {
 		t.Fatalf("unexpected unfiltered pagination variables: %#v", sawSearchVars)
 	}
@@ -111,6 +112,7 @@ func TestWorkspaceServiceOperationsUsesServerPaginationWithoutQuery(t *testing.T
 	}
 }
 
+// TestSecretListUsesBucketScopedPagination verifies that secret list uses bucket scoped pagination.
 func TestSecretListUsesBucketScopedPagination(t *testing.T) {
 	const bucketID = "11111111-1111-4111-8111-111111111111"
 	var sawVariables map[string]any
@@ -130,7 +132,7 @@ func TestSecretListUsesBucketScopedPagination(t *testing.T) {
 	}))
 	defer server.Close()
 
-	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"secret", "list", "--bucket", bucketID, "--limit", "5", "--offset", "10"})
+	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"bucket", "secret", "list", bucketID, "--limit", "5", "--offset", "10"})
 	if sawVariables["bucketId"] != bucketID || sawVariables["limit"] != float64(5) || sawVariables["offset"] != float64(10) {
 		t.Fatalf("unexpected variables: %#v", sawVariables)
 	}
@@ -145,12 +147,12 @@ func TestSDKVersionsUsesEnginePaginationAndFixedKind(t *testing.T) {
 	server := httptest.NewServer(sdkListTestHandler(t, &sawVariables))
 	defer server.Close()
 
-	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"sdk", "versions", "--limit", "10", "--offset", "20"})
-	if sawVariables["limit"] != float64(10) || sawVariables["offset"] != float64(20) || sawVariables["kind"] != "sdk" {
+	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"app", "versions", "list", "--limit", "10", "--offset", "20"})
+	if sawVariables["limit"] != float64(10) || sawVariables["offset"] != float64(20) || sawVariables["kind"] != "" {
 		t.Fatalf("unexpected variables: %#v", sawVariables)
 	}
 	if !strings.Contains(out, "security") || !strings.Contains(out, "sdk-1") || !strings.Contains(out, "family-1") ||
-		!strings.Contains(out, "SDK_ID") || !strings.Contains(out, "VERSION_ID") || !strings.Contains(out, "inactive") {
+		!strings.Contains(out, "APP_ID") || !strings.Contains(out, "VERSION_ID") || !strings.Contains(out, "inactive") {
 		t.Fatalf("unexpected output: %q", out)
 	}
 }
@@ -168,11 +170,12 @@ func sdkListTestHandler(t *testing.T, sawVariables *map[string]any) http.Handler
 	})
 }
 
+// TestSDKServicesUsesKindScopedHumanReferenceAtEngineBoundary verifies that SDK services uses kind scoped human reference at engine boundary.
 func TestSDKServicesUsesKindScopedHumanReferenceAtEngineBoundary(t *testing.T) {
 	server := httptest.NewServer(sdkServicesTestHandler(t))
 	defer server.Close()
 
-	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"sdk", "services", "support@2.0.0"})
+	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"app", "service", "list", "support@2.0.0"})
 	if !strings.Contains(out, "github") || !strings.Contains(out, "service-1") || !strings.Contains(out, "2") {
 		t.Fatalf("unexpected SDK services output: %q", out)
 	}
@@ -194,9 +197,10 @@ func sdkServicesTestHandler(t *testing.T) http.Handler {
 	})
 }
 
+// assertSDKReferenceVariables checks that shared app resolution preserves the exact name and version.
 func assertSDKReferenceVariables(t *testing.T, variables map[string]any) {
 	t.Helper()
-	if variables["reference"] != "support" || variables["version"] != "2.0.0" || variables["kind"] != "sdk" {
+	if variables["reference"] != "support" || variables["version"] != "2.0.0" || variables["kind"] != "" {
 		t.Fatalf("unexpected SDK reference: %#v", variables)
 	}
 }
@@ -230,8 +234,8 @@ func TestSDKShowUsesPublicIDLabels(t *testing.T) {
 	}))
 	defer server.Close()
 
-	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"sdk", "show", "security@1.0.0"})
-	for _, expected := range []string{"sdk_id:\tsdk-1", "version_id:\tversion-1", "generation_status:\tfailed", "generation_job_id:\tjob-1"} {
+	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"app", "show", "security@1.0.0"})
+	for _, expected := range []string{"app_id:\tsdk-1", "version_id:\tversion-1", "generation_status:\tfailed", "generation_job_id:\tjob-1"} {
 		// Public identity and generation diagnostics must all be visible without internal family terminology.
 		if !strings.Contains(out, expected) {
 			t.Fatalf("SDK show output %q is missing %q", out, expected)
@@ -249,7 +253,7 @@ func TestMCPVersionsUsesEnginePaginationAndFixedKind(t *testing.T) {
 	server := httptest.NewServer(mcpVersionsTestHandler(t, &sawVariables))
 	defer server.Close()
 
-	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"mcp", "versions", "--limit", "5", "--offset", "10"})
+	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"app", "versions", "list", "--limit", "5", "--offset", "10"})
 	assertMCPVersionsVariables(t, sawVariables)
 	assertMCPVersionsOutput(t, out)
 }
@@ -257,7 +261,7 @@ func TestMCPVersionsUsesEnginePaginationAndFixedKind(t *testing.T) {
 // assertMCPVersionsVariables keeps MCP catalogue filtering scoped and bounded.
 func assertMCPVersionsVariables(t *testing.T, variables map[string]any) {
 	t.Helper()
-	if variables["kind"] != "mcp" || variables["limit"] != float64(5) || variables["offset"] != float64(10) {
+	if variables["kind"] != "" || variables["limit"] != float64(5) || variables["offset"] != float64(10) {
 		t.Fatalf("unexpected MCP list variables: %#v", variables)
 	}
 }
@@ -266,7 +270,7 @@ func assertMCPVersionsVariables(t *testing.T, variables map[string]any) {
 func assertMCPVersionsOutput(t *testing.T, out string) {
 	t.Helper()
 	if !strings.Contains(out, "support") || !strings.Contains(out, "mcp-1") || !strings.Contains(out, "family-1") ||
-		!strings.Contains(out, "MCP_ID") || !strings.Contains(out, "VERSION_ID") ||
+		!strings.Contains(out, "APP_ID") || !strings.Contains(out, "VERSION_ID") ||
 		!strings.Contains(out, "STABLE") || !strings.Contains(out, "STABLE_VERSION_ID") ||
 		!strings.Contains(out, "DEFAULT_TRANSPORT") || !strings.Contains(out, "streamable_http") ||
 		!strings.Contains(out, "STREAMABLE HTTP (STABLE, RECOMMENDED)") || !strings.Contains(out, "https://public.engine.test/mcp/family-1") ||
@@ -282,7 +286,7 @@ func TestMCPVersionsJSONRetainsTypedTransportEndpoints(t *testing.T) {
 	server := httptest.NewServer(mcpVersionsTestHandler(t, new(map[string]any)))
 	defer server.Close()
 
-	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"mcp", "versions", "--json"})
+	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"app", "versions", "list", "--json"})
 	var page struct {
 		Items []map[string]any `json:"items"`
 	}
@@ -315,7 +319,7 @@ func TestMCPOperationsListsPhysicalOperations(t *testing.T) {
 	server := httptest.NewServer(mcpOperationsTestHandler(t))
 	defer server.Close()
 
-	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"mcp", "operations", "support@2.0.0"})
+	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"app", "operation", "list", "support@2.0.0"})
 	// Physical operations must be visible under their public invocation names.
 	for _, expected := range []string{"OPERATION_ID", "KIND", "tickets.list", "physical"} {
 		// Every header and operation value is independently required in the human table.
@@ -330,7 +334,7 @@ func TestMCPOperationsJSONPreservesExactCatalogue(t *testing.T) {
 	server := httptest.NewServer(mcpOperationsTestHandler(t))
 	defer server.Close()
 
-	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"mcp", "operations", "support@2.0.0", "--json"})
+	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"app", "operation", "list", "support@2.0.0", "--json"})
 	var catalogue api.MCPAppOperationCatalogue
 	// Structured command output must remain valid JSON without human table decoration.
 	if err := json.Unmarshal([]byte(out), &catalogue); err != nil {
@@ -344,7 +348,7 @@ func TestMCPOperationsJSONPreservesExactCatalogue(t *testing.T) {
 
 // TestMCPOperationsRequiresExactVersion prevents a family-only name from silently changing its callable set.
 func TestMCPOperationsRequiresExactVersion(t *testing.T) {
-	message := runCommandInDirExpectError(t, t.TempDir(), "http://unused.invalid", []string{"mcp", "operations", "support"})
+	message := runCommandInDirExpectError(t, t.TempDir(), "http://unused.invalid", []string{"app", "operation", "list", "support"})
 	// Validation must fail locally before any Engine lookup can resolve a floating family reference.
 	if !strings.Contains(message, "name@version") {
 		t.Fatalf("unexpected MCP operations validation error: %q", message)
@@ -386,13 +390,14 @@ func mcpVersionsTestHandler(t *testing.T, sawVariables *map[string]any) http.Han
 	})
 }
 
+// TestMCPDeactivateResolvesOnlyMCPNames verifies that MCP deactivate resolves only MCP names.
 func TestMCPDeactivateResolvesOnlyMCPNames(t *testing.T) {
 	var sawResolution, sawDeactivate bool
 	server := httptest.NewServer(mcpDeactivateTestHandler(t, &sawResolution, &sawDeactivate))
 	defer server.Close()
 
-	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"mcp", "deactivate", "support@1.0.0"})
-	if !sawResolution || !sawDeactivate || !strings.Contains(out, "Deactivated MCP server") {
+	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"app", "deactivate", "support@1.0.0"})
+	if !sawResolution || !sawDeactivate || !strings.Contains(out, "Deactivated app version mcp-1") {
 		t.Fatalf("MCP deactivate = resolution:%t deactivate:%t output:%q", sawResolution, sawDeactivate, out)
 	}
 }
@@ -404,7 +409,7 @@ func TestSDKDeactivateResolvesOnlySDKNames(t *testing.T) {
 	server := httptest.NewServer(sdkDeactivateTestHandler(t, &sawResolution, &sawDeactivate))
 	defer server.Close()
 
-	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"sdk", "deactivate", "support@1.0.0"})
+	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"app", "deactivate", "support@1.0.0"})
 	// Direct API apps share SDK-kind identity, so neutral output must cover both delivery modes.
 	if !sawResolution || !sawDeactivate || !strings.Contains(out, "Deactivated app version") {
 		t.Fatalf("SDK deactivate = resolution:%t deactivate:%t output:%q", sawResolution, sawDeactivate, out)
@@ -419,7 +424,7 @@ func sdkDeactivateTestHandler(t *testing.T, sawResolution, sawDeactivate *bool) 
 		switch r.URL.Path {
 		case "/engine/graphql":
 			body := decodeGraphQLTestRequest(t, r)
-			if body.Variables["reference"] != "support" || body.Variables["version"] != "1.0.0" || body.Variables["kind"] != "sdk" {
+			if body.Variables["reference"] != "support" || body.Variables["version"] != "1.0.0" || body.Variables["kind"] != "" {
 				t.Fatalf("unexpected SDK reference variables: %#v", body.Variables)
 			}
 			*sawResolution = true
@@ -458,9 +463,10 @@ func mcpDeactivateTestHandler(t *testing.T, sawResolution, sawDeactivate *bool) 
 	})
 }
 
+// assertMCPReferenceVariables checks shared app resolution without narrowing discovery to another app kind.
 func assertMCPReferenceVariables(t *testing.T, variables map[string]any) {
 	t.Helper()
-	if variables["reference"] != "support" || variables["version"] != "1.0.0" || variables["kind"] != "mcp" {
+	if variables["reference"] != "support" || variables["version"] != "1.0.0" || variables["kind"] != "" {
 		t.Fatalf("unexpected MCP reference variables: %#v", variables)
 	}
 }

@@ -190,13 +190,13 @@ func TestWorkspaceSkillUsesSingleWorkspaceFirstAddWorkflow(t *testing.T) {
 		"Only when absent",
 		"Registry result is activated",
 		"permission error is not a miss",
-		"Do not require a separate `service search` command first",
+		"Do not require a separate `service list --registry` command first",
 		"Without `--file`",
 		"creates no local config",
 		"Passing `--file` explicitly",
 		"`--file` without `--apply` only authors local intent",
-		"read-only combined view",
-		"available_to_add",
+		"read-only Registry discovery",
+		"do not merge workspace membership",
 	} {
 		if !strings.Contains(content, token) {
 			t.Errorf("workspace skill missing workspace-first add guidance %q", token)
@@ -304,7 +304,7 @@ func TestSDKSkillsDocumentInteractivePlanCredentialBoundary(t *testing.T) {
 	}
 	// Installed guidance must preserve the same secret and bucket boundary as the interactive command.
 	for _, token := range []string{
-		"terminal, `sdk plan`",
+		"terminal, `app plan`",
 		"exact YAML-resolved bucket",
 		"retry once",
 		"--no-input",
@@ -326,16 +326,16 @@ func TestAppOpenAPIExportIsDiscoverableAcrossCLIReferenceAndSkills(t *testing.T)
 		required []string
 	}{
 		{path: filepath.Join("..", "docs", "COMMANDS.md"), required: []string{
-			"## `sdk openapi <sdk-name@version-or-version-id>`", "GET /apps/{app_id}/openapi", "`app.sdk.read`",
+			"## `app openapi <app-name@version-or-version-id>`", "GET /apps/{app_id}/openapi", "`app.sdk.read`",
 			"POST /v1/apps/{app_id}/executions", "execution token", "atomically writes", "16 MiB", "`--operation`", "`--format`", "`--out`", "metadata only", "`operation_count`", "`sha256:<64 lowercase hex>`",
 		}},
 		{path: filepath.Join("..", "skills", "dev", "fused-sdk", "SKILL.md"), required: []string{
-			"sdk openapi <sdk-name@version-or-version-id>", "GETs `/apps/{app_id}/openapi`", "`app.sdk.read`",
+			"app openapi <sdk-name@version-or-version-id>", "GETs `/apps/{app_id}/openapi`", "`app.sdk.read`",
 			"POST /v1/apps/{app_id}/executions", "metadata only", "execution-token Bearer", "`operation_count`", "`sha256:<64 lowercase hex>`",
 		}},
 		{path: filepath.Join("..", "skills", "dev", "fused-cli", "SKILL.md"), required: []string{
-			"sdk openapi <sdk-name@version-or-version-id>", "GETs `/apps/{app_id}/openapi`", "`app.sdk.read`",
-			"POST /v1/apps/{app_id}/executions", "metadata rather than the document", "SDK-wide execution token", "`operation_count`", "`sha256:<64 lowercase hex>`",
+			"app openapi <app-name@version-or-version-id>", "GETs `/apps/{app_id}/openapi`",
+			"POST /v1/apps/{app_id}/executions", "metadata rather than the document", "app-wide execution token", "`operation_count`", "`sha256:<64 lowercase hex>`",
 		}},
 	}
 	for _, test := range tests {
@@ -351,6 +351,7 @@ func TestAppOpenAPIExportIsDiscoverableAcrossCLIReferenceAndSkills(t *testing.T)
 	}
 }
 
+// TestDevAppSkillsDocumentVersionedLifecycle verifies that dev app skills document versioned lifecycle.
 func TestDevAppSkillsDocumentVersionedLifecycle(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -358,7 +359,7 @@ func TestDevAppSkillsDocumentVersionedLifecycle(t *testing.T) {
 	}{
 		{name: "fused-sdk", required: []string{
 			"SDK ID", "Version ID", "immutable", "app_version_immutable",
-			"FUSED_SDK_TOKEN", "cache miss", "database reset", "sdk deactivate <sdk-name@version-or-version-id>",
+			"FUSED_APP_TOKEN", "cache miss", "database reset", "app deactivate <sdk-name@version-or-version-id>",
 		}},
 		{name: "fused-mcp", required: []string{
 			"MCP ID", "Version ID", "immutable", "app_version_immutable",
@@ -465,7 +466,7 @@ func TestCLISkillsUseCurrentCommandLanguage(t *testing.T) {
 		"fused-cli bucket <",
 		"fused-cli secret <",
 		"fused-cli connect <",
-		"fused-cli workspace service <",
+		"fused-cli service <",
 		"sdk-name-or-family",
 		"app-family-id",
 		"operationId...",

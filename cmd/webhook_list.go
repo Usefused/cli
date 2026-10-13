@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"github.com/google/uuid"
 	"text/tabwriter"
 
 	cliapi "github.com/Usefused/cli/internal/api"
@@ -24,11 +25,11 @@ var webhookListCmd = &cobra.Command{
 // init exposes the same filters and bounded pages for global and service-scoped registration reads.
 func init() {
 	webhookCmd.AddCommand(webhookListCmd)
-	webhookListCmd.Flags().StringVar(&webhookListQuery, "q", "", "Search registrations by label, URL, or service")
-	webhookListCmd.Flags().StringVar(&webhookListServiceID, "service-id", "", "Filter registrations by exact workspace service UUID")
+	webhookListCmd.Flags().StringVar(&webhookListQuery, "search", "", "Search registrations by label, URL, or service")
+	webhookListCmd.Flags().StringVar(&webhookListServiceID, "service", "", "Filter registrations by workspace service name, slug, or UUID")
 	addListFlags(webhookListCmd, &webhookListFlags)
 	addJSONOutputFlag(webhookListCmd)
-	workspaceServiceWebhooksCmd.Flags().StringVar(&workspaceWebhookListQuery, "q", "", "Search this service's webhook registrations")
+	workspaceServiceWebhooksCmd.Flags().StringVar(&workspaceWebhookListQuery, "search", "", "Search this service's webhook registrations")
 	addListFlags(workspaceServiceWebhooksCmd, &workspaceWebhookListFlags)
 }
 
@@ -39,7 +40,17 @@ func runWebhookList(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	page, err := client.ListWorkspaceWebhookPage(webhookListServiceID, webhookListQuery, webhookListFlags.pageOptions())
+	serviceID := webhookListServiceID
+	// A supplied selector must resolve exactly and belong to this workspace before filtering.
+	_, parseErr := uuid.Parse(serviceID)
+	if serviceID != "" && parseErr != nil {
+		serviceID, err = client.ResolveServiceReference(serviceID)
+		// A failed reference must not broaden the query to every registration.
+		if err != nil {
+			return err
+		}
+	}
+	page, err := client.ListWorkspaceWebhookPage(serviceID, webhookListQuery, webhookListFlags.pageOptions())
 	// Authorization and transport failures must not appear as empty search results.
 	if err != nil {
 		return err

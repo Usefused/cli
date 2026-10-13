@@ -60,8 +60,9 @@ func TestApplyCmdSkeleton(t *testing.T) {
 	}
 }
 
+// TestWorkspaceServiceAddCmdSkeleton verifies that workspace service add cmd skeleton.
 func TestWorkspaceServiceAddCmdSkeleton(t *testing.T) {
-	RootCmd.SetArgs([]string{"workspace", "service", "add", "okta", "--version", "2026-07-01"})
+	RootCmd.SetArgs([]string{"service", "add", "okta", "--version", "2026-07-01"})
 
 	origRunE := workspaceServiceAddCmd.RunE
 	defer func() { workspaceServiceAddCmd.RunE = origRunE }()
@@ -79,12 +80,13 @@ func TestWorkspaceServiceAddCmdSkeleton(t *testing.T) {
 	out := new(bytes.Buffer)
 	RootCmd.SetOut(out)
 	if err := RootCmd.Execute(); err != nil {
-		t.Fatalf("unexpected error executing workspace service add: %v", err)
+		t.Fatalf("unexpected error executing service add: %v", err)
 	}
 }
 
+// TestWorkspaceServiceVersionsCmdSkeleton verifies that workspace service versions cmd skeleton.
 func TestWorkspaceServiceVersionsCmdSkeleton(t *testing.T) {
-	RootCmd.SetArgs([]string{"workspace", "service", "versions", "okta"})
+	RootCmd.SetArgs([]string{"service", "version", "list", "okta"})
 
 	origRunE := workspaceServiceVersionsCmd.RunE
 	defer func() { workspaceServiceVersionsCmd.RunE = origRunE }()
@@ -99,12 +101,13 @@ func TestWorkspaceServiceVersionsCmdSkeleton(t *testing.T) {
 	out := new(bytes.Buffer)
 	RootCmd.SetOut(out)
 	if err := RootCmd.Execute(); err != nil {
-		t.Fatalf("unexpected error executing workspace service versions: %v", err)
+		t.Fatalf("unexpected error executing service version list: %v", err)
 	}
 }
 
+// TestSdkAddOperationCmdSkeleton verifies that sdk add operation cmd skeleton.
 func TestSdkAddOperationCmdSkeleton(t *testing.T) {
-	RootCmd.SetArgs([]string{"sdk", "operation", "add", "okta", "listLogEvents", "--interactive", "--apply", "--download"})
+	RootCmd.SetArgs([]string{"app", "operation", "add", "okta", "listLogEvents", "--interactive", "--apply", "--download"})
 
 	origRunE := sdkAddOperationCmd.RunE
 	defer func() { sdkAddOperationCmd.RunE = origRunE }()
@@ -128,12 +131,13 @@ func TestSdkAddOperationCmdSkeleton(t *testing.T) {
 	out := new(bytes.Buffer)
 	RootCmd.SetOut(out)
 	if err := RootCmd.Execute(); err != nil {
-		t.Fatalf("unexpected error executing sdk operation add: %v", err)
+		t.Fatalf("unexpected error executing app operation add: %v", err)
 	}
 }
 
+// TestSDKServiceAddCmdSkeleton verifies that SDK service add cmd skeleton.
 func TestSDKServiceAddCmdSkeleton(t *testing.T) {
-	RootCmd.SetArgs([]string{"sdk", "service", "add", "okta", "--version", "2026-07-01"})
+	RootCmd.SetArgs([]string{"app", "service", "add", "okta", "--version", "2026-07-01"})
 
 	origRunE := sdkAddServiceCmd.RunE
 	defer func() { sdkAddServiceCmd.RunE = origRunE }()
@@ -151,12 +155,13 @@ func TestSDKServiceAddCmdSkeleton(t *testing.T) {
 	out := new(bytes.Buffer)
 	RootCmd.SetOut(out)
 	if err := RootCmd.Execute(); err != nil {
-		t.Fatalf("unexpected error executing sdk service add: %v", err)
+		t.Fatalf("unexpected error executing app service add: %v", err)
 	}
 }
 
+// TestWorkspaceServiceDeprecateCmdSkeleton verifies that workspace service deprecate cmd skeleton.
 func TestWorkspaceServiceDeprecateCmdSkeleton(t *testing.T) {
-	RootCmd.SetArgs([]string{"workspace", "service", "deprecate", "okta", "--at", "2026-10-01", "--reason", "migration"})
+	RootCmd.SetArgs([]string{"service", "deprecate", "okta", "--at", "2026-10-01", "--reason", "migration"})
 
 	origRunE := workspaceServiceDeprecateCmd.RunE
 	defer func() { workspaceServiceDeprecateCmd.RunE = origRunE }()
@@ -181,13 +186,14 @@ func TestWorkspaceServiceDeprecateCmdSkeleton(t *testing.T) {
 	}
 }
 
+// TestServiceVersionsCmdSkeleton verifies that service versions cmd skeleton.
 func TestServiceVersionsCmdSkeleton(t *testing.T) {
-	RootCmd.SetArgs([]string{"service", "versions", "okta"})
+	RootCmd.SetArgs([]string{"service", "version", "list", "--registry", "okta"})
 
-	origRunE := serviceVersionsCmd.RunE
-	defer func() { serviceVersionsCmd.RunE = origRunE }()
+	origRunE := workspaceServiceVersionsCmd.RunE
+	defer func() { workspaceServiceVersionsCmd.RunE = origRunE }()
 
-	serviceVersionsCmd.RunE = func(cmd *cobra.Command, args []string) error {
+	workspaceServiceVersionsCmd.RunE = func(cmd *cobra.Command, args []string) error {
 		if len(args) != 1 || args[0] != "okta" {
 			t.Errorf("expected arg 'okta', got %v", args)
 		}

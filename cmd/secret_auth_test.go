@@ -29,7 +29,7 @@ func TestSecretSetRejectsMalformedInlineInputBeforeRequests(t *testing.T) {
 
 	secretSetCmd.SetIn(strings.NewReader("username=alice;password"))
 	out := runCommandInDirExpectError(t, t.TempDir(), server.URL, []string{
-		"secret", "set", "jira", "--type", "basic", "--value-stdin",
+		"bucket", "credential", "set", "jira", "--type", "basic", "--value-stdin",
 	})
 	// The local diagnostic should identify the exact malformed segment.
 	if !strings.Contains(out, "segment 2 must contain '='") {

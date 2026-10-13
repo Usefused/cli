@@ -9,6 +9,7 @@ import (
 	"testing"
 )
 
+// TestWorkspaceServiceVersionAddLatest verifies that workspace service version add latest.
 func TestWorkspaceServiceVersionAddLatest(t *testing.T) {
 	dir := t.TempDir()
 
@@ -49,7 +50,7 @@ services:
 	}))
 	defer server.Close()
 
-	out := runCommandInDirOutput(t, dir, server.URL, []string{"workspace", "service", "version", "add", "plunk", "latest", "-f", filepath.Join(dir, ".fused", "workspace.yaml")})
+	out := runCommandInDirOutput(t, dir, server.URL, []string{"service", "version", "add", "plunk", "latest", "-f", filepath.Join(dir, ".fused", "workspace.yaml")})
 
 	if !sawLatestQuery {
 		t.Fatal("expected GetServiceLatestVersion request")

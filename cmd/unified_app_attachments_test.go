@@ -54,7 +54,7 @@ func TestUnifiedAppConsumerPlanTransport(t *testing.T) {
 				_ = json.NewEncoder(w).Encode(map[string]any{"plan_id": "attachment-plan", "config_key": kind + ":portal:1.0.0", "source_hash": body.SourceHash, "summary": map[string]any{}})
 			}))
 			defer server.Close()
-			runCommandInDir(t, dir, server.URL, []string{kind, "plan", "-f", path})
+			runCommandInDir(t, dir, server.URL, []string{"app", "plan", "-f", path})
 			if !seen {
 				t.Fatal("consumer plan never reached Engine")
 			}

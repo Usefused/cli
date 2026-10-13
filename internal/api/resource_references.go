@@ -226,6 +226,7 @@ func (c *Client) resolveAppFamilyReference(reference, kind string) (string, erro
 	return id, nil
 }
 
+// resolveResourceReference delegates exact identity and authorization checks to Engine.
 func (c *Client) resolveResourceReference(field, reference string) (string, error) {
 	query := `query ResolveResourceReference($reference: String!) {
 		` + field + `(reference: $reference) { id kind }
@@ -233,4 +234,19 @@ func (c *Client) resolveResourceReference(field, reference string) (string, erro
 	var response map[string]ResolvedResourceReference
 	err := c.EngineGraphQL(query, map[string]interface{}{"reference": reference}, &response)
 	return response[field].ID, err
+}
+
+// ResolveAppReference resolves an exact version across app kinds; Engine rejects ambiguous names.
+func (c *Client) ResolveAppReference(reference, version string) (string, error) {
+	id, err := c.resolveAppReference(reference, version, "")
+	// A malformed successful lookup is not authority to read or mutate another app.
+	if err == nil && id == "" {
+		return "", errGraphQLDataMalformed
+	}
+	return id, err
+}
+
+// ResolveAppFamilyReference resolves a family across kinds without guessing between names.
+func (c *Client) ResolveAppFamilyReference(reference string) (string, error) {
+	return c.resolveAppFamilyReference(reference, "")
 }

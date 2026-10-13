@@ -139,8 +139,8 @@ services:
 	}))
 	defer server.Close()
 
-	runCommandInDir(t, dir, server.URL, []string{"mcp", "plan", "-f", path})
-	applyOutput := runCommandInDirOutput(t, dir, server.URL, []string{"mcp", "apply", "-f", path})
+	runCommandInDir(t, dir, server.URL, []string{"app", "plan", "-f", path})
+	applyOutput := runCommandInDirOutput(t, dir, server.URL, []string{"app", "apply", "-f", path})
 	if sourceHash == "" {
 		t.Fatal("MCP plan did not include a source hash")
 	}
@@ -193,7 +193,7 @@ services:
 	}))
 	defer server.Close()
 
-	runCommandInDir(t, dir, server.URL, []string{"sdk", "plan", "-f", path})
+	runCommandInDir(t, dir, server.URL, []string{"app", "plan", "-f", path})
 }
 
 // TestWorkspaceApplyUsesReceiptWithoutReplanning verifies receipts and generic secret material share one apply request.
@@ -259,6 +259,7 @@ buckets:
 	}
 }
 
+// TestAggregatePlanOrdersWorkspaceBeforeSDK verifies that aggregate plan orders workspace before SDK.
 func TestAggregatePlanOrdersWorkspaceBeforeSDK(t *testing.T) {
 	dir := t.TempDir()
 	writeSprintConfig(t, dir, ".fused/workspace.yaml", `
@@ -296,10 +297,11 @@ services:
 
 	runCommandInDir(t, dir, server.URL, []string{"plan"})
 	if got := strings.Join(paths, ","); got != "/workspace/config/plan,/sdk-config/plan" {
-		t.Fatalf("expected workspace then sdk plan, got %s", got)
+		t.Fatalf("expected workspace then app plan, got %s", got)
 	}
 }
 
+// TestSDKPlanPrintsNotificationsFromPlanResponse verifies that SDK plan prints notifications from plan response.
 func TestSDKPlanPrintsNotificationsFromPlanResponse(t *testing.T) {
 	dir := t.TempDir()
 	path := writeSprintConfig(t, dir, "security.yaml", `
@@ -345,7 +347,7 @@ services:
 	}))
 	defer server.Close()
 
-	out := runCommandInDirOutput(t, dir, server.URL, []string{"sdk", "plan", "-f", path})
+	out := runCommandInDirOutput(t, dir, server.URL, []string{"app", "plan", "-f", path})
 	if !strings.Contains(out, "Workspace notifications for sdk:security:1.0.0") {
 		t.Fatalf("expected notification heading, got %q", out)
 	}
@@ -418,6 +420,7 @@ services:
 	}
 }
 
+// TestSDKPlanResolvesFusedSDKShortcutAndPrintsConfigPath verifies that SDK plan resolves fused SDK shortcut and prints config path.
 func TestSDKPlanResolvesFusedSDKShortcutAndPrintsConfigPath(t *testing.T) {
 	dir := t.TempDir()
 	writeSprintConfig(t, dir, ".fused/sdks/security.yaml", `
@@ -457,7 +460,7 @@ services:
 	}))
 	defer server.Close()
 
-	out := runCommandInDirOutput(t, dir, server.URL, []string{"sdk", "plan", "-f", "security.yaml"})
+	out := runCommandInDirOutput(t, dir, server.URL, []string{"app", "plan", "-f", "security.yaml"})
 
 	if planCount != 1 {
 		t.Fatalf("expected one SDK plan request, got %d", planCount)
@@ -467,6 +470,7 @@ services:
 	}
 }
 
+// TestSDKAddAndRemoveOperationWriteYaml verifies that SDK add and remove operation write yaml.
 func TestSDKAddAndRemoveOperationWriteYaml(t *testing.T) {
 	dir := t.TempDir()
 	path := writeSprintConfig(t, dir, "fused.yaml", `
@@ -480,7 +484,7 @@ services:
     version: "2026-07-01"
     operations: ["listLogEvents"]
 `)
-	runCommandInDir(t, dir, "", []string{"sdk", "operation", "add", "okta", "getUser", "listGroups", "-f", path})
+	runCommandInDir(t, dir, "", []string{"app", "operation", "add", "okta", "getUser", "listGroups", "-f", path})
 	afterAdd, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -489,7 +493,7 @@ services:
 		t.Fatalf("expected getUser and listGroups in YAML:\n%s", string(afterAdd))
 	}
 
-	runCommandInDir(t, dir, "", []string{"sdk", "operation", "remove", "okta", "listLogEvents", "getUser", "-f", path})
+	runCommandInDir(t, dir, "", []string{"app", "operation", "remove", "okta", "listLogEvents", "getUser", "-f", path})
 	afterRemove, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -502,6 +506,7 @@ services:
 	}
 }
 
+// TestSDKAddServiceWritesYaml verifies that SDK add service writes yaml.
 func TestSDKAddServiceWritesYaml(t *testing.T) {
 	dir := t.TempDir()
 	path := writeSprintConfig(t, dir, "fused.yaml", `
@@ -515,7 +520,7 @@ services:
     version: "2026-07-01"
     operations: ["listLogEvents"]
 `)
-	runCommandInDir(t, dir, "", []string{"sdk", "service", "add", "github", "-f", path, "--version", "2026-06-15"})
+	runCommandInDir(t, dir, "", []string{"app", "service", "add", "github", "-f", path, "--version", "2026-06-15"})
 
 	after, err := os.ReadFile(path)
 	if err != nil {
@@ -525,7 +530,7 @@ services:
 		t.Fatalf("expected github service in YAML:\n%s", string(after))
 	}
 
-	runCommandInDir(t, dir, "", []string{"sdk", "service", "remove", "github", "-f", path})
+	runCommandInDir(t, dir, "", []string{"app", "service", "remove", "github", "-f", path})
 	afterRemove, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -535,14 +540,16 @@ services:
 	}
 }
 
+// TestSDKServiceHelpShowsExplicitActions verifies that SDK service help shows explicit actions.
 func TestSDKServiceHelpShowsExplicitActions(t *testing.T) {
 	dir := t.TempDir()
-	out := runCommandInDirOutput(t, dir, "", []string{"sdk", "service", "--help"})
+	out := runCommandInDirOutput(t, dir, "", []string{"app", "service", "--help"})
 	if !strings.Contains(out, "add") || !strings.Contains(out, "remove") {
-		t.Fatalf("expected explicit sdk service subcommands in help, got %q", out)
+		t.Fatalf("expected explicit app service subcommands in help, got %q", out)
 	}
 }
 
+// TestSDKValidateLoadsOnlySDKConfigs verifies that SDK validate loads only SDK configs.
 func TestSDKValidateLoadsOnlySDKConfigs(t *testing.T) {
 	dir := t.TempDir()
 	path := writeSprintConfig(t, dir, "fused.yaml", `
@@ -556,12 +563,13 @@ services:
     version: "2026-07-01"
     operations: ["listLogEvents"]
 `)
-	out := runCommandInDirOutput(t, dir, "", []string{"sdk", "validate", "-f", path})
-	if !strings.Contains(out, "validated 1 sdk config") {
+	out := runCommandInDirOutput(t, dir, "", []string{"app", "validate", "-f", path})
+	if !strings.Contains(out, "validated 1 sdk app config") {
 		t.Fatalf("expected sdk validation summary, got %q", out)
 	}
 }
 
+// TestWorkspaceServicesListCallsEngine verifies that workspace services list calls engine.
 func TestWorkspaceServicesListCallsEngine(t *testing.T) {
 	dir := t.TempDir()
 	var sawList bool
@@ -573,7 +581,7 @@ func TestWorkspaceServicesListCallsEngine(t *testing.T) {
 	}))
 	defer server.Close()
 
-	out := runCommandInDirOutput(t, dir, server.URL, []string{"workspace", "services", "list"})
+	out := runCommandInDirOutput(t, dir, server.URL, []string{"service", "list"})
 	if !sawList {
 		t.Fatal("expected workspace services request")
 	}
@@ -582,6 +590,7 @@ func TestWorkspaceServicesListCallsEngine(t *testing.T) {
 	}
 }
 
+// TestWorkspaceServicesListInteractiveCallsEngine verifies that workspace services list interactive calls engine.
 func TestWorkspaceServicesListInteractiveCallsEngine(t *testing.T) {
 	dir := t.TempDir()
 	var sawList bool
@@ -597,7 +606,7 @@ func TestWorkspaceServicesListInteractiveCallsEngine(t *testing.T) {
 	workspaceInput = strings.NewReader("1\n")
 	t.Cleanup(func() { workspaceInput = oldInput })
 
-	out := runCommandInDirOutput(t, dir, server.URL, []string{"workspace", "services", "list", "--interactive"})
+	out := runCommandInDirOutput(t, dir, server.URL, []string{"service", "list", "--interactive"})
 	if !sawList {
 		t.Fatal("expected workspace services request")
 	}
@@ -606,13 +615,14 @@ func TestWorkspaceServicesListInteractiveCallsEngine(t *testing.T) {
 	}
 }
 
+// TestWorkspaceServiceVersionsUsesSlugResolvedServiceID verifies that workspace service versions uses slug resolved service ID.
 func TestWorkspaceServiceVersionsUsesSlugResolvedServiceID(t *testing.T) {
 	dir := t.TempDir()
 	state := &workspaceServiceVersionsSlugState{}
 	server := httptest.NewServer(workspaceServiceVersionsSlugHandler(t, state))
 	defer server.Close()
 
-	out := runCommandInDirOutput(t, dir, server.URL, []string{"workspace", "service", "versions", "@acme-inc/github"})
+	out := runCommandInDirOutput(t, dir, server.URL, []string{"service", "version", "list", "@acme-inc/github"})
 	if !state.sawGraphQL || !state.sawWorkspaceList {
 		t.Fatalf("expected graphql and workspace requests, saw graphql=%v workspace=%v", state.sawGraphQL, state.sawWorkspaceList)
 	}
@@ -643,7 +653,7 @@ func TestWorkspaceServiceVersionsRejectsUnapprovedService(t *testing.T) {
 	}))
 	defer server.Close()
 
-	errText := runCommandInDirExpectError(t, dir, server.URL, []string{"workspace", "service", "versions", "@acme-inc/github"})
+	errText := runCommandInDirExpectError(t, dir, server.URL, []string{"service", "version", "list", "@acme-inc/github"})
 	if !strings.Contains(errText, "is not enabled in this workspace") {
 		t.Fatalf("expected workspace approval rejection, got %q", errText)
 	}
@@ -687,13 +697,14 @@ func workspaceServiceVersionsSlugHandler(t *testing.T, state *workspaceServiceVe
 	}
 }
 
+// TestWorkspaceServiceOperationsDefaultsToLatestEnabledVersion verifies that workspace service operations defaults to latest enabled version.
 func TestWorkspaceServiceOperationsDefaultsToLatestEnabledVersion(t *testing.T) {
 	dir := t.TempDir()
 	state := &workspaceOperationsLatestState{}
 	server := httptest.NewServer(workspaceOperationsLatestHandler(t, state))
 	defer server.Close()
 
-	out := runCommandInDirOutput(t, dir, server.URL, []string{"workspace", "service", "operations", "@acme-inc/github"})
+	out := runCommandInDirOutput(t, dir, server.URL, []string{"service", "operation", "list", "@acme-inc/github"})
 	if state.sawVersion != "2026-07-16" {
 		t.Fatalf("expected latest enabled version, got %q", state.sawVersion)
 	}
@@ -804,6 +815,7 @@ func assertProviderQualifiedServiceLookupVariables(t *testing.T, variables map[s
 	}
 }
 
+// TestWorkspaceServiceOperationsUsesExplicitEnabledVersion verifies that workspace service operations uses explicit enabled version.
 func TestWorkspaceServiceOperationsUsesExplicitEnabledVersion(t *testing.T) {
 	dir := t.TempDir()
 	var sawVersion string
@@ -833,12 +845,13 @@ func TestWorkspaceServiceOperationsUsesExplicitEnabledVersion(t *testing.T) {
 	}))
 	defer server.Close()
 
-	runCommandInDir(t, dir, server.URL, []string{"workspace", "service", "operations", "github", "--version", "2026-01-01"})
+	runCommandInDir(t, dir, server.URL, []string{"service", "operation", "list", "github", "--version", "2026-01-01"})
 	if sawVersion != "2026-01-01" {
 		t.Fatalf("expected explicit version to be used, got %q", sawVersion)
 	}
 }
 
+// TestWorkspaceServiceOperationsRejectsNonWorkspaceVersion verifies that workspace service operations rejects non workspace version.
 func TestWorkspaceServiceOperationsRejectsNonWorkspaceVersion(t *testing.T) {
 	dir := t.TempDir()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -855,24 +868,26 @@ func TestWorkspaceServiceOperationsRejectsNonWorkspaceVersion(t *testing.T) {
 	}))
 	defer server.Close()
 
-	out := runCommandInDirExpectError(t, dir, server.URL, []string{"workspace", "service", "operations", "github", "--version", "2026-08-01"})
+	out := runCommandInDirExpectError(t, dir, server.URL, []string{"service", "operation", "list", "github", "--version", "2026-08-01"})
 	if !strings.Contains(out, "not enabled in this workspace") {
 		t.Fatalf("expected workspace-version rejection, got %q", out)
 	}
 }
 
+// TestWorkspaceServiceUsesDiscoverableSubcommands verifies that workspace service uses discoverable subcommands.
 func TestWorkspaceServiceUsesDiscoverableSubcommands(t *testing.T) {
-	for _, name := range []string{"add", "connect", "delete", "deprecate", "operations", "versions", "webhooks", "version"} {
-		if child, _, err := workspaceServiceCmd.Find([]string{name}); err != nil || child.Name() != name {
+	for _, name := range []string{"add", "connect", "remove", "deprecate", "operation", "version", "webhook"} {
+		if child, _, err := serviceCmd.Find([]string{name}); err != nil || child.Name() != name {
 			t.Fatalf("expected %q subcommand, child=%v err=%v", name, child, err)
 		}
 	}
 }
 
+// TestWorkspaceServiceSlugHelpShowsReadableActions verifies that workspace service slug help shows readable actions.
 func TestWorkspaceServiceSlugHelpShowsReadableActions(t *testing.T) {
 	dir := t.TempDir()
-	out := runCommandInDirOutput(t, dir, "", []string{"workspace", "service", "--help"})
-	if !strings.Contains(out, "Available Commands:") || !strings.Contains(out, "operations") || !strings.Contains(out, "versions") || !strings.Contains(out, "webhooks") || !strings.Contains(out, "add") {
+	out := runCommandInDirOutput(t, dir, "", []string{"service", "--help"})
+	if !strings.Contains(out, "Available Commands:") || !strings.Contains(out, "operation") || !strings.Contains(out, "version") || !strings.Contains(out, "webhook") || !strings.Contains(out, "add") {
 		t.Fatalf("expected service actions in help, got %q", out)
 	}
 }
@@ -899,7 +914,7 @@ func TestWorkspaceHasCallsEngine(t *testing.T) {
 	}))
 	defer server.Close()
 
-	out := runCommandInDirOutput(t, dir, server.URL, []string{"workspace", "has", "okta"})
+	out := runCommandInDirOutput(t, dir, server.URL, []string{"service", "has", "okta"})
 	if !strings.Contains(out, "Found service okta (Enabled Versions: 2026-07-01, 2026-07-02)") {
 		t.Fatalf("expected has command output for okta, got %q", out)
 	}
@@ -981,7 +996,7 @@ services:
 	}))
 	defer server.Close()
 
-	runCommandInDir(t, dir, server.URL, []string{"workspace", "service", "version", "delete", "okta", "2026-07-01", "-f", path, "--force"})
+	runCommandInDir(t, dir, server.URL, []string{"service", "version", "remove", "okta", "2026-07-01", "-f", path, "--force"})
 
 	if got := strings.Join(paths, ","); got != "/workspace/config/plan,/config/plans/plan-workspace/actions,/workspace/config/apply" {
 		t.Fatalf("unexpected request order %s", got)
@@ -1041,7 +1056,7 @@ services:
 	oldNoInput := NoInput
 	// The unattended flag must not suppress disclosure of either workspace-local consequence.
 	t.Cleanup(func() { NoInput = oldNoInput })
-	out := runCommandInDirOutput(t, dir, server.URL, []string{"workspace", "service", "version", "delete", "gmail", "v1", "--force", "--no-input"})
+	out := runCommandInDirOutput(t, dir, server.URL, []string{"service", "version", "remove", "gmail", "v1", "--force", "--no-input"})
 	// The complete governed sequence includes one read, one plan, one full decision replacement, and one apply.
 	if got := strings.Join(paths, ","); got != "POST /engine/graphql,POST /workspace/config/plan,PATCH /config/plans/plan-workspace/actions,POST /workspace/config/apply" {
 		t.Fatalf("unexpected final-version removal sequence %s", got)
@@ -1110,7 +1125,7 @@ services:
 	}))
 	defer server.Close()
 
-	errText := runCommandInDirExpectError(t, dir, server.URL, []string{"workspace", "service", "version", "delete", "gmail", "v1", "--force"})
+	errText := runCommandInDirExpectError(t, dir, server.URL, []string{"service", "version", "remove", "gmail", "v1", "--force"})
 	// The diagnostic should tell the operator to reconcile stale local state.
 	if !strings.Contains(errText, "live versions outside requested version v1") {
 		t.Fatalf("unexpected sibling error %q", errText)
@@ -1158,7 +1173,7 @@ services:
 	}))
 	defer server.Close()
 
-	errText := runCommandInDirExpectError(t, dir, server.URL, []string{"workspace", "service", "version", "delete", "okta", "v1", "-f", path, "--force"})
+	errText := runCommandInDirExpectError(t, dir, server.URL, []string{"service", "version", "remove", "okta", "v1", "-f", path, "--force"})
 	// Broadened receipt scope must produce an actionable review error.
 	if !strings.Contains(errText, "unrelated removal") {
 		t.Fatalf("unexpected broadened-plan error %q", errText)
@@ -1204,7 +1219,7 @@ services:
 	}))
 	defer server.Close()
 
-	errText := runCommandInDirExpectError(t, dir, server.URL, []string{"workspace", "service", "version", "delete", "gmail", "v1", "--force"})
+	errText := runCommandInDirExpectError(t, dir, server.URL, []string{"service", "version", "remove", "gmail", "v1", "--force"})
 	if !strings.Contains(errText, "upgrade Fused") {
 		t.Fatalf("unexpected old-Engine error %q", errText)
 	}
@@ -1242,7 +1257,7 @@ services:
 	}))
 	defer server.Close()
 
-	errText := runCommandInDirExpectError(t, dir, server.URL, []string{"workspace", "service", "version", "delete", "gmail", "v1", "--force"})
+	errText := runCommandInDirExpectError(t, dir, server.URL, []string{"service", "version", "remove", "gmail", "v1", "--force"})
 	if !strings.Contains(errText, "without source_hash") {
 		t.Fatalf("unexpected missing-hash error %q", errText)
 	}
@@ -1282,13 +1297,14 @@ services:
 	}))
 	defer server.Close()
 
-	runCommandInDirExpectError(t, dir, server.URL, []string{"workspace", "service", "version", "delete", "gmail", "v1", "--force"})
+	runCommandInDirExpectError(t, dir, server.URL, []string{"service", "version", "remove", "gmail", "v1", "--force"})
 	after, _ := os.ReadFile(path)
 	if !bytes.Equal(after, before) {
 		t.Fatalf("authoritative apply rejection left speculative config:\n%s", after)
 	}
 }
 
+// TestWorkspaceAddServiceWritesSlugOnlyYaml verifies that workspace add service writes slug only yaml.
 func TestWorkspaceAddServiceWritesSlugOnlyYaml(t *testing.T) {
 	resetWorkspaceServiceAddState(t)
 	dir := t.TempDir()
@@ -1302,7 +1318,7 @@ services: {}
 		`[]`,
 	)
 	defer server.Close()
-	runCommandInDir(t, dir, server.URL, []string{"workspace", "service", "add", "okta", "-f", path, "--version", "2026-07-01"})
+	runCommandInDir(t, dir, server.URL, []string{"service", "add", "okta", "-f", path, "--version", "2026-07-01"})
 	if *registryCalls != 0 {
 		t.Fatalf("workspace hit should not search Registry, got %d calls", *registryCalls)
 	}
@@ -1367,7 +1383,7 @@ services:
 	})
 	t.Cleanup(restoreSelector)
 
-	runCommandInDir(t, dir, server.URL, []string{"sdk", "operation", "add", "", "--interactive", "-f", path})
+	runCommandInDir(t, dir, server.URL, []string{"app", "operation", "add", "", "--interactive", "-f", path})
 	if sawVersion != "2026-07-01" {
 		t.Fatalf("expected versioned operation lookup, got %q", sawVersion)
 	}
@@ -1420,7 +1436,7 @@ services:
 	})
 	t.Cleanup(restoreSelector)
 
-	runCommandInDir(t, dir, server.URL, []string{"sdk", "operation", "add", "", "--interactive", "-f", path})
+	runCommandInDir(t, dir, server.URL, []string{"app", "operation", "add", "", "--interactive", "-f", path})
 	after, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -1520,9 +1536,16 @@ func runCommandInDirExpectError(t *testing.T, dir, engineURL string, args []stri
 // makes every command execution start from the correct defaults regardless of
 // what an earlier test in the same process did.
 func resetHelpFlags(cmd *cobra.Command) {
-	for _, name := range []string{"help", jsonOutputFlag} {
+	for _, name := range []string{"help", jsonOutputFlag, "registry"} {
 		if flag := cmd.Flags().Lookup(name); flag != nil {
 			_ = flag.Value.Set("false")
+			flag.Changed = false
+		}
+	}
+	// Reset shared string flags between repeated in-process CLI executions.
+	for _, name := range []string{"search", "type"} {
+		if flag := cmd.Flags().Lookup(name); flag != nil {
+			_ = flag.Value.Set(flag.DefValue)
 			flag.Changed = false
 		}
 	}

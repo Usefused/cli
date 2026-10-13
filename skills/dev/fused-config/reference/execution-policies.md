@@ -1,6 +1,6 @@
 # Execution policy
 
-`execution_policy`, nested under a workspace service (as the default for
+`execution_policy`, nested under a service (as the default for
 every version) or under one of its own `versions[]` entries (an override for
 just that version). Controls rate limiting, retries, pagination, and
 outbound webhook verification -- and, as of the local-override work, always

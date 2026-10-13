@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	defaultSDKTokenEnvironment = "FUSED_SDK_TOKEN"
+	defaultSDKTokenEnvironment = "FUSED_APP_TOKEN"
 	maxSDKInvokeInputBytes     = 1 << 20
 	maxSDKInvokeSelectorBytes  = 256
 	maxSDKInvokeResponseBytes  = 17 * maxSDKInvokeInputBytes
@@ -40,7 +40,7 @@ var sdkInvokeCmd = &cobra.Command{
 		if err := cobra.ExactArgs(2)(cmd, args); err != nil {
 			return err
 		}
-		return validateExactAppReference(args[0], "sdk invoke")
+		return validateExactAppReference(args[0], "app invoke")
 	},
 	RunE: WithTelemetry("cli.sdk.invoke", func(cmd *cobra.Command, args []string) error {
 		return runSDKInvoke(cmd, downloadTargetFromName(args[0]), args[1])
@@ -145,7 +145,7 @@ func sdkInvokeCredentialCommand(code string, details map[string]any) string {
 	if name, ok := details["bucket_name"].(string); ok && !invalidSDKInvokeAuthName(name) && !strings.HasPrefix(name, "-") {
 		canonicalBucketID = shellQuoteSDKInvokeArgument(name)
 	}
-	return fmt.Sprintf("fused-cli secret set %s --bucket %s --type %s --auth-name %s --interactive",
+	return fmt.Sprintf("fused-cli bucket credential set %s --bucket %s --type %s --auth-name %s --interactive",
 		canonicalServiceID, canonicalBucketID, shellQuoteSDKInvokeArgument(authType), shellQuoteSDKInvokeArgument(authName))
 }
 
@@ -170,7 +170,7 @@ func sdkInvokeConnectionCommand(details map[string]any) string {
 		userArgument = shellQuoteSDKInvokeArgument(endUserRef)
 	}
 	return fmt.Sprintf(
-		"fused-cli workspace service connect %s --bucket %s --user-ref %s",
+		"fused-cli service connect %s --bucket %s --user-ref %s",
 		canonicalServiceID, canonicalBucketID, userArgument,
 	)
 }

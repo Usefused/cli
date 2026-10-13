@@ -42,8 +42,7 @@ Three related but distinct things use different owners:
   or app YAML (see `fused-bucket`).
 - SDK/MCP `services.<target>.connect.scopes` is the service-specific consent
   ceiling for the interactive per-user OAuth/OIDC flow. Store the application's
-  complete `client_id`/`client_secret` pair atomically with `fused-cli secret
-  set <service-slug> --bucket <bucket> --type oauth|oidc --auth-name <scheme>
+  complete `client_id`/`client_secret` pair atomically with `fused-cli bucket credential set <service-slug> --bucket <bucket> --type oauth|oidc --auth-name <scheme>
   --value-stdin|--interactive`. The pair uses deterministic encrypted bucket
   secret rows and is distinct from connected-user access, refresh, and ID
   tokens. Blank, partial, extra, token, and `redirect_uri` fields are rejected.
@@ -56,7 +55,7 @@ Three related but distinct things use different owners:
   use that same exact resolver.
 
   Registering the app is separate from any one user connecting: start an
-  actual user session with `fused-cli workspace service connect <slug>
+  actual user session with `fused-cli service connect <slug>
   --user-ref <end-user-reference>` (see `fused-bucket`).
 
   The imported OAuth2 security scheme also determines how Engine authenticates
@@ -211,7 +210,7 @@ value: "${resource.metadata.portal_id}"     # a declared metadata key
 ```
 
 For a literal sourced dynamically rather than hardcoded, set it as a bucket
-value (`fused-cli value set ...` -- see `fused-bucket`) instead of writing it
+value (`fused-cli bucket value set ...` -- see `fused-bucket`) instead of writing it
 inline here.
 
 `prefix-${resource.base_url}` is rejected — build URLs with
@@ -243,7 +242,7 @@ There is no `public`/`visibility`/`provenance`/`scope`/owner field settable
 in profile config — the backend rejects any of these if present. Visibility
 and provenance come only from which authenticated path wrote the profile.
 
-Selection order when a workspace service doesn't inline a `profile`:
+Selection order when a service doesn't inline a `profile`:
 
 1. An explicit workspace-local profile.
 2. An explicitly selected public `profile_id`.

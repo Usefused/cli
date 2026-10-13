@@ -11,7 +11,7 @@ import (
 
 var workspaceAccessCmd = &cobra.Command{
 	Use:   "access",
-	Short: "Share selected buckets, SDKs, and MCP servers across the workspace",
+	Short: "Share selected buckets and apps across the workspace",
 	Args:  cobra.NoArgs,
 	RunE:  requireSubcommand,
 }
@@ -51,9 +51,9 @@ var workspaceAccessListCmd = &cobra.Command{
 var workspaceBucketAccessCmd = commandGroup("bucket", "Share a bucket for workspace-wide use")
 var workspaceBucketAccessGrantCmd = workspaceShareCommand("grant <bucket-name-or-id>", "Share a bucket for workspace-wide use", "cli.workspace.access.bucket.grant", grantWorkspaceBucketAccess)
 var workspaceBucketAccessRevokeCmd = workspaceShareCommand("revoke <bucket-name-or-id>", "Stop workspace-wide bucket use", "cli.workspace.access.bucket.revoke", revokeWorkspaceBucketAccess)
-var workspaceAppAccessCmd = commandGroup("app", "Share an SDK or MCP server across the workspace")
-var workspaceAppAccessGrantCmd = workspaceShareCommand("grant <sdk-or-mcp-id>", "Share all versions of an SDK or MCP server across the workspace", "cli.workspace.access.app.grant", grantWorkspaceAppAccess)
-var workspaceAppAccessRevokeCmd = workspaceShareCommand("revoke <sdk-or-mcp-id>", "Stop workspace-wide use of all versions of an SDK or MCP server", "cli.workspace.access.app.revoke", revokeWorkspaceAppAccess)
+var workspaceAppAccessCmd = commandGroup("app", "Share an app across the workspace")
+var workspaceAppAccessGrantCmd = workspaceShareCommand("grant <app-id>", "Share all versions of an app across the workspace", "cli.workspace.access.app.grant", grantWorkspaceAppAccess)
+var workspaceAppAccessRevokeCmd = workspaceShareCommand("revoke <app-id>", "Stop workspace-wide use of all versions of an app", "cli.workspace.access.app.revoke", revokeWorkspaceAppAccess)
 
 type workspaceShareMutation func(*cliapi.Client, string) (*cliapi.WorkspaceShareMutationPayload, error)
 

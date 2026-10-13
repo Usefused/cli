@@ -8,8 +8,8 @@ import (
 	"testing"
 )
 
-// TestServiceSearchUsesEngineTextMatching protects workspace-only partial matches and Registry membership merging.
-func TestServiceSearchUsesEngineTextMatching(t *testing.T) {
+// TestRegistrySearchDoesNotMergeWorkspaceMatches keeps explicit Registry reads independent of workspace membership.
+func TestRegistrySearchDoesNotMergeWorkspaceMatches(t *testing.T) {
 	sawSearch, sawMembership := false, false
 	// Distinct responses make it impossible for exact-name lookup to accidentally satisfy the partial-search assertion.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -42,18 +42,18 @@ func TestServiceSearchUsesEngineTextMatching(t *testing.T) {
 		_, _ = w.Write([]byte(`{"data":{"workspaceServicePage":{"total":1,"data":[{"service_id":"registry","service_name":"Payments","service_slug":"payments"}]}}}`))
 	}))
 	defer server.Close()
-	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"service", "search", "--q", "BiLl", "--json"})
+	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"service", "list", "--registry", "--search", "BiLl", "--json"})
 	var results []serviceSearchResult
-	// Both transport phases must succeed before reporting enabled results.
+	// Explicit Registry reads return catalog results without Engine membership calls.
 	if err := json.Unmarshal([]byte(out), &results); err != nil {
 		t.Fatal(err)
 	}
-	if !sawSearch || !sawMembership || len(results) != 2 {
+	if sawSearch || sawMembership || len(results) != 1 {
 		t.Fatalf("search=%v membership=%v results=%s", sawSearch, sawMembership, out)
 	}
 	for _, result := range results {
-		// Exact Registry membership and workspace-only partial matches are equally enabled.
-		if result.WorkspaceStatus != serviceWorkspaceEnabled {
+		// Registry-only output must not claim workspace membership.
+		if result.WorkspaceStatus != "" {
 			t.Fatalf("unexpected status: %+v", result)
 		}
 	}

@@ -1,6 +1,6 @@
 ---
 name: fused-config
-description: "Use this skill for cross-cutting Fused config: execution policy (rate limits, retries, pagination, a base_url override for a wrong/missing spec URL, event_extraction_path, incoming_webhook_config, and whether it's published to the Registry vs. only enforced locally in this workspace), import overlays that supply reviewed non-secret provider facts missing from a machine-readable source, or connection profiles (auth type, OAuth/OIDC resource discovery, dynamic request bindings) attached to a workspace service version or declared directly in an OpenAPI/Postman spec via x-fused-connect. Trigger on 'execution policy', 'rate limit'/'retry config', 'pagination', 'base_url override', 'import overlay', '--overlay', 'webhook verification'/'incoming_webhook_config', 'local override', 'connection profile', 'resource_discovery', 'binding', '${resource...}', or 'x-fused-connect'. For SDK package or MCP server selection, or bucket/secret storage, read fused-workspace/fused-sdk/fused-mcp/fused-bucket instead."
+description: "Use this skill for cross-cutting Fused config: execution policy (rate limits, retries, pagination, a base_url override for a wrong/missing spec URL, event_extraction_path, incoming_webhook_config, and whether it's published to the Registry vs. only enforced locally in this workspace), import overlays that supply reviewed non-secret provider facts missing from a machine-readable source, or connection profiles (auth type, OAuth/OIDC resource discovery, dynamic request bindings) attached to a service version or declared directly in an OpenAPI/Postman spec via x-fused-connect. Trigger on 'execution policy', 'rate limit'/'retry config', 'pagination', 'base_url override', 'import overlay', '--overlay', 'webhook verification'/'incoming_webhook_config', 'local override', 'connection profile', 'resource_discovery', 'binding', '${resource...}', or 'x-fused-connect'. For SDK package or MCP server selection, or bucket/secret storage, read fused-workspace/fused-sdk/fused-mcp/fused-bucket instead."
 ---
 
 # Cross-cutting runtime config: execution policy & connection profiles
@@ -37,7 +37,7 @@ closed policy and `reference/connection-profiles.md` for runtime behavior.
 When workspace bucket auth selects a type with several named schemes, carry
 both `auth_type` and the exact `auth_name`; never choose the first scheme in
 that type. The same identity rule applies to version connection-profile
-attachments and to `secret set --type ... --auth-name ...`.
+attachments and to `bucket credential set --type ... --auth-name ...`.
 
 Provider documentation and similarly named vendor extensions are evidence,
 not executable policy. During curation, prefer standard OpenAPI security and
@@ -54,7 +54,7 @@ mapping decision. Mark omitted executable policies explicitly and distinguish
 provider limits from Fused-selected safety bounds; a bare link in research
 notes is not enough to reproduce or review the configuration.
 
-These concerns cross configuration boundaries: workspace service versions own
+These concerns cross configuration boundaries: service version list own
 execution-policy and credential-free profile attachments; SDK/MCP service
 selections own `auth` and `connect.scopes`; imported OpenAPI/Postman contracts
 may declare provider connection profiles. Workspace YAML never owns a bucket's
@@ -103,10 +103,10 @@ baseline), read `fused-notifications`.
 
 Never put a real credential value inline in a config file being committed to
 source control. For a static `auth` credential (token/api_key/basic/mtls),
-use a bucket secret (`fused-cli secret set <service-slug>` -- see
+use a bucket secret (`fused-cli bucket credential set <service-slug>` -- see
 `fused-bucket`): it's resolved by the Engine itself, so it works the same
 whether `apply` runs from a laptop or CI. Binding literal values have the
-same bucket-secret path via `fused-cli value`.
+same bucket-secret path via `fused-cli bucket value`.
 
 When two OAuth/OIDC services can use compatible application credentials in one
 bucket, an SDK/MCP target service selects its exact `auth.type` and `auth.name`,
@@ -128,7 +128,7 @@ does not make private Fused bucket values readable or silently fill missing
 credentials. Managed webhook sources use `relay.source`; see `fused-webhook`.
 
 For your own OAuth/OIDC application, `client_id`/`client_secret` pairs follow the
-bucket-secret path. Store the pair with `fused-cli secret set <service-slug> --bucket
+bucket-secret path. Store the pair with `fused-cli bucket credential set <service-slug> --bucket
 <bucket> --type oauth|oidc --auth-name <scheme>
 --interactive|--value-stdin`; never
 supply a redirect URI. Engine derives the callback from its canonical public
@@ -149,16 +149,16 @@ Follow the lifecycle of the command that owns the config:
   even when the caller otherwise has workspace access.
 - Importing `x-fused-connect` through OpenAPI/Postman needs `catalogue.import`;
   reading the import session needs `catalogue.read`.
-- OAuth/OIDC application `secret set` needs `credentials.manage`; starting a
+- OAuth/OIDC application `bucket credential set` needs `credentials.manage`; starting a
   connect session needs `connection.manage`, `bucket.use`, and
   `service.consume`.
 
 The narrow remediation commands are usually:
 
 ```shell
-fused-cli team access service grant <team> <service> use|manage
-fused-cli team access bucket grant <team> <bucket> use|manage
-fused-cli team access workspace set <team> admin   # only for a missing workspace-level permission
+fused-cli workspace team access service grant <team> <service> use|manage
+fused-cli workspace team access bucket grant <team> <bucket> use|manage
+fused-cli workspace team access workspace set <team> admin   # only for a missing workspace-level permission
 ```
 
 On denial, stop the blocked action, preserve the config/source and plan, and

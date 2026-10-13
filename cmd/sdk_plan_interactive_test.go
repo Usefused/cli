@@ -251,17 +251,17 @@ func TestSDKPlanCredentialRemediationDefaultsToInteractive(t *testing.T) {
 	t.Setenv("CI", "")
 	sdkPlanInteractive, sdkPlanJSON, NoInput = false, false, false
 	if !sdkPlanUsesInteractiveCredentialRemediation() {
-		t.Fatal("terminal sdk plan should remediate missing credentials by default")
+		t.Fatal("terminal app plan should remediate missing credentials by default")
 	}
 	// JSON output is a machine-readable contract and must never contain prompts.
 	sdkPlanJSON = true
 	if sdkPlanUsesInteractiveCredentialRemediation() {
-		t.Fatal("JSON sdk plan must remain non-interactive")
+		t.Fatal("JSON app plan must remain non-interactive")
 	}
 	// --no-input is the explicit automation opt-out requested by the caller.
 	sdkPlanJSON, NoInput = false, true
 	if sdkPlanUsesInteractiveCredentialRemediation() {
-		t.Fatal("--no-input sdk plan must remain non-interactive")
+		t.Fatal("--no-input app plan must remain non-interactive")
 	}
 }
 

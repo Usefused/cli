@@ -360,6 +360,7 @@ services:
 	}
 }
 
+// TestSDKNameDownloadResolvesExactEngineAppBeforeDownload verifies that SDK name download resolves exact engine app before download.
 func TestSDKNameDownloadResolvesExactEngineAppBeforeDownload(t *testing.T) {
 	dir := t.TempDir()
 	var sawGraphQL, sawDownload bool
@@ -387,7 +388,7 @@ func TestSDKNameDownloadResolvesExactEngineAppBeforeDownload(t *testing.T) {
 	}))
 	defer server.Close()
 
-	runCommandInDir(t, dir, server.URL, []string{"sdk", "download", "security-sdk@1.2.0"})
+	runCommandInDir(t, dir, server.URL, []string{"app", "download", "security-sdk@1.2.0"})
 
 	if !sawGraphQL || !sawDownload {
 		t.Fatalf("expected graphql and download requests, saw graphql=%v download=%v", sawGraphQL, sawDownload)
@@ -403,7 +404,7 @@ func TestSDKSyncCreatesDefaultFusedConfig(t *testing.T) {
 	server := newSDKSyncServer(t, "1.0.0")
 	defer server.Close()
 
-	runCommandInDir(t, dir, server.URL, []string{"sdk", "sync", "security-sdk"})
+	runCommandInDir(t, dir, server.URL, []string{"app", "sync", "security-sdk"})
 
 	data, err := os.ReadFile(filepath.Join(dir, ".fused", "sdks", "security-sdk.yaml"))
 	if err != nil {
@@ -412,21 +413,23 @@ func TestSDKSyncCreatesDefaultFusedConfig(t *testing.T) {
 	text := string(data)
 	// The authored reference must survive YAML serialization alongside the rest of portable selection metadata.
 	if !strings.Contains(text, "version: 1.0.0") || !strings.Contains(text, "kind: sdk") || !strings.Contains(text, "name: security-sdk") || !strings.Contains(text, "language: python") || !strings.Contains(text, "github-rest-api:") || !strings.Contains(text, "repos_list_for_authenticated_user") || !strings.Contains(text, "type: oauth") || !strings.Contains(text, `ref: ${bucket.auth.github-app.sharedOAuth}`) || !strings.Contains(text, "X-Tenant") {
-		t.Fatalf("unexpected sdk sync file:\n%s", text)
+		t.Fatalf("unexpected app sync file:\n%s", text)
 	}
 }
 
+// TestSDKSyncDoesNotOfferImplicitVersionUpgrade verifies that SDK sync does not offer implicit version upgrade.
 func TestSDKSyncDoesNotOfferImplicitVersionUpgrade(t *testing.T) {
 	dir := t.TempDir()
 	server := newSDKSyncServer(t, "1.0.0")
 	defer server.Close()
 
-	message := runCommandInDirExpectError(t, dir, server.URL, []string{"sdk", "sync", "security-sdk", "--sync-version"})
+	message := runCommandInDirExpectError(t, dir, server.URL, []string{"app", "sync", "security-sdk", "--sync-version"})
 	if !strings.Contains(message, "unknown flag") {
 		t.Fatalf("expected removed implicit upgrade flag to be rejected, got %q", message)
 	}
 }
 
+// TestSDKSyncHistoricalDefinitionDoesNotOverwriteConfig verifies that SDK sync historical definition does not overwrite config.
 func TestSDKSyncHistoricalDefinitionDoesNotOverwriteConfig(t *testing.T) {
 	dir := t.TempDir()
 	path := writeSprintConfig(t, dir, "security.yaml", `
@@ -464,7 +467,7 @@ services:
 	}))
 	defer server.Close()
 
-	message := runCommandInDirExpectError(t, dir, server.URL, []string{"sdk", "sync", "security-sdk", "-f", path})
+	message := runCommandInDirExpectError(t, dir, server.URL, []string{"app", "sync", "security-sdk", "-f", path})
 	if !strings.Contains(message, "requires definition refresh") {
 		t.Fatalf("expected definition refresh guidance, got %q", message)
 	}
@@ -526,7 +529,7 @@ services:
 	}))
 	defer server.Close()
 
-	message := runCommandInDirExpectError(t, dir, server.URL, []string{"sdk", "sync", "security-sdk", "-f", path})
+	message := runCommandInDirExpectError(t, dir, server.URL, []string{"app", "sync", "security-sdk", "-f", path})
 	// The error names the incomplete identity instead of warning and continuing.
 	if !strings.Contains(message, "missing service slug") || !strings.Contains(message, "GitHub REST API") {
 		t.Fatalf("expected missing-slug error, got %q", message)

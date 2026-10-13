@@ -258,8 +258,9 @@ func printIssuedCredential(cmd *cobra.Command, payload *cliapi.IssuedCredentialP
 	return nil
 }
 
+// init places workspace-owned people alongside workspace policy and access commands.
 func init() {
-	RootCmd.AddCommand(userCmd)
+	workspaceCmd.AddCommand(userCmd)
 	userCmd.AddCommand(userListCmd, userShowCmd, userCreateCmd, userUpdateCmd, userSuspendCmd, userReactivateCmd, userCredentialCmd)
 	addJSONOutputFlag(userListCmd, userShowCmd)
 	addListFlags(userListCmd, &userListFlags)

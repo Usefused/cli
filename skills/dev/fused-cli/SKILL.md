@@ -9,6 +9,25 @@ description: "Set up and operate fused-cli: install or authenticate it, inspect 
 under `.fused/` (or `-f <path>`) declare desired state, `plan` previews the
 diff against the Engine, `apply` pushes it.
 
+## Shared app management
+
+All app types use `fused-cli app`: SDK, direct REST API, MCP, and Unified Apps. The config selects the type for `plan`, `apply`, and `validate`; remote commands resolve the selected app. No `sdk`, `api`, `mcp`, or `unified-app` command aliases remain.
+
+```sh
+fused-cli app list --type sdk
+fused-cli app show support@1.0.0
+fused-cli app plan -f .fused/sdks/support.yaml
+fused-cli app apply -f .fused/sdks/support.yaml
+fused-cli app versions list support
+fused-cli app token generate support agent
+fused-cli app schedule list reports
+fused-cli app download support@1.0.0
+```
+
+`--type` accepts `sdk`, `api`, `mcp`, and `unified-app`. Downloads require generated SDKs; schedules and promotion require Unified Apps. `app source extract` externalizes Unified App source; `app sync` mirrors an exact SDK/API config. Execution and destructive version actions require `name@version` or an immutable version ID. Use `init` to create apps and `extend` to add selections.
+
+Service reads default to enabled workspace services: `service list`, `service version list`, and `service operation list`. Add `--registry` for catalog reads, for example `service list --registry --search gmail`. Use `--search` consistently for list filtering. Provider credentials live under `bucket credential`; secret metadata uses `bucket secret list <bucket>`.
+
 ## Standing up an Engine (before you have one to connect to)
 
 Everything below this section assumes an Engine is already running somewhere
@@ -160,7 +179,7 @@ Every command list in this skill and its eight domain skills
 the subcommands/flags that existed when that file was last
 updated -- not a live source of truth. Before running any subcommand you
 haven't just confirmed, run `fused-cli <command> --help` (e.g. `fused-cli
-workspace service --help`, `fused-cli sdk token --help`) to see its actual
+service --help`, `fused-cli app token --help`) to see its actual
 current flags and any subcommands these files don't list yet. `fused-cli
 --readme` dumps the full reference for every command at once, useful when
 you need the whole surface rather than one subcommand. Treat a command list
@@ -168,9 +187,9 @@ in any of these skills as a starting point for what's likely available, not
 the final word on exact syntax.
 
 Command grammar is action-first after each resource group because every action
-is a real Cobra subcommand. For example, use `sdk service add <service-slug>`,
-`sdk operation remove <service-slug> <operation-id...>`, `sdk token generate
-<sdk-name-or-id> <token-name>`, and `mcp deactivate <mcp-name@version>`.
+is a real Cobra subcommand. For example, use `app service add <service-slug>`,
+`app operation remove <service-slug> <operation-id...>`, `app token generate
+<sdk-name-or-id> <token-name>`, and `app deactivate <mcp-name@version>`.
 Running a group without an
 action or passing an unexpected positional argument is an error; use the
 group's `--help` output to choose the exact subcommand.
@@ -178,31 +197,21 @@ group's `--help` output to choose the exact subcommand.
 ## Structured output for agents
 
 Use `--json` whenever the confirmed command help exposes it. This includes
-read/list/show/validate commands, plan commands, `import apply`, `sdk apply`, `sdk download`,
-`sdk openapi`, `api openapi`, `sdk token generate`, `mcp token generate`, `sdk invoke`, and `sdk activity`. Do not scrape IDs, one-time tokens,
+read/list/show/validate commands, plan commands, `import apply`, `app apply`, `app download`,
+`app openapi`, `app token generate`, `app invoke`, and `app activity`. Do not scrape IDs, one-time tokens,
 receipt fields, retry timing, or execution results from human output. A command
 without `--json` must be treated as a human-only mutation unless its domain
 skill documents a stable alternative.
 
-`fused-cli sdk openapi <sdk-name@version-or-version-id>` resolves one exact
-immutable SDK version with the ordinary control credential and `app.sdk.read`, then
-GETs `/apps/{app_id}/openapi`. It always atomically writes YAML (or JSON with
-`--format json`); `--operation` filters one exact physical name,
-`--out` selects the file, and `--json` prints metadata rather than the document.
-The export pins the real `POST /v1/apps/{app_id}/executions` route, whose Bearer
-credential is the SDK-wide execution token—not the CLI control key. Output is
-derived from at most 16 MiB of Engine JSON and its server URL is the configured
-Engine. The CLI verifies the returned Version ID and real POST path before
-replacement, including its matching `app_id` enum and request-branch count.
-JSON metadata includes `operation_count` and `sha256:<64 lowercase hex>` of the
-final rendered file bytes.
-
-For a direct REST API created by `fused-cli init --api`, or a `kind: sdk`
-configuration with `generate: false`, use `fused-cli api openapi
-<api-name@version-or-version-id>`. It shares the exact-version export and
-validation contract above but reports the resource under the `api` metadata
-field and uses an API-oriented default filename. Reserve `sdk openapi` for
-generated SDK versions.
+`fused-cli app openapi <app-name@version-or-version-id>` resolves an exact
+immutable app version with the ordinary control credential and GETs `/apps/{app_id}/openapi`. Generated SDKs and direct REST API apps use this same command.
+`--operation` filters one exact operation, `--out` selects the file, and
+`--format json` selects JSON instead of YAML. `--json` prints metadata rather than the document,
+including `app`, `version_id`, `operation_count`, and the checksum
+`sha256:<64 lowercase hex>`. Responses are bounded to 16 MiB; version identity
+and the `POST /v1/apps/{app_id}/executions` route are validated before atomically
+replacing the output file. Runtime requests use the app-wide execution token,
+not the CLI control credential.
 
 `fused-cli skill install` installs from the immutable `skills/<version>/`
 snapshot shipped beside a release binary when available. This is intentionally
@@ -220,17 +229,16 @@ IDs.
 
 ## Permissions and team access
 
-Use `team` and `user` for RBAC, and `workspace access` when a specific bucket
+Use `workspace team` and `workspace user` for RBAC, and `workspace access` when a specific bucket
 or SDK/MCP permission scope should be usable by everyone in the local workspace.
 The access commands use the shared Engine `app` resource. Generic app-access
-commands require the `SDK_ID` or `MCP_ID` shown by list commands; SDK-specific
-commands may resolve an SDK name because the kind is already explicit. These
-are immediate
+commands require the stable `APP_ID` shown by `app list`. This avoids
+ambiguous names across app types. These are immediate
 access-management commands, not config-file fields. Read
 [reference/access-management.md](reference/access-management.md) before
 changing membership, roles, resource access, personal credentials, or resource
 ownership. Prefer human names/slugs for kind-specific commands and use the
-displayed `SDK_ID` or `MCP_ID` for generic app access. Use `team
+displayed `APP_ID` for generic app access. Use `workspace team
 eligible-owners` before planning a new SDK, MCP server, or webhook.
 
 Permission-sensitive CLI flows must follow the denial protocol in that
@@ -249,8 +257,9 @@ kind: workspace   # or: sdk, mcp, webhook
 ```
 
 `fused-cli plan` / `fused-cli apply` (no subcommand) operate across every
-kind found under the target directory at once. `<kind> plan|apply` scopes to
-one kind.
+kind found under the target directory at once. `app plan` / `app apply`
+select the app config kind; use `-f` when the directory contains multiple app
+types. `workspace plan|apply` and `webhook plan|apply` manage their own configs.
 
 ## Start or extend a config file
 
@@ -263,22 +272,22 @@ suffix where the command permits all versions or its documented default.
 
 ```shell
 fused-cli init <name> --sdk --service '<service>[@<version>]' --operation '<service>=<operationId>'
-fused-cli init <name> --api --service '<service>[@<version>]' --select-all '<service>'
+fused-cli init <name> --rest --service '<service>[@<version>]' --select-all '<service>'
 fused-cli init <name> --mcp --description '<user-facing purpose>' --service '<service>[@<version>]' --select-all '<service>'
 ```
 
-Result: missing workspace services are enabled, the app file is created under
+Result: missing services are enabled, the app file is created under
 `.fused/`, and the app is planned and applied. SDK mode downloads the package;
 API mode prints a REST request template; MCP mode reports its hosted runtime.
 Use `-f <path>` for a different app config target.
 
 Pass `--no-apply` to resolve, validate, and plan the same desired state without
-applying it. The app config and required workspace service additions
+applying it. The app config and required service additions
 are written locally, and every plan whose dependencies are active gets a local
 receipt. When service activation is pending, the workspace receipt is saved and
 app planning waits until workspace apply. No SDK job or download starts. The
 CLI prints the exact remaining commands; for SDKs, completion ends with
-`sdk apply --download`. Re-plan before apply when a saved receipt is stale.
+`app apply --download`. Re-plan before apply when a saved receipt is stale.
 
 Generated SDK init alone handles the typed
 `generation_contract_pin_unavailable` legacy condition. It resolves all
@@ -287,7 +296,7 @@ selected active workspace versions before mutation, prints the exact
 retries the unchanged app plan once. `--no-input` uses the same deterministic
 repair without prompting. Never fabricate a generation pin, substitute the
 runtime contract hash, float to another version, or repeat the repair. API,
-MCP, ordinary `sdk plan`, and unrelated errors remain read-only with respect to
+MCP, ordinary `app plan`, and unrelated errors remain read-only with respect to
 snapshot refresh.
 
 In a terminal, omit the mode to choose one. Omit operation flags to accept all
@@ -316,8 +325,7 @@ automation. Read
 `--bucket` references an existing bucket only. Omitting it preserves Engine
 default-bucket selection; this command never creates a bucket.
 
-For explicit legacy maintenance, `fused-cli workspace services
-refresh-missing-contracts --limit <n>` refreshes a bounded batch of activated
+For explicit legacy maintenance, `fused-cli service refresh-missing-contracts --limit <n>` refreshes a bounded batch of activated
 versions whose runtime snapshot is missing or unpinned. It never runs as an
 implicit workspace-wide fallback. Preserve its Registry-issued generation pin
 exactly and report partial failures instead of widening or replaying the batch.
@@ -345,17 +353,17 @@ evidence for the resources that changed before a later failure. CLI-managed
 config and receipt writes use validated same-directory atomic replacement and
 preserve an existing file's permission mode.
 
-`sdk apply --json` returns explicit apply, Registry-generation, and download
+`app apply --json` returns explicit apply, Registry-generation, and download
 outcomes, including the one-time execution token when one was created. If a
 stage fails, stderr remains the standard structured error envelope and
 `error.details.stage` identifies `apply`, `generation`, or `download`; a
 successful apply's SDK and Version IDs and one-time token are included when a
 later stage failed. Without `--download`, generated-SDK apply returns after
-Engine durably queues a non-runnable build; use `sdk show <name@version-or-version-id>`
+Engine durably queues a non-runnable build; use `app show <name@version-or-version-id>`
 for `generation_status`. With `--download`, CLI polls that exact Version ID on
 Engine and never consumes a Registry stream or replays apply.
-`sdk download` is a distinct visible command, so prefer separate `sdk apply
---json` and `sdk download <name@version> --json` steps when automation needs
+`app download` is a distinct visible command, so prefer separate `app apply
+--json` and `app download <name@version> --json` steps when automation needs
 independent retry boundaries.
 
 An active apply lease returns `plan_apply_in_progress` with HTTP `Retry-After`,
@@ -366,7 +374,7 @@ requires a new plan.
 
 ## Importing a provider API
 
-Registry search and import are separate permissions: `service search --q`
+Registry search and import are separate permissions: `service list --registry --search`
 requires `catalogue.read`; creating or updating a service with `import plan`,
 `import apply`, or `import discover` requires `catalogue.import`; reading an import
 session requires `catalogue.read`. A visible Registry result does not grant
@@ -376,8 +384,8 @@ and follow [reference/access-management.md](reference/access-management.md);
 do not try another credential or grant access automatically.
 
 For agent-readable discovery, pass `--json` to read-only inspection commands.
-Start with `workspace services list --json`; use `service show --json` and
-`service operations --json` when Registry-wide discovery is needed. Paginated
+Start with `service list --json`; use `service show --registry --json` and
+`service operation list --registry --json` when Registry-wide discovery is needed. Paginated
 reads return `items`, `total`, `limit`, and `offset`. Operation lists remain a
 deliberately bounded summary. Fetch one exact contract with `service operation
 show <slug> <operation-name> --version <version> --json`, opting into request
@@ -401,12 +409,12 @@ exact `recovery` command instead of inferring safety from the HTTP status.
 If Registry publication commits but Engine workspace activation fails, apply
 returns `import_workspace_activation_failed` with `phase=workspace_activation`
 and `commit_state=committed`. Treat the import as published, run the pinned
-file-free `workspace service add ... --service-id ... --version ...` recovery,
+file-free `service add ... --service-id ... --version ...` recovery,
 and never replay the import merely because the composite command exited non-zero.
 Engine authentication, authorization, and preflight-audit failures on import
 routes use the same shape before Registry is reached. Authentication recovers
 with `fused-cli login`; permission denial points an authorized workspace owner
-to `fused-cli team access workspace set --help` instead of implying that
+to `fused-cli workspace team access workspace set --help` instead of implying that
 `whoami` can grant access. Transport timeout text never includes the raw Engine
 URL; use the wrapped error only for local logs.
 
@@ -474,7 +482,7 @@ capability must remain visible so Registry/Engine can reject execution with
 remediation; use an Engine version that declares support or publish a contract
 whose execution semantics are actually implemented.
 
-Use `service versions` for bounded browsing and target resolution. Its GraphQL
+Use `service version list --registry` for bounded browsing and target resolution. Its GraphQL
 selection contains only version identity, status, and the execution envelope;
 do not add documentation, authentication, or policy objects to that list path.
 Full version contracts belong only to workflows that actually round-trip them,
@@ -485,7 +493,7 @@ A 2xx apply through Engine also activates the exact imported version in that
 workspace and persists the Registry slug used by later SDK/MCP config. If the
 client receives a proxy timeout or other non-2xx response, do not infer
 activation merely because Registry search can already see the committed row;
-verify with `workspace services list -q <slug>` and use the normal workspace
+verify with `service list -q <slug>` and use the normal workspace
 plan/apply flow to activate it.
 
 ```shell
@@ -635,8 +643,8 @@ Imported authentication and routing metadata also remains provider-owned.
 Operation security requirements are an ordered OR-of-AND structure: each
 `security_requirements` entry is an alternative, while every named scheme
 inside that entry must be satisfied together. An empty alternative explicitly
-allows anonymous access. `service operations` renders that order instead of
-collapsing it to one guessed auth method. `service show` exposes imported
+allows anonymous access. `service operation list --registry` renders that order instead of
+collapsing it to one guessed auth method. `service show --registry` exposes imported
 server variables and a Basic scheme's `basic_password_mode` (`required`,
 `optional`, or `empty`); these describe the provider contract and never carry
 credentials. A missing server-variable default stays missing in CLI transport
@@ -770,7 +778,7 @@ workspace.yaml field. This ordinary example uses `default`:
 ```shell
 fused-cli bucket list
 printf '%s' 'client_id=...;client_secret=...' | \
-  fused-cli secret set jira --bucket default --type oauth --auth-name oauth2 --value-stdin
+  fused-cli bucket credential set jira --bucket default --type oauth --auth-name oauth2 --value-stdin
 ```
 
 (Omit the value and add `-i` to be prompted per field instead.) Always provide
@@ -784,7 +792,7 @@ add one explicitly.
 Start one user's OAuth session (see `fused-bucket`):
 
 ```shell
-fused-cli workspace service connect jira --bucket default \
+fused-cli service connect jira --bucket default \
   --user-ref user_123 \
   --scope read:jira-work --scope write:jira-work --scope offline_access
 ```
@@ -833,8 +841,8 @@ services:
 ```
 
 ```shell
-fused-cli sdk plan
-fused-cli sdk apply --download
+fused-cli app plan
+fused-cli app apply --download
 ```
 
 Call it -- only Fused selectors ever cross the wire, never a raw provider
@@ -848,8 +856,8 @@ await sdk.Jira.issues.getIssue({
 });
 ```
 
-Changing the file to `kind: mcp`, then running `fused-cli mcp plan` and
-`fused-cli mcp apply` (see `fused-mcp`), deploys an Engine-hosted MCP server
+Changing the file to `kind: mcp`, then running `fused-cli app plan` and
+`fused-cli app apply` (see `fused-mcp`), deploys an Engine-hosted MCP server
 against the same bucket rather than generating a package. The
 workspace/bucket/connect steps above do not change.
 
@@ -891,6 +899,6 @@ or `FUSED_EXECUTION_BUILD` variable is needed.
 `--kind sdk`, `--kind mcp`, and `--kind rest` retain their existing output paths.
 Unified App describe currently requires 1 to 16 explicit operations and a
 creation goal. To change an existing Unified App, edit the linked TypeScript
-file and deploy a reviewed new version with `fused-cli unified-app plan/apply`.
-`fused-cli unified-app sync` converts legacy inline source into the canonical
+file and deploy a reviewed new version with `fused-cli app plan/apply`.
+`fused-cli app source extract` converts legacy inline source into the canonical
 TypeScript file and rewrites the YAML to use `source_path`.

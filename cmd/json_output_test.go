@@ -19,7 +19,7 @@ func TestAgentReadCommandsExposeJSON(t *testing.T) {
 	commands := []*cobra.Command{
 		serviceSearchCmd, serviceVersionsCmd, serviceShowCmd, serviceOperationsCmd, serviceOperationShowCmd, serviceWebhooksCmd,
 		workspaceServicesListCmd, workspaceHasCmd, workspaceServiceVersionsCmd, workspaceServiceOperationsCmd, workspaceServiceWebhooksCmd,
-		bucketListCmd, bucketShowCmd, bucketServicesCmd, bucketSecretsCmd, bucketValuesCmd, bucketConnectionsCmd, bucketSDKsCmd,
+		bucketListCmd, bucketShowCmd, bucketServicesCmd, bucketSecretsCmd, bucketConnectionsCmd, bucketSDKsCmd,
 		secretListCmd, valueListCmd, sdkListCmd, sdkVersionsCmd, sdkValidateCmd, sdkShowCmd, sdkServicesCmd, sdkBucketsCmd,
 		sdkActivityCmd, sdkInvokeCmd, mcpListCmd, mcpVersionsCmd, mcpValidateCmd, sdkTokenListCmd, mcpTokenListCmd, workspaceConnectionResourcesListCmd,
 		validateCmd, webhookValidateCmd, whoAmICmd, workspaceAccessListCmd, teamListCmd, teamShowCmd,
@@ -239,6 +239,7 @@ func TestWriteCommandErrorClassifiesCobraUsageFailures(t *testing.T) {
 	}
 }
 
+// TestJSONReadCommandRendersStructuredAPIError verifies that JSON read command renders structured API error.
 func TestJSONReadCommandRendersStructuredAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -257,7 +258,7 @@ func TestJSONReadCommandRendersStructuredAPIError(t *testing.T) {
 	var stdout, cobraErr, rendered bytes.Buffer
 	RootCmd.SetOut(&stdout)
 	RootCmd.SetErr(&cobraErr)
-	RootCmd.SetArgs([]string{"service", "show", "github", "--json"})
+	RootCmd.SetArgs([]string{"service", "show", "--registry", "github", "--json"})
 	executed, commandErr := RootCmd.ExecuteC()
 	if commandErr == nil {
 		t.Fatal("expected service show to fail")

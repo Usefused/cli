@@ -1,6 +1,6 @@
 ---
 name: fused-mcp
-description: "Use when the user wants to deploy or manage an Engine-hosted MCP server using fused-cli mcp and a kind: mcp config, including subscribing to explicitly selected provider webhook events as MCP resources. Trigger on 'MCP server', 'fused-cli mcp', 'kind: mcp', or 'MCP event notification'. For generated SDK packages read fused-sdk instead."
+description: "Use when the user wants to deploy or manage an Engine-hosted MCP server using fused-cli app and a kind: mcp config, including subscribing to explicitly selected provider webhook events as MCP resources. Trigger on 'MCP server', 'MCP app', 'kind: mcp', or 'MCP event notification'. For generated SDK packages read fused-sdk instead."
 ---
 
 # MCP server config
@@ -10,7 +10,7 @@ the `fused-cli` skill's `reference/build-sdk-or-mcp.md` workflow. Use this skill
 for the MCP-specific config and lifecycle once Engine setup, service discovery,
 workspace activation, and credential requirements are understood.
 
-`kind: mcp`, managed by `fused-cli mcp ...`, declares an Engine-hosted runtime.
+`kind: mcp`, managed by `fused-cli app ...`, declares an Engine-hosted runtime.
 It never builds, archives, or downloads a code package. Its config shares service
 selection fields with SDK configs so validation remains consistent where the
 runtime capabilities overlap.
@@ -31,7 +31,7 @@ masked secret collector and bucket permissions as SDK init. Rechecking plans
 the same config again; it never calls the provider. Cancellation stops MCP
 publication, while prior workspace activation or confirmed credential writes
 remain. `--no-input` and CI print readiness guidance and continue without prompts
-or secret writes. Ordinary `mcp plan` remains a read-only readiness report.
+or secret writes. Ordinary `app plan` remains a read-only readiness report.
 
 ```yaml
 apiVersion: fused/v1
@@ -82,7 +82,7 @@ Keep OAuth/OIDC selection to the target `auth.type`/`auth.name`, an optional
 complete-pair `auth.ref`, and sibling service-specific `connect.scopes`. The ref
 resolves the source service/auth name in this MCP server's selected bucket; the
 source need not be selected by the MCP server, but it must be an enabled
-workspace service with that named pair stored in the bucket. MCP readiness,
+service with that named pair stored in the bucket. MCP readiness,
 consent, callback exchange, execution, and managed refresh use the same Engine
 application-credential resolver as SDKs; MCP hosting does not add another
 credential store or decision path. Offer a **Managed service** where Fused provides
@@ -90,7 +90,7 @@ the exact scheme before asking for the user's own client pair. `ref` may name `$
 for a Fused Managed App -- see `fused-bucket`.
 
 For standalone CLI consent, pass the complete reference explicitly with
-`workspace service connect --auth-ref`. That command has no `--mcp` selector
+`service connect --auth-ref`. That command has no `--mcp` selector
 and does not load an MCP app to infer credential routing.
 
 `injections[].value` tags always resolve against *this MCP server's* `bucket:` -- there's no way to name a different bucket here, unlike `kind: webhook`'s `${bucket.<name>.secret.<key>}` (see `fused-webhook`). A value can also merge a tag with surrounding text (e.g. `"Bearer ${bucket.secrets.API_KEY}"`), which a webhook's secret field cannot. Writing a webhook-style named-bucket reference here (e.g. `${bucket.prod.secrets.API_KEY}`) is rejected at dispatch time with an explicit error naming the unsupported reference, rather than one of the three ambient forms above.
@@ -215,12 +215,12 @@ discover or apply. Saved catalogs are private to the importing actor. Bearer
 connections use an existing bucket secret; never pass the provider token to CLI.
 
 ```sh
-fused-cli workspace service mcp discover demo-crm --version 1.0.0 \
+fused-cli service mcp discover demo-crm --version 1.0.0 \
   --url https://mcp.deepwiki.com/mcp --json
 # Review the preview, then use its exact id before it expires.
-fused-cli workspace service mcp apply demo-crm --version 1.0.0 \
+fused-cli service mcp apply demo-crm --version 1.0.0 \
   --draft-id <preview-id>
-fused-cli workspace service mcp show demo-crm --version 1.0.0 \
+fused-cli service mcp show demo-crm --version 1.0.0 \
   --type tools --query structure
 ```
 
@@ -244,7 +244,7 @@ These commands write the config, plan, and apply it. Extension preserves earlier
 selections and infers the next minor version for a changed stable SemVer app;
 repeating the same selection keeps the version. Use `-f <path>` for an explicit
 config, `--no-apply` to save desired state and available receipts for review, or
-`--no-token` to skip issuing an execution token. Existing service versions are
+`--no-token` to skip issuing an execution token. Existing service version list --registry are
 inherited on extend, so there is no need to repeat `--service`.
 
 In a terminal, omit selection flags to search and select endpoints, tools,
@@ -291,17 +291,17 @@ services:
 ```
 
 ```sh
-fused-cli mcp validate -f mcp.yaml
-fused-cli mcp plan -f mcp.yaml
-fused-cli mcp apply -f mcp.yaml
-fused-cli mcp operations repository-docs@1.0.0 --json
+fused-cli app validate -f mcp.yaml
+fused-cli app plan -f mcp.yaml
+fused-cli app apply -f mcp.yaml
+fused-cli app operation list repository-docs@1.0.0 --json
 ```
 
 Engine checks exact revision membership and pins definitions in the immutable app
 version. Refreshing a catalog does not change deployed apps. Imported tools use
 Fused `search_docs` and `execute`; prompts and resources remain native MCP
 capabilities. Restricted execution tokens use the exact capability identities
-returned by `mcp operations`. Provider connections and credentials remain in
+returned by `app operation list`. Provider connections and credentials remain in
 Engine; CLI never executes provider tools during import or selection.
 
 ## Identity, versions, and authentication
@@ -344,7 +344,7 @@ to both. Registry stores no MCP runtime/config/package data.
 ## Commands
 
 This list may be behind the CLI's actual flags/subcommands -- run
-`fused-cli mcp <subcommand> --help` to confirm before relying on one. The
+`fused-cli app <subcommand> --help` to confirm before relying on one. The
 `fused-cli` skill documents init's batched server-variable enrichment.
 `--service` accepts comma-separated selectors or repeated flags; MCP selections
 use canonical `<service>@<version>` to name their exact immutable version.
@@ -352,25 +352,24 @@ use canonical `<service>@<version>` to name their exact immutable version.
 ```shell
 fused-cli init <name> --mcp --description '<LLM-authored capability summary>' --service '<service>[@<version>]' [--operation '<service>=<operationId>'] [--webhook-attachment <name> --events '<service>=<event>[,<event>...]']
 fused-cli extend <name> [--version <new>] [--description '<replacement capability summary>'] --service '<service>[@<version>]' --select-all '<service>'
-fused-cli mcp plan
-fused-cli mcp apply
-fused-cli mcp validate
-fused-cli mcp list
-fused-cli mcp versions [mcp-name-or-id]
-fused-cli mcp operations <mcp-name@version-or-version-id> [--json]
-fused-cli mcp deactivate <mcp-name@version-or-version-id>
-fused-cli mcp token generate <mcp-name-or-id> <token-name> --allow <operation-id> --expires-in 15m --json
-fused-cli mcp token generate <mcp-name-or-id> <token-name> --expires-in 1h \
+fused-cli app plan
+fused-cli app apply
+fused-cli app validate
+fused-cli app list
+fused-cli app versions list [mcp-name-or-id]
+fused-cli app operation list <mcp-name@version-or-version-id> [--json]
+fused-cli app deactivate <mcp-name@version-or-version-id>
+fused-cli app token generate <mcp-name-or-id> <token-name> --allow <operation-id> --expires-in 15m --json
+fused-cli app token generate <mcp-name-or-id> <token-name> --expires-in 1h \
   --fixed-binding '<service-slug>,<auth-name>,<end-user-ref>[,<resource-uuid>]'
-fused-cli mcp token generate <mcp-name-or-id> <token-name> \
+fused-cli app token generate <mcp-name-or-id> <token-name> \
   --fixed-binding 'jira,JiraOAuth,jira-customer-a' \
   --fixed-binding '@google/gmail,GoogleOAuth,google-customer-a'
-fused-cli mcp token list <mcp-name-or-id>
-fused-cli mcp token revoke <mcp-name-or-id> <token-name>
+fused-cli app token list <mcp-name-or-id>
+fused-cli app token revoke <mcp-name-or-id> <token-name>
 ```
 
-The hidden `fused-cli mcp init` compatibility command remains callable for old
-scaffold-only scripts. Prefer top-level init for new onboarding.
+Create MCP apps with `fused-cli init <name> --mcp`; use `app` for management.
 
 Use `init` to create `.fused/mcps/<name>.yaml` without overwriting an existing
 file. Use top-level `extend` to infer MCP mode and add selections in that same file. A changed stable SemVer version advances to its next minor, including under `--no-input`; an idempotent extension keeps the current version. Explicit `--version` overrides inference and is required for prerelease or non-SemVer versions. Other conflicts stop before writing. An empty skeleton is intentionally incomplete
@@ -381,11 +380,11 @@ first visible candidate, and fails without writing when none is visible. An
 explicit `--bucket` remains authoritative. Init never creates a bucket, and
 plan/apply remains the authoritative `bucket.use` check.
 
-`mcp apply` doesn't just validate config -- it stands up (or updates) a
-persistent, named Engine-hosted server with a stable MCP URL. `mcp list` shows
+`app apply` doesn't just validate config -- it stands up (or updates) a
+persistent, named Engine-hosted server with a stable MCP URL. `app list` shows
 each application once by its canonical name and stable MCP ID, with a version
 count, latest published version, and the promoted version's stable transport URLs. Engine groups and paginates applications before returning the page to the CLI.
-Use `mcp versions [mcp-name-or-id]` for immutable version rows, exact Version
+Use `app versions list [mcp-name-or-id]` for immutable version rows, exact Version
 IDs, status, and stable/version-pinned transport URLs. Omit the selector to list
 all versions. Both commands support `--json`, `--limit`, and `--offset`.
 Give new clients the recommended stable Streamable HTTP URL. Use the SSE URL
@@ -397,10 +396,10 @@ recreated. Sibling versions and shared tokens remain. Deactivating the promoted
 version leaves the stable URL unavailable; Engine does not choose a sibling.
 Explicitly apply or reapply the intended sibling to promote it. Deactivation is immediate and
 not gated behind the same SDK-config blocker `fused-workspace` describes for
-removing a workspace service. The CLI currently exposes no MCP deprecate or
+removing a service. The CLI currently exposes no MCP deprecate or
 undeprecate command; do not invent one.
 
-Use `mcp operations <name@version-or-version-id>` when a user needs every
+Use `app operation list <name@version-or-version-id>` when a user needs every
 public `operationId` callable through one immutable MCP version. It expands
 physical `select_all` selections from Engine-local contract snapshots. A bare MCP name is invalid;
 use `--json` when another command or agent needs the MCP/Version IDs, operation
@@ -411,7 +410,7 @@ apply does not reveal it again. Store it immediately. After an Engine database
 reset, Registry cannot restore the MCP or its token; reapply the exact config
 and securely distribute the newly issued token.
 
-`mcp token generate --json` reveals the plaintext once in a structured object
+`app token generate --json` reveals the plaintext once in a structured object
 with exact expiry, allowlist, binding metadata, and creation time. Use JSON for
 automation and store the token immediately. Omit `--expires-in` for
 no expiry; omit `--allow` for the full-access `*` default. Repeat `--allow` or
@@ -423,7 +422,7 @@ slug (bare `service` or provider-qualified `@provider/service`), never its
 internal UUID. Every repeat independently selects its auth name, end-user
 reference, and optional resource UUID. The CLI rejects malformed optional resource UUIDs;
 Engine resolves every slug and rejects duplicate or unavailable service/auth
-bindings atomically. `mcp token list` includes
+bindings atomically. `app token list` includes
 active/expired/revoked status, binding mode, and aggregate execution/session
 counts from retained history; it never reveals token plaintext or hashes.
 
@@ -433,25 +432,25 @@ A new MCP plan requires `app.mcp.create`, `service.read`, and `bucket.read`.
 Planning an update requires `app.mcp.manage` plus the dependency reads. Apply
 requires `app.mcp.create` for a new server or `app.mcp.manage` for an existing
 one, together with `service.consume` for every selected service and `bucket.use`
-for its bucket. `mcp list` and `mcp operations` require `app.mcp.read`, removal requires
+for its bucket. `app list` and `app operation list` require `app.mcp.read`, removal requires
 `app.mcp.manage`, and any execution-token management surface requires
 `app.mcp.tokens.manage`.
 
 For team ownership, preflight the owner and dependencies before planning:
 
 ```shell
-fused-cli team eligible-owners
-fused-cli team build-access <team> --resource service
-fused-cli team build-access <team> --resource bucket
-fused-cli mcp plan --owner-team <team>
+fused-cli workspace team eligible-owners
+fused-cli workspace team build-access <team> --resource service
+fused-cli workspace team build-access <team> --resource bucket
+fused-cli app plan --owner-team <team>
 ```
 
 An authorised administrator can grant only the missing scope:
 
 ```shell
-fused-cli team access service grant <team> <service> use
-fused-cli team access bucket grant <team> <bucket> use
-fused-cli team access app grant <team-slug-or-id> <mcp-id> read|use|manage
+fused-cli workspace team access service grant <team> <service> use
+fused-cli workspace team access bucket grant <team> <bucket> use
+fused-cli workspace team access app grant <team-slug-or-id> <mcp-id> read|use|manage
 ```
 
 Use workspace-wide bucket/app grants only when that audience is intended.
@@ -471,7 +470,7 @@ access bucket grant <bucket-name>` while its secrets remain platform-managed.
 
 ## Calling the running MCP
 
-Use the recommended Streamable HTTP URL returned by `mcp apply` or `mcp list`:
+Use the recommended Streamable HTTP URL returned by `app apply` or `app list`:
 
 ```text
 https://<engine-host>/mcp/<mcp-id>
@@ -524,7 +523,7 @@ capable hosts that `session.get`, `session.set`, and `session.page` are already
 attached inside each script and share state only across execute calls on the
 same connection. A reinitialized connection has fresh state and cannot read
 prior result references. DELETE terminates only that session. Revoke access with
-`fused-cli mcp token revoke`; do not treat session deletion as token revocation.
+`fused-cli app token revoke`; do not treat session deletion as token revocation.
 
 An unavailable Streamable session returns HTTP 404 with a compact recovery
 contract: `recovery_action: reinitialize_connection`,

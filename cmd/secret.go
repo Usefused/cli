@@ -684,6 +684,7 @@ func resolveOptionalBucketID(value string) (string, error) {
 	return resolveExplicitBucketID(value)
 }
 
+// init registers resource-specific flags before the public command tree is assembled.
 func init() {
 	RootCmd.AddCommand(secretCmd)
 	secretCmd.AddCommand(secretSetCmd, secretListCmd, secretDeleteCmd)
@@ -696,7 +697,6 @@ func init() {
 	secretSetCmd.Flags().BoolVarP(&secretSetInteractive, "interactive", "i", false, "Explicitly require authentication prompts (the terminal default)")
 	secretSetCmd.Flags().BoolVar(&secretSetValueStdin, "value-stdin", false, "Read the credential value from stdin")
 	secretSetWebhook.addFlag(secretSetCmd)
-	secretListCmd.Flags().StringVar(&secretListBucketID, "bucket", "", "Bucket name or UUID (required)")
 	addListFlags(secretListCmd, &secretListFlags)
 	secretDeleteCmd.Flags().StringVar(&secretRemoveBucketID, "bucket", "", "Bucket name or UUID; omit to use the default bucket")
 }

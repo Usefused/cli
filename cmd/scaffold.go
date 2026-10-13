@@ -205,11 +205,6 @@ merge services into that file.`
 		command.Flags().StringVar(&opts.description, "description", "", "Human-readable summary naming selected services and capabilities")
 	}
 	addJSONOutputFlag(command)
-	// Resource-scoped app init remains invokable for scripts, but unified init is the only creation path advertised in help.
-	if kind == configfile.KindSDK || kind == configfile.KindMCP {
-		command.Hidden = true
-		command.Long += fmt.Sprintf("\n\nFor new workflows, use 'fused-cli init <app-name> --%s'.", kind)
-	}
 	return command
 }
 
@@ -1181,10 +1176,9 @@ func printScaffoldResult(cmd *cobra.Command, result scaffoldResult) error {
 	return nil
 }
 
+// init registers only workspace scaffolding; app creation belongs to root init.
 func init() {
 	workspaceCmd.AddCommand(newScaffoldCommand(configfile.KindWorkspace))
-	sdkCmd.AddCommand(newScaffoldCommand(configfile.KindSDK))
-	mcpCmd.AddCommand(newScaffoldCommand(configfile.KindMCP))
 }
 
 // mergeMCPFusedIntelligentClassifier prevents extensions from silently changing remote-processing consent.

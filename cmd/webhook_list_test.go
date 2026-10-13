@@ -29,7 +29,7 @@ func TestWebhookListSearchUsesOneEnginePage(t *testing.T) {
 		_, _ = w.Write([]byte(`{"data":{"workspaceWebhookPage":{"total":11,"items":[{"label":"invoice","callback_url":"https://public.example/webhook/invoice","delivery_mode":"direct","signature":"set"}]}}}`))
 	}))
 	defer server.Close()
-	output := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"webhook", "list", "--q", "invoice", "--service-id", "11111111-1111-4111-8111-111111111111", "--limit", "5", "--offset", "10", "--json"})
+	output := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"webhook", "list", "--search", "invoice", "--service", "11111111-1111-4111-8111-111111111111", "--limit", "5", "--offset", "10", "--json"})
 	var page cliapi.WorkspaceWebhookPage
 	// JSON includes filtered totals for automation and preserves canonical Engine destinations.
 	if err := json.Unmarshal([]byte(output), &page); err != nil || calls != 1 || page.Total != 11 || len(page.Items) != 1 || page.Items[0].CallbackURL != "https://public.example/webhook/invoice" {

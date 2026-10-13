@@ -9,12 +9,12 @@ discover or apply. Saved catalogs are private to the importing actor. Bearer
 connections use an existing bucket secret; never pass the provider token to CLI.
 
 ```sh
-fused-cli workspace service mcp discover demo-crm --version 1.0.0 \
+fused-cli service mcp discover demo-crm --version 1.0.0 \
   --url https://mcp.deepwiki.com/mcp --json
 # Review the preview, then use its exact id before it expires.
-fused-cli workspace service mcp apply demo-crm --version 1.0.0 \
+fused-cli service mcp apply demo-crm --version 1.0.0 \
   --draft-id <preview-id>
-fused-cli workspace service mcp show demo-crm --version 1.0.0 \
+fused-cli service mcp show demo-crm --version 1.0.0 \
   --type tools --query structure
 ```
 
@@ -38,7 +38,7 @@ These commands write the config, plan, and apply it. Extension preserves earlier
 selections and infers the next minor version for a changed stable SemVer app;
 repeating the same selection keeps the version. Use `-f <path>` for an explicit
 config, `--no-apply` to save desired state and available receipts for review, or
-`--no-token` to skip issuing an execution token. Existing service versions are
+`--no-token` to skip issuing an execution token. Existing service version list --registry are
 inherited on extend, so there is no need to repeat `--service`.
 
 In a terminal, omit selection flags to search and select endpoints, tools,
@@ -85,15 +85,15 @@ services:
 ```
 
 ```sh
-fused-cli mcp validate -f mcp.yaml
-fused-cli mcp plan -f mcp.yaml
-fused-cli mcp apply -f mcp.yaml
-fused-cli mcp operations repository-docs@1.0.0 --json
+fused-cli app validate -f mcp.yaml
+fused-cli app plan -f mcp.yaml
+fused-cli app apply -f mcp.yaml
+fused-cli app operation list repository-docs@1.0.0 --json
 ```
 
 Engine checks exact revision membership and pins definitions in the immutable app
 version. Refreshing a catalog does not change deployed apps. Imported tools use
 Fused `search_docs` and `execute`; prompts and resources remain native MCP
 capabilities. Restricted execution tokens use the exact capability identities
-returned by `mcp operations`. Provider connections and credentials remain in
+returned by `app operation list`. Provider connections and credentials remain in
 Engine; CLI never executes provider tools during import or selection.

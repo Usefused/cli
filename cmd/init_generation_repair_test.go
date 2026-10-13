@@ -155,7 +155,7 @@ func TestUnifiedInitAPISchemaRefreshesExactVersionAndRetriesOnce(t *testing.T) {
 	command.SetOut(&output)
 	err := createPlanApplyUnifiedInit(command, api.NewClient(server.URL, "test-key"), unifiedInitModeAPI, request, false, false, noOpScaffoldRequirements, defaultTestScaffoldBucket)
 	// The exact refresh and byte-identical retry must finish before one API apply and its public OpenAPI guidance.
-	if err != nil || calls.planCalls != 2 || calls.refreshCalls != 1 || calls.applyCalls != 1 || !strings.Contains(output.String(), "Refreshing immutable REST API OpenAPI snapshot for linear@v1") || !strings.Contains(output.String(), "fused-cli api openapi") || strings.Contains(output.String(), "fused-cli sdk openapi") {
+	if err != nil || calls.planCalls != 2 || calls.refreshCalls != 1 || calls.applyCalls != 1 || !strings.Contains(output.String(), "Refreshing immutable REST API OpenAPI snapshot for linear@v1") || !strings.Contains(output.String(), "fused-cli app openapi") || strings.Contains(output.String(), "fused-cli sdk openapi") {
 		t.Fatalf("error=%v calls=%#v output=%q", err, calls, output.String())
 	}
 }

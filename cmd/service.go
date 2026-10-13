@@ -51,12 +51,13 @@ func runServiceOperations(cmd *cobra.Command, serviceSlug string) error {
 	return nil
 }
 
+// readServiceOperations preserves bounded operation search and exact version filtering.
 func readServiceOperations(cmd *cobra.Command, client *cliapi.Client, serviceID string) ([]cliapi.Integration, error) {
 	if strings.TrimSpace(serviceOperationsQuery) != "" {
 		return client.SearchEndpointsPage(serviceID, serviceOperationsVersion, serviceOperationsQuery, serviceListFlags.pageOptions())
 	}
 	if cmd.Flags().Changed("limit") || cmd.Flags().Changed("offset") {
-		return nil, fmt.Errorf("--limit and --offset require --q for service operations because only endpoint search is paginated server-side")
+		return nil, fmt.Errorf("--limit and --offset require --search for service operations because only endpoint search is paginated server-side")
 	}
 	// Why: The Registry has a full operation-list field but no paginated
 	// operation-list field yet; avoid slicing in the CLI where it would hide
@@ -99,6 +100,7 @@ func formatSecurityRequirement(requirement cliapi.SecurityRequirement) string {
 	return requirement.Scheme + "[" + strings.Join(requirement.Scopes, ",") + "]"
 }
 
+// runServiceWebhooks reads provider definitions separately from workspace ingress registrations.
 func runServiceWebhooks(cmd *cobra.Command, serviceSlug string) error {
 	client, err := getAPIClient()
 	if err != nil {
@@ -142,7 +144,7 @@ type serviceSearchResult struct {
 	ServiceID       string `json:"service_id"`
 	IsOwner         *bool  `json:"is_owner,omitempty"`
 	IsPublic        *bool  `json:"is_public,omitempty"`
-	WorkspaceStatus string `json:"workspace_status"`
+	WorkspaceStatus string `json:"workspace_status,omitempty"`
 }
 
 var serviceSearchCmd = &cobra.Command{
@@ -152,7 +154,7 @@ var serviceSearchCmd = &cobra.Command{
 	RunE: WithTelemetry("cli.service.search", func(cmd *cobra.Command, _ []string) error {
 		query := strings.TrimSpace(serviceSearchQuery)
 		if query == "" {
-			return fmt.Errorf("--q must not be empty")
+			return fmt.Errorf("--search must not be empty")
 		}
 		client, err := getAPIClient()
 		if err != nil {
@@ -162,21 +164,17 @@ var serviceSearchCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		results, err = addWorkspaceStatusToServiceSearch(client, query, results)
-		if err != nil {
-			return err
-		}
 		if wantsJSON(cmd) {
 			return writeJSON(cmd, results)
 		}
 		if len(results) == 0 {
-			fmt.Fprintf(cmd.OutOrStdout(), "No workspace or Registry services found for query %q.\n", query)
+			fmt.Fprintf(cmd.OutOrStdout(), "No Registry services found for query %q.\n", query)
 			return nil
 		}
 		w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 8, 2, ' ', 0)
-		fmt.Fprintln(w, "NAME\tSLUG\tSERVICE_ID\tWORKSPACE")
+		fmt.Fprintln(w, "NAME\tSLUG\tSERVICE_ID")
 		for _, result := range results {
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", result.Name, result.Slug, result.ServiceID, result.WorkspaceStatus)
+			fmt.Fprintf(w, "%s\t%s\t%s\n", result.Name, result.Slug, result.ServiceID)
 		}
 		return w.Flush()
 	}),
@@ -435,13 +433,14 @@ func printServiceVersions(out io.Writer, service string, versions []cliapi.Servi
 	w.Flush()
 }
 
+// init registers resource-specific flags before the public command tree is assembled.
 func init() {
 	RootCmd.AddCommand(serviceCmd)
 	serviceCmd.AddCommand(serviceSearchCmd, serviceVersionsCmd, serviceShowCmd, serviceOperationsCmd, serviceOperationCmd, serviceWebhooksCmd)
 	serviceOperationCmd.AddCommand(serviceOperationShowCmd)
-	serviceSearchCmd.Flags().StringVar(&serviceSearchQuery, "q", "", "Service name or capability to search for")
+	serviceSearchCmd.Flags().StringVar(&serviceSearchQuery, "search", "", "Service name or capability to search for")
 	addJSONOutputFlag(serviceSearchCmd, serviceVersionsCmd, serviceShowCmd, serviceOperationsCmd, serviceOperationShowCmd, serviceWebhooksCmd)
-	serviceOperationsCmd.Flags().StringVar(&serviceOperationsQuery, "q", "", "Search query")
+	serviceOperationsCmd.Flags().StringVar(&serviceOperationsQuery, "search", "", "Search query")
 	serviceOperationsCmd.Flags().StringVar(&serviceOperationsVersion, "version", "", "Service version")
 	addListFlags(serviceOperationsCmd, &serviceListFlags)
 	serviceOperationShowCmd.Flags().StringVar(&serviceOperationVersion, "version", "", "Exact service version (required)")

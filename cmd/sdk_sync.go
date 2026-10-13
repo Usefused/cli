@@ -37,7 +37,7 @@ type sdkSyncRemoteService struct {
 	Injections        []configfile.InjectionConfig
 }
 
-// mergeSDKServicesFromRemote is Task 4's core logic for `sdk sync`
+// mergeSDKServicesFromRemote is Task 4's core logic for `app sync`
 // (engine_workspace_registration_plan.md): full-mirrors one exact Engine app
 // version's selections into cfg.Services. Pure and side-effect-free (no file
 // or network I/O) so it is directly testable, mirroring
@@ -111,11 +111,12 @@ func sdkSyncRemoteByName(remote []sdkSyncRemoteService) (map[string]sdkSyncRemot
 	return remoteByName, nil
 }
 
+// sdkSyncServiceConfigKey keeps resolved services reusable by their canonical config keys.
 func sdkSyncServiceConfigKey(svc sdkSyncRemoteService) (string, error) {
 	if ref := strings.TrimSpace(svc.Ref); ref != "" {
 		return ref, nil
 	}
-	return "", fmt.Errorf("sdk sync missing service slug for service %s", svc.Name)
+	return "", fmt.Errorf("app sync missing service slug for service %s", svc.Name)
 }
 
 // sdkServiceEqual compares the fields sync actually touches. Operations is
@@ -205,13 +206,13 @@ func fetchSDKSyncData(client *api.Client, sdkName, sdkVersion string) (appVersio
 		}
 		service, ok := servicesByID[sel.ServiceID]
 		if !ok {
-			return "", "", nil, fmt.Errorf("sdk sync missing service metadata for service %s", sel.ServiceID)
+			return "", "", nil, fmt.Errorf("app sync missing service metadata for service %s", sel.ServiceID)
 		}
 		ref := strings.TrimSpace(service.ServiceSlug)
 		// Full-mirror removal is destructive, so incomplete remote identity must
 		// fail before merge can mistake a skipped service for a remote deletion.
 		if ref == "" {
-			return "", "", nil, fmt.Errorf("sdk sync missing service slug for service %q (%s)", service.ServiceName, service.ServiceID)
+			return "", "", nil, fmt.Errorf("app sync missing service slug for service %q (%s)", service.ServiceName, service.ServiceID)
 		}
 		remote = append(remote, sdkSyncRemoteService{
 			Name: service.ServiceName, Ref: ref, Version: service.Version,
@@ -224,6 +225,7 @@ func fetchSDKSyncData(client *api.Client, sdkName, sdkVersion string) (appVersio
 	return app.Version, app.TargetLanguage, remote, nil
 }
 
+// validateSDKSyncDefinition rejects unsupported historical definitions before rewriting local intent.
 func validateSDKSyncDefinition(sdkName string, selection api.AppSelection) error {
 	if selection.SchemaVersion == api.AppSelectionSchemaVersion {
 		return nil
@@ -237,7 +239,7 @@ func validateSDKSyncDefinition(sdkName string, selection api.AppSelection) error
 	// operation names alone cannot make a trustworthy config. Re-applying the
 	// original declaration is the only migration that preserves auth, consent
 	// ceilings, and injections.
-	return fmt.Errorf("sdk %q requires definition refresh before sync; run `fused-cli sdk plan` and `fused-cli sdk apply` from its original config, then retry sync", sdkName)
+	return fmt.Errorf("sdk %q requires definition refresh before sync; run `fused-cli app plan` and `fused-cli app apply` from its original config, then retry sync", sdkName)
 }
 
 func sdkSyncInjections(injections []api.InjectionConfig) []configfile.InjectionConfig {

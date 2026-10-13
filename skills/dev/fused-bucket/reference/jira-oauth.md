@@ -8,7 +8,7 @@ fallback bucket. This example uses `default`:
 ```shell
 fused-cli bucket list
 printf '%s' 'client_id=...;client_secret=...' | \
-  fused-cli secret set jira --bucket default --type oauth --auth-name OAuth2 --value-stdin
+  fused-cli bucket credential set jira --bucket default --type oauth --auth-name OAuth2 --value-stdin
 ```
 
 Configure the Engine canonical public URL separately. Engine appends

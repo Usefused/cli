@@ -3,6 +3,8 @@ package api
 // ApplicationSummary contains family-level discovery plus deterministic latest-version presentation metadata.
 type ApplicationSummary struct {
 	AppFamilyID      string           `json:"app_family_id"`
+	Kind             string           `json:"kind"`
+	DeliveryMode     string           `json:"delivery_mode"`
 	Name             string           `json:"name"`
 	VersionCount     int              `json:"version_count"`
 	LatestVersion    string           `json:"latest_version,omitempty"`
@@ -28,7 +30,7 @@ type ApplicationPage struct {
 func (c *Client) ListApplications(kind string, opts PageOptions) (*ApplicationPage, error) {
 	query := `query ApplicationFamilies($kind: String!, $limit: Int!, $offset: Int!) {
   appFamilies(kind: $kind, limit: $limit, offset: $offset) {
-   total items { app_family_id name version_count latest_version latest_version_id stable_version stable_version_id default_transport
+   total items { app_family_id name kind delivery_mode version_count latest_version latest_version_id stable_version stable_version_id default_transport
     transport_urls { streamable_http sse }
    }
   }

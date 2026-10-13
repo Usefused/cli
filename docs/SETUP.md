@@ -39,7 +39,7 @@ You can also configure values directly:
 fused-cli config set engine-url http://localhost:8081
 fused-cli config set api-key "$FUSED_API_KEY"
 fused-cli config list
-fused-cli workspace services list
+fused-cli service list
 ```
 
 If you do not have a Fused deployment yet, use a release from the
@@ -78,12 +78,12 @@ structured error to stderr on failure and exits non-zero.
 
 ```bash
 fused-cli bucket list
-printf '%s' "$GITHUB_TOKEN" | fused-cli secret set github --value-stdin
+printf '%s' "$GITHUB_TOKEN" | fused-cli bucket credential set github --value-stdin
 ```
 
-Use `fused-cli service show <slug> --json` to inspect a service's available
+Use `fused-cli service show --registry <slug> --json` to inspect a service's available
 authentication schemes before setting credentials. OAuth/OIDC app
-credentials use `fused-cli secret set <slug> --bucket <bucket> --type
+credentials use `fused-cli bucket credential set <slug> --bucket <bucket> --type
 oauth|oidc --auth-name <scheme> --value-stdin` with
 `client_id=...;client_secret=...`. They remain
 separate from connected-user tokens and workspace configuration.
@@ -94,9 +94,9 @@ Solo workspaces do not need RBAC setup. Organisation workspaces can inspect and
 manage people, ownership, and access with:
 
 ```bash
-fused-cli team list
-fused-cli user list
-fused-cli team eligible-owners
+fused-cli workspace team list
+fused-cli workspace user list
+fused-cli workspace team eligible-owners
 fused-cli workspace access bucket grant company-credentials
 ```
 

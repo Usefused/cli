@@ -8,7 +8,7 @@ import (
 
 var valueCmd = &cobra.Command{
 	Use:   "value",
-	Short: "Manage workspace bucket values",
+	Short: "Manage non-secret values in a bucket",
 	Args:  cobra.NoArgs,
 	RunE:  requireSubcommand,
 }
@@ -19,7 +19,7 @@ var valueSetCmd = &cobra.Command{
 	Use:   "set <bucket-name-or-id> <service-slug> <location> <key-name> <value>",
 	Short: "Set a non-secret bucket value",
 	Args:  cobra.ExactArgs(5),
-	RunE: WithTelemetry("cli.value.set", func(cmd *cobra.Command, args []string) error {
+	RunE: WithTelemetry("cli.bucket.value.set", func(cmd *cobra.Command, args []string) error {
 		return runValueSet(cmd, args[0], args[1], args[3], args[2], args[4])
 	}),
 }
@@ -28,7 +28,7 @@ var valueListCmd = &cobra.Command{
 	Use:   "list <bucket-name-or-id>",
 	Short: "List non-secret values in a bucket",
 	Args:  cobra.ExactArgs(1),
-	RunE: WithTelemetry("cli.value.list", func(cmd *cobra.Command, args []string) error {
+	RunE: WithTelemetry("cli.bucket.value.list", func(cmd *cobra.Command, args []string) error {
 		return runValueList(cmd, args[0])
 	}),
 }
@@ -37,7 +37,7 @@ var valueDeleteCmd = &cobra.Command{
 	Use:   "delete <bucket-name-or-id> <service-slug> <key-name>",
 	Short: "Delete a non-secret bucket value",
 	Args:  cobra.ExactArgs(3),
-	RunE: WithTelemetry("cli.value.delete", func(cmd *cobra.Command, args []string) error {
+	RunE: WithTelemetry("cli.bucket.value.delete", func(cmd *cobra.Command, args []string) error {
 		return runValueDelete(cmd, args[0], args[1], args[2])
 	}),
 }
@@ -90,6 +90,7 @@ func runValueList(cmd *cobra.Command, bucketID string) error {
 	return nil
 }
 
+// runValueDelete resolves the selected bucket and service before deleting a value.
 func runValueDelete(cmd *cobra.Command, bucketID, serviceSlug, keyName string) error {
 	client, err := getAPIClient()
 	if err != nil {
@@ -114,8 +115,9 @@ func runValueDelete(cmd *cobra.Command, bucketID, serviceSlug, keyName string) e
 	return nil
 }
 
+// init keeps value operations under their owning bucket with no top-level alias.
 func init() {
-	RootCmd.AddCommand(valueCmd)
+	bucketCmd.AddCommand(valueCmd)
 	valueCmd.AddCommand(valueSetCmd, valueListCmd, valueDeleteCmd)
 	addJSONOutputFlag(valueListCmd)
 	addListFlags(valueListCmd, &valueListFlags)

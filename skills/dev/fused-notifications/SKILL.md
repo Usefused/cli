@@ -19,7 +19,7 @@ Engine deployment," never a second workspace living inside this one.
 
 **`workspace_service_removed` / `workspace_version_removed`** -- a
 decision-audit record of something *you* just did. Created only when
-`workspace service delete <slug> --force` or `workspace service version
+`service remove <slug> --force` or `service version
 delete <slug> <v> --force` overrides the default removal blocker
 (see `fused-workspace`) while an SDK/MCP config in this account still
 references what got removed. You already know this happened -- the
@@ -38,7 +38,7 @@ minutes and checks whether the change actually affects this workspace:
   `changed` specifically, which of *those* configs selected the exact
   endpoint that was added/removed/changed -- a config with an explicit
   operation list is never notified about an endpoint it never selected).
-- An **execution policy** change: matched only if this workspace has *no*
+- An **execution policy** change: matched only if this service has *no*
   local execution-policy override for that service/version -- a local
   override already shadows whatever the Registry default just became, so
   the change is moot here.
@@ -176,7 +176,7 @@ user the missing permission (`notification.update`) and workspace resource;
 preserve the notification ID/status needed for an authorised user to finish.
 Never self-grant, switch credentials, broaden scope, or retry with guessed
 authority. An authorised administrator may assign a suitable workspace role
-with `fused-cli team access workspace set <team> <role>`, but the agent must not
+with `fused-cli workspace team access workspace set <team> <role>`, but the agent must not
 run that command unless the user explicitly requests the access change. Read
 the `fused-cli` skill's `reference/access-management.md` for the complete role
 matrix.

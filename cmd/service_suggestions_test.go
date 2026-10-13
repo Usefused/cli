@@ -94,7 +94,7 @@ func TestWorkspaceAddServiceSuggestions(t *testing.T) {
 			}))
 			defer server.Close()
 
-			errText := runCommandInDirExpectError(t, dir, server.URL, []string{"workspace", "service", "add", "google-sheet", "--apply", "--no-input", "-f", path})
+			errText := runCommandInDirExpectError(t, dir, server.URL, []string{"service", "add", "google-sheet", "--apply", "--no-input", "-f", path})
 			// Error text and request counts prove hints are best effort and miss-only.
 			if !strings.Contains(errText, testCase.want) || registryReads != testCase.wantReads {
 				t.Fatalf("error = %q, Registry reads = %d; want %q, %d", errText, registryReads, testCase.want, testCase.wantReads)

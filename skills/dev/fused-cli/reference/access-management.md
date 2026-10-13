@@ -44,14 +44,14 @@ absent, do not claim it is disabled until an authorised caller confirms that;
 the current caller may simply lack `service.read` for it. Registry search is a
 separate discovery surface: it returns owned private services plus visible
 public services, requires `catalogue.read`, and does not grant workspace
-activation or consumption rights. Registry service search currently returns at
+activation or consumption rights. Registry service list --registry currently returns at
 most 20 ranked matches and has no next-page flag.
 
 ## Permissions by process
 
 | Process | Required permissions |
 |---|---|
-| Registry service search | `catalogue.read` |
+| Registry service list --registry | `catalogue.read` |
 | Registry import | `catalogue.import`; import-session reads use `catalogue.read` |
 | Workspace service list/search | `service.read` for each returned service |
 | Workspace service plan | `workspace.read` and `service.manage` for every changed service; `bucket.manage` for bucket changes |
@@ -83,15 +83,15 @@ workspace activation.
 - For attributable human or service access, set the personal key in
   `FUSED_API_KEY`; it takes precedence over `FUSED_LICENSE_KEY`.
 - Never place a personal key in command output, config examples, logs, or OTEL.
-  `user credential issue` is the one command that prints a raw key, once.
+  `workspace user credential issue` is the one command that prints a raw key, once.
 
 ## Discover IDs before mutating
 
 ```shell
-fused-cli team list --search platform
-fused-cli team show <team-slug>
-fused-cli user list --search ada@example.com
-fused-cli user show <email>
+fused-cli workspace team list --search platform
+fused-cli workspace team show <team-slug>
+fused-cli workspace user list --search ada@example.com
+fused-cli workspace user show <email>
 ```
 
 List commands query and paginate on the Engine. Use `--limit` and `--offset`;
@@ -100,23 +100,23 @@ do not fetch every page just to filter locally.
 ## Manage people and membership
 
 ```shell
-fused-cli user create ada@example.com --name "Ada Lovelace"
-fused-cli team member add <team-slug> ada@example.com --role member
-fused-cli team member add <team-slug> manager@example.com --role manager
-fused-cli team member list <team-slug>
-fused-cli team member remove <team-slug> ada@example.com
+fused-cli workspace user create ada@example.com --name "Ada Lovelace"
+fused-cli workspace team member add <team-slug> ada@example.com --role member
+fused-cli workspace team member add <team-slug> manager@example.com --role manager
+fused-cli workspace team member list <team-slug>
+fused-cli workspace team member remove <team-slug> ada@example.com
 
-fused-cli user update ada@example.com --name "Ada L."
-fused-cli user suspend ada@example.com
-fused-cli user reactivate ada@example.com
+fused-cli workspace user update ada@example.com --name "Ada L."
+fused-cli workspace user suspend ada@example.com
+fused-cli workspace user reactivate ada@example.com
 ```
 
 Creating or adding a person does not send an invitation. Issue a personal
 credential when they need to authenticate:
 
 ```shell
-fused-cli user credential issue ada@example.com --name laptop
-fused-cli user credential revoke ada@example.com laptop
+fused-cli workspace user credential issue ada@example.com --name laptop
+fused-cli workspace user credential revoke ada@example.com laptop
 ```
 
 Capture the issued key directly into the intended secret store. It is shown
@@ -125,16 +125,16 @@ once and must not be copied into chat, source control, or telemetry.
 ## Manage team access
 
 ```shell
-fused-cli team create "Platform" --slug platform
-fused-cli team access workspace set platform builder
-fused-cli team access workspace clear platform
+fused-cli workspace team create "Platform" --slug platform
+fused-cli workspace team access workspace set platform builder
+fused-cli workspace team access workspace clear platform
 
-fused-cli team access service grant platform github use
-fused-cli team access service revoke platform github use
-fused-cli team access bucket grant platform <bucket> manage
-fused-cli team access bucket revoke platform <bucket> manage
-fused-cli team access app grant platform <sdk-or-mcp-id> use
-fused-cli team access app revoke platform <sdk-or-mcp-id> use
+fused-cli workspace team access service grant platform github use
+fused-cli workspace team access service revoke platform github use
+fused-cli workspace team access bucket grant platform <bucket> manage
+fused-cli workspace team access bucket revoke platform <bucket> manage
+fused-cli workspace team access app grant platform <app-id> use
+fused-cli workspace team access app revoke platform <app-id> use
 ```
 
 Use only the canonical values exposed by command help:
@@ -157,12 +157,12 @@ servers, and webhook registrations.
 ## Share a resource across the workspace
 
 Use this only for a bucket, SDK, or MCP server intended for everyone in the
-local workspace. SDK and MCP lifecycle commands remain separate. There is no
+local workspace. All app types share the `app` lifecycle commands. There is no
 team ID and no selectable access level: workspace access always means bounded
 `use`, while the owning person or team keeps management of configuration,
 secrets, and tokens.
 
-Generic `team/workspace access app` mutations require the `SDK_ID` or `MCP_ID`
+Generic `workspace team access app` / `workspace access app` mutations require the `APP_ID`
 shown by the corresponding list command. This avoids ambiguity when an SDK and
 MCP server share a name.
 
@@ -170,8 +170,8 @@ MCP server share a name.
 fused-cli workspace access list [--resource bucket|app]
 fused-cli workspace access bucket grant <bucket>
 fused-cli workspace access bucket revoke <bucket>
-fused-cli workspace access app grant <sdk-or-mcp-id>
-fused-cli workspace access app revoke <sdk-or-mcp-id>
+fused-cli workspace access app grant <app-id>
+fused-cli workspace access app revoke <app-id>
 ```
 
 A workspace-shared bucket is eligible when any team builds an SDK or deploys an MCP server, so a
@@ -182,7 +182,7 @@ the SDK or MCP server's own token; sharing does not print, mint, or distribute
 that token. These generic access commands require the stable SDK or MCP ID,
 which also avoids ambiguity when an SDK and MCP server share a display name.
 
-Use `team access ...` instead when only selected teams need the resource or
+Use `workspace team access ...` instead when only selected teams need the resource or
 when a team needs management rights.
 
 ## Choose an owner for SDKs, MCP servers, and webhooks
@@ -192,10 +192,10 @@ by default. Choose a team when that team should own and manage the resource;
 workspace-wide use is a separate binding and never changes the owner:
 
 ```shell
-fused-cli team eligible-owners
-fused-cli team build-access platform --resource service
-fused-cli sdk plan --owner-team <team-slug>
-fused-cli mcp plan --owner-team <team-slug>
+fused-cli workspace team eligible-owners
+fused-cli workspace team build-access platform --resource service
+fused-cli app plan --owner-team <team-slug>
+fused-cli app plan --owner-team <team-slug>
 fused-cli webhook plan --owner-team <team-slug>
 ```
 
@@ -210,9 +210,9 @@ For a team-owned build, verify both ownership eligibility and dependency
 access before planning:
 
 ```shell
-fused-cli team eligible-owners
-fused-cli team build-access <team-slug> --resource service
-fused-cli team build-access <team-slug> --resource bucket
+fused-cli workspace team eligible-owners
+fused-cli workspace team build-access <team-slug> --resource service
+fused-cli workspace team build-access <team-slug> --resource bucket
 ```
 
 If the intended team is not eligible or lacks dependency access, keep the
@@ -223,9 +223,9 @@ When a dependency is missing, an authorised administrator can grant the
 narrowest matching scope rather than changing the team's workspace role:
 
 ```shell
-fused-cli team access service grant <team-slug> <service> use
-fused-cli team access bucket grant <team-slug> <bucket> use
-fused-cli team access app grant <team-slug> <sdk-or-mcp-id> read|use|manage
+fused-cli workspace team access service grant <team-slug> <service> use
+fused-cli workspace team access bucket grant <team-slug> <bucket> use
+fused-cli workspace team access app grant <team-slug> <app-id> read|use|manage
 ```
 
 ## When permission is denied

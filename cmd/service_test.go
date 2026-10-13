@@ -96,7 +96,7 @@ func TestServiceShow_PrintsBareSlugForOwnedService(t *testing.T) {
 	server := newServiceInfoTestServer(t, `{"id":"svc-1","name":"Stripe","slug":"stripe","base_url":"https://api.stripe.com","provider":null,"is_owner":true,"servers":[],"auth_configs":[]}`)
 	defer server.Close()
 
-	out := runCommandInDirOutput(t, dir, server.URL, []string{"service", "show", "stripe"})
+	out := runCommandInDirOutput(t, dir, server.URL, []string{"service", "show", "--registry", "stripe"})
 	if !strings.Contains(out, "slug:\tstripe\n") {
 		t.Fatalf("expected bare slug in output, got %q", out)
 	}
@@ -113,12 +113,13 @@ func TestServiceShow_QualifiesSlugForNonOwnedService(t *testing.T) {
 	server := newServiceInfoTestServer(t, `{"id":"svc-2","name":"Plunk","slug":"plunk","base_url":"https://api.useplunk.com","provider":{"handle":"acme"},"is_owner":false,"servers":[],"auth_configs":[]}`)
 	defer server.Close()
 
-	out := runCommandInDirOutput(t, dir, server.URL, []string{"service", "show", "@acme/plunk"})
+	out := runCommandInDirOutput(t, dir, server.URL, []string{"service", "show", "--registry", "@acme/plunk"})
 	if !strings.Contains(out, "slug:\t@acme/plunk\n") {
 		t.Fatalf("expected provider-qualified slug in output, got %q", out)
 	}
 }
 
+// TestServiceShow_PrintsServerVariablesAndBasicPasswordMode verifies that service show prints server variables and basic password mode.
 func TestServiceShow_PrintsServerVariablesAndBasicPasswordMode(t *testing.T) {
 	server := newServiceInfoTestServer(t, `{
 		"id":"svc-1","name":"Confluence","slug":"confluence","base_url":"https://{your-domain}.atlassian.net",
@@ -131,7 +132,7 @@ func TestServiceShow_PrintsServerVariablesAndBasicPasswordMode(t *testing.T) {
 	}`)
 	defer server.Close()
 
-	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"service", "show", "confluence"})
+	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"service", "show", "--registry", "confluence"})
 	for _, want := range []string{
 		"variable:\tyour-domain\trequired: true\tenum: example,sandbox",
 		"variable:\tapi-version\trequired: false\tdefault: v2",
@@ -143,6 +144,7 @@ func TestServiceShow_PrintsServerVariablesAndBasicPasswordMode(t *testing.T) {
 	}
 }
 
+// TestServiceShowJSONReturnsReusableSlugAndAuthMetadata verifies that service show JSON returns reusable slug and auth metadata.
 func TestServiceShowJSONReturnsReusableSlugAndAuthMetadata(t *testing.T) {
 	server := newServiceInfoTestServer(t, `{
 		"id":"svc-2","name":"Payments","description":"Payment APIs","slug":"payments","base_url":"https://api.example.test",
@@ -151,7 +153,7 @@ func TestServiceShowJSONReturnsReusableSlugAndAuthMetadata(t *testing.T) {
 	}`)
 	defer server.Close()
 
-	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"service", "show", "@acme/payments", "--json"})
+	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"service", "show", "--registry", "@acme/payments", "--json"})
 	var result serviceShowResult
 	if err := json.Unmarshal([]byte(out), &result); err != nil {
 		t.Fatalf("decode output %q: %v", out, err)
@@ -161,6 +163,7 @@ func TestServiceShowJSONReturnsReusableSlugAndAuthMetadata(t *testing.T) {
 	}
 }
 
+// TestServiceOperationsJSONIncludesDescriptionAndSecurity verifies that service operations JSON includes description and security.
 func TestServiceOperationsJSONIncludesDescriptionAndSecurity(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
@@ -180,7 +183,7 @@ func TestServiceOperationsJSONIncludesDescriptionAndSecurity(t *testing.T) {
 	}))
 	defer server.Close()
 
-	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"service", "operations", "payments", "--version", "v2", "--q", "create", "--json"})
+	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"service", "operation", "list", "--registry", "payments", "--version", "v2", "--search", "create", "--json"})
 	var operations []api.Integration
 	if err := json.Unmarshal([]byte(out), &operations); err != nil {
 		t.Fatalf("decode output %q: %v", out, err)
@@ -190,6 +193,7 @@ func TestServiceOperationsJSONIncludesDescriptionAndSecurity(t *testing.T) {
 	}
 }
 
+// TestServiceOperationShowJSONIncludesRequestedContracts verifies that service operation show JSON includes requested contracts.
 func TestServiceOperationShowJSONIncludesRequestedContracts(t *testing.T) {
 	serviceOperationVersion = ""
 	serviceOperationIncludeRequest, serviceOperationIncludeResponses = false, false
@@ -224,7 +228,7 @@ func TestServiceOperationShowJSONIncludesRequestedContracts(t *testing.T) {
 	}))
 	defer server.Close()
 
-	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"service", "operation", "show", "payments", "createPayment", "--version", "v2", "--json", "--include-request", "--include-responses"})
+	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"service", "operation", "show", "--registry", "payments", "createPayment", "--version", "v2", "--json", "--include-request", "--include-responses"})
 	var detail api.ServiceOperationDetail
 	if err := json.Unmarshal([]byte(out), &detail); err != nil {
 		t.Fatalf("decode output %q: %v", out, err)
@@ -248,6 +252,7 @@ func TestFormatSecurityRequirementsPreservesAlternativeAndSchemeOrder(t *testing
 	}
 }
 
+// TestServiceSearch_PrintsReusableAccountScopedSlugs verifies that service search prints reusable account scoped slugs.
 func TestServiceSearch_PrintsReusableAccountScopedSlugs(t *testing.T) {
 	dir := t.TempDir()
 	server := newServiceSearchTestServer(t, `[
@@ -256,7 +261,7 @@ func TestServiceSearch_PrintsReusableAccountScopedSlugs(t *testing.T) {
 	]`)
 	defer server.Close()
 
-	out := runCommandInDirOutput(t, dir, server.URL, []string{"service", "search", "--q", "billing"})
+	out := runCommandInDirOutput(t, dir, server.URL, []string{"service", "list", "--registry", "--search", "billing"})
 	if !strings.Contains(out, "Billing API") || !strings.Contains(out, "billing") {
 		t.Fatalf("expected owned service with bare slug, got %q", out)
 	}
@@ -265,6 +270,7 @@ func TestServiceSearch_PrintsReusableAccountScopedSlugs(t *testing.T) {
 	}
 }
 
+// TestServiceSearch_JSONHasStableReusableFields verifies that service search JSON has stable reusable fields.
 func TestServiceSearch_JSONHasStableReusableFields(t *testing.T) {
 	dir := t.TempDir()
 	server := newServiceSearchTestServer(t, `[
@@ -272,17 +278,18 @@ func TestServiceSearch_JSONHasStableReusableFields(t *testing.T) {
 	]`)
 	defer server.Close()
 
-	out := runCommandInDirOutput(t, dir, server.URL, []string{"service", "search", "--q", "billing", "--json"})
+	out := runCommandInDirOutput(t, dir, server.URL, []string{"service", "list", "--registry", "--search", "billing", "--json"})
 	var results []serviceSearchResult
 	if err := json.Unmarshal([]byte(out), &results); err != nil {
 		t.Fatalf("decode JSON output: %v\n%s", err, out)
 	}
-	if len(results) != 1 || results[0].Slug != "@acme/billing" || results[0].ServiceID != "svc-public" || results[0].IsPublic == nil || !*results[0].IsPublic || results[0].WorkspaceStatus != serviceWorkspaceAvailable {
+	if len(results) != 1 || results[0].Slug != "@acme/billing" || results[0].ServiceID != "svc-public" || results[0].IsPublic == nil || !*results[0].IsPublic || results[0].WorkspaceStatus != "" {
 		t.Fatalf("unexpected search output: %#v", results)
 	}
 }
 
-func TestServiceSearchShowsEnabledAndAvailableRegistryServices(t *testing.T) {
+// TestRegistrySearchReturnsVisibleCatalogServices verifies that registry search returns visible catalog services.
+func TestRegistrySearchReturnsVisibleCatalogServices(t *testing.T) {
 	dir := t.TempDir()
 	server, _ := newWorkspaceServiceDiscoveryServer(t, `[
 		{"service_id":"svc-owned","service_name":"Billing API","service_slug":"billing"}
@@ -292,31 +299,29 @@ func TestServiceSearchShowsEnabledAndAvailableRegistryServices(t *testing.T) {
 	]`)
 	defer server.Close()
 
-	out := runCommandInDirOutput(t, dir, server.URL, []string{"service", "search", "--q", "billing"})
-	if !strings.Contains(out, "Billing API") || !strings.Contains(out, serviceWorkspaceEnabled) {
+	out := runCommandInDirOutput(t, dir, server.URL, []string{"service", "list", "--registry", "--search", "billing"})
+	if !strings.Contains(out, "Billing API") {
 		t.Fatalf("expected enabled workspace result, got %q", out)
 	}
-	if !strings.Contains(out, "@acme/billing") || !strings.Contains(out, serviceWorkspaceAvailable) {
+	if !strings.Contains(out, "@acme/billing") {
 		t.Fatalf("expected Registry result available to add, got %q", out)
-	}
-	if strings.Index(out, "Billing API") > strings.Index(out, "Acme Billing") {
-		t.Fatalf("enabled workspace result should be listed first, got %q", out)
 	}
 }
 
-func TestServiceSearchIncludesExactWorkspaceOnlyResult(t *testing.T) {
+// TestRegistrySearchExcludesWorkspaceOnlyResults verifies that registry search excludes workspace only results.
+func TestRegistrySearchExcludesWorkspaceOnlyResults(t *testing.T) {
 	dir := t.TempDir()
 	server, _ := newWorkspaceServiceDiscoveryServer(t, `[
 		{"service_id":"svc-workspace","service_name":"Private Billing","service_slug":"private-billing"}
 	]`, `[]`)
 	defer server.Close()
 
-	out := runCommandInDirOutput(t, dir, server.URL, []string{"service", "search", "--q", "private-billing", "--json"})
+	out := runCommandInDirOutput(t, dir, server.URL, []string{"service", "list", "--registry", "--search", "private-billing", "--json"})
 	var results []serviceSearchResult
 	if err := json.Unmarshal([]byte(out), &results); err != nil {
 		t.Fatalf("decode combined search output: %v\n%s", err, out)
 	}
-	if len(results) != 1 || results[0].ServiceID != "svc-workspace" || results[0].WorkspaceStatus != serviceWorkspaceEnabled {
+	if len(results) != 0 {
 		t.Fatalf("unexpected workspace-only result: %#v", results)
 	}
 	if strings.Contains(out, `"is_owner"`) || strings.Contains(out, `"is_public"`) {
@@ -324,6 +329,7 @@ func TestServiceSearchIncludesExactWorkspaceOnlyResult(t *testing.T) {
 	}
 }
 
+// TestServiceSearchKeepsProviderCollisionsDistinct verifies that service search keeps provider collisions distinct.
 func TestServiceSearchKeepsProviderCollisionsDistinct(t *testing.T) {
 	dir := t.TempDir()
 	server, _ := newWorkspaceServiceDiscoveryServer(t, `[
@@ -333,17 +339,18 @@ func TestServiceSearchKeepsProviderCollisionsDistinct(t *testing.T) {
 	]`)
 	defer server.Close()
 
-	out := runCommandInDirOutput(t, dir, server.URL, []string{"service", "search", "--q", "@other/billing", "--json"})
+	out := runCommandInDirOutput(t, dir, server.URL, []string{"service", "list", "--registry", "--search", "@other/billing", "--json"})
 	var results []serviceSearchResult
 	if err := json.Unmarshal([]byte(out), &results); err != nil {
 		t.Fatal(err)
 	}
-	if len(results) != 1 || results[0].ServiceID != "svc-other" || results[0].WorkspaceStatus != serviceWorkspaceAvailable {
+	if len(results) != 1 || results[0].ServiceID != "svc-other" || results[0].WorkspaceStatus != "" {
 		t.Fatalf("provider collision contaminated search results: %#v", results)
 	}
 }
 
-func TestServiceSearchStopsWhenWorkspaceStatusIsUnauthorized(t *testing.T) {
+// TestRegistrySearchDoesNotRequireWorkspacePermission verifies that registry search does not require workspace permission.
+func TestRegistrySearchDoesNotRequireWorkspacePermission(t *testing.T) {
 	dir := t.TempDir()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -355,26 +362,28 @@ func TestServiceSearchStopsWhenWorkspaceStatusIsUnauthorized(t *testing.T) {
 	}))
 	defer server.Close()
 
-	errText := runCommandInDirExpectError(t, dir, server.URL, []string{"service", "search", "--q", "billing"})
-	if !strings.Contains(strings.ToLower(errText), "forbidden") && !strings.Contains(errText, "403") {
-		t.Fatalf("expected workspace permission failure, got %q", errText)
+	out := runCommandInDirOutput(t, dir, server.URL, []string{"service", "list", "--registry", "--search", "billing"})
+	if !strings.Contains(out, "@acme/billing") {
+		t.Fatalf("Registry result should not depend on workspace access: %q", out)
 	}
 }
 
-func TestServiceSearchReportsEmptyCombinedResult(t *testing.T) {
+// TestRegistrySearchReportsEmptyResult verifies that registry search reports empty result.
+func TestRegistrySearchReportsEmptyResult(t *testing.T) {
 	server := newServiceSearchTestServer(t, `[]`)
 	defer server.Close()
-	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"service", "search", "--q", "billing"})
-	if !strings.Contains(out, `No workspace or Registry services found for query "billing".`) {
+	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"service", "list", "--registry", "--search", "billing"})
+	if !strings.Contains(out, `No Registry services found for query "billing".`) {
 		t.Fatalf("unexpected empty result message %q", out)
 	}
 }
 
+// TestServiceSearch_RejectsEmptyQuery verifies that service search rejects empty query.
 func TestServiceSearch_RejectsEmptyQuery(t *testing.T) {
 	dir := t.TempDir()
 	serviceSearchQuery = ""
-	errText := runCommandInDirExpectError(t, dir, "http://127.0.0.1:1", []string{"service", "search", "--q", "   "})
-	if !strings.Contains(errText, "--q must not be empty") {
+	errText := runCommandInDirExpectError(t, dir, "http://127.0.0.1:1", []string{"service", "list", "--registry", "--search", "   "})
+	if !strings.Contains(errText, "--search is required with --registry") {
 		t.Fatalf("expected empty-query error, got %q", errText)
 	}
 }

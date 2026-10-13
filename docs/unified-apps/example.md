@@ -28,11 +28,11 @@ sends its source to Fused for compilation, plans the App, saves
 the plan. A successful run prints the App ID and one-time execution token.
 `describe` requires terminal review; it cannot run unattended in CI. To
 change the App later, edit that saved config, increase the version, and run
-`unified-app plan` and `unified-app apply` with its path:
+`app plan` and `app apply` with its path:
 
 ```bash
-fused-cli unified-app plan -f .fused/unified_app/customer-onboarding.yaml
-fused-cli unified-app apply -f .fused/unified_app/customer-onboarding.yaml
+fused-cli app plan -f .fused/unified_app/customer-onboarding.yaml
+fused-cli app apply -f .fused/unified_app/customer-onboarding.yaml
 ```
 
 `describe --update` does not update Unified Apps.
@@ -78,8 +78,8 @@ export default buildUnifiedApp({
 `source_path` is relative to the YAML file. You can edit and lint the `.tsx`
 file directly. Omit `language` and `generate`; Unified Apps always use
 TypeScript and do not generate an SDK package. For an older inline `source: |`
-config, `fused-cli unified-app sync -f <config.yaml>` creates the `.tsx` file and
-replaces the inline block with `source_path`. `unified-app plan` also performs this
+config, `fused-cli app source extract -f <config.yaml>` creates the `.tsx` file and
+replaces the inline block with `source_path`. `app plan` also performs this
 conversion before planning. An existing file with different contents causes
 an error instead of being overwritten.
 
@@ -91,23 +91,24 @@ an error instead of being overwritten.
 Run these commands from the directory containing `.fused/`:
 
 ```bash
-fused-cli unified-app plan -f .fused/unified_app/customer-app.yaml --json
-fused-cli unified-app apply -f .fused/unified_app/customer-app.yaml --json
+fused-cli app plan -f .fused/unified_app/customer-app.yaml --json
+fused-cli app apply -f .fused/unified_app/customer-app.yaml --json
 ```
 
-`unified-app plan` reads the linked TypeScript and sends its bytes and selected operations to the
-Fused, where the TypeScript is validated and compiled. `unified-app apply`
+`app plan` reads the linked TypeScript and sends its bytes and selected operations to the
+Fused, where the TypeScript is validated and compiled. `app apply`
 uses that plan to host the compiled bundle and activate the App. There is no
 local `tsc` step or separate `.ts` upload command. Save the returned App ID and
 one-time family execution token securely.
 
 ## Execute the deployed App
 
-Call the Fused REST route used for both SDK apps and Unified Apps. Use the
-version's App ID (a UUID), not its name, in the URL:
+Use the `execution_url` returned by apply. Unified Apps default to their app
+name in this URL; the family UUID remains supported. URL-encode the name as one
+path segment. Both forms follow the version currently receiving traffic.
 
 ```bash
-BASE="$FUSED_ENGINE_URL/v1/apps/$FUSED_APP_ID/executions"
+BASE="$FUSED_ENGINE_URL/v1/apps/$FUSED_APP_NAME_ENCODED/executions"
 curl -H "Authorization: Bearer $FUSED_APP_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"operation":"execute","input":{"name":"Jane"}}' "$BASE"
@@ -168,7 +169,7 @@ A Unified App needs at least one explicit selected operation. `select_all`
 is invalid for this kind. A source change needs a new
 immutable version; only one version in the App family receives new traffic.
 `source_path` uses Fused compilation. `bundle_digest` is for code compiled
-separately and uploaded with `unified-app bundle attach`; use one or the other.
+separately and uploaded with `app bundle attach`; use one or the other.
 Source is limited to 256 KiB, and authored imports are limited to
 `@fused/unified-app`, `@fused/operations`, `zod`, and `zod/mini`.
 

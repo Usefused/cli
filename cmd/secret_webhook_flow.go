@@ -158,7 +158,7 @@ func reuseWebhookRegistration(cmd *cobra.Command, client *api.Client, serviceSlu
 }
 
 // printReusedWebhookURL reconstructs the full display URL from the opaque slug,
-// matching `workspace service <slug> webhooks` and apply output.
+// matching `webhook list --service <slug>` and apply output.
 func printReusedWebhookURL(client *api.Client, serviceSlug string, w api.WorkspaceWebhook) {
 	fmt.Printf("Using webhook %q: %s\n", w.Label, appliedWebhookURL(client.BaseURL, api.AppliedWebhookConfig{ServiceKey: serviceSlug, Label: w.Label, Slug: w.Slug}))
 }

@@ -8,6 +8,7 @@ import (
 	"testing"
 )
 
+// TestSDKPlanOwnerTeamFlagUsesPlanMetadataContract verifies that SDK plan owner team flag uses plan metadata contract.
 func TestSDKPlanOwnerTeamFlagUsesPlanMetadataContract(t *testing.T) {
 	sdkPlanOwnerTeam = ""
 	t.Cleanup(func() {
@@ -39,7 +40,7 @@ services:
 	}))
 	defer server.Close()
 
-	out := runCommandInDirOutput(t, dir, server.URL, []string{"sdk", "plan", "-f", path, "--owner-team", ownerTeamSlug})
+	out := runCommandInDirOutput(t, dir, server.URL, []string{"app", "plan", "-f", path, "--owner-team", ownerTeamSlug})
 	if request["owner_team"] != ownerTeamSlug || !strings.Contains(out, "Plan created") {
 		t.Fatalf("request/output = %#v / %q", request, out)
 	}

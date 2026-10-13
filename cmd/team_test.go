@@ -26,7 +26,7 @@ func TestTeamListUsesPagedEngineContract(t *testing.T) {
 	}))
 	defer server.Close()
 
-	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"team", "list", "--search", "pay", "--include-archived", "--limit", "5", "--offset", "2"})
+	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"workspace", "team", "list", "--search", "pay", "--include-archived", "--limit", "5", "--offset", "2"})
 
 	if !strings.Contains(request.Query, "teams(search: $search") || request.Variables["search"] != "pay" || request.Variables["includeArchived"] != true {
 		t.Fatalf("unexpected team list request: %#v", request)
@@ -52,10 +52,10 @@ func TestTeamAccessCommandsUseProductLanguageAndExactEnums(t *testing.T) {
 	}))
 	defer server.Close()
 
-	runCommandInDir(t, t.TempDir(), server.URL, []string{"team", "access", "workspace", "set", "team-1", "builder"})
-	runCommandInDir(t, t.TempDir(), server.URL, []string{"team", "access", "workspace", "clear", "team-1"})
-	runCommandInDir(t, t.TempDir(), server.URL, []string{"team", "access", "service", "grant", "team-1", "service-1", "use"})
-	runCommandInDir(t, t.TempDir(), server.URL, []string{"team", "access", "bucket", "revoke", "team-1", "bucket-1", "manage"})
+	runCommandInDir(t, t.TempDir(), server.URL, []string{"workspace", "team", "access", "workspace", "set", "team-1", "builder"})
+	runCommandInDir(t, t.TempDir(), server.URL, []string{"workspace", "team", "access", "workspace", "clear", "team-1"})
+	runCommandInDir(t, t.TempDir(), server.URL, []string{"workspace", "team", "access", "service", "grant", "team-1", "service-1", "use"})
+	runCommandInDir(t, t.TempDir(), server.URL, []string{"workspace", "team", "access", "bucket", "revoke", "team-1", "bucket-1", "manage"})
 
 	if len(requests) != 4 {
 		t.Fatalf("request count = %d, want 4", len(requests))
@@ -75,7 +75,7 @@ func TestTeamAccessCommandsUseProductLanguageAndExactEnums(t *testing.T) {
 }
 
 func TestTeamUpdateRequiresAChangedField(t *testing.T) {
-	message := runCommandInDirExpectError(t, t.TempDir(), "http://unused.invalid", []string{"team", "update", "team-1"})
+	message := runCommandInDirExpectError(t, t.TempDir(), "http://unused.invalid", []string{"workspace", "team", "update", "team-1"})
 	if !strings.Contains(message, "provide at least one") {
 		t.Fatalf("unexpected error: %q", message)
 	}
@@ -97,7 +97,7 @@ func TestNormalizeTeamRoles(t *testing.T) {
 	if got, err := normalizeAppAccessLevel("use"); err != nil || got != "USER" {
 		t.Fatalf("normalizeAppAccessLevel(use) = %q, %v", got, err)
 	}
-	for _, legacy := range []string{"user", "manager"} {
+	for _, legacy := range []string{"workspace", "user", "manager"} {
 		if _, err := normalizeAccessLevel(legacy); err == nil {
 			t.Errorf("legacy service access level %q was accepted", legacy)
 		}
@@ -125,7 +125,7 @@ func TestNoOpTeamAccessDoesNotEmitAppliedChangeAudit(t *testing.T) {
 	otel.SetTracerProvider(provider)
 	t.Cleanup(func() { otel.SetTracerProvider(previousProvider) })
 
-	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"team", "access", "service", "grant", "team-1", "service-1", "use"})
+	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"workspace", "team", "access", "service", "grant", "team-1", "service-1", "use"})
 	if !strings.Contains(out, "already up to date") {
 		t.Fatalf("no-op output = %q", out)
 	}
@@ -146,8 +146,8 @@ func TestTeamAppAccessCanShareOneFamilyWithTwoTeams(t *testing.T) {
 	}))
 	defer server.Close()
 
-	runCommandInDir(t, t.TempDir(), server.URL, []string{"team", "access", "app", "grant", "platform", "support", "read"})
-	runCommandInDir(t, t.TempDir(), server.URL, []string{"team", "access", "app", "grant", "support", "support", "manage"})
+	runCommandInDir(t, t.TempDir(), server.URL, []string{"workspace", "team", "access", "app", "grant", "platform", "support", "read"})
+	runCommandInDir(t, t.TempDir(), server.URL, []string{"workspace", "team", "access", "app", "grant", "support", "support", "manage"})
 
 	if len(requests) != 2 {
 		t.Fatalf("request count = %d, want 2", len(requests))
@@ -187,7 +187,7 @@ func TestTeamBuildAccessShowsOnlySelectorResults(t *testing.T) {
 	}))
 	defer server.Close()
 
-	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"team", "build-access", "team-1", "--resource", "bucket", "--search", "prod", "--limit", "5"})
+	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"workspace", "team", "build-access", "team-1", "--resource", "bucket", "--search", "prod", "--limit", "5"})
 	for _, want := range []string{"Production", "bucket-1"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output %q does not contain %q", out, want)
@@ -208,7 +208,7 @@ func TestTeamEligibleOwnersUsesNarrowBuilderContract(t *testing.T) {
 	}))
 	defer server.Close()
 
-	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"team", "eligible-owners", "--search", "sup", "--limit", "5"})
+	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"workspace", "team", "eligible-owners", "--search", "sup", "--limit", "5"})
 	for _, want := range []string{"Support", "support", "team-1"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output %q does not contain %q", out, want)

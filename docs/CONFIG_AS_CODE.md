@@ -1,6 +1,6 @@
 # Config as code
 
-Fused can manage workspace services, Unified Apps, Apps with SDK, MCP, and
+Fused can manage services, Unified Apps, Apps with SDK, MCP, and
 REST delivery, and webhook registrations through YAML stored under `.fused/`.
 
 ## Create or extend a config
@@ -53,20 +53,19 @@ and require explicit selections for each service: `--operation`, `--select-all`,
 or imported capability flags such as `--mcp-tool` for standalone MCP apps. Top-level init does not support `--json`.
 
 Use `--no-apply` on init or extend when only preparing files for later review.
-The CLI still resolves concrete service versions, operation selections,
+The CLI still resolves concrete service version list --registry, operation selections,
 buckets, and required local workspace additions, then writes semantically
 validated config and saves available plan receipts. It does not apply Fused
-state, generate an SDK, or download a package. If a missing workspace service
+state, generate an SDK, or download a package. If a missing service
 prevents the app plan, the workspace plan is saved first and app planning is
 listed after workspace apply. Otherwise the app receipt is ready for apply.
 The command prints the exact remaining commands; generated SDKs finish with
-`sdk apply --download`. A stale receipt is handled by rerunning its plan
+`app apply --download`. A stale receipt is handled by rerunning its plan
 command before apply.
 
-`fused-cli init <name> --api` uses the same `kind: sdk` execution resource with
+`fused-cli init <name> --rest` uses the same `kind: sdk` execution resource with
 `generate: false`, then prints a central Fused REST request template instead of
-downloading a package. The hidden `sdk init` and `mcp init` compatibility
-commands remain callable for scripts that only need the older scaffold flow.
+downloading a package. Use `init <name> --sdk` or `init <name> --mcp` for creation and `extend` for additions.
 
 SDK and MCP validation becomes actionable after each declared service has an
 explicit capability selection. MCP services may select imported tools, prompts,
@@ -78,7 +77,7 @@ A service-bearing top-level init or extend adds only missing required
 server-variable bindings; explicit injections, workspace policy, and native
 `x-fused-connect` routing are preserved. Empty SDK scaffolds and MCP init retain
 JSON scaffold output with `generated_binding_count`; use each key written into
-the config with `fused-cli value set`. The `fused-config` OpenAPI/Postman
+the config with `fused-cli bucket value set`. The `fused-config` OpenAPI/Postman
 reference contains the single canonical Sendbird setup example and routing
 safety rules.
 
@@ -88,15 +87,15 @@ A Unified App is a distinct `kind: unified_app` resource. Its config selects
 explicit workspace operations and links one TypeScript `source_path` export using
 `buildUnifiedApp({ input, output, execute, fetch? })`. Input and output use
 Zod. The CLI reads the `.tsx` file and sends its bytes to Fused, which
-compiles them during `unified-app plan` and publishes the bundle during
-`unified-app apply`. `unified-app sync` moves legacy inline `source: |` into a `.tsx`
+compiles them during `app plan` and publishes the bundle during
+`app apply`. `app source extract` moves legacy inline `source: |` into a `.tsx`
 file and updates the YAML. `language` and `generate` are unnecessary here.
 
 Store the config and source under `.fused/unified_app/` and run:
 
 ```bash
-fused-cli unified-app plan -f .fused/unified_app/customer-app.yaml --json
-fused-cli unified-app apply -f .fused/unified_app/customer-app.yaml --json
+fused-cli app plan -f .fused/unified_app/customer-app.yaml --json
+fused-cli app apply -f .fused/unified_app/customer-app.yaml --json
 ```
 
 Fused returns the immutable App version ID and shows its family execution
@@ -154,7 +153,7 @@ services:
     operations: [listCustomers, getCustomer]
 ```
 
-Run `fused-cli sdk plan` and `fused-cli sdk apply --download`. Apply returns one
+Run `fused-cli app plan` and `fused-cli app apply --download`. Apply returns one
 App ID and token plus Fused-owned MCP URLs. The MCP route becomes callable
 when package generation completes. This App uses both the SDK and MCP family
 allowances. A successor version keeps the same family identity and can change
@@ -170,14 +169,14 @@ Operation values are OpenAPI `operationId`s for the selected version. Browse
 and update selections with:
 
 ```bash
-fused-cli sdk service add okta -f .fused/sdks/my-sdk.yaml --version 2026-07-09
-fused-cli workspace service operations okta --version 2026-07-09 --json
-fused-cli sdk operation add okta listLogEvents getUser -f .fused/sdks/my-sdk.yaml
-fused-cli sdk plan -f .fused/sdks/my-sdk.yaml --json
+fused-cli app service add okta -f .fused/sdks/my-sdk.yaml --version 2026-07-09
+fused-cli service operation list okta --version 2026-07-09 --json
+fused-cli app operation add okta listLogEvents getUser -f .fused/sdks/my-sdk.yaml
+fused-cli app plan -f .fused/sdks/my-sdk.yaml --json
 ```
 
-`sdk plan` performs the same local validation first, before its Fused request.
-The standalone `sdk validate` command remains available for offline-only checks.
+`app plan` performs the same local validation first, before its Fused request.
+The standalone `app validate` command remains available for offline-only checks.
 
 ## Workspace configuration
 
@@ -221,7 +220,7 @@ version during planning and records its exact identity.
 Each version entry can carry `public`, `execution_policy`, and
 `connection_profiles` overrides. Credentials, including OAuth/OIDC application
 `client_id`/`client_secret` pairs, do not belong in workspace YAML; use
-`secret set`.
+`bucket credential set`.
 
 ## Plan and apply
 
@@ -229,8 +228,8 @@ Each version entry can carry `public`, `execution_policy`, and
 fused-cli workspace plan
 fused-cli workspace apply
 
-fused-cli sdk plan -f .fused/sdks/my-sdk.yaml
-fused-cli sdk apply -f .fused/sdks/my-sdk.yaml --json
+fused-cli app plan -f .fused/sdks/my-sdk.yaml
+fused-cli app apply -f .fused/sdks/my-sdk.yaml --json
 ```
 
 Generated-SDK apply returns once Fused has atomically stored the app, token,
@@ -239,7 +238,7 @@ and queued package job. The app remains non-runnable while
 generation completes. Add `--download` when the same command should wait by
 exact Version ID and fetch the package.
 
-For terminal setup, `fused-cli sdk plan -f .fused/sdks/my-sdk.yaml` securely
+For terminal setup, `fused-cli app plan -f .fused/sdks/my-sdk.yaml` securely
 fills only credentials Fused reports missing from that file's resolved
 `bucket`, confirms the immediate bucket write, and retries once. Declining
 keeps the valid plan, and the app can still be published. It never creates or
@@ -264,7 +263,7 @@ fused-cli workspace sync --file .fused/services/payments.yaml
 fused-cli workspace sync --service stripe
 fused-cli workspace sync --service stripe@v1,github@v3 --file .fused/services/payments.yaml
 fused-cli workspace sync --all
-fused-cli sdk sync my-sdk -f .fused/sdks/my-sdk.yaml
+fused-cli app sync my-sdk -f .fused/sdks/my-sdk.yaml
 ```
 
 Workspace sync is a non-destructive Fused-to-local pull. By default it refreshes
@@ -283,7 +282,7 @@ including selected services, versions, and operation names.
 
 ## Execution policy ownership
 
-Execution policies live on workspace services and versions. SDK and MCP
+Execution policies live on services and versions. SDK and MCP
 configs reference them; generated clients do not duplicate pagination, quota,
 concurrency, or retry logic.
 

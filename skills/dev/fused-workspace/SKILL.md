@@ -43,7 +43,7 @@ bucket commands in `fused-bucket`. OAuth/OIDC targets may reuse an application
 credential pair with the app service's `auth.ref`; the workspace allowlist
 does not own that choice.
 
-There is no `runtime_config` field on a workspace service anymore -- it was
+There is no `runtime_config` field on a service anymore -- it was
 removed with no backward compatibility once `kind: webhook` shipped (a
 `workspace.yaml` still containing `runtime_config: {...}` now fails to parse
 outright with a "field not found" error; that's the intended hard rejection,
@@ -93,8 +93,7 @@ service `public: true` and confirm the intended version is not staged private.
 adding one does not deactivate anything by itself. It records intent (a
 target date, a reason) while the service or version stays fully active, so
 existing SDK/MCP configs that reference it keep working while consumers
-migrate. Actually deactivating it later is a separate step: `workspace
-service delete <slug>` (whole service) or `workspace service version delete
+migrate. Actually deactivating it later is a separate step: `service remove <slug>` (whole service) or `service version remove
 <slug> <v>` (one version).
 
 Removal itself is blocked by default if any SDK/MCP config in the same
@@ -124,17 +123,17 @@ fused-cli workspace init [--service '<service>[@<version>]']
 fused-cli workspace init --extend --service '<service>[@<version>]'
 fused-cli workspace plan
 fused-cli workspace apply
-fused-cli workspace services list [--q "<provider or product>"]
-fused-cli workspace service versions <slug>
-fused-cli workspace service operations <slug>
-fused-cli workspace service webhooks <slug>   # read-only: lists this service's kind: webhook registrations, see fused-webhook
-fused-cli workspace service add <query-or-slug> [query-or-slug...] [--version <v>] [--no-input] [--apply]
-fused-cli workspace service delete <slug> [--force]
-fused-cli workspace service deprecate <slug> --at <date> --reason "..."
-fused-cli workspace service version add <slug> <v|latest>
-fused-cli workspace service version delete <slug> <v> [--force]
-fused-cli workspace service version deprecate <slug> <v> --at <date> [--reason "..."]
-fused-cli workspace service connect <service-slug> --bucket <bucket-name-or-id> --user-ref <end-user-reference> [--type oauth|oidc --auth-name <scheme>] [--auth-ref '${bucket.auth.<source-service>.<source-auth-name>}'] [--scope ...]
+fused-cli service list [--search "<provider or product>"]
+fused-cli service version list <slug>
+fused-cli service operation list <slug>
+fused-cli webhook list --service <slug>   # read-only: lists this service's kind: webhook registrations, see fused-webhook
+fused-cli service add <query-or-slug> [query-or-slug...] [--version <v>] [--no-input] [--apply]
+fused-cli service remove <slug> [--force]
+fused-cli service deprecate <slug> --at <date> --reason "..."
+fused-cli service version add <slug> <v|latest>
+fused-cli service version remove <slug> <v> [--force]
+fused-cli service version deprecate <slug> <v> --at <date> [--reason "..."]
+fused-cli service connect <service-slug> --bucket <bucket-name-or-id> --user-ref <end-user-reference> [--type oauth|oidc --auth-name <scheme>] [--auth-ref '${bucket.auth.<source-service>.<source-auth-name>}'] [--scope ...]
 fused-cli workspace managed-auth status   # ready | disabled | enrollment_required | temporarily_unavailable
 fused-cli workspace managed-auth enable   # explicitly enroll, repair, or re-enable managed auth
 fused-cli workspace managed-auth disable  # persist opt-out and withdraw broker authority; keep local connections
@@ -161,22 +160,22 @@ as provenance on the bucket-owned connection; the standalone command never
 infers one from app identity. The full flow
 (buckets, secrets, connection resources) is documented in `fused-bucket`.
 
-Use `workspace service add <query-or-slug> [query-or-slug...]` as the single discovery-and-activate
+Use `service add <query-or-slug> [query-or-slug...]` as the single discovery-and-activate
 action. It checks the access-filtered workspace first by exact name or slug
 (`service.read`) and reuses that result. Only when absent does it call the
 Registry's set-based reference resolver (`catalogue.read`), which shares the
-lexical ranking and provider-identity policy of `service search --q`. In a
+lexical ranking and provider-identity policy of `service list --registry --search`. In a
 terminal, ambiguous results open selection and every Registry fallback is
 confirmed before the selected Registry result is activated. In CI or `--no-input`,
 unique or exact results are activated deterministically; ambiguous results fail
 until the caller supplies an exact provider-qualified slug or service ID. A permission error is not a miss:
 stop instead of falling through, changing credentials, or guessing another
-service. Do not require a separate `service search` command first.
+service. Do not require a separate `service list --registry` command first.
 
 For add, a provider-qualified identity must use the complete
 `@provider/service-slug` form. Reject a leading `@` with a missing, blank,
 whitespace-containing, or nested segment locally before discovery. This is
-intentionally narrower than read-only `service search`, where incomplete `@`
+intentionally narrower than read-only `service list --registry`, where incomplete `@`
 text remains a lexical catalogue query.
 
 Multiple references share batched workspace and Registry reads. `--service-id`
@@ -199,11 +198,7 @@ fails, report the command's committed, failed, and unattempted groups plus its
 stable code, failed phase, composite request ID, failed-target commit
 possibility, and exact ID-pinned recovery command; do not describe the whole
 composite as rolled back. One `--version` applies to every reference, so use
-separate commands for different explicit provider versions. Keep `service
-search --q` for an explicit read-only combined view: each Registry match is
-marked `enabled` or `available_to_add`, and an exact workspace-only match is
-included. It requires both `catalogue.read` and `service.read`, but remains
-optional rather than a prerequisite to workspace addition.
+separate commands for different explicit provider versions. Use `service list` for enabled workspace services, or `service list --registry --search <query>` for explicit read-only Registry discovery. Registry reads require `catalogue.read` and do not merge workspace membership. Discovery remains optional before adding a service.
 
 ## Permissions and team access
 
@@ -228,9 +223,9 @@ narrow service/bucket grant or, when the missing permission is workspace-level,
 assign a suitable workspace role:
 
 ```shell
-fused-cli team access service grant <team> <service> manage
-fused-cli team access bucket grant <team> <bucket> manage
-fused-cli team access workspace set <team> admin
+fused-cli workspace team access service grant <team> <service> manage
+fused-cli workspace team access bucket grant <team> <bucket> manage
+fused-cli workspace team access workspace set <team> admin
 ```
 
 Do not run those access-changing commands unless the user explicitly asks and

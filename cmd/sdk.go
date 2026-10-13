@@ -84,7 +84,7 @@ var sdkDeactivateCmd = &cobra.Command{
 // Engine hard-deactivation route already used by the App UI and MCP CLI.
 func runSDKDeactivate(cmd *cobra.Command, target string) error {
 	// Revalidation keeps direct helper callers on the same exact-version boundary as Cobra.
-	if err := validateExactAppReference(target, "sdk deactivate"); err != nil {
+	if err := validateExactAppReference(target, "app deactivate"); err != nil {
 		return err
 	}
 	client, err := getAPIClient()
@@ -186,17 +186,19 @@ type sdkDownloadTarget struct {
 	Version string
 }
 
+// validateSDKDownloadArgs requires an immutable target to prevent implicit version upgrades.
 func validateSDKDownloadArgs(args []string) error {
 	if len(args) > 0 {
-		return validateExactAppReference(args[0], "sdk download")
+		return validateExactAppReference(args[0], "app download")
 	}
 	return nil
 }
 
+// resolveSDKDownloadTargets uses explicit references or pinned config versions for package downloads.
 func resolveSDKDownloadTargets(args []string, configPath string) ([]sdkDownloadTarget, error) {
 	if len(args) > 0 {
 		name, version := parseSDKDownloadName(args[0])
-		if err := validateExactAppReference(args[0], "sdk download"); err != nil {
+		if err := validateExactAppReference(args[0], "app download"); err != nil {
 			return nil, err
 		}
 		return []sdkDownloadTarget{{Name: name, Version: version}}, nil
@@ -210,7 +212,7 @@ func resolveSDKDownloadTargets(args []string, configPath string) ([]sdkDownloadT
 	for _, cfg := range run.Configs {
 		if cfg.Kind == configfile.KindSDK {
 			// A config that builds no package has nothing to fetch. Skipping it
-			// keeps a bare `sdk download` working for the configs alongside it
+			// keeps a bare `app download` working for the configs alongside it
 			// that do generate one.
 			if !sdkGeneratesPackage(cfg.SDK) {
 				skipped = append(skipped, cfg.SDK.Name)
@@ -228,7 +230,7 @@ func resolveSDKDownloadTargets(args []string, configPath string) ([]sdkDownloadT
 	if len(targets) == 0 {
 		if len(skipped) > 0 {
 			return nil, fmt.Errorf(
-				"no sdk configs build a package: %s set generate: false; call them over REST, or describe one with 'fused-cli api openapi'",
+				"no sdk configs build a package: %s set generate: false; call them over REST, or describe one with 'fused-cli app openapi'",
 				strings.Join(skipped, ", "),
 			)
 		}
@@ -358,7 +360,7 @@ func newSDKVersionReadCommand(use, short, spanName string, run func(*cobra.Comma
 // runSDKShow combines catalogue identity with best-effort local package-generation diagnostics for one immutable SDK version.
 func runSDKShow(cmd *cobra.Command, target sdkDownloadTarget) error {
 	// Show accepts only an immutable version target so generation state cannot cross versions.
-	if err := validateExactAppTarget(target, "sdk show"); err != nil {
+	if err := validateExactAppTarget(target, "app show"); err != nil {
 		return err
 	}
 	client, err := getAPIClient()
@@ -396,8 +398,9 @@ func runSDKShow(cmd *cobra.Command, target sdkDownloadTarget) error {
 	return nil
 }
 
+// runSDKServices retains exact-version service selection boundaries.
 func runSDKServices(cmd *cobra.Command, target sdkDownloadTarget) error {
-	if err := validateExactAppTarget(target, "sdk services"); err != nil {
+	if err := validateExactAppTarget(target, "app services"); err != nil {
 		return err
 	}
 	client, err := getAPIClient()
@@ -776,7 +779,7 @@ func selectSDKOperationsForService(client *api.Client, serviceID, serviceName, s
 	if err != nil {
 		return nil, false, err
 	}
-	// The shared structured result lets sdk init persist select_all while operation add retains its explicit-list behavior.
+	// The shared structured result lets root init persist select_all while operation add retains its explicit-list behavior.
 	return selection.operations, selection.selectAll, nil
 }
 

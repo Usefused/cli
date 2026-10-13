@@ -179,7 +179,7 @@ func runMCPVersions(cmd *cobra.Command, target string) error {
 
 // runMCPOperations resolves one immutable MCP version and renders its Engine-authoritative callable catalogue.
 func runMCPOperations(cmd *cobra.Command, target string) error {
-	if err := validateExactAppReference(target, "mcp operations"); err != nil {
+	if err := validateExactAppReference(target, "app operations"); err != nil {
 		return err
 	}
 	client, err := getAPIClient()
@@ -229,8 +229,9 @@ var mcpDeactivateCmd = &cobra.Command{
 	}),
 }
 
+// runMCPDeactivate resolves an immutable MCP identity before deactivation.
 func runMCPDeactivate(cmd *cobra.Command, target string) error {
-	if err := validateExactAppReference(target, "mcp deactivate"); err != nil {
+	if err := validateExactAppReference(target, "app deactivate"); err != nil {
 		return err
 	}
 	client, err := getAPIClient()

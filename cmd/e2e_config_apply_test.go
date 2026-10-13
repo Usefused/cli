@@ -31,17 +31,17 @@ services:
 	}))
 	defer server.Close()
 	// 1. Plan
-	runCommandInDir(t, dir, server.URL, []string{"sdk", "plan", "-f", path})
+	runCommandInDir(t, dir, server.URL, []string{"app", "plan", "-f", path})
 	// Plan must complete before the receipt can authorize apply.
 	if !seen.plan {
-		t.Fatal("expected sdk plan request")
+		t.Fatal("expected app plan request")
 	}
 
 	// 2. Apply with --download
-	runCommandInDir(t, dir, server.URL, []string{"sdk", "apply", "-f", path, "--download"})
+	runCommandInDir(t, dir, server.URL, []string{"app", "apply", "-f", path, "--download"})
 	// Apply now acknowledges durable generation instead of holding the request open.
 	if !seen.apply {
-		t.Fatal("expected sdk apply request")
+		t.Fatal("expected app apply request")
 	}
 	// Download waits on the Engine-owned immutable-version status route.
 	if !seen.generation {

@@ -1,7 +1,7 @@
 # Engine execution REST API
 
 Use this reference when the user wants to call an SDK operation through the
-Engine HTTP API without `fused-cli sdk invoke` or a generated language client.
+Engine HTTP API without `fused-cli app invoke` or a generated language client.
 The Engine call remains SDK-scoped: it uses an immutable app ID and that SDK's
 execution token, never a provider credential or the CLI control key.
 
@@ -11,24 +11,24 @@ execution token, never a provider credential or the CLI control key.
    with:
 
    ```shell
-   fused-cli sdk show <sdk-name@version-or-version-id> --json
+   fused-cli app show <sdk-name@version-or-version-id> --json
    ```
 
-2. Export its Engine-owned OpenAPI document. Use `sdk openapi` for a generated
+2. Export its Engine-owned OpenAPI document. Use `app openapi` for a generated
    SDK:
 
    ```shell
-   fused-cli sdk openapi <sdk-name@version-or-version-id> \
+   fused-cli app openapi <sdk-name@version-or-version-id> \
      --out engine-execution.openapi.yaml \
      --format yaml \
      --json
    ```
 
-   For a direct REST API created with `fused-cli init --api`, or a `kind: sdk`
+   For a direct REST API created with `fused-cli init --rest`, or a `kind: sdk`
    configuration with `generate: false`, use its public API command instead:
 
    ```shell
-   fused-cli api openapi <api-name@version-or-version-id> \
+   fused-cli app openapi <api-name@version-or-version-id> \
      --out engine-execution.openapi.yaml \
      --format yaml \
      --json
@@ -56,7 +56,7 @@ Idempotency-Key: {STABLE_KEY}  # optional for physical calls
 The bearer value must be an execution token created for that SDK:
 
 ```shell
-fused-cli sdk token generate <sdk-name-or-id> <token-name> --expires-in 4h --json
+fused-cli app token generate <sdk-name-or-id> <token-name> --expires-in 4h --json
 ```
 
 Capture the returned token once in a secret input or environment variable.
@@ -121,7 +121,7 @@ Example call:
 curl --fail-with-body --silent --show-error \
   --request POST \
   --url "$FUSED_ENGINE_URL/v1/apps/$FUSED_APP_ID/executions" \
-  --header "Authorization: Bearer $FUSED_SDK_TOKEN" \
+  --header "Authorization: Bearer $FUSED_APP_TOKEN" \
   --header "Content-Type: application/json" \
   --data-binary @physical-request.json
 ```

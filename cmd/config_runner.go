@@ -32,7 +32,7 @@ type planReceipt struct {
 	// a --no-apply receipt file, so a later `fused-cli apply` still honors
 	// it): Engine must not auto-issue this app family's first execution
 	// token, because the caller intends to mint their own separately via
-	// `fused-cli sdk|mcp token generate`.
+	// `fused-cli app token generate`.
 	NoToken bool `json:"no_token,omitempty"`
 }
 
@@ -153,7 +153,7 @@ func (err *sdkApplyOutcomeUnknownError) Unwrap() error {
 
 // recoveryCommand builds one inert shared-lifecycle state-inspection command for the immutable candidate version.
 func (err *sdkApplyOutcomeUnknownError) recoveryCommand() string {
-	return "fused-cli sdk show " + shellQuoteWorkspaceServiceArg(safeSDKApplyRecoveryTarget(err.sdkName, err.version))
+	return "fused-cli app show " + shellQuoteWorkspaceServiceArg(safeSDKApplyRecoveryTarget(err.sdkName, err.version))
 }
 
 // jsonDetails preserves the reviewed plan and local config identity needed to correlate an ambiguous apply.
@@ -488,7 +488,7 @@ func printCredentialReadiness(out io.Writer, configKey string, readiness *api.Cr
 		}
 		service := readinessCommandName(requirement.Service, requirement.ServiceID)
 		bucketName := readinessCommandName(bucket.Name, bucket.ID)
-		fmt.Fprintf(out, "  fused-cli secret set %s --bucket %s --type %s", shellQuoteWorkspaceServiceArg(service), shellQuoteWorkspaceServiceArg(bucketName), shellQuoteWorkspaceServiceArg(requirement.AuthType))
+		fmt.Fprintf(out, "  fused-cli bucket credential set %s --bucket %s --type %s", shellQuoteWorkspaceServiceArg(service), shellQuoteWorkspaceServiceArg(bucketName), shellQuoteWorkspaceServiceArg(requirement.AuthType))
 		// Named alternatives must remain exact when several schemes share one auth type.
 		if requirement.AuthName != "" {
 			fmt.Fprintf(out, " --auth-name %s", shellQuoteWorkspaceServiceArg(requirement.AuthName))
@@ -622,6 +622,7 @@ func sdkGeneratesPackage(cfg *configfile.SDKConfig) bool {
 	return cfg.Generate == nil || *cfg.Generate
 }
 
+// applyConfigs dispatches prepared receipts by kind without replaying a failed mutation.
 func applyConfigs(client *api.Client, configs []*configfile.ParsedConfig, opts applyOptions) error {
 	prepared, err := prepareConfigApplies(configs, opts, client.BaseURL)
 	if err != nil {
@@ -632,6 +633,9 @@ func applyConfigs(client *api.Client, configs []*configfile.ParsedConfig, opts a
 		if len(prepared) > 0 && prepared[0].config.Kind == configfile.KindUnifiedApp {
 			return applyUnifiedAppConfigsJSON(client, prepared, opts)
 		}
+		if len(prepared) > 0 && prepared[0].config.Kind == configfile.KindMCP {
+			return applyMCPConfigsJSON(client, prepared, opts)
+		} // MCP receipts retain transport and one-time token metadata.
 		return applySDKConfigsJSON(client, prepared, opts)
 	}
 	for _, item := range prepared {
@@ -648,7 +652,7 @@ func applySDKConfigsJSON(client *api.Client, prepared []preparedConfigApply, opt
 	results := make([]sdkApplyOutput, 0, len(prepared))
 	for _, item := range prepared {
 		if item.config.Kind != configfile.KindSDK {
-			return errors.New("structured apply output is currently available only for sdk apply")
+			return errors.New("structured apply output is currently available only for app apply")
 		}
 		result, err := applyPreparedSDKJSON(client, item.config, item.receipt, opts.download)
 		if err != nil {
@@ -951,7 +955,7 @@ func applyPreparedSDKWithResult(client *api.Client, cfg *configfile.ParsedConfig
 	if resp.ExecutionToken != "" {
 		fmt.Printf("  %s token (shown once): %s\n", label, resp.ExecutionToken)
 	} else if receipt.NoToken {
-		fmt.Printf("  Token creation skipped (--no-token); run 'fused-cli sdk token generate %s <token-name>' to create one.\n", cfg.SDK.Name)
+		fmt.Printf("  Token creation skipped (--no-token); run 'fused-cli app token generate %s <token-name>' to create one.\n", cfg.SDK.Name)
 	}
 	// The stable route is advertised now and becomes callable when generation completes.
 	if resp.HostedMCP {
@@ -961,7 +965,7 @@ func applyPreparedSDKWithResult(client *api.Client, cfg *configfile.ParsedConfig
 	// A direct API has no package job or download stage, but its exact identity remains useful to unified init.
 	if !sdkGeneratesPackage(cfg.SDK) {
 		result.Generation.JobID = ""
-		fmt.Printf("  Package: not built (generate: false) -- call it over REST, or describe it with 'fused-cli api openapi %s@%s'\n", cfg.SDK.Name, cfg.SDK.Version)
+		fmt.Printf("  Package: not built (generate: false) -- call it over REST, or describe it with 'fused-cli app openapi %s@%s'\n", cfg.SDK.Name, cfg.SDK.Version)
 		return result, nil
 	}
 	// A normal apply returns after durable publication and reports whether generation queued or completed immediately.
@@ -1063,7 +1067,7 @@ func applyPreparedMCP(client *api.Client, cfg *configfile.ParsedConfig, receipt 
 	if resp.ExecutionToken != "" {
 		fmt.Printf("  Token (shown once): %s\n", resp.ExecutionToken)
 	} else if receipt.NoToken {
-		fmt.Printf("  Token creation skipped (--no-token); run 'fused-cli mcp token generate %s <token-name>' to create one.\n", cfg.MCP.Name)
+		fmt.Printf("  Token creation skipped (--no-token); run 'fused-cli app token generate %s <token-name>' to create one.\n", cfg.MCP.Name)
 	}
 	return nil
 }
@@ -1228,14 +1232,14 @@ func pollSDKGeneration(client *api.Client, appID string, pollInterval, timeout t
 				continue
 			// Timing out never replays apply because its commit already succeeded.
 			case <-deadline.C:
-				return status, fmt.Errorf("timed out waiting for SDK generation; inspect `%s`", "fused-cli sdk show "+appID)
+				return status, fmt.Errorf("timed out waiting for SDK generation; inspect `%s`", "fused-cli app show "+appID)
 			}
 		// Complete and skipped are the only terminal states safe for the download stage to consume.
 		case "complete", "skipped":
 			return status, nil
 		// Failed is terminal but Engine deliberately exposes no upstream error prose at this boundary.
 		case "failed":
-			return status, fmt.Errorf("Fused reported SDK generation failed; inspect `%s` before retrying package download", "fused-cli sdk show "+appID)
+			return status, fmt.Errorf("Fused reported SDK generation failed; inspect `%s` before retrying package download", "fused-cli app show "+appID)
 		// Unknown states fail closed so CLI never downloads a package whose readiness it cannot prove.
 		default:
 			return status, fmt.Errorf("Fused returned invalid SDK generation status %q", status.Status)
@@ -1474,6 +1478,7 @@ func marshalPlanReceipt(receipt planReceipt) ([]byte, error) {
 	return append(data, '\n'), nil
 }
 
+// readPlanReceiptFile loads a saved receipt so apply can verify the reviewed source and Engine.
 func readPlanReceiptFile(path string) (planReceipt, error) {
 	var receipt planReceipt
 	data, err := os.ReadFile(path)
@@ -1484,4 +1489,25 @@ func readPlanReceiptFile(path string) (planReceipt, error) {
 		return receipt, fmt.Errorf("failed to parse plan receipt %s: %w", path, err)
 	}
 	return receipt, nil
+}
+
+// applyMCPConfigsJSON emits structured MCP receipts without losing one-time token or connection metadata.
+func applyMCPConfigsJSON(client *api.Client, prepared []preparedConfigApply, opts applyOptions) error {
+	results := make([]interface{}, 0, len(prepared))
+	for _, item := range prepared {
+		if item.config.Kind != configfile.KindMCP {
+			return fmt.Errorf("structured MCP apply requires only MCP configs")
+		} // Never mutate a different resource type.
+		response, err := client.ApplyMCPConfig(item.receipt.PlanID, item.receipt.SourceHash, item.receipt.NoToken)
+		if err != nil {
+			return err
+		} // An uncertain apply is not retried.
+		results = append(results, response)
+		recordAppliedChange(opts.auditCtx, opts.auditAction, string(item.config.Kind))
+	}
+	output := opts.output
+	if output == nil {
+		output = os.Stdout
+	} // Direct callers use the process output stream.
+	return json.NewEncoder(output).Encode(results)
 }

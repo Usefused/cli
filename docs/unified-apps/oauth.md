@@ -9,7 +9,7 @@ First, configure the service's OAuth application in the bucket. Then start
 consent for the user the app will act for:
 
 ```bash
-fused-cli workspace service connect crm \
+fused-cli service connect crm \
   --bucket default --user-ref customer-42 \
   --type oauth --auth-name crmOAuth
 ```
@@ -43,11 +43,11 @@ stored in the app's bucket. For different user references per service, use
 ## OAuth application setup
 
 If your workspace uses its own provider application, store its client pair
-before running `workspace service connect`:
+before running `service connect`:
 
 ```bash
 printf '%s' 'client_id=...;client_secret=...' |
-  fused-cli secret set crm --bucket default \
+  fused-cli bucket credential set crm --bucket default \
     --type oauth --auth-name crmOAuth --value-stdin
 ```
 

@@ -26,8 +26,8 @@ var workspaceInput io.Reader = os.Stdin
 
 var workspaceCmd = &cobra.Command{
 	Use:   "workspace",
-	Short: "Manage Fused workspace configuration",
-	Long:  `Manage your central workspace policy, including allowed services and versions.`,
+	Short: "Manage Fused workspace configuration, teams, and people",
+	Long:  `Manage workspace teams, people, resource access, and central policy, including allowed services and versions.`,
 	Args:  cobra.NoArgs,
 	RunE:  requireSubcommand,
 }
@@ -181,7 +181,7 @@ func filterWorkspaceServices(services []cliapi.WorkspaceService, query string) [
 
 // workspaceServiceSlugColumn prints what a user actually needs to act on a
 // listed service -- its Registry slug, the argument `service show <slug>`
-// and `workspace service operations <slug>` expect -- as an ADDITIONAL
+// and `service operation list <slug>` expect -- as an ADDITIONAL
 // column alongside the existing UUID (never replacing it: several e2e flows
 // assert the raw service ID appears in this command's output, and other
 // tooling may already parse this column position). Falls back to "-" when
@@ -1382,7 +1382,7 @@ func init() {
 
 	workspaceCmd.AddCommand(workspaceServicesCmd)
 	workspaceServicesListCmd.Flags().BoolVarP(&workspaceServicesListInteractive, "interactive", "i", false, "Interactive service selection")
-	workspaceServicesListCmd.Flags().StringVarP(&workspaceServicesListQuery, "q", "q", "", "Filter visible workspace services by name or slug")
+	workspaceServicesListCmd.Flags().StringVarP(&workspaceServicesListQuery, "search", "", "", "Filter visible workspace services by name or slug")
 	addJSONOutputFlag(workspaceServicesListCmd, workspaceHasCmd, workspaceServiceVersionsCmd, workspaceServiceOperationsCmd, workspaceServiceWebhooksCmd)
 	workspaceServicesCmd.AddCommand(workspaceServicesListCmd)
 	workspaceCmd.AddCommand(workspaceServiceCmd)
@@ -1392,7 +1392,7 @@ func init() {
 	workspaceServiceVersionCmd.AddCommand(workspaceServiceVersionAddCmd, workspaceServiceVersionDeleteCmd, workspaceServiceVersionDeprecateCmd)
 
 	workspaceServiceOperationsCmd.Flags().StringVar(&workspaceServiceOperationsVersion, "version", "", "Enabled version; omitted uses the latest enabled version")
-	workspaceServiceOperationsCmd.Flags().StringVar(&workspaceServiceOperationsQuery, "q", "", "Search query")
+	workspaceServiceOperationsCmd.Flags().StringVar(&workspaceServiceOperationsQuery, "search", "", "Search query")
 	addListFlags(workspaceServiceOperationsCmd, &workspaceServiceListFlags)
 
 	workspaceServiceAddCmd.Flags().StringVar(&workspaceServiceAddVersion, "version", "", "Version to enable; omitted resolves latest during plan or scoped activation")

@@ -157,7 +157,7 @@ service, variable, and key from the written config, which never contains the
 value. Configure each key once:
 
 ```shell
-fused-cli value set sendbird-bucket sendbird env SENDBIRD_APP_ID your-app-id
+fused-cli bucket value set sendbird-bucket sendbird env SENDBIRD_APP_ID your-app-id
 ```
 
 ```yaml

@@ -15,8 +15,8 @@ fused-cli --version
 fused-cli config list
 fused-cli service --help
 fused-cli workspace --help
-fused-cli sdk --help       # SDK target
-fused-cli mcp --help       # MCP target
+fused-cli app --help       # SDK target
+fused-cli app --help       # MCP target
 ```
 
 If the Engine URL or credential is missing, follow the `fused-cli` skill's
@@ -44,7 +44,7 @@ for auth, connect scopes, connection profiles, or execution policy.
 Use the combined search when you need to browse candidates:
 
 ```shell
-fused-cli service search --q "<provider, product, or capability>" --json
+fused-cli service list --registry --search "<provider, product, or capability>" --json
 ```
 
 The command searches Registry and performs one bounded Engine lookup. Read
@@ -53,16 +53,16 @@ that still needs workspace activation. Discovery requires `catalogue.read` and
 `service.read`, and results remain access-filtered. A missing result means "no
 suitable visible service," not proof that no service exists.
 
-Use `workspace services list --json` only when the user needs the complete
-enabled set. Use `workspace has "<exact service name>"` only as an additional
+Use `service list --json` only when the user needs the complete
+enabled set. Use `service has "<exact service name>"` only as an additional
 exact-name check; it does not match a slug. As the selection is refined, use
 `--json` so agents do not parse human-readable tables.
 
 For an enabled result, inspect its workspace contract:
 
 ```shell
-fused-cli workspace service versions <slug>
-fused-cli workspace service operations <slug> --version <version> --q "<capability>"
+fused-cli service version list <slug>
+fused-cli service operation list <slug> --version <version> --search "<capability>"
 ```
 
 The returned `slug` is reusable in later commands. Owned services use a bare
@@ -70,8 +70,8 @@ slug; public services owned by another provider use `@provider/slug`. If several
 results could satisfy the request, compare names/providers and ask the user
 before selecting a materially different service.
 
-Registry service search currently returns at most 20 ranked matches and has no
-pagination flag. Refine `--q` when the intended provider is not in that set;
+Registry service list --registry currently returns at most 20 ranked matches and has no
+pagination flag. Refine `--search` when the intended provider is not in that set;
 do not assume later pages exist.
 
 A search result proves only visibility; it does not prove that the caller may
@@ -81,9 +81,9 @@ Then inspect available versions and search operations using the user's own
 business terms:
 
 ```shell
-fused-cli service versions <slug>
-fused-cli service show <slug> --json
-fused-cli service operations <slug> --version <version> --q "<capability>" --json
+fused-cli service version list --registry <slug>
+fused-cli service show --registry <slug> --json
+fused-cli service operation list --registry <slug> --version <version> --search "<capability>" --json
 ```
 
 Prefer a stable public version unless the user requested another version. Keep
@@ -92,8 +92,8 @@ large request/response schemas. Inspect only the operations that could satisfy
 the goal:
 
 ```shell
-fused-cli service operation show <slug> <operation-name> --version <version> --json
-fused-cli service operation show <slug> <operation-name> --version <version> --json --include-request --include-responses
+fused-cli service operation show --registry <slug> <operation-name> --version <version> --json
+fused-cli service operation show --registry <slug> <operation-name> --version <version> --json --include-request --include-responses
 ```
 
 Start without body flags, then request only the contract needed to author or
@@ -102,7 +102,7 @@ are authoritative; do not infer parameters or payload fields from an operation
 name. Use `select_all: true` only when the user genuinely wants the full surface
 and accepts future scope growth.
 
-`workspace has` matches the exact service name, not its slug.
+`service has` matches the exact service name, not its slug.
 
 ## 4. Add and activate only when needed
 
@@ -111,7 +111,7 @@ Skip this step when the selected search result is already `enabled`. For an
 back to Registry, and activate only the selected services:
 
 ```shell
-fused-cli workspace service add <query-or-slug> [query-or-slug...] [--version <version>]
+fused-cli service add <query-or-slug> [query-or-slug...] [--version <version>]
 ```
 
 A unique or exact result is added non-interactively. Use `--interactive` only
@@ -122,7 +122,7 @@ When the user explicitly wants the addition represented as config-as-code,
 name the existing destination and review it before applying:
 
 ```shell
-fused-cli workspace service add <query-or-slug> -f <workspace-config-path>
+fused-cli service add <query-or-slug> -f <workspace-config-path>
 fused-cli validate -f <workspace-config-path>
 fused-cli workspace plan -f <workspace-config-path>
 fused-cli workspace apply -f <workspace-config-path>
@@ -137,8 +137,8 @@ and tell the user that the service was found but could not be added. Include the
 named missing permission/resource and leave the SDK/MCP outcome explicitly
 incomplete. Do not self-grant, silently switch credentials, or keep retrying. An
 access administrator can, for example, give the user's team an appropriate
-workspace role with `team access workspace set`, or grant scoped service access
-with `team access service grant`; follow `reference/access-management.md` and
+workspace role with `workspace team access workspace set`, or grant scoped service access
+with `workspace team access service grant`; follow `reference/access-management.md` and
 current command help. A service-specific grant alone does not supply
 `workspace.update`.
 
@@ -146,8 +146,8 @@ Use the narrow command only as remediation for an authorised administrator;
 do not run it automatically:
 
 ```shell
-fused-cli team access service grant <team> <service> manage
-fused-cli team access workspace set <team> admin
+fused-cli workspace team access service grant <team> <service> manage
+fused-cli workspace team access workspace set <team> admin
 ```
 
 The editor operates on an existing config file and requires `-f`.
@@ -185,10 +185,10 @@ must appear in `eligible-owners` and have build access to every selected service
 and bucket:
 
 ```shell
-fused-cli team eligible-owners
-fused-cli team build-access <team> --resource service
-fused-cli team build-access <team> --resource bucket
-fused-cli sdk plan --owner-team <team>       # or mcp/webhook plan
+fused-cli workspace team eligible-owners
+fused-cli workspace team build-access <team> --resource service
+fused-cli workspace team build-access <team> --resource bucket
+fused-cli app plan --owner-team <team>       # or mcp/webhook plan
 ```
 
 If the requested team is absent from `eligible-owners` or `build-access` shows
@@ -201,8 +201,8 @@ scope. These are remediation commands, not permission to change access on the
 user's behalf:
 
 ```shell
-fused-cli team access service grant <team> <service> use
-fused-cli team access bucket grant <team> <bucket> use
+fused-cli workspace team access service grant <team> <service> use
+fused-cli workspace team access bucket grant <team> <bucket> use
 ```
 
 An app may be published while credential readiness remains unresolved. Describe
@@ -241,8 +241,8 @@ as the MCP server's identity before tool discovery. Then run:
 
 ```shell
 fused-cli init <name> --mcp --description '<LLM-authored capability summary>' --service '<service>[@<version>]' [...selection flags]
-fused-cli mcp list
-fused-cli mcp operations <name@version-or-version-id>
+fused-cli app list
+fused-cli app operation list <name@version-or-version-id>
 ```
 
 On MCP extension, omit `--description` to preserve the YAML value or provide a
@@ -259,7 +259,7 @@ Apply requires `app.<type>.create` for a new resource or `app.<type>.manage` for
 existing one, together with `service.consume` and `bucket.use` for every
 selected dependency. Use the human-readable denial or `required_permissions`
 in JSON plan output to identify the exact resource. An authorised administrator
-can use `team access service ... use`, `team access bucket ... use`, or `team
+can use `workspace team access service ... use`, `workspace team access bucket ... use`, or `workspace team
 access app ... manage` as appropriate. Do not execute those grants
 automatically or broaden a team to Admin merely to consume an already-enabled
 service.

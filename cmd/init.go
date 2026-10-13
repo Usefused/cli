@@ -99,7 +99,7 @@ func newUnifiedInitCommandWithRunner(runner unifiedInitRunner) *cobra.Command {
 
 The default App shares one identity, version, selected scope, and token across
 SDK, MCP, and REST delivery. Choose --sdk, --rest, --mcp, or --webhook for one
-method or ingress registration. --api is an alias for --rest.
+method or ingress registration.
 App modes select operations; webhook mode registers inbound delivery.
 The command enables missing services, writes the config, plans, applies, and returns the
 runtime outcome. Pass --no-apply to write validated local desired state and
@@ -129,14 +129,10 @@ Non-interactive runs print readiness warnings without prompting or storing secre
 
 	addMCPInitFlags(command, &opts.importedMCP)
 	command.Flags().BoolVar(&opts.sdk, "sdk", false, "Create a generated typed SDK and download its package")
-	command.Flags().BoolVar(&opts.api, "api", false, "Create a direct REST unified app without generating a package")
 	command.Flags().BoolVar(&opts.rest, "rest", false, "Create a direct REST unified app without generating a package")
 	command.Flags().BoolVar(&opts.mcp, "mcp", false, "Create and deploy a Fused-hosted MCP server")
 	command.Flags().BoolVar(&opts.webhook, "webhook", false, "Create and apply an inbound webhook registration")
 	command.Flags().StringArrayVar(&opts.secrets, "secret", nil, "Webhook signing reference as <service>=${bucket.<name>.secret.<key>}; repeatable")
-	command.Flags().BoolVar(&opts.extend, "extend", false, "Compatibility alias for 'fused-cli extend'; use --version for an applied successor")
-	// Existing scripts retain --extend, while help directs new additive workflows to the root extend command.
-	_ = command.Flags().MarkHidden("extend")
 	command.Flags().StringSliceVar(&opts.services, "service", nil, "Registry service as <service>[@<version>]; comma-separated or repeatable")
 	command.Flags().StringSliceVar(&opts.operations, "operation", nil, "Selected operation as <service>=<operationId>; repeatable")
 	command.Flags().StringSliceVar(&opts.selectAll, "select-all", nil, "Service whose complete operation surface should be selected; repeatable")
@@ -148,7 +144,7 @@ Non-interactive runs print readiness warnings without prompting or storing secre
 	command.Flags().BoolVar(&opts.fusedIntelligentClassifier, "fused-intelligent-classifier", false, "Enable MCP intelligent search using Jev via Fused Registry")
 	command.Flags().StringVar(&opts.description, "description", "", "Hosted MCP summary; combined Apps derive one from the name when omitted")
 	command.Flags().BoolVar(&opts.noApply, "no-apply", false, "Plan initialization without applying, generating, or downloading")
-	command.Flags().BoolVar(&opts.noToken, "no-token", false, "Apply without an auto-issued execution token; create one yourself later with 'sdk|mcp token generate'")
+	command.Flags().BoolVar(&opts.noToken, "no-token", false, "Apply without an auto-issued execution token; create one yourself later with 'app token generate'")
 	return command
 }
 
@@ -514,15 +510,8 @@ func printUnifiedInitDeferredNextSteps(cmd *cobra.Command, mode unifiedInitMode,
 		fmt.Fprintln(cmd.OutOrStdout(), "  # App planning waits for the selected workspace service version to become active.")
 		fmt.Fprintf(cmd.OutOrStdout(), "  fused-cli workspace apply -f %s\n", shellQuoteWorkspaceServiceArg(workspaceDraft.path))
 	}
-	commandGroup := "fused-cli " + string(mode)
-	// Combined Apps use the SDK config commands because their durable identity is SDK-kind.
-	if mode == unifiedInitModeApp {
-		commandGroup = "fused-cli sdk"
-	}
-	// Direct APIs use the generic config plan/apply surface because they deliberately have no API apply subgroup.
-	if mode == unifiedInitModeAPI {
-		commandGroup = "fused-cli"
-	}
+	commandGroup := "fused-cli app" // The config selects delivery type for every deferred workflow.
+
 	// App planning is deferred only when its selected workspace snapshot does not exist yet.
 	if !appPlanned {
 		fmt.Fprintf(cmd.OutOrStdout(), "  %s plan -f %s\n", commandGroup, shellQuoteWorkspaceServiceArg(appPath))
@@ -1136,7 +1125,7 @@ func validateUnifiedInitModeRequest(mode unifiedInitMode, request scaffoldReques
 	if mode == unifiedInitModeAPI && (!request.generateSet || request.generate) {
 		return errors.New("direct API init requires generate: false")
 	}
-	// Generated SDK mode admits the compatibility alias's absent-means-generate default but rejects an explicit suppression.
+	// Generated SDK mode defaults to package generation and rejects explicit suppression.
 	if (mode == unifiedInitModeSDK || mode == unifiedInitModeApp) && request.generateSet && !request.generate {
 		return errors.New("SDK init requires package generation")
 	}
@@ -1151,7 +1140,7 @@ func printUnifiedInitAPINextStep(cmd *cobra.Command, client *api.Client, parsed 
 	if strings.TrimSpace(ref) == "" {
 		ref = parsed.SDK.Name + "@" + parsed.SDK.Version
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "Direct API ready. Export its OpenAPI contract with:\n  fused-cli api openapi %s --out app.openapi.yaml\n", shellQuoteWorkspaceServiceArg(ref))
+	fmt.Fprintf(cmd.OutOrStdout(), "Direct API ready. Export its OpenAPI contract with:\n  fused-cli app openapi %s --out app.openapi.yaml\n", shellQuoteWorkspaceServiceArg(ref))
 	fmt.Fprintln(cmd.OutOrStdout(), "Use app.openapi.yaml to choose an operation and supply its required input and selectors.")
 	printAPIInitConnections(cmd, parsed.SDK)
 	// Older or synthetic apply responses may omit identity, so preserve an actionable exact-name fallback without another network read.
@@ -1169,8 +1158,8 @@ func printUnifiedInitAPINextStep(cmd *cobra.Command, client *api.Client, parsed 
 	encoder := json.NewEncoder(&encoded)
 	encoder.SetEscapeHTML(false)
 	_ = encoder.Encode(payload)
-	fmt.Fprintln(cmd.OutOrStdout(), "Set FUSED_SDK_TOKEN to the app token shown above. Replace any operation placeholder and fill the required input using app.openapi.yaml before running this REST request template:")
-	fmt.Fprintf(cmd.OutOrStdout(), "  curl -X POST %s -H \"Authorization: Bearer ${FUSED_SDK_TOKEN:?Set the app execution token first}\" -H 'Content-Type: application/json' -d %s\n", shellQuoteWorkspaceServiceArg(endpoint), shellQuoteWorkspaceServiceArg(strings.TrimSpace(encoded.String())))
+	fmt.Fprintln(cmd.OutOrStdout(), "Set FUSED_APP_TOKEN to the app token shown above. Replace any operation placeholder and fill the required input using app.openapi.yaml before running this REST request template:")
+	fmt.Fprintf(cmd.OutOrStdout(), "  curl -X POST %s -H \"Authorization: Bearer ${FUSED_APP_TOKEN:?Set the app execution token first}\" -H 'Content-Type: application/json' -d %s\n", shellQuoteWorkspaceServiceArg(endpoint), shellQuoteWorkspaceServiceArg(strings.TrimSpace(encoded.String())))
 }
 
 // apiInitNeedsConnection adds a user selector only for the chosen connected
@@ -1221,7 +1210,7 @@ func printAPIInitConnections(cmd *cobra.Command, config *configfile.SDKConfig) {
 		if service.Auth == nil || service.Auth.Name == "" || !isConnectAuthType(canonicalSecretTypeName(service.Auth.Type)) {
 			continue
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "  fused-cli workspace service connect %s --bucket %s --user-ref 'user-123' --type %s --auth-name %s", shellQuoteWorkspaceServiceArg(name), shellQuoteWorkspaceServiceArg(config.Bucket), shellQuoteWorkspaceServiceArg(service.Auth.Type), shellQuoteWorkspaceServiceArg(service.Auth.Name))
+		fmt.Fprintf(cmd.OutOrStdout(), "  fused-cli service connect %s --bucket %s --user-ref 'user-123' --type %s --auth-name %s", shellQuoteWorkspaceServiceArg(name), shellQuoteWorkspaceServiceArg(config.Bucket), shellQuoteWorkspaceServiceArg(service.Auth.Type), shellQuoteWorkspaceServiceArg(service.Auth.Name))
 		// A configured shared client pair must also be selected by standalone consent.
 		if service.Auth.Ref != "" {
 			fmt.Fprintf(cmd.OutOrStdout(), " --auth-ref %s", shellQuoteWorkspaceServiceArg(service.Auth.Ref))

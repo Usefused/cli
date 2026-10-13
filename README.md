@@ -4,6 +4,25 @@
 [Fused](https://usefused.com) integration gateway. Use it to connect to
 Fused, import APIs, generate SDKs, and deploy MCP servers.
 
+## Shared app management
+
+All app types use `fused-cli app`: SDK, direct REST API, MCP, and Unified Apps. The config selects the type for `plan`, `apply`, and `validate`; remote commands resolve the selected app. No `sdk`, `api`, `mcp`, or `unified-app` command aliases remain.
+
+```sh
+fused-cli app list --type sdk
+fused-cli app show support@1.0.0
+fused-cli app plan -f .fused/sdks/support.yaml
+fused-cli app apply -f .fused/sdks/support.yaml
+fused-cli app versions list support
+fused-cli app token generate support agent
+fused-cli app schedule list reports
+fused-cli app download support@1.0.0
+```
+
+`--type` accepts `sdk`, `api`, `mcp`, and `unified-app`. Downloads require generated SDKs; schedules and promotion require Unified Apps. `app source extract` externalizes Unified App source; `app sync` mirrors an exact SDK/API config. Execution and destructive version actions require `name@version` or an immutable version ID. Use `init` to create apps and `extend` to add selections.
+
+Service reads default to enabled workspace services: `service list`, `service version list`, and `service operation list`. Add `--registry` for catalog reads, for example `service list --registry --search gmail`. Use `--search` consistently for list filtering. Provider credentials live under `bucket credential`; secret metadata uses `bucket secret list <bucket>`.
+
 ## Installation
 
 ### macOS and Linux
@@ -59,7 +78,7 @@ your `PATH`.
 ```bash
 fused-cli --engine-url http://localhost:8081 login
 fused-cli whoami
-fused-cli workspace services list
+fused-cli service list
 ```
 
 Automation can use `--key`, `FUSED_API_KEY`, or `FUSED_LICENSE_KEY` instead of
@@ -193,12 +212,12 @@ request template without generating a package. In automation, pass
 `--no-input` and explicit `--operation` or `--select-all` for every service.
 
 Pass `--no-apply` to plan without applying. Fused writes the app config and any
-required workspace service additions, saves every plan receipt whose
+required service additions, saves every plan receipt whose
 dependencies are already active, applies no desired-state changes, and starts no
 generation or download job. When a service still needs activation, its
 workspace receipt is saved and app planning waits until that receipt is
 applied. The output prints the exact remaining commands; SDK completion
-includes `sdk apply --download`.
+includes `app apply --download`.
 
 Create an inbound webhook registration with `--webhook`. It requires services,
 but no operation selection or app version:
@@ -208,7 +227,7 @@ fused-cli init alerts --webhook --service github \
   --secret 'github=${bucket.default.secret.github_signing}'
 ```
 
-This writes `.fused/webhooks/alerts.yaml`, enables missing workspace services,
+This writes `.fused/webhooks/alerts.yaml`, enables missing services,
 then plans and applies the webhook registration and prints its ingress URL.
 Omit `--secret` only when the provider does not require a signing secret.
 `--secret` accepts bucket references, never literal credentials. Use `--no-apply`
@@ -220,9 +239,9 @@ file and use `webhook plan` / `webhook apply`.
 List or search registered webhooks through the same Fused API as the UI:
 
 ```bash
-fused-cli webhook list --q invoice --limit 20 --offset 0 --json
+fused-cli webhook list --search invoice --limit 20 --offset 0 --json
 fused-cli webhook list --service-id <service-uuid>
-fused-cli workspace service webhooks github --q repo --limit 20 --offset 0
+fused-cli webhook list --service github --search repo --limit 20 --offset 0
 ```
 
 Search and pagination run on Fused within your service permissions. `webhook list --json`
@@ -269,7 +288,7 @@ config, and REST calls.
 
 You can also name an existing SDK, MCP, or REST app in the goal: `Update billing-sdk to add Stripe invoice lookup`.
 Those updates resolve an existing local config; pass `-f <path>` when names are ambiguous.
-They preserve existing selections, language, bucket, auth, and service versions.
+They preserve existing selections, language, bucket, auth, and service version list --registry.
 A changed config receives the next minor version, or the version you provide with
 `--version`. An unchanged proposal keeps its current version. Missing update targets
 never fall back to creating an app. To update a Unified App, edit its
@@ -305,8 +324,8 @@ services:
 ```
 
 ```bash
-fused-cli sdk plan --json -f .fused/sdks/support-sdk.yaml
-fused-cli sdk apply --json -f .fused/sdks/support-sdk.yaml
+fused-cli app plan --json -f .fused/sdks/support-sdk.yaml
+fused-cli app apply --json -f .fused/sdks/support-sdk.yaml
 ```
 
 Standalone validation remains available for offline checks, but plan already

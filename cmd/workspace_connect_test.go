@@ -40,7 +40,7 @@ func TestWorkspaceServiceConnectStartsSession(t *testing.T) {
 	}))
 	defer server.Close()
 
-	out := runCommandInDirOutput(t, dir, server.URL, []string{"workspace", "service", "connect", "github", "--bucket", "11111111-1111-4111-8111-111111111111", "--user-ref", "user_123", "--type", "oauth", "--auth-name", "targetOAuth", "--auth-ref", "${bucket.auth.gmail.oauth2}", "--resource-input", "subdomain=acme", "--scope", "repo:read", "--scope", "offline_access"})
+	out := runCommandInDirOutput(t, dir, server.URL, []string{"service", "connect", "github", "--bucket", "11111111-1111-4111-8111-111111111111", "--user-ref", "user_123", "--type", "oauth", "--auth-name", "targetOAuth", "--auth-ref", "${bucket.auth.gmail.oauth2}", "--resource-input", "subdomain=acme", "--scope", "repo:read", "--scope", "offline_access"})
 	if !sawConnect {
 		t.Fatal("expected connect session request")
 	}
@@ -167,6 +167,6 @@ func TestParseResourceInputFlags(t *testing.T) {
 func TestWorkspaceServiceConnectCredentialFlagsKeepsAppIdentityOutOfRouting(t *testing.T) {
 	// Generated app identities stay on generated runtime clients, while auth-ref carries the complete standalone source selector.
 	if workspaceServiceConnectCmd.Flags().Lookup("mcp") != nil || workspaceServiceConnectCmd.Flags().Lookup("sdk") != nil || workspaceServiceConnectCmd.Flags().Lookup("auth-ref") == nil {
-		t.Fatal("workspace service connect flags do not preserve app-agnostic credential routing")
+		t.Fatal("service connect flags do not preserve app-agnostic credential routing")
 	}
 }

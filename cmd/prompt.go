@@ -262,6 +262,7 @@ func serviceIntentConfigKey(vis api.ServiceVisibility) string {
 	return serviceConfigRef(vis.Slug, providerHandle(vis.Provider))
 }
 
+// mergeNewEndpoints adds selected operations without duplicating existing config entries.
 func mergeNewEndpoints(cart map[string]api.Integration, endpoints []api.Integration) int {
 	added := 0
 	for _, ep := range endpoints {
@@ -274,7 +275,7 @@ func mergeNewEndpoints(cart map[string]api.Integration, endpoints []api.Integrat
 }
 
 // runPrompt retains the interactive endpoint cart for native SDKs. MCP
-// runtimes use the declarative `mcp plan` and `mcp apply` commands instead.
+// runtimes use the declarative `app plan` and `app apply` commands instead.
 func runPrompt(cmd *cobra.Command) error {
 	// The natural-language request is mandatory even though Cobra cannot mark a
 	// shared package variable as a positional argument.
@@ -306,8 +307,8 @@ func runPrompt(cmd *cobra.Command) error {
 	recordAppliedChange(cmd.Context(), cmd.CommandPath(), "sdk_config")
 	fmt.Printf("✅ SDK config generated at %s\n", path)
 	fmt.Printf("\nNext steps:\n")
-	fmt.Printf("  1. Preview changes: fused-cli sdk plan\n")
-	fmt.Printf("  2. Apply changes:   fused-cli sdk apply\n")
+	fmt.Printf("  1. Preview changes: fused-cli app plan\n")
+	fmt.Printf("  2. Apply changes:   fused-cli app apply\n")
 	return nil
 }
 

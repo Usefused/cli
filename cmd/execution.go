@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/Usefused/cli/internal/api"
 	"github.com/Usefused/cli/internal/configfile"
+	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 )
 
@@ -72,7 +74,7 @@ type unifiedApplyOutput struct {
 	MCPTransportURLs *api.MCPTransportURLs `json:"mcp_transport_urls,omitempty"`
 }
 
-// applyExecutionVersion retains deployment identity while advertising only the stable family execution URL.
+// applyExecutionVersion retains deployment UUIDs while advertising the named family execution URL.
 func applyExecutionVersion(client *api.Client, cfg *configfile.ParsedConfig, receipt planReceipt) (unifiedApplyOutput, error) {
 	resp, err := client.ApplyUnifiedAppConfig(receipt.PlanID, receipt.SourceHash, receipt.NoToken)
 	// An uncertain mutation cannot be reported as a safe retry.
@@ -80,12 +82,23 @@ func applyExecutionVersion(client *api.Client, cfg *configfile.ParsedConfig, rec
 		return unifiedApplyOutput{}, fmt.Errorf("failed to apply Unified App %s: %w", cfg.UnifiedApp.Name, err)
 	}
 	result := unifiedApplyOutput{ConfigKey: cfg.ConfigKey, PlanID: resp.PlanID, Status: resp.Status,
-		AppFamilyID: resp.AppFamilyID, AppID: resp.AppID, ExecutionURL: sdkInvokeEndpoint(client.BaseURL, resp.AppFamilyID), ExecutionToken: resp.ExecutionToken, HostedMCP: resp.HostedMCP}
+		AppFamilyID: resp.AppFamilyID, AppID: resp.AppID, ExecutionURL: unifiedAppExecutionURL(client.BaseURL, resp.AppFamilyID, cfg.UnifiedApp.Name), ExecutionToken: resp.ExecutionToken, HostedMCP: resp.HostedMCP}
 	// The optional transport shares this exact App version and family token.
 	if resp.HostedMCP {
 		result.MCPTransportURLs = &resp.MCPTransportURLs
 	}
 	return result, nil
+}
+
+// unifiedAppExecutionURL prefers the authored name without changing Engine's precedence for UUID references.
+func unifiedAppExecutionURL(engineURL, familyID, name string) string {
+	name = strings.TrimSpace(name)
+	_, idErr := uuid.Parse(name)
+	// Empty or UUID-shaped names need the known family ID to remain executable.
+	if name == "" || idErr == nil {
+		name = familyID
+	}
+	return sdkInvokeEndpoint(engineURL, name)
 }
 
 // applyPreparedExecution advertises stable invocation identity separately from the deployed version label.
@@ -109,7 +122,7 @@ func applyUnifiedAppConfigsJSON(client *api.Client, prepared []preparedConfigApp
 	for _, item := range prepared {
 		// A mixed apply must not quietly produce one kind's JSON schema for another.
 		if item.config.Kind != configfile.KindUnifiedApp {
-			return fmt.Errorf("structured unified-app apply requires only unified_app configs")
+			return fmt.Errorf("structured app apply requires only unified_app configs")
 		}
 		result, err := applyExecutionVersion(client, item.config, item.receipt)
 		if err != nil {

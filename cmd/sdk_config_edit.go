@@ -12,12 +12,13 @@ import (
 	"github.com/Usefused/cli/internal/configfile"
 )
 
+// addSDKService edits the selected config without implicitly applying remote changes.
 func addSDKService(path, serviceName, version string) error {
 	if path == "" {
 		return errors.New("sdk config edit requires -f")
 	}
 	if version == "" {
-		return errors.New("sdk service add requires --version")
+		return errors.New("app service add requires --version")
 	}
 	cfg, err := loadSDKConfigForEdit(path)
 	if err != nil {
@@ -120,13 +121,14 @@ func loadSDKConfigForSync(path, sdkName string) (string, *configfile.SDKConfig, 
 	return target, cfg, err
 }
 
+// sdkConfigSyncPath selects the local config while preserving its declared app identity.
 func sdkConfigSyncPath(path, sdkName string) (string, error) {
 	if path != "" {
 		return path, nil
 	}
 	fileName := safeConfigFileName(sdkName)
 	if fileName == "" {
-		return "", errors.New("sdk sync requires an sdk name")
+		return "", errors.New("app sync requires an sdk name")
 	}
 	return filepath.Join(".fused", "sdks", fileName+".yaml"), nil
 }

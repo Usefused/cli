@@ -17,7 +17,7 @@ type mcpSelectOptions struct {
 func selectMCPCatalog(snapshot *api.MCPCatalogSnapshot, options mcpSelectOptions) (*configfile.ImportedMCPSelection, error) {
 	// A service without an approved catalog cannot contribute imported capabilities.
 	if snapshot == nil {
-		return nil, fmt.Errorf("no imported MCP catalog; run workspace service mcp discover and apply first")
+		return nil, fmt.Errorf("no imported MCP catalog; run service mcp discover and apply first")
 	}
 	// Review-to-selection races require another review instead of silently switching revisions.
 	if options.revision != "" && options.revision != snapshot.ID {

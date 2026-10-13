@@ -21,9 +21,9 @@ func TestAPIInitShowsOpenAPIAndConnectionSteps(t *testing.T) {
 	command.SetOut(&output)
 	printUnifiedInitAPINextStep(command, api.NewClient("https://engine.example", "control-never-print"), parsed, sdkOpenAPITestVersionID)
 	for _, want := range []string{
-		"fused-cli api openapi '" + sdkOpenAPITestVersionID + "' --out app.openapi.yaml",
-		"workspace service connect 'google-sheets' --bucket 'selected-bucket' --user-ref 'user-123' --type 'oauth' --auth-name 'sheetsOAuth'",
-		"--auth-ref '${bucket.auth.gmail.gmailOAuth}' --scope 'sheets.readonly'", `"selector":{"end_user_ref":"user-123"}`, `"operation":"<operationId>"`, "${FUSED_SDK_TOKEN:?",
+		"fused-cli app openapi '" + sdkOpenAPITestVersionID + "' --out app.openapi.yaml",
+		"service connect 'google-sheets' --bucket 'selected-bucket' --user-ref 'user-123' --type 'oauth' --auth-name 'sheetsOAuth'",
+		"--auth-ref '${bucket.auth.gmail.gmailOAuth}' --scope 'sheets.readonly'", `"selector":{"end_user_ref":"user-123"}`, `"operation":"<operationId>"`, "${FUSED_APP_TOKEN:?",
 	} {
 		// Setup must use literal reusable selectors rather than inferred credential or provider values.
 		if !strings.Contains(output.String(), want) {

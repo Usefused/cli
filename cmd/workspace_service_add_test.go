@@ -59,7 +59,7 @@ func TestWorkspaceAddWithoutFileActivatesDirectly(t *testing.T) {
 	defer server.Close()
 
 	out := runCommandInDirOutput(t, dir, server.URL, []string{
-		"workspace", "service", "add", "direct-service", "--service-id", serviceID, "--version", "v2",
+		"service", "add", "direct-service", "--service-id", serviceID, "--version", "v2",
 	})
 	// One service argument maps to exactly one scoped activation mutation.
 	if activationCalls != 1 {
@@ -83,7 +83,7 @@ func TestWorkspaceAddQueriesWithoutFileResolveAndActivate(t *testing.T) {
 	server, engineReads, registryReads, activations := newCompositeWorkspaceServiceServer(t)
 	defer server.Close()
 
-	out := runCommandInDirOutput(t, dir, server.URL, []string{"workspace", "service", "add", "linear", "square"})
+	out := runCommandInDirOutput(t, dir, server.URL, []string{"service", "add", "linear", "square"})
 	// Named references must share bounded discovery and then activate each exact resolved service once.
 	if *engineReads != 1 || *registryReads != 1 || len(*activations) != 2 {
 		t.Fatalf("file-free request counts engine=%d registry=%d activations=%d", *engineReads, *registryReads, len(*activations))
@@ -122,7 +122,7 @@ services:
 	server, engineReads, registryReads, activations := newCompositeWorkspaceServiceServer(t)
 	defer server.Close()
 
-	out := runCommandInDirOutput(t, dir, server.URL, []string{"workspace", "service", "add", "linear", "square", "--apply", "-f", path})
+	out := runCommandInDirOutput(t, dir, server.URL, []string{"service", "add", "linear", "square", "--apply", "-f", path})
 	parsed, err := configfile.ParseFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -203,7 +203,7 @@ func TestWorkspaceAddMultipleServicesRejectsSingularServiceID(t *testing.T) {
 	dir := t.TempDir()
 	path := writeSprintConfig(t, dir, "workspace.yaml", "apiVersion: fused/v1\nkind: workspace\nservices: {}\n")
 	errText := runCommandInDirExpectError(t, dir, "http://127.0.0.1:1", []string{
-		"workspace", "service", "add", "linear", "square", "--service-id", "00000000-0000-4000-8000-000000000001", "-f", path,
+		"service", "add", "linear", "square", "--service-id", "00000000-0000-4000-8000-000000000001", "-f", path,
 	})
 	if !strings.Contains(errText, "--service-id can only be used with one service reference") {
 		t.Fatalf("unexpected multi-ID error: %q", errText)
@@ -219,7 +219,7 @@ func TestWorkspaceAddMultipleExactIDsWithoutApplyIsConfigOnly(t *testing.T) {
 	path := writeSprintConfig(t, dir, "workspace.yaml", "apiVersion: fused/v1\nkind: workspace\nservices: {}\n")
 	first := "00000000-0000-4000-8000-000000000011"
 	second := "00000000-0000-4000-8000-000000000012"
-	runCommandInDir(t, dir, "http://127.0.0.1:1", []string{"workspace", "service", "add", first, second, "-f", path})
+	runCommandInDir(t, dir, "http://127.0.0.1:1", []string{"service", "add", first, second, "-f", path})
 
 	parsed, err := configfile.ParseFile(path)
 	if err != nil {
@@ -272,7 +272,7 @@ services:
 			server, _ := newWorkspaceServiceDiscoveryServer(t, testCase.workspaceJSON, testCase.registryJSON)
 			defer server.Close()
 
-			errText := runCommandInDirExpectError(t, dir, server.URL, []string{"workspace", "service", "add", "billing", "--apply", "-f", path})
+			errText := runCommandInDirExpectError(t, dir, server.URL, []string{"service", "add", "billing", "--apply", "-f", path})
 			if !strings.Contains(errText, "already has service_id") || !strings.Contains(errText, "refusing to resolve or activate") {
 				t.Fatalf("missing identity conflict: %q", errText)
 			}
@@ -298,14 +298,14 @@ func TestWorkspaceAddApplyReportsPartialOutcomeAndExactRecovery(t *testing.T) {
 	defer server.Close()
 
 	errText := runCommandInDirExpectError(t, dir, server.URL, []string{
-		"workspace", "service", "add", "linear", "square", "guard", "--apply", "-f", path,
+		"service", "add", "linear", "square", "guard", "--apply", "-f", path,
 		"--request-id", "composite-review-42",
 	})
 	for _, expected := range []string{
 		"code=workspace_service_apply_partial", "phase=engine_scoped_activation", "request_id=",
 		"committed=linear", "failed=square (not_committed, commit_possible=false)", "unattempted=guard",
-		"workspace service add 'square' --service-id '00000000-0000-4000-8000-000000000002'",
-		"workspace service add 'guard' --service-id '00000000-0000-4000-8000-000000000003'",
+		"service add 'square' --service-id '00000000-0000-4000-8000-000000000002'",
+		"service add 'guard' --service-id '00000000-0000-4000-8000-000000000003'",
 	} {
 		if !strings.Contains(errText, expected) {
 			t.Fatalf("partial outcome missing %q: %s", expected, errText)
@@ -338,12 +338,12 @@ func TestWorkspaceAddDirectPartialRecoveryStaysFileFree(t *testing.T) {
 	defer server.Close()
 
 	errText := runCommandInDirExpectError(t, dir, server.URL, []string{
-		"workspace", "service", "add", "linear", "square", "guard", "--request-id", "composite-review-42",
+		"service", "add", "linear", "square", "guard", "--request-id", "composite-review-42",
 	})
 	// Exact-ID retry commands can safely replay the failed suffix without any local artifact.
 	for _, expected := range []string{
-		"workspace service add 'square' --service-id '00000000-0000-4000-8000-000000000002'",
-		"workspace service add 'guard' --service-id '00000000-0000-4000-8000-000000000003'",
+		"service add 'square' --service-id '00000000-0000-4000-8000-000000000002'",
+		"service add 'guard' --service-id '00000000-0000-4000-8000-000000000003'",
 	} {
 		if !strings.Contains(errText, expected) {
 			t.Fatalf("direct partial outcome missing %q: %s", expected, errText)
@@ -461,7 +461,7 @@ func TestClassifyWorkspaceServiceApplyOutcomePreservesRecoveryMetadata(t *testin
 		code: workspaceServiceApplyErrorCode, phase: workspaceServiceApplyPhase,
 		requestID: "11111111-1111-4111-8111-111111111111",
 		committed: []string{"linear"}, failed: "square", failedCommitState: "unknown", failedCommitPossible: true,
-		unattempted: []string{"guard"}, recovery: "fused-cli workspace service add square", cause: errors.New("lost response"),
+		unattempted: []string{"guard"}, recovery: "fused-cli service add square", cause: errors.New("lost response"),
 	}
 	result := classifyCommandError(&cobra.Command{Use: "add"}, err)
 	// Stable top-level fields let agents recover without parsing human prose.
@@ -603,7 +603,7 @@ func TestWorkspaceAddServiceDefaultsToRegistryConfirmation(t *testing.T) {
 	}
 	t.Cleanup(func() { confirmWorkspaceRegistryService = oldConfirm })
 
-	out := runCommandInDirOutput(t, dir, server.URL, []string{"workspace", "service", "add", "billing", "-f", path})
+	out := runCommandInDirOutput(t, dir, server.URL, []string{"service", "add", "billing", "-f", path})
 	if !confirmed {
 		t.Fatal("default workspace add did not request Registry confirmation")
 	}
@@ -640,7 +640,7 @@ func TestWorkspaceAddServiceCompatibilityFlagConfirmsRegistryMatch(t *testing.T)
 	}
 	t.Cleanup(func() { confirmWorkspaceRegistryService = oldConfirm })
 
-	runCommandInDir(t, dir, server.URL, []string{"workspace", "service", "add", "drive", "--interactive", "-f", path})
+	runCommandInDir(t, dir, server.URL, []string{"service", "add", "drive", "--interactive", "-f", path})
 	assertWorkspaceConfigContains(t, path, "@google/drive:", false)
 }
 
@@ -662,7 +662,7 @@ func TestWorkspaceAddServiceDefaultCancellationDoesNotWrite(t *testing.T) {
 	oldConfirm := confirmWorkspaceRegistryService
 	confirmWorkspaceRegistryService = func(service serviceSearchResult) (bool, error) { return false, nil }
 	t.Cleanup(func() { confirmWorkspaceRegistryService = oldConfirm })
-	errText := runCommandInDirExpectError(t, dir, server.URL, []string{"workspace", "service", "add", "drive", "-f", path})
+	errText := runCommandInDirExpectError(t, dir, server.URL, []string{"service", "add", "drive", "-f", path})
 	if !strings.Contains(errText, "service addition cancelled") {
 		t.Fatalf("expected cancellation error, got %q", errText)
 	}
@@ -688,7 +688,7 @@ func TestWorkspaceAddServiceNonInteractiveRejectsAmbiguousRegistryQuery(t *testi
 	]`)
 	defer server.Close()
 
-	errText := runCommandInDirExpectError(t, dir, server.URL, []string{"workspace", "service", "add", "bill", "-f", path})
+	errText := runCommandInDirExpectError(t, dir, server.URL, []string{"service", "add", "bill", "-f", path})
 	if !strings.Contains(errText, "matched 2 Registry services") || !strings.Contains(errText, "--no-input") {
 		t.Fatalf("expected actionable ambiguity error, got %q", errText)
 	}
@@ -707,7 +707,7 @@ func TestWorkspaceAddServiceStopsOnAmbiguousWorkspaceMatch(t *testing.T) {
 	]`, `[]`)
 	defer server.Close()
 
-	errText := runCommandInDirExpectError(t, dir, server.URL, []string{"workspace", "service", "add", "billing", "-f", path})
+	errText := runCommandInDirExpectError(t, dir, server.URL, []string{"service", "add", "billing", "-f", path})
 	if !strings.Contains(errText, "matches multiple workspace services") || !strings.Contains(errText, "--service-id") {
 		t.Fatalf("expected actionable workspace ambiguity error, got %q", errText)
 	}
@@ -731,7 +731,7 @@ func TestWorkspaceAddServiceQualifiedQueryIgnoresDifferentWorkspaceProvider(t *t
 	]`)
 	defer server.Close()
 
-	runCommandInDir(t, dir, server.URL, []string{"workspace", "service", "add", "@other/billing", "-f", path})
+	runCommandInDir(t, dir, server.URL, []string{"service", "add", "@other/billing", "-f", path})
 	if *registryCalls != 1 {
 		t.Fatalf("different provider workspace result must fall through to Registry, got %d calls", *registryCalls)
 	}
@@ -755,7 +755,7 @@ func TestWorkspaceAddServiceDefaultsToSelectingAmbiguousWorkspaceMatch(t *testin
 		return services[1], nil
 	}
 	t.Cleanup(func() { selectExistingWorkspaceService = oldSelect })
-	out := runCommandInDirOutput(t, dir, server.URL, []string{"workspace", "service", "add", "billing", "-f", path})
+	out := runCommandInDirOutput(t, dir, server.URL, []string{"service", "add", "billing", "-f", path})
 	if *registryCalls != 0 {
 		t.Fatalf("selected workspace match must not search Registry, got %d calls", *registryCalls)
 	}
@@ -830,13 +830,14 @@ func TestWorkspaceAddServiceStopsOnRegistryPermissionFailure(t *testing.T) {
 	}))
 	defer server.Close()
 
-	errText := runCommandInDirExpectError(t, dir, server.URL, []string{"workspace", "service", "add", "billing", "-f", path})
+	errText := runCommandInDirExpectError(t, dir, server.URL, []string{"service", "add", "billing", "-f", path})
 	if !strings.Contains(strings.ToLower(errText), "forbidden") && !strings.Contains(errText, "403") {
 		t.Fatalf("expected Registry permission failure, got %q", errText)
 	}
 	assertWorkspaceConfigContainsNoServices(t, path)
 }
 
+// TestWorkspaceAddServiceStopsOnWorkspacePermissionFailure verifies that workspace add service stops on workspace permission failure.
 func TestWorkspaceAddServiceStopsOnWorkspacePermissionFailure(t *testing.T) {
 	resetWorkspaceServiceAddState(t)
 	dir := t.TempDir()
@@ -855,7 +856,7 @@ func TestWorkspaceAddServiceStopsOnWorkspacePermissionFailure(t *testing.T) {
 	}))
 	defer server.Close()
 
-	errText := runCommandInDirExpectError(t, dir, server.URL, []string{"workspace", "service", "add", "billing", "-f", path})
+	errText := runCommandInDirExpectError(t, dir, server.URL, []string{"service", "add", "billing", "-f", path})
 	if !strings.Contains(strings.ToLower(errText), "forbidden") && !strings.Contains(errText, "403") {
 		t.Fatalf("expected workspace permission failure, got %q", errText)
 	}
@@ -877,10 +878,11 @@ func TestWorkspaceAddServiceNoInputAutoAddsUniqueRegistryMatch(t *testing.T) {
 	]`)
 	defer server.Close()
 
-	runCommandInDir(t, dir, server.URL, []string{"workspace", "service", "add", "drive", "-f", path})
+	runCommandInDir(t, dir, server.URL, []string{"service", "add", "drive", "-f", path})
 	assertWorkspaceConfigContains(t, path, "@google/drive:", false)
 }
 
+// TestWorkspaceAddServiceExplicitServiceIDSkipsDiscoveryAndPreservesYAML verifies that workspace add service explicit service ID skips discovery and preserves YAML.
 func TestWorkspaceAddServiceExplicitServiceIDSkipsDiscoveryAndPreservesYAML(t *testing.T) {
 	resetWorkspaceServiceAddState(t)
 	dir := t.TempDir()
@@ -888,7 +890,7 @@ func TestWorkspaceAddServiceExplicitServiceIDSkipsDiscoveryAndPreservesYAML(t *t
 	serviceID := "00000000-0000-4000-8000-000000000024"
 
 	out := runCommandInDirOutput(t, dir, "http://127.0.0.1:1", []string{
-		"workspace", "service", "add", "private-service", "--service-id", serviceID, "--version", "1.2.3", "-f", path,
+		"service", "add", "private-service", "--service-id", serviceID, "--version", "1.2.3", "-f", path,
 	})
 	parsed, err := configfile.ParseFile(path)
 	if err != nil {
@@ -917,6 +919,7 @@ func TestWorkspaceServiceViewURLNormalizesBaseAndEscapesID(t *testing.T) {
 	}
 }
 
+// TestWorkspaceAddServiceUUIDReferenceSkipsDiscovery verifies that workspace add service UUID reference skips discovery.
 func TestWorkspaceAddServiceUUIDReferenceSkipsDiscovery(t *testing.T) {
 	resetWorkspaceServiceAddState(t)
 	dir := t.TempDir()
@@ -924,7 +927,7 @@ func TestWorkspaceAddServiceUUIDReferenceSkipsDiscovery(t *testing.T) {
 	serviceID := "00000000-0000-4000-8000-000000000043"
 
 	runCommandInDir(t, dir, "http://127.0.0.1:1", []string{
-		"workspace", "service", "add", serviceID, "-f", path,
+		"service", "add", serviceID, "-f", path,
 	})
 	parsed, err := configfile.ParseFile(path)
 	if err != nil {
@@ -936,6 +939,7 @@ func TestWorkspaceAddServiceUUIDReferenceSkipsDiscovery(t *testing.T) {
 	}
 }
 
+// TestWorkspaceAddServicePreservesExistingLocalServiceMetadata verifies that workspace add service preserves existing local service metadata.
 func TestWorkspaceAddServicePreservesExistingLocalServiceMetadata(t *testing.T) {
 	resetWorkspaceServiceAddState(t)
 	dir := t.TempDir()
@@ -951,7 +955,7 @@ services:
       - version: "1.0.0"
 `)
 	runCommandInDir(t, dir, "http://127.0.0.1:1", []string{
-		"workspace", "service", "add", "billing", "--service-id", serviceID, "--version", "2.0.0", "-f", path,
+		"service", "add", "billing", "--service-id", serviceID, "--version", "2.0.0", "-f", path,
 	})
 	parsed, err := configfile.ParseFile(path)
 	if err != nil {
@@ -966,12 +970,13 @@ services:
 	}
 }
 
+// TestWorkspaceAddServiceTrimsWhitespaceVersion verifies that workspace add service trims whitespace version.
 func TestWorkspaceAddServiceTrimsWhitespaceVersion(t *testing.T) {
 	resetWorkspaceServiceAddState(t)
 	dir := t.TempDir()
 	path := writeSprintConfig(t, dir, "workspace.yaml", "apiVersion: fused/v1\nkind: workspace\nservices: {}\n")
 	out := runCommandInDirOutput(t, dir, "http://127.0.0.1:1", []string{
-		"workspace", "service", "add", "billing", "--service-id", "00000000-0000-4000-8000-000000000042", "--version", "   ", "-f", path,
+		"service", "add", "billing", "--service-id", "00000000-0000-4000-8000-000000000042", "--version", "   ", "-f", path,
 	})
 	parsed, err := configfile.ParseFile(path)
 	if err != nil {
@@ -985,12 +990,13 @@ func TestWorkspaceAddServiceTrimsWhitespaceVersion(t *testing.T) {
 	}
 }
 
+// TestWorkspaceAddServiceRejectsInvalidExplicitServiceID verifies that workspace add service rejects invalid explicit service ID.
 func TestWorkspaceAddServiceRejectsInvalidExplicitServiceID(t *testing.T) {
 	resetWorkspaceServiceAddState(t)
 	dir := t.TempDir()
 	path := writeSprintConfig(t, dir, "workspace.yaml", "apiVersion: fused/v1\nkind: workspace\nservices: {}\n")
 	errText := runCommandInDirExpectError(t, dir, "http://127.0.0.1:1", []string{
-		"workspace", "service", "add", "billing", "--service-id", "not-a-uuid", "-f", path,
+		"service", "add", "billing", "--service-id", "not-a-uuid", "-f", path,
 	})
 	if !strings.Contains(errText, "--service-id must be a valid Registry service UUID") {
 		t.Fatalf("expected UUID validation error, got %q", errText)
@@ -998,21 +1004,23 @@ func TestWorkspaceAddServiceRejectsInvalidExplicitServiceID(t *testing.T) {
 	assertWorkspaceConfigContainsNoServices(t, path)
 }
 
+// TestWorkspaceAddServiceInteractiveIsRejectedInCI verifies that workspace add service interactive is rejected in CI.
 func TestWorkspaceAddServiceInteractiveIsRejectedInCI(t *testing.T) {
 	resetWorkspaceServiceAddState(t)
 	t.Setenv("CI", "true")
-	errText := runCommandInDirExpectError(t, t.TempDir(), "http://127.0.0.1:1", []string{"workspace", "service", "add", "drive", "--interactive", "-f", "workspace.yaml"})
+	errText := runCommandInDirExpectError(t, t.TempDir(), "http://127.0.0.1:1", []string{"service", "add", "drive", "--interactive", "-f", "workspace.yaml"})
 	if !strings.Contains(errText, "interactive input is disabled") {
 		t.Fatalf("expected CI gating error, got %q", errText)
 	}
 }
 
+// TestWorkspaceAddServiceInteractiveIsRejectedWithNoInput verifies that workspace add service interactive is rejected with no input.
 func TestWorkspaceAddServiceInteractiveIsRejectedWithNoInput(t *testing.T) {
 	resetWorkspaceServiceAddState(t)
 	oldNoInput := NoInput
 	NoInput = true
 	t.Cleanup(func() { NoInput = oldNoInput })
-	errText := runCommandInDirExpectError(t, t.TempDir(), "http://127.0.0.1:1", []string{"workspace", "service", "add", "drive", "--interactive", "-f", "workspace.yaml"})
+	errText := runCommandInDirExpectError(t, t.TempDir(), "http://127.0.0.1:1", []string{"service", "add", "drive", "--interactive", "-f", "workspace.yaml"})
 	if !strings.Contains(errText, "interactive input is disabled") {
 		t.Fatalf("expected --no-input gating error, got %q", errText)
 	}

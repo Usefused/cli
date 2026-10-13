@@ -155,7 +155,7 @@ func resolveUnifiedInitSnapshotTargets(client *api.Client, parsed *configfile.Pa
 		matches := matchingUnifiedInitWorkspaceServices(workspaceServices, serviceKey)
 		// Exactly one workspace service must own the selected key before any UUID is used for mutation.
 		if len(matches) != 1 {
-			return nil, fmt.Errorf("selected service %s resolves to %d enabled workspace services; run 'fused-cli workspace service list' and retry with an unambiguous service reference", serviceKey, len(matches))
+			return nil, fmt.Errorf("selected service %s resolves to %d enabled workspace services; run 'fused-cli service list' and retry with an unambiguous service reference", serviceKey, len(matches))
 		}
 		versions := matchingUnifiedInitWorkspaceVersions(matches[0].EnabledVersions, configured.Version)
 		// The refresh endpoint accepts only an active exact version, so absence and duplicate identity both fail closed.

@@ -52,7 +52,7 @@ func TestPrintPlanResultIncludesEngineSummary(t *testing.T) {
 		"Required permissions:", `Ability to manage service "GitHub"`,
 		"Ability to use the selected bucket",
 		`Credential readiness for workspace: 1 authentication requirement(s) are missing.`,
-		"fused-cli secret set 'Okta' --bucket 'production' --type 'api_key' --auth-name 'oktaKey' --interactive",
+		"fused-cli bucket credential set 'Okta' --bucket 'production' --type 'api_key' --auth-name 'oktaKey' --interactive",
 	} {
 		if !strings.Contains(out, expected) {
 			t.Fatalf("expected %q in plan output:\n%s", expected, out)
@@ -112,7 +112,7 @@ func TestApplyPreparedAPIFailureUsesNeutralNestedLabel(t *testing.T) {
 	}
 }
 
-// TestPlanAPIUsesAPILabelsForSuccessAndFailure proves direct sdk plan keeps
+// TestPlanAPIUsesAPILabelsForSuccessAndFailure proves direct app plan keeps
 // canonical transport identity while presenting generate:false as an API.
 func TestPlanAPIUsesAPILabelsForSuccessAndFailure(t *testing.T) {
 	generate := false
@@ -165,12 +165,12 @@ func TestAPIApplyAmbiguityUsesAPILabels(t *testing.T) {
 	cause := &api.APIError{Code: "engine_unavailable", Message: "Engine unavailable", HTTPStatus: http.StatusBadGateway, CommitState: "unknown"}
 	classified := classifySDKApplyFailure(cause, cfg, planReceipt{PlanID: "plan-api"})
 	// Human recovery must name the API while retaining the sdk show compatibility command.
-	if !strings.Contains(classified.Error(), "API apply outcome is unknown") || strings.Contains(classified.Error(), "SDK apply outcome is unknown") || !strings.Contains(classified.Error(), "fused-cli sdk show") {
+	if !strings.Contains(classified.Error(), "API apply outcome is unknown") || strings.Contains(classified.Error(), "SDK apply outcome is unknown") || !strings.Contains(classified.Error(), "fused-cli app show") {
 		t.Fatalf("API apply ambiguity=%v", classified)
 	}
 	result := classifyCommandError(&cobra.Command{Use: "apply"}, classified)
 	// Structured messages describe the public API resource without changing stable error codes or recovery commands.
-	if result.Code != "sdk_apply_outcome_unknown" || !strings.Contains(result.Message, "API apply response") || !strings.Contains(result.Remediation, "API version") || result.Recovery != "fused-cli sdk show 'ledger@1.0.0'" {
+	if result.Code != "sdk_apply_outcome_unknown" || !strings.Contains(result.Message, "API apply response") || !strings.Contains(result.Remediation, "API version") || result.Recovery != "fused-cli app show 'ledger@1.0.0'" {
 		t.Fatalf("API structured ambiguity=%#v", result)
 	}
 }
@@ -234,7 +234,7 @@ func assertSDKApplyAmbiguousResponse(t *testing.T, status int, body string) {
 	}
 	result := classifyCommandError(&cobra.Command{Use: "apply"}, err)
 	// JSON exposes the plan, immutable target, and read-only command without inheriting retryability.
-	if result.Code != "sdk_apply_outcome_unknown" || result.Retryable || result.CommitState != "unknown" || result.OperationID != "plan-1" || result.Recovery != "fused-cli sdk show 'security@1.2.0'" || result.Details["config_key"] != cfg.ConfigKey {
+	if result.Code != "sdk_apply_outcome_unknown" || result.Retryable || result.CommitState != "unknown" || result.OperationID != "plan-1" || result.Recovery != "fused-cli app show 'security@1.2.0'" || result.Details["config_key"] != cfg.ConfigKey {
 		t.Fatalf("classification = %#v", result)
 	}
 }
@@ -507,6 +507,7 @@ services:
 	}
 }
 
+// TestApplyRejectsReceiptForDifferentEngineBeforeRemoteMutation verifies that apply rejects receipt for different engine before remote mutation.
 func TestApplyRejectsReceiptForDifferentEngineBeforeRemoteMutation(t *testing.T) {
 	dir := t.TempDir()
 	sdkPath := writeSprintConfig(t, dir, "security.yaml", `
@@ -537,7 +538,7 @@ services:
 		t.Fatal(err)
 	}
 
-	out := runCommandInDirExpectError(t, dir, server.URL, []string{"sdk", "apply", "-f", sdkPath})
+	out := runCommandInDirExpectError(t, dir, server.URL, []string{"app", "apply", "-f", sdkPath})
 	if !strings.Contains(out, "receipt targets") {
 		t.Fatalf("expected target mismatch, got %q", out)
 	}

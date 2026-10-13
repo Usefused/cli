@@ -94,7 +94,7 @@ func workspaceServiceApplyRecoveryCommand(targets []workspaceServiceAddTarget, v
 	commands := make([]string, 0, len(targets))
 	for _, target := range targets {
 		parts := []string{
-			"fused-cli workspace service add", shellQuoteWorkspaceServiceArg(safeWorkspaceServiceRef(target.slug)),
+			"fused-cli service add", shellQuoteWorkspaceServiceArg(safeWorkspaceServiceRef(target.slug)),
 			"--service-id", shellQuoteWorkspaceServiceArg(safeWorkspaceServiceID(target.serviceID)),
 		}
 		// Preserve an explicit version on every exact retry; omitted version keeps

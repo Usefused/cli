@@ -28,7 +28,7 @@ func TestUnifiedInitRoutesExplicitModes(t *testing.T) {
 		wantKind configfile.ConfigKind
 	}{
 		{name: "sdk", modeFlag: "--sdk", wantMode: unifiedInitModeSDK, wantKind: configfile.KindSDK},
-		{name: "api", modeFlag: "--api", wantMode: unifiedInitModeAPI, wantKind: configfile.KindSDK},
+		{name: "api", modeFlag: "--rest", wantMode: unifiedInitModeAPI, wantKind: configfile.KindSDK},
 		{name: "rest", modeFlag: "--rest", wantMode: unifiedInitModeAPI, wantKind: configfile.KindSDK},
 		{name: "mcp", modeFlag: "--mcp", extra: []string{"--description", "Manage support issues."}, wantMode: unifiedInitModeMCP, wantKind: configfile.KindMCP},
 	}
@@ -101,7 +101,7 @@ func TestUnifiedAppInitAcceptsWebhookAttachmentAndEvents(t *testing.T) {
 // TestUnifiedInitRejectsWebhookReceiverFlagsWithoutReceiverTransport keeps REST and ingress registration modes receiver-free.
 func TestUnifiedInitRejectsWebhookReceiverFlagsWithoutReceiverTransport(t *testing.T) {
 	tests := [][]string{
-		{"support-api", "--api", "--service", "linear@v1", "--select-all", "linear", "--webhook-attachment", "events"},
+		{"support-api", "--rest", "--service", "linear@v1", "--select-all", "linear", "--webhook-attachment", "events"},
 		{"events", "--webhook", "--service", "linear", "--events", "linear=issue.created"},
 	}
 	for _, args := range tests {
@@ -174,8 +174,8 @@ func TestUnifiedInitNoApplyPlansCombinedAppWithoutApplying(t *testing.T) {
 	// Completion output consumes the workspace receipt before creating the app receipt and later downloading the SDK.
 	if !strings.Contains(text, "Initialization planned. No Fused changes were applied.") ||
 		!strings.Contains(text, "fused-cli workspace apply -f '.fused/workspace.yaml'") ||
-		!strings.Contains(text, "fused-cli sdk plan -f '.fused/sdks/deferred-sdk.yaml'") ||
-		!strings.Contains(text, "fused-cli sdk apply -f '.fused/sdks/deferred-sdk.yaml' --download") ||
+		!strings.Contains(text, "fused-cli app plan -f '.fused/sdks/deferred-sdk.yaml'") ||
+		!strings.Contains(text, "fused-cli app apply -f '.fused/sdks/deferred-sdk.yaml' --download") ||
 		!strings.Contains(text, "If a saved plan is stale") {
 		t.Fatalf("deferred init output=%q", text)
 	}
@@ -218,7 +218,7 @@ func TestUnifiedInitNoApplyPlansAppWhenServicesAreEnabled(t *testing.T) {
 	}
 	text := output.String()
 	// A ready app needs only apply later; reprinting plan would obscure that its receipt was already saved.
-	if !strings.Contains(text, "fused-cli sdk apply") || strings.Contains(text, "fused-cli sdk plan -f") || !strings.Contains(text, "--download") {
+	if !strings.Contains(text, "fused-cli app apply") || strings.Contains(text, "fused-cli app plan -f") || !strings.Contains(text, "--download") {
 		t.Fatalf("deferred ready-app output=%q", text)
 	}
 }
@@ -230,11 +230,11 @@ func TestUnifiedInitNoApplyReturnsModeSpecificApplyCommands(t *testing.T) {
 		mode                  unifiedInitMode
 		appPlanned            bool
 	}{
-		{name: "combined App downloads", mode: unifiedInitModeApp, appPlanned: true, want: "fused-cli sdk apply -f 'app.yaml' --download"},
-		{name: "SDK downloads", mode: unifiedInitModeSDK, appPlanned: true, want: "fused-cli sdk apply -f 'app.yaml' --download"},
-		{name: "API uses generic apply", mode: unifiedInitModeAPI, appPlanned: true, want: "fused-cli apply -f 'app.yaml'", forbidden: "fused-cli sdk apply"},
-		{name: "API deferred plan uses generic commands", mode: unifiedInitModeAPI, want: "fused-cli plan -f 'app.yaml'\n  fused-cli apply -f 'app.yaml'", forbidden: "fused-cli sdk"},
-		{name: "MCP uses hosted resource", mode: unifiedInitModeMCP, appPlanned: true, want: "fused-cli mcp apply -f 'app.yaml'", forbidden: "--download"},
+		{name: "combined App downloads", mode: unifiedInitModeApp, appPlanned: true, want: "fused-cli app apply -f 'app.yaml' --download"},
+		{name: "SDK downloads", mode: unifiedInitModeSDK, appPlanned: true, want: "fused-cli app apply -f 'app.yaml' --download"},
+		{name: "API uses generic apply", mode: unifiedInitModeAPI, appPlanned: true, want: "fused-cli app apply -f 'app.yaml'", forbidden: "fused-cli api apply"},
+		{name: "API deferred plan uses generic commands", mode: unifiedInitModeAPI, want: "fused-cli app plan -f 'app.yaml'\n  fused-cli app apply -f 'app.yaml'", forbidden: "fused-cli sdk"},
+		{name: "MCP uses hosted resource", mode: unifiedInitModeMCP, appPlanned: true, want: "fused-cli app apply -f 'app.yaml'", forbidden: "--download"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -258,10 +258,10 @@ func TestUnifiedInitModeValidationRejectsAmbiguousAutomation(t *testing.T) {
 		args []string
 		want string
 	}{
-		{name: "competing modes", args: []string{"support", "--sdk", "--api", "--service", "linear", "--select-all", "linear"}, want: "choose exactly one"},
+		{name: "competing modes", args: []string{"support", "--sdk", "--rest", "--service", "linear", "--select-all", "linear"}, want: "choose exactly one"},
 		{name: "missing service", args: []string{"support", "--sdk"}, want: "at least one --service"},
 		{name: "missing mcp description", args: []string{"support", "--mcp", "--service", "linear", "--select-all", "linear"}, want: "requires --description"},
-		{name: "API language", args: []string{"support", "--api", "--language", "python", "--service", "linear", "--select-all", "linear"}, want: "--language can only be used with a combined App or --sdk"},
+		{name: "API language", args: []string{"support", "--rest", "--language", "python", "--service", "linear", "--select-all", "linear"}, want: "--language can only be used with a combined App or --sdk"},
 		{name: "MCP language", args: []string{"support", "--mcp", "--description", "Support users.", "--language", "python", "--service", "linear", "--select-all", "linear"}, want: "--language can only be used with a combined App or --sdk"},
 	}
 	for _, test := range tests {
@@ -301,14 +301,10 @@ func TestUnifiedInitDefaultsToCombinedApp(t *testing.T) {
 
 // TestUnifiedInitMCPExtendPreservesExistingDescription proves additive automation does not require immutable prose a second time.
 func TestUnifiedInitMCPExtendPreservesExistingDescription(t *testing.T) {
-	var got scaffoldRequest
-	executeUnifiedInitForTest(t, func(_ *cobra.Command, _ unifiedInitMode, request scaffoldRequest) error {
-		got = request
-		return nil
-	}, "incident-agent", "--mcp", "--extend", "--service", "linear", "--select-all", "linear")
-	// Omitting description on extension leaves the existing field authoritative instead of clearing or conflicting with it.
-	if !got.extend || got.descriptionSet || got.description != "" {
-		t.Fatalf("MCP extension request=%#v", got)
+	command := newUnifiedInitCommandWithRunner(nil)
+	// Extension is an explicit root command, never a hidden init mode.
+	if command.Flags().Lookup("extend") != nil {
+		t.Fatal("init still accepts --extend")
 	}
 }
 
@@ -389,7 +385,7 @@ func TestUnifiedInitAPINextStepPrintsAppliedRESTCall(t *testing.T) {
 	printUnifiedInitAPINextStep(command, client, parsed, "app-version-1")
 	text := output.String()
 	// The result names the immutable app route, token environment variable, and one selected operation.
-	if !strings.Contains(text, server.URL+"/v1/apps/app-version-1/executions") || !strings.Contains(text, "FUSED_SDK_TOKEN") || !strings.Contains(text, "REST request template") || !strings.Contains(text, `"operation":"issueUpdate"`) || !strings.Contains(text, `"input":{}`) || strings.Contains(text, `"params"`) {
+	if !strings.Contains(text, server.URL+"/v1/apps/app-version-1/executions") || !strings.Contains(text, "FUSED_APP_TOKEN") || !strings.Contains(text, "REST request template") || !strings.Contains(text, `"operation":"issueUpdate"`) || !strings.Contains(text, `"input":{}`) || strings.Contains(text, `"params"`) {
 		t.Fatalf("API next step=%q", text)
 	}
 }
@@ -478,7 +474,7 @@ func TestUnifiedAPIInitUsesAPIUserFacingLabels(t *testing.T) {
 		t.Fatalf("kind=%q generate=%v", parsed.Kind, parsed.SDK.Generate)
 	}
 	receipt, err := readPlanReceiptFile(defaultReceiptPath("sdk:support-api:1.0.0"))
-	// Receipt identity remains canonical so normal sdk apply can consume it unchanged.
+	// Receipt identity remains canonical so normal app apply can consume it unchanged.
 	if err != nil || receipt.ConfigKey != "sdk:support-api:1.0.0" {
 		t.Fatalf("receipt=%#v error=%v", receipt, err)
 	}
@@ -559,7 +555,7 @@ func TestUnifiedInitPrintsPlanReadinessAndNotifications(t *testing.T) {
 	command.SetOut(&output)
 	err := createPlanApplyUnifiedInit(command, api.NewClient(server.URL, "test-key"), unifiedInitModeSDK, unifiedInitFailureTestRequest(filepath.Join(directory, "support-sdk.yaml")), false, false, noOpScaffoldRequirements, defaultTestScaffoldBucket)
 	// Combined init must not hide readiness or notifications that ordinary plan users receive.
-	if err != nil || !strings.Contains(output.String(), "Credential readiness for sdk:support-sdk:1.0.0") || !strings.Contains(output.String(), "fused-cli secret set 'Linear' --bucket 'default' --type 'api_key' --auth-name 'linearKey' --interactive") || !strings.Contains(output.String(), "registry_notifications_unavailable") {
+	if err != nil || !strings.Contains(output.String(), "Credential readiness for sdk:support-sdk:1.0.0") || !strings.Contains(output.String(), "fused-cli bucket credential set 'Linear' --bucket 'default' --type 'api_key' --auth-name 'linearKey' --interactive") || !strings.Contains(output.String(), "registry_notifications_unavailable") {
 		t.Fatalf("error=%v output=%q", err, output.String())
 	}
 }
@@ -1040,21 +1036,11 @@ func TestUnifiedInitCreateCollisionStopsBeforeWorkspaceLifecycle(t *testing.T) {
 
 // TestResourceInitCommandsRemainHiddenCompatibilityAliases keeps old invocations and JSON clean while removing them from normal discovery.
 func TestResourceInitCommandsRemainHiddenCompatibilityAliases(t *testing.T) {
-	tests := []struct {
-		parent *cobra.Command
-		mode   string
-	}{
-		{parent: sdkCmd, mode: "sdk"},
-		{parent: mcpCmd, mode: "mcp"},
-	}
-	for _, test := range tests {
-		command, _, err := test.parent.Find([]string{"init"})
-		if err != nil {
-			t.Fatalf("find %s init: %v", test.mode, err)
-		}
-		// Hidden compatibility commands carry migration help without Cobra's deprecation prefix contaminating --json output.
-		if command == nil || !command.Hidden || command.Deprecated != "" || !strings.Contains(command.Long, "fused-cli init <app-name> --"+test.mode) {
-			t.Fatalf("%s init compatibility metadata: %#v", test.mode, command)
+	for _, parent := range []*cobra.Command{sdkCmd, mcpCmd} {
+		command, rest, err := parent.Find([]string{"init"})
+		// Unresolved input proves the legacy creation path is not executable.
+		if err == nil && (command != parent || len(rest) != 1) {
+			t.Fatalf("legacy init is still registered: %s", parent.Name())
 		}
 	}
 }

@@ -21,7 +21,6 @@ var bucketCmd = &cobra.Command{
 var bucketListFlags listFlags
 var bucketServicesFlags listFlags
 var bucketSecretsFlags listFlags
-var bucketValuesFlags listFlags
 var bucketConnectionsFlags listFlags
 var bucketSDKsFlags listFlags
 var bucketConnectionsServices []string
@@ -32,7 +31,6 @@ var bucketDeleteCmd = newBucketCommand("delete <bucket-name>", "Delete a bucket"
 var bucketShowCmd = newBucketCommand("show <bucket-name-or-id>", "Show a bucket", "cli.bucket.show", runBucketShow)
 var bucketServicesCmd = newBucketCommand("services <bucket-name-or-id>", "List services represented in a bucket", "cli.bucket.services", runBucketServices)
 var bucketSecretsCmd = newBucketCommand("secrets <bucket-name-or-id>", "List secret metadata in a bucket", "cli.bucket.secrets", runBucketSecrets)
-var bucketValuesCmd = newBucketCommand("values <bucket-name-or-id>", "List non-secret values in a bucket", "cli.bucket.values", runBucketValues)
 var bucketConnectionsCmd = newBucketCommand("connections <bucket-name-or-id>", "List connected users in a bucket", "cli.bucket.connections", runBucketConnections)
 var bucketSDKsCmd = newBucketCommand("sdks <bucket-name-or-id>", "List SDK scopes using a bucket", "cli.bucket.sdks", runBucketSDKs)
 
@@ -146,6 +144,7 @@ func runBucketServices(cmd *cobra.Command, nameOrID string) error {
 	return nil
 }
 
+// runBucketSecrets lists metadata without retrieving credential values.
 func runBucketSecrets(cmd *cobra.Command, nameOrID string) error {
 	client, bucketID, err := bucketClientAndID(nameOrID)
 	if err != nil {
@@ -165,28 +164,6 @@ func runBucketSecrets(cmd *cobra.Command, nameOrID string) error {
 	}
 	w.Flush()
 	printPageSummary(cmd.OutOrStdout(), page.Total, bucketSecretsFlags)
-	return nil
-}
-
-func runBucketValues(cmd *cobra.Command, nameOrID string) error {
-	client, bucketID, err := bucketClientAndID(nameOrID)
-	if err != nil {
-		return err
-	}
-	page, err := client.ListBucketValuesPage(bucketID, bucketValuesFlags.pageOptions())
-	if err != nil {
-		return err
-	}
-	if wantsJSON(cmd) {
-		return writeJSONPage(cmd, page.Items, page.Total, bucketValuesFlags)
-	}
-	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 8, 2, ' ', 0)
-	fmt.Fprintln(w, "SERVICE_ID\tKEY_NAME\tLOCATION")
-	for _, value := range page.Items {
-		fmt.Fprintf(w, "%s\t%s\t%s\n", value.ServiceID, value.KeyName, value.Location)
-	}
-	w.Flush()
-	printPageSummary(cmd.OutOrStdout(), page.Total, bucketValuesFlags)
 	return nil
 }
 
@@ -347,6 +324,7 @@ func resolveConnectionServiceSelectors(client *cliapi.Client, values []string) (
 	return serviceIDs, filteredVersionIDs, nil
 }
 
+// formatOptionalTime keeps absent timestamps readable in inventory output.
 func formatOptionalTime(value *time.Time) string {
 	if value == nil {
 		return "never"
@@ -354,14 +332,14 @@ func formatOptionalTime(value *time.Time) string {
 	return value.Format(time.RFC3339)
 }
 
+// init registers bucket administration; the value group owns value CRUD and pagination.
 func init() {
 	RootCmd.AddCommand(bucketCmd)
-	bucketCmd.AddCommand(bucketCreateCmd, bucketDeleteCmd, bucketListCmd, bucketShowCmd, bucketServicesCmd, bucketSecretsCmd, bucketValuesCmd, bucketConnectionsCmd, bucketSDKsCmd)
-	addJSONOutputFlag(bucketListCmd, bucketShowCmd, bucketServicesCmd, bucketSecretsCmd, bucketValuesCmd, bucketConnectionsCmd, bucketSDKsCmd)
+	bucketCmd.AddCommand(bucketCreateCmd, bucketDeleteCmd, bucketListCmd, bucketShowCmd, bucketServicesCmd, bucketSecretsCmd, bucketConnectionsCmd, bucketSDKsCmd)
+	addJSONOutputFlag(bucketListCmd, bucketShowCmd, bucketServicesCmd, bucketSecretsCmd, bucketConnectionsCmd, bucketSDKsCmd)
 	addListFlags(bucketListCmd, &bucketListFlags)
 	addListFlags(bucketServicesCmd, &bucketServicesFlags)
 	addListFlags(bucketSecretsCmd, &bucketSecretsFlags)
-	addListFlags(bucketValuesCmd, &bucketValuesFlags)
 	addListFlags(bucketConnectionsCmd, &bucketConnectionsFlags)
 	addListFlags(bucketSDKsCmd, &bucketSDKsFlags)
 	bucketConnectionsCmd.Flags().StringSliceVar(&bucketConnectionsServices, "service", nil, "Service filter as <service>[@<version>]; comma-separated or repeatable")

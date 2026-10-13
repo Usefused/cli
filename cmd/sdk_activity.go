@@ -26,7 +26,7 @@ var sdkActivityCmd = &cobra.Command{
 		if err := cobra.ExactArgs(1)(cmd, args); err != nil {
 			return err
 		}
-		return validateExactAppReference(args[0], "sdk activity")
+		return validateExactAppReference(args[0], "app activity")
 	},
 	RunE: WithTelemetry("cli.sdk.activity", func(cmd *cobra.Command, args []string) error {
 		return runSDKActivity(cmd, downloadTargetFromName(args[0]))
@@ -53,9 +53,9 @@ func runSDKActivity(cmd *cobra.Command, target sdkDownloadTarget) error {
 	if err != nil {
 		return err
 	}
-	appID, err := client.ResolveSDKAppReference(target.Name, target.Version)
+	appID, err := client.ResolveAppReference(target.Name, target.Version)
 	if err != nil {
-		return fmt.Errorf("resolve SDK version: %w", err)
+		return fmt.Errorf("resolve app version: %w", err)
 	}
 	page, err := client.ListSDKExecutionEvents(appID, api.AppExecutionEventOptions{
 		IncludeAllVersions: sdkActivityAllVersions,
@@ -65,7 +65,7 @@ func runSDKActivity(cmd *cobra.Command, target sdkDownloadTarget) error {
 		PageOptions:        sdkActivityListFlags.pageOptions(),
 	})
 	if err != nil {
-		return fmt.Errorf("list SDK execution activity: %w", err)
+		return fmt.Errorf("list app execution activity: %w", err)
 	}
 	if wantsJSON(cmd) {
 		return writeJSONPage(cmd, page.Items, page.Total, sdkActivityListFlags)

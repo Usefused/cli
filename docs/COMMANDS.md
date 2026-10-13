@@ -60,11 +60,11 @@ output and stderr receives one JSON object before the CLI exits non-zero:
       "service_id": "22222222-2222-4222-8222-222222222222",
       "service_slug": "stripe",
       "bucket_name": "production",
-      "command": "fused-cli secret set 'stripe' --bucket 'production' --type 'api_key' --auth-name 'providerKey' --interactive"
+      "command": "fused-cli bucket credential set 'stripe' --bucket 'production' --type 'api_key' --auth-name 'providerKey' --interactive"
     },
     "trace_id": "...",
     "http_status": 409,
-    "command": "fused-cli sdk invoke support-sdk@1.0.0 listIssues"
+    "command": "fused-cli app invoke support-sdk@1.0.0 listIssues"
   }
 }
 ```
@@ -162,11 +162,11 @@ receipt whose dependencies are active, and stops before apply, generation, or
 download. If a service is not active yet, the workspace plan receipt is saved
 and app planning is deferred until workspace apply; otherwise the app plan
 receipt is saved immediately. The command prints the exact remaining commands,
-including `sdk apply --download` for generated SDKs, and tells users to re-plan
+including `app apply --download` for generated SDKs, and tells users to re-plan
 if a retained receipt becomes stale.
 
 Omitting the method flag creates the combined App in terminals and automation.
-`--api` remains an alias for `--rest`. If a
+If a
 service has no operation flags, standalone MCP apps with imported capabilities
 show a searchable combined picker with nothing preselected. Other services use
 the endpoint selector, whose highlighted default is **All operations**;
@@ -177,8 +177,7 @@ explicit endpoint flags or, for standalone MCP apps, imported flags such as
 MCP creation also requires `--description`.
 
 Creation refuses to replace an existing path before any remote plan. Extension is additive and
-idempotent through the top-level `extend` command described below. The retained
-`init --extend` flag is a compatibility alias for existing scripts.
+idempotent through the top-level `extend` command described below.
 
 If an exact version is not enabled, a terminal presents one combined
 confirmation; governance remains split into a workspace plan receipt and an app
@@ -241,9 +240,7 @@ new publication-choice menu.
 
 App scaffolding adds only missing required bucket-backed
 `server_variable` injections. Existing injections remain authoritative, and
-workspace policy or native `x-fused-connect` routing is not duplicated. The
-older `sdk init` and `mcp init` scaffold commands remain callable but hidden for
-compatibility. See the `fused-config` OpenAPI/Postman reference for the canonical
+workspace policy or native `x-fused-connect` routing is not duplicated. Use top-level `init` for creation and `extend` for additions. See the `fused-config` OpenAPI/Postman reference for the canonical
 Sendbird binding and bucket-value setup.
 
 ## `describe <goal>`
@@ -271,7 +268,7 @@ REST apps have no event receiver.
 
 Unified App creation needs 1–16 explicit operations. `describe` saves
 `.fused/unified_app/<app>.tsx` and a YAML `source_path` reference. Edit that
-TypeScript file and deploy a new version to update it. `unified-app sync` moves
+TypeScript file and deploy a new version to update it. `app source extract` moves
 inline YAML source into the editable file. `--update <app-name>` applies to
 existing SDK, MCP, and REST configs and publishes an immutable successor when
 the reviewed proposal changes it. Use `-f <path>` when a name is ambiguous.
@@ -364,26 +361,19 @@ the official installers preserve it beside the executable. `skill install`
 reads that immutable local snapshot first, avoiding network drift; GitHub and
 embedded content remain fallbacks for older and `go install` installations.
 
-## `service search`
-Search workspace and Registry services together for read-only browsing. Pass a
-non-empty `--q <provider-or-product>` and optionally `--json`. Results already
-enabled in the workspace are listed first with `workspace_status: enabled`;
-Registry-only results use `workspace_status: available_to_add`. The CLI uses
-Registry's existing bounded search, then one Fused deployment lookup limited to that
-query/result set—it does not load the full workspace. This combined view
-requires both `catalogue.read` and `service.read`.
+## `service list`
 
-You do not need to run this before adding a service: `workspace service add
-<query-or-slug>` performs the same workspace-first resolution and Registry
-fallback itself.
+List enabled workspace services. Use `--search <query>` to filter. Add `--registry` with a non-empty search to read the Registry catalog instead. Registry results retain reusable provider-qualified slugs and require `catalogue.read`; they do not perform a workspace membership lookup. Both scopes support `--json`.
 
-## `service versions <service-slug>`
+`service add <query-or-slug>` already checks the workspace and falls back to Registry discovery when needed, so a separate search is optional.
+
+## `service version list --registry <service-slug>`
 List Registry versions visible to the current account for a service slug. Supports provider-qualified slugs such as `@provider/slug`.
 The command requests only version identity, status, and execution-contract
 compatibility fields; it does not download documentation or execution policies.
 Pass `--json` to return those bounded summary objects directly.
 
-## `service edit <service-slug>`
+## `service edit <service-slug> --registry`
 
 Edit the display name or description of a service owned by your account. Requires
 Engine `service.manage` permission; Registry also enforces service ownership.
@@ -398,7 +388,7 @@ Omitted fields stay unchanged. An empty description clears it. The slug, service
 ID, and version contracts stay unchanged. Requires a Registry and Engine version
 that supports `PATCH /integrations/{id}/details`.
 
-## `service show <service-slug>`
+## `service show --registry <service-slug>`
 Show the description, base URL, servers, and supported authentication methods
 for a service. Pass `--json` for stable machine-readable metadata, including
 the reusable provider-qualified slug and complete non-secret auth contract.
@@ -407,18 +397,18 @@ the reusable provider-qualified slug and complete non-secret auth contract.
 |----------|-------|-------------|---------|
 | `--json` | | Print service metadata as JSON | `false` |
 
-## `service operations <service-slug>`
-List or search Registry operations for a service. Passing `--q` uses the server-side endpoint search path and supports pagination.
+## `service operation list --registry <service-slug>`
+List or search Registry operations for a service. Passing `--search` uses the server-side endpoint search path and supports pagination.
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
-| `--q` | | Search query for service operations | `""` |
+| `--search` | | Search query for service operation list --registry | `""` |
 | `--version` | | Service version for operations | `""` |
-| `--limit` | | Maximum rows to read; requires `--q` | `20` |
-| `--offset` | | Rows to skip before reading; requires `--q` | `0` |
+| `--limit` | | Maximum rows to read; requires `--search` | `20` |
+| `--offset` | | Rows to skip before reading; requires `--search` | `0` |
 | `--json` | | Print operation summaries, descriptions, documentation, and security requirements as JSON | `false` |
 
-## `service operation show <service-slug> <operation-name>`
+## `service operation show --registry <service-slug> <operation-name>`
 
 Show one operation grounded in an exact service version. Parameters,
 description, documentation, protocol, and ordered security requirements are
@@ -432,12 +422,12 @@ do not unnecessarily fill an agent's context.
 | `--include-request` | | Include the request content contract | `false` |
 | `--include-responses` | | Include response contracts | `false` |
 
-## `service webhooks <service-slug>`
+## `service webhook list --registry <service-slug>`
 List Registry webhook definitions for a service.
 Pass `--json` to return webhook definitions directly.
 
-## `secret set <service-slug>`
-Set authentication credentials for a workspace service. In a terminal, the
+## `bucket credential set <service-slug>`
+Set authentication credentials for a service. In a terminal, the
 command prompts for a supported authentication method and securely collects its
 value by default. Use `--value-stdin` for automation; it is required with
 `--no-input` or `CI=true`. Credential values are rejected in argv so they cannot
@@ -452,20 +442,20 @@ scheme. Interactive mode selects the exact scheme directly.
 > per field. Send both fields as one `;`-delimited
 > `key=value;key=value` value over stdin:
 > ```shell
-> printf '%s' 'username=x;password=y' | fused-cli secret set jira --type basic --value-stdin
-> printf '%s' 'cert=...;key=...' | fused-cli secret set jira --type mtls --value-stdin
-> printf '%s' 'client_id=...;client_secret=...' | fused-cli secret set gmail --bucket default --type oauth --auth-name oauth2 --value-stdin
+> printf '%s' 'username=x;password=y' | fused-cli bucket credential set jira --type basic --value-stdin
+> printf '%s' 'cert=...;key=...' | fused-cli bucket credential set jira --type mtls --value-stdin
+> printf '%s' 'client_id=...;client_secret=...' | fused-cli bucket credential set gmail --bucket default --type oauth --auth-name oauth2 --value-stdin
 > ```
 > Without `--value-stdin`, a terminal supplies both fields through protected prompts.
 
-OAuth/OIDC application credentials are encrypted bucket secrets, separate from
+OAuth/OIDC application credentials are encrypted bucket credentials, separate from
 each connected user's access, refresh, and ID tokens. Fused derives the
 callback from its canonical public URL; `redirect_uri` is never accepted as
 credential input.
 
-> **Recommended Pattern:** Pipe API keys, tokens, and service credentials to `fused-cli secret set <service-slug> --value-stdin`. OAuth/OIDC application pairs must include the exact `--bucket <bucket-name>`; other schemes may use it to override the default. This stores secrets securely in Fused's encrypted vault.
+> **Recommended Pattern:** Pipe API keys, tokens, and service credentials to `fused-cli bucket credential set <service-slug> --value-stdin`. OAuth/OIDC application pairs must include the exact `--bucket <bucket-name>`; other schemes may use it to override the default. This stores secrets securely in Fused's encrypted vault.
 
-> **Tip:** To see available authentication families and their exact scheme names, run `fused-cli service show <service-slug>`.
+> **Tip:** To see available authentication families and their exact scheme names, run `fused-cli service show --registry <service-slug>`.
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
@@ -476,16 +466,9 @@ credential input.
 | `--bucket` | | Bucket name or full UUID; required for OAuth/OIDC application credentials | `""` |
 | `--expires-at` | | RFC3339 expiry timestamp (e.g. 2026-12-31T23:59:59Z) | `""` |
 
-## `secret list`
-List secret metadata in a specific bucket. Secret values are never read back.
 
-| Argument | Short | Description | Default |
-|----------|-------|-------------|---------|
-| `--bucket` | | Bucket name or full UUID to inspect (required) | `""` |
-| `--limit` | | Maximum rows to read | `20` |
-| `--offset` | | Rows to skip before reading | `0` |
 
-## `secret delete <service-slug> <key-name>`
+## `bucket credential delete <service-slug> <key-name>`
 Delete a workspace secret. Use `--bucket <bucket-name-or-id>` for an override secret.
 
 ## `bucket create <bucket-name>`
@@ -510,7 +493,7 @@ List services represented in a bucket, including secret, value, Connect config, 
 | `--limit` | | Maximum rows to read | `20` |
 | `--offset` | | Rows to skip before reading | `0` |
 
-## `bucket secrets <bucket-name-or-id>`
+## `bucket secret list <bucket-name-or-id>`
 List secret metadata in a bucket without reading secret values.
 
 | Argument | Short | Description | Default |
@@ -536,14 +519,6 @@ printf '%s' "$WEBHOOK_SECRET" | fused-cli --no-input bucket secret set default w
 | `--expires-at` | | Optional RFC3339 expiry timestamp | `""` |
 | `--json` | | Print non-sensitive mutation metadata as JSON | `false` |
 
-## `bucket values <bucket-name-or-id>`
-List non-secret values in a bucket.
-
-| Argument | Short | Description | Default |
-|----------|-------|-------------|---------|
-| `--limit` | | Maximum rows to read | `20` |
-| `--offset` | | Rows to skip before reading | `0` |
-
 ## `bucket connections <bucket-name-or-id>`
 List connected users in a bucket. Filters are sent to Fused GraphQL.
 
@@ -566,176 +541,148 @@ the SDK.
 ## `bucket delete <bucket-name>`
 Delete a workspace bucket.
 
-## `value set <bucket-name-or-id> <service-slug> <location> <key-name> <value>`
+## `bucket value set <bucket-name-or-id> <service-slug> <location> <key-name> <value>`
 Set a non-secret configuration value in a bucket. Location can be `env`, `body`, `query`, `header`, or `path`.
 
-## `value list <bucket-name-or-id>`
-List all non-secret values stored in a bucket.
+## `bucket value list <bucket-name-or-id>`
+List a page of non-secret values stored in a bucket.
 
-## `value delete <bucket-name-or-id> <service-slug> <key-name>`
+| Argument | Short | Description | Default |
+|----------|-------|-------------|---------|
+| `--json` | | Print the page as JSON | `false` |
+| `--limit` | | Maximum rows to read | `20` |
+| `--offset` | | Rows to skip before reading | `0` |
+
+## `bucket value delete <bucket-name-or-id> <service-slug> <key-name>`
 Delete a non-secret value from a bucket.
 
 ## Teams and access
 
+Teams and people belong to the selected workspace. Use `workspace team` and
+`workspace user`; these are the only supported identity-management paths.
+
 Commands accept team slugs and user email addresses. Bucket names and workspace
 service slugs are accepted at their respective resource boundaries. App access
-mutations require the `SDK_ID` or `MCP_ID` displayed by list commands because
-the generic `app` command cannot infer SDK versus MCP from a potentially shared
-name. Kind-specific SDK/MCP commands can resolve names safely. List
+mutations require the stable `APP_ID` displayed by `app list`; an exact ID avoids ambiguous names across app types. Kind-specific SDK/MCP commands can resolve names safely. List
 operations are paginated by Fused; use `--limit` and `--offset` rather
 than fetching an entire workspace into the CLI.
 
 Provider connection and discovered-resource IDs remain opaque IDs because
 providers do not guarantee a stable, workspace-unique human name for them.
 
-### `team list`
+### `workspace team list`
 List active teams. Use `--search <text>` to search names and slugs and
 `--include-archived` to include archived teams.
 
-### `team show <team-slug-or-id>`
+### `workspace team show <team-slug-or-id>`
 Show a team and its workspace, service, bucket, SDK, and MCP bindings.
 
-### `team eligible-owners`
+### `workspace team eligible-owners`
 List active teams the current caller can select as the owner of a new SDK, MCP
 server, or webhook. Supports `--search`, `--limit`, and `--offset`.
 
-### `team create <team-name>`
+### `workspace team create <team-name>`
 Create a team. Optional flags are `--slug` and `--description`.
 
-### `team update <team-slug-or-id>`
+### `workspace team update <team-slug-or-id>`
 Update a team with one or more of `--name`, `--slug`, or `--description`.
 Pass an empty `--description` value to clear it.
 
-### `team archive <team-slug-or-id>`
+### `workspace team archive <team-slug-or-id>`
 Archive a team after its bindings and owned apps have been removed or
 transferred.
 
-### `team member list <team-slug-or-id>`
+### `workspace team member list <team-slug-or-id>`
 List team members. Supports `--limit` and `--offset`.
 
-### `team member add <team-slug-or-id> <email>`
+### `workspace team member add <team-slug-or-id> <email>`
 Add a person to a team, creating their person record when needed. Use
 `--role member` (default) or `--role manager`.
 
-### `team member remove <team-slug-or-id> <user-email-or-id>`
+### `workspace team member remove <team-slug-or-id> <user-email-or-id>`
 Remove a person from a team.
 
-### `team access workspace set <team-slug-or-id> <role>`
+### `workspace team access workspace set <team-slug-or-id> <role>`
 Set the team's workspace role. The canonical roles are `owner`, `admin`,
 `builder`, and `viewer`.
 
-### `team access workspace clear <team-slug-or-id>`
+### `workspace team access workspace clear <team-slug-or-id>`
 Clear the team's workspace role.
 
-### `team access service grant|revoke <team-slug-or-id> <service-slug-or-id> <level>`
+### `workspace team access service grant|revoke <team-slug-or-id> <service-slug-or-id> <level>`
 Grant or revoke `use` or `manage` access to a service.
 
-### `team access bucket grant|revoke <team-slug-or-id> <bucket-name-or-id> <level>`
+### `workspace team access bucket grant|revoke <team-slug-or-id> <bucket-name-or-id> <level>`
 Grant or revoke `use` or `manage` access to a bucket.
 
-### `team access app grant|revoke <team-slug-or-id> <sdk-or-mcp-id> <level>`
+### `workspace team access app grant|revoke <team-slug-or-id> <app-id> <level>`
 Grant or revoke `read`, `use`, or `manage` for an SDK or MCP server. The ID is
-shown as `SDK_ID` or `MCP_ID`, and the grant applies to every version.
+shown as `APP_ID`, and the grant applies to every version.
 
-### `team build-access <team-slug-or-id>`
+### `workspace team build-access <team-slug-or-id>`
 List services or buckets available to both the current caller and the team.
 Use `--resource service|bucket`, with optional `--search`, `--limit`, and
 `--offset`.
 
 ## People and personal credentials
 
-### `user list`
+### `workspace user list`
 List active people. Use `--search <text>` to search names and email addresses,
 `--include-suspended` to include suspended people, and `--limit`/`--offset` for
 pagination.
 
-### `user show <email-or-id>`
+### `workspace user show <email-or-id>`
 Show a person, their team memberships, and non-secret credential metadata.
 
-### `user create <email>`
+### `workspace user create <email>`
 Add a person without sending an email. `--name <display-name>` is required.
 
-### `user update <email-or-id>`
+### `workspace user update <email-or-id>`
 Update a person with `--email`, `--name`, or both.
 
-### `user suspend <email-or-id>` / `user reactivate <email-or-id>`
+### `workspace user suspend <email-or-id>` / `workspace user reactivate <email-or-id>`
 Suspend a person and stop their credentials, or reactivate a suspended person.
 
-### `user credential issue <email-or-id>`
+### `workspace user credential issue <email-or-id>`
 Issue a personal credential. `--name` defaults to `personal`. The raw key is
 printed once and is never written to config, logs, or OTEL.
 
-### `user credential revoke <email-or-id> <credential-name-or-id>`
+### `workspace user credential revoke <email-or-id> <credential-name-or-id>`
 Revoke a personal credential.
 
-## `sdk plan` / `mcp plan`
-Preview SDK package or MCP server changes. Each command reads only its matching
-config kind, so an MCP plan never generates SDK code and an SDK plan never
-deploys an MCP server. Plan runs the same local/offline validation as
-`validate` before its first Fused request.
+## `app plan`
 
-| Argument | Short | Description | Default |
-|----------|-------|-------------|---------|
-| `--json` | | Print plan result JSON, including summary and notifications; the default receipt is still written | `false` |
-| `--interactive` | `-i` | Explicitly require SDK credential prompting when needed (the terminal default); incompatible with `--json`, CI, and `--no-input` | `false` |
-| `--receipt-out` | | Write the plan receipt to a specific path | `""` |
-| `--owner-team` | | Optional owning team slug; defaults to the authenticated person | `""` |
+Plan the app type declared by the selected config: SDK, direct REST API (`kind: sdk`, `generate: false`), MCP, or Unified App. Use `-f <path>` to select a file. Without `-f`, discovery ignores workspace/webhook configs and requires one app type; mixed app types require explicit file selection. Local validation runs before any deployment request.
 
-Terminal SDK planning may receive successful `credential_readiness` metadata,
-offer one secure write to the exact YAML-resolved bucket, and retry once.
-Declining preserves the valid plan. It never creates or substitutes a bucket.
-Static auth is stored through the ordinary secret path; OAuth/OIDC prompts for
-the bucket's client registration rather than an end-user provider token. MCP
-planning reports the same non-blocking readiness but does not prompt.
+| Flag | Description |
+|---|---|
+| `--json` | Print a structured plan and permissions |
+| `--receipt-out <path>` | Write a plan receipt |
+| `--owner-team <slug>` | Select the owning team |
+| `--interactive` | Require terminal credential prompting for SDK/API planning |
 
-## `sdk apply` / `mcp apply`
-Apply an SDK generation plan or deploy an MCP server plan.
+SDK/API planning can offer one secure credential repair and re-plan in a terminal. MCP planning reports readiness without prompting. Unified App planning extracts inline TypeScript into an editable source file before compilation.
 
-Generated-SDK apply returns after Fused durably queues the non-runnable build;
-package generation continues in Fused's background finalizer. Use `sdk show
-<name@version-or-version-id>` to inspect `generation_status`. `--download`
-waits through Fused-local Version ID status reads before downloading, without
-replaying apply or depending on a Registry event stream.
+## `app apply`
 
-| Argument | Short | Description | Default |
-|----------|-------|-------------|---------|
-| `--download` | | Download generated SDKs after `sdk apply`; unavailable for MCP | `false` |
-| `--json` | | Print SDK apply, generation, and download outcomes as JSON; unavailable for MCP | `false` |
-| `--plan-id` | | Apply a specific remote plan ID | `""` |
-| `--receipt` | | Read a specific plan receipt | `""` |
+Apply the saved plan for the app type declared by the config. `--json` returns the type's deployment receipt, including any one-time execution token. Receipt and Engine identity checks run before mutation.
 
-## `unified-app plan`
-
-Plan a `kind: unified_app` config with selected workspace operations and a
-TypeScript `source_path`. The CLI reads the source file, validates the config,
-and sends the reviewed cart to Fused for compilation. If the config still has
-inline `source: |`, plan first writes an editable `.tsx` file and updates the
-YAML reference. The plan receipt is used by `unified-app apply`.
-
-| Argument | Description |
-|----------|-------------|
-| `--json` | Print the plan result as JSON |
-| `--receipt-out <path>` | Write the plan receipt to a specific path |
-| `--owner-team <slug>` | Set the owning team |
-
-## `unified-app apply`
-
-Apply a Unified App plan and publish its immutable version. Fused returns the
-App IDs and shows the initial execution token once.
-
-| Argument | Description |
-|----------|-------------|
-| `--json` | Print the apply receipt as JSON |
-| `--plan-id <id>` | Apply a specific remote plan ID |
+| Flag | Description |
+|---|---|
+| `--plan-id <id>` | Apply a particular plan |
 | `--receipt <path>` | Read a saved plan receipt |
+| `--json` | Print structured deployment output for every supported app type |
+| `--download` | Wait for generation and download the package; generated SDKs only |
 
-## `unified-app promote [app-name] --version <version>`
+Generated SDKs queue package generation. Use `app show <name@version>` for build status, or `--download` to wait and fetch the package. Direct REST, MCP, and Unified Apps do not provide downloadable SDK packages.
+
+## `app promote [app-name] --version <version>`
 
 Switch new traffic to an existing Unified App version without recompiling or changing local files. Use an exact app name and a version label such as `1.0.0`; you do not need a UUID.
 
 ```sh
-fused-cli unified-app promote "Customer lookup" --version 1.0.0
-fused-cli unified-app promote -f .fused/unified_app/customer-app.yaml --version 1.0.0
+fused-cli app promote "Customer lookup" --version 1.0.0
+fused-cli app promote -f .fused/unified_app/customer-app.yaml --version 1.0.0
 ```
 
 | Argument | Description |
@@ -755,84 +702,96 @@ Exact-version REST URLs do not redirect: update callers to the selected version'
 
 Public execution errors contain stable codes. Detailed exceptions and captured bodies are available in the app's Requests inspector to actors granted `app.unified_app.diagnostics.read` on its family or workspace. Ordinary read/manage grants do not include this permission; Owner retains all permissions. Requests also needs `app.unified_app.read` and `audit.read`. The management endpoint is `GET /apps/{app_id}/executions/{execution_id}/diagnostics`; runtime execution tokens cannot use it. Evidence expires with the retained result, currently after 24 hours. New compiled bundles include TypeScript source maps.
 
-## `unified-app bundle attach <app-version-id>`
+## `app schedule`
+
+Manage one-time and recurring runs with saved JSON input. Commands accept an
+optional app name, or select one Unified App with `-f`. Requires app management
+permission and an Engine build with scheduling support.
+
+```sh
+fused-cli app schedule create "Reports" --name "December report" --at '2026-12-01T09:00:00Z' --input-file ./input.json
+fused-cli app schedule create "Reports" --name "Weekday report" --cron '0 9 * * 1-5' --timezone Europe/London --input-file ./input.json
+fused-cli app schedule list "Reports"
+fused-cli app schedule update "Reports" --id SCHEDULE_ID --input-file ./revised.json
+fused-cli app schedule pause "Reports" --id SCHEDULE_ID
+fused-cli app schedule resume "Reports" --id SCHEDULE_ID
+fused-cli app schedule delete "Reports" --id SCHEDULE_ID
+```
+
+Create and update accept `--name`, `--at` (RFC3339 with an offset), `--cron`
+(five fields), `--timezone` (IANA; defaults to UTC on creation), `--input`
+(inline JSON), `--input-file` (file or `-` for stdin), and `--paused`.
+`--at` and `--cron` are mutually exclusive, as are `--input` and `--input-file`.
+Input defaults to `{}` on creation. Updates preserve omitted fields.
+
+All commands support `--json`. JSON listing includes private saved input;
+default output omits it. Prefer files or stdin for private input. Update, pause,
+resume, and delete require `--id` and use the current revision to reject racing
+changes. After an uncertain create response, list schedules before creating
+another; the error retains the original schedule ID for reconciliation.
+
+Schedules follow the app's active version and continue after the creator signs
+out. Engine must remain running. Missed recurrence times produce one catch-up
+run, while resuming skips paused occurrences. Runs never overlap for one
+schedule, and failed executions are not automatically retried. Uncertain runs
+pause for review. Recurring local times follow daylight-saving transitions:
+nonexistent times are skipped and repeated times can run twice. Completed
+one-time schedules need a new future `--at` to run again.
+
+## `app bundle attach <app-version-id>`
 
 You usually do not need this command. With `source_path`, Fused compiles the
-TypeScript during `unified-app plan`.
+TypeScript during `app plan`.
 
 Use `bundle attach` only if you compiled the code yourself. Put the compiled
-file's checksum in the config as `bundle_digest`, then run `unified-app plan`
-and `unified-app apply`. The attach command uploads that JavaScript file and
+file's checksum in the config as `bundle_digest`, then run `app plan`
+and `app apply`. The attach command uploads that JavaScript file and
 the compiler's metadata file to the new App version. Pass the plan's
 `source_hash` with `--source-hash`, the JavaScript file with `--bundle`, and the
 metadata file with `--manifest`.
 
-## `unified-app sync`
+## `app source extract`
 
 Create `.fused/unified_app/<app>.tsx` from a local Unified App's inline
 `source: |`, and replace that block with a relative `source_path`. A linked
 source in another location is copied into the canonical path. Existing files
 with different contents are left untouched and reported as conflicts.
 
-Usage: `fused-cli unified-app sync -f .fused/unified_app/<app>.yaml`. Omit `-f` to
-sync all discovered local Unified App configs. `unified-app plan` performs the
+Usage: `fused-cli app source extract -f .fused/unified_app/<app>.yaml`. Omit `-f` to
+sync all discovered local Unified App configs. `app plan` performs the
 inline-source conversion automatically before sending the cart to Fused.
 
-## `sdk sync`
+## `app sync`
 Full-mirror a local SDK config from the exact Fused app version declared in that file. There is no implicit latest lookup or sync-time version upgrade.
 
-Usage: `fused-cli sdk sync <sdk-name> -f .fused/sdks/<sdk-name>.yaml`
+Usage: `fused-cli app sync <sdk-name> -f .fused/sdks/<sdk-name>.yaml`
 
-## `sdk validate` / `mcp validate`
-Validate only the matching SDK or MCP configuration files without a Fused deployment
-request. This remains useful for offline checks; `plan` already performs this
-validation first. Inherits global flags.
+## `app validate`
 
-## `sdk versions [sdk-or-api-name-or-id]` / `mcp versions [mcp-name-or-id]`
-List generated SDK versions or deployed MCP versions. The kind is fixed by the command.
-Use `sdk versions <name-or-id>` or `mcp versions <name-or-id>` to inspect one application, or omit the selector
-to list all versions of that kind, including exact version IDs. MCP output also
-includes stable and pinned transport URLs.
-`SDK_ID` or `MCP_ID` remains stable across versions; `VERSION_ID` identifies
-one exact immutable version.
+Validate the selected app config offline. The config determines its type. Supports `--json`.
 
-| Argument | Short | Description | Default |
-|----------|-------|-------------|---------|
-| `--limit` | | Maximum rows to read | `20` |
-| `--offset` | | Rows to skip before reading | `0` |
+## `app list`
 
-## `sdk list`
-List each SDK or direct API application once by canonical name and stable
-`SDK_ID`, with a version count and latest published version. `--limit` (default 20) and `--offset` (default 0)
-paginate applications in name order using Fused-owned grouping and authorized totals.
-`--json` returns the usual pagination envelope with `app_family_id`, `name`, and
-`version_count`, plus `latest_version` and its exact `latest_version_id`. Latest is catalogue metadata; runtime and lifecycle commands still require an exact version.
-Use `sdk versions [sdk-or-api-name-or-id]` for exact version rows and status;
-`sdk versions --json` provides the previous `sdk list --json` output shape.
+List each visible app once across SDK, REST API, MCP, and Unified Apps. `--type sdk|api|mcp|unified-app` filters on the server before pagination. `--limit` defaults to 20 and `--offset` to 0. `--json` returns `items` and `total`, stable family identity, kind, delivery mode, version count, latest/stable version metadata, and applicable transport URLs.
 
-## `mcp list`
-List each MCP application once by its canonical name and stable `MCP_ID`.
-Shows the version count, latest published version, explicitly promoted stable version, and stable transport
-URLs. Applications without a promoted version remain listed with no stable URL;
-the CLI does not select a newer sibling automatically.
+```sh
+fused-cli app list
+fused-cli app list --type api --json
+```
 
-`--limit` (default 20) and `--offset` (default 0) paginate applications in name
-order, using Fused-owned grouping and authorized totals. `--json` uses the
-usual `items`/`total` pagination envelope with application-level fields:
-`app_family_id`, `name`, `version_count`, `latest_version`, `latest_version_id`, optional `stable_version`,
-`stable_version_id`, `default_transport`, and stable `transport_urls`.
-For the previous version-level output, use `mcp versions --json`.
+## `app versions list [app-name-or-id]`
 
-Application listing requires Fused support for the `appFamilies` GraphQL query.
-Upgrade Fused alongside this CLI change. The UI uses the same family catalogue and keeps `app`/`appVersions` for exact-version details.
+List immutable versions of one app, or all visible versions when the selector is omitted. Supports `--limit`, `--offset`, and `--json`. Human output distinguishes stable app identity (`APP_ID`) from immutable `VERSION_ID`, and preserves applicable stable/pinned MCP transport URLs.
 
-## `sdk show <sdk-name@version-or-version-id>`
-Show one exact SDK version from Fused.
+## `app show <app-name@version-or-version-id>`
 
-## `sdk services <sdk-name@version-or-version-id>`
-List services selected by one exact SDK version.
+Inspect an exact app version. The selected app determines its type; SDK/REST records include best-effort generation diagnostics. There is no implicit latest-version selection.
 
-## `mcp operations <mcp-name@version-or-version-id>`
+## `app service list <app-name@version-or-version-id>`
+
+List services selected by an exact app version. Supports `--json`.
+
+## `app operation list <mcp-name@version-or-version-id>`
 List every operation ID callable through one exact MCP server version. The
 Fused expands `select_all` from its immutable local service-contract snapshots.
 Human output shows `OPERATION_ID` and `KIND` (`physical`); `--json`
@@ -840,21 +799,21 @@ returns the MCP and Version IDs plus exact physical service provenance. A bare
 MCP name without `@version` is rejected so the result cannot float to another
 version.
 
-## `sdk buckets <sdk-name-or-id>`
-List credential buckets shared by all versions of an SDK.
+## `app bucket list <app-name-or-id>`
+List credential buckets shared by all versions of an app.
 
-## `mcp deactivate <mcp-name@version-or-version-id>`
-Deactivate exactly one MCP server version. Human-readable references must use
+## `app deactivate <app-name@version-or-version-id>`
+Deactivate exactly one app version. Human-readable references must use
 `name@version`; a version ID can identify the version directly. There is no
 implicit latest version.
 
-## `sdk download <sdk-name@version-or-version-id>`
+## `app download <sdk-name@version-or-version-id>`
 Download one exact generated SDK version through Fused. Human-readable
 references must use `name@version`; a version ID can identify the version
 directly. There is no implicit latest version.
 
 ```bash
-fused-cli sdk download security-sdk@1.2.0
+fused-cli app download security-sdk@1.2.0
 ```
 
 The package is extracted to `<out>/fused-sdks/<sdk-name>`. When the generated
@@ -867,61 +826,28 @@ skills share one discovery root.
 | `--out` | `-o` | Output directory for the SDK | `"."` |
 | `--json` | | Print SDK, Version ID, status, and output path as JSON | `false` |
 
-## `sdk openapi <sdk-name@version-or-version-id>`
+## `app openapi <app-name@version-or-version-id>`
 
-Export an OpenAPI 3.1 document for one exact immutable **generated SDK**
-version. Use `api openapi` for an app created with `init --api` or any SDK
-configuration whose `generate` field is `false`. The CLI
-resolves the Version ID with its ordinary control credential and `app.sdk.read`,
-then calls `GET /apps/{app_id}/openapi`; an SDK execution token does not
-authorize this export. The document describes the real
-`POST /v1/apps/{app_id}/executions` route, pins that path to the resolved
-Version ID, and declares the SDK execution token as the runtime Bearer
-credential.
+Export the OpenAPI 3.1 execution contract for an exact app version, including direct REST API apps created with `init --rest`. Engine determines whether the selected app supports export. The CLI resolves the immutable version with a management credential, then requests `GET /apps/{app_id}/openapi`.
 
-The command always atomically writes a file and never writes the document to
-stdout. YAML is the default; JSON is available for consumers that require it.
-The generated server URL is the configured Fused URL. Redirects are rejected,
-and the CLI accepts at most 16 MiB from Fused. Before replacing the file,
-the CLI verifies that the document identifies the resolved Version ID and
-contains the actual app-execution POST path with the matching `app_id` enum and
-a request-branch count consistent with the declared operation count.
+The export describes `POST /v1/apps/{app_id}/executions` and runtime bearer authentication. It validates the returned version identity and writes the document atomically. Redirects are rejected and responses are bounded to 16 MiB.
 
-| Argument | Short | Description | Default |
-|----------|-------|-------------|---------|
-| `--operation` | | Export one exact physical operation name; surrounding whitespace is rejected and the value is case-sensitive, non-empty, and at most 512 bytes | `""` |
-| `--out` | `-o` | Atomic output file path | `<safe-sdk-name>-<version>.openapi.<format>`; Version ID input uses `<version-id>.openapi.<format>` |
-| `--format` | | Output format: `yaml` or `json` | `"yaml"` |
-| `--json` | | Print export metadata only (SDK, version, Version ID, operation, `operation_count`, format, path, bytes, `sha256:<64 lowercase hex>`, server URL, and status) | `false` |
+| Flag | Description |
+|---|---|
+| `--operation <id>` | Export one exact operation |
+| `--out <path>` | Choose the output file |
+| `--format` (`yaml` or `json`) | Document format; defaults to YAML |
+| `--json` | Print metadata only: `app`, version identity, `operation_count`, path and checksum (`sha256:<64 lowercase hex>`) |
 
-## `api openapi <api-name@version-or-version-id>`
-
-Export the OpenAPI 3.1 execution contract for one exact immutable direct REST
-API version created with `init --api` or represented by an SDK configuration
-with `generate: false`.
-
-```bash
-fused-cli api openapi billing-api@1.2.0 --out billing-api.openapi.yaml
+```sh
+fused-cli app openapi billing-api@1.2.0 --out billing.openapi.yaml
 ```
 
-The export has the same immutable-version resolution, `app.api.read` control
-credential, operation filtering, atomic file writing, size bound, and document
-validation described for `sdk openapi`. It describes the same Fused execution
-route and runtime Bearer token contract. Its generated filename and `--json`
-metadata identify the resource as an API instead of an SDK.
-
-| Argument | Short | Description | Default |
-|----------|-------|-------------|---------|
-| `--operation` | | Export one exact physical operation name | `""` |
-| `--out` | `-o` | Atomic output file path | `<safe-api-name>-<version>.openapi.<format>`; Version ID input uses `<version-id>.openapi.<format>` |
-| `--format` | | Output format: `yaml` or `json` | `"yaml"` |
-| `--json` | | Print export metadata only, using the `api` field for the resource name | `false` |
-
-## `sdk invoke <sdk-name@version-or-version-id> <operation>`
+## `app invoke <app-name@version-or-version-id> <operation>`
 
 Invoke one JSON operation through the Fused REST execution route configured by
 the global `--engine-url` / `FUSED_ENGINE_URL` setting. The SDK execution token
-comes from `FUSED_SDK_TOKEN`, a variable named by `--token-env`, or stdin with
+comes from `FUSED_APP_TOKEN`, a variable named by `--token-env`, or stdin with
 `--token-stdin`; management and provider credentials are never substituted.
 Generated SDKs retain their broader gRPC transports; this CLI smoke-test surface
 accepts only buffered JSON provider responses up to 1 MiB.
@@ -929,30 +855,30 @@ accepts only buffered JSON provider responses up to 1 MiB.
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
 | `--params` | | One duplicate-free JSON object, `@file`, or `-` for stdin | `"{}"` |
-| `--token-env` | | Environment variable containing the execution token | `"FUSED_SDK_TOKEN"` |
+| `--token-env` | | Environment variable containing the execution token | `"FUSED_APP_TOKEN"` |
 | `--token-stdin` | | Read the execution token from stdin | `false` |
 | `--environment` | | Provider environment selector; sugar for `--selector` | `""` |
 | `--selector` | | Strict selector JSON object or `@file` | `""` |
 | `--idempotency-key` | | Stable logical-request key; generated when omitted | `""` |
 | `--json` | | Print Fused endpoint, physical results, status, and timing | `false` |
 
-## `sdk activity <sdk-name@version-or-version-id>`
+## `app activity <app-name@version-or-version-id>`
 
 List canonical Fused execution receipts. Use `--all-versions` for the entire
 SDK and `--status`, `--start`, or `--end` to narrow the page. Requires both
 `app.sdk.read` and `audit.read`.
 
-## `sdk service add <service-slug>`
+## `app service add <service-slug>`
 Add a service to an SDK configuration.
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
 | `--version` | | Specific version to use for the service | `""` |
 
-## `sdk service remove <service-slug>`
+## `app service remove <service-slug>`
 Remove a service from an SDK configuration. Inherits global flags.
 
-## `sdk operation add <service-slug> [operation-id...]`
+## `app operation add <service-slug> [operation-id...]`
 Add OpenAPI operation IDs to an existing SDK configuration.
 
 | Argument | Short | Description | Default |
@@ -961,41 +887,28 @@ Add OpenAPI operation IDs to an existing SDK configuration.
 | `--apply` | | Apply changes after adding operation | `false` |
 | `--download` | | Download SDK after apply (implies `--apply`) | `false` |
 
-## `sdk operation remove <service-slug> <operation-id...>`
+## `app operation remove <service-slug> <operation-id...>`
 Remove OpenAPI operation IDs from an existing SDK configuration. Inherits global flags.
 
-## `sdk token generate <sdk-name-or-id> <token-name>`
-Generate a named execution token that works across every active or deprecated
-version of the SDK. Use `--expires-in 4h` to grant temporary full-SDK execution
-access for testing; omit it for a non-expiring service token. Pass `--json` to
-receive the one-time token, absolute expiry, and metadata as a structured object.
+## `app token generate <app-name-or-id> <token-name>`
 
-## `sdk token list <sdk-name-or-id>`
-List execution-token metadata for an SDK, including expired tokens that may
-still need to be inspected or revoked.
+Generate a family execution token for an SDK, REST API, MCP, or Unified App. `--expires-in 15m` sets its lifetime. `--allow <operation>` and repeatable `--fixed-binding '<service>,<auth>,<user>[,<resource>]'` are available where supported by the selected app. Engine validates the token policy. Omitted `--allow` uses the app type's default policy.
 
-## `sdk token revoke <sdk-name-or-id> <token-name>`
-Revoke an SDK execution token by name.
+The one-time token and metadata are returned as JSON; keep the token private.
 
-## `mcp token generate <mcp-name-or-id> <token-name>`
-Generate a named MCP execution token. It defaults to full access (`--allow "*"`)
-with no expiry. Repeat `--allow <operation-id>` (or pass a comma-separated list)
-to narrow the token, and use `--expires-in 15m` to make it short-lived. Pass
-`--json` to receive the one-time token, absolute expiry, allowlist, binding
-metadata, and creation time as a structured object.
+## `app token list <app-name-or-id>`
 
-## `mcp token list <mcp-name-or-id>`
-List MCP execution-token metadata, including its operation allowlist, expiry,
-last use, and creation time.
+List token metadata for the selected app family, including expiry and scope.
 
-## `mcp token revoke <mcp-name-or-id> <token-name>`
-Revoke an MCP execution token by name.
+## `app token revoke <app-name-or-id> <token-name>`
 
-## `sdk webhook add <service-slug> [webhook-id...]`
+Revoke a named family execution token.
+
+## `app webhook add <service-slug> [webhook-id...]`
 Add webhooks to an existing SDK configuration. Use `--interactive` to select
 webhooks when IDs are omitted.
 
-## `sdk webhook remove <service-slug> <webhook-id...>`
+## `app webhook remove <service-slug> <webhook-id...>`
 Remove webhooks from an existing SDK configuration.
 
 ## `webhook plan`
@@ -1051,7 +964,7 @@ fused-cli workspace sync --all
 |----------|-------|-------------|---------|
 | `--file` | `-f` | Refresh only services declared in this file, or choose the destination with `--service`/`--all` | `""` |
 | `--service` | | Active service as `<service>[@<version>]`; comma-separated or repeatable | `[]` |
-| `--all` | | Explicitly import every active workspace service | `false` |
+| `--all` | | Explicitly import every active service | `false` |
 
 ## `workspace access list`
 List buckets and SDK/MCP permission scopes shared for bounded workspace-wide use. The
@@ -1072,26 +985,26 @@ management remain unchanged.
 ## `workspace access bucket revoke <bucket-name-or-id>`
 Remove workspace-wide bucket use. Owner and explicit team bindings remain.
 
-## `workspace access app grant <sdk-or-mcp-id>`
+## `workspace access app grant <app-id>`
 Grant bounded workspace-wide read/use of an SDK or MCP server. Use the
-`SDK_ID` or `MCP_ID` shown by the list command. The grant applies to every
+`APP_ID` shown by the list command. The grant applies to every
 version. It does not grant lifecycle or token
 management and does not replace the runtime token.
 
-## `workspace access app revoke <sdk-or-mcp-id>`
+## `workspace access app revoke <app-id>`
 Remove workspace-wide SDK or MCP use. Owner and explicit team bindings remain.
 
-## `workspace services list`
-List workspace services along with their enabled versions.
+## `service list`
+List services along with their enabled versions.
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
-| `--q` | `-q` | Filter visible workspace services by name or slug | `""` |
+| `--search` | `-q` | Filter visible services by name or slug | `""` |
 | `--interactive` | `-i` | Interactive service selection | `false` |
-| `--json` | | Print visible workspace services as JSON | `false` |
+| `--json` | | Print visible services as JSON | `false` |
 
-## `workspace services refresh-missing-contracts`
-Explicitly refresh a bounded batch of activated service versions whose runtime
+## `service refresh-missing-contracts`
+Explicitly refresh a bounded batch of activated service version list --registry whose runtime
 contract snapshot is missing or does not retain a valid generation pin. Each
 refresh reacquires the exact immutable contract from Registry; it does not
 derive a pin locally or move a service to another version. The command reports
@@ -1104,23 +1017,23 @@ SDK candidate.
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
-| `--limit` | | Maximum missing or unpinned activated service versions to refresh | `100` |
+| `--limit` | | Maximum missing or unpinned activated service version list --registry to refresh | `100` |
 
-## `workspace has`
+## `service has`
 Check if a specific service is available in the workspace and output its enabled versions.
-Usage: `fused-cli workspace has <service-name>`
+Usage: `fused-cli service has <service-name>`
 
-## `workspace service add <service-query-or-slug> [service-query-or-slug...]`
-Resolve enabled workspace services first, then fall back to Registry search.
+## `service add <service-query-or-slug> [service-query-or-slug...]`
+Resolve enabled services first, then fall back to Registry search.
 Without `--file`, the command immediately activates only the resolved services
 through Fused's scoped additive boundary and does not read, create, or update
 local workspace files. It prints each canonical service slug and a direct
 Fused UI link backed by its stable service ID.
 
 Find and add a service to the workspace. The command first checks the
-access-filtered workspace service list. If there is no exact name or slug match,
+access-filtered service list. If there is no exact name or slug match,
 it uses the Registry's set-based reference resolver with the same lexical
-ranking and provider-identity rules as `service search`. In a terminal, an
+ranking and provider-identity rules as `service list --registry`. In a terminal, an
 ambiguous match opens service selection and every Registry fallback is confirmed
 before activation or an explicitly requested file write. In CI or with `--no-input`, a unique or exact match
 is added deterministically; ambiguous callers must supply an exact slug or
@@ -1128,7 +1041,7 @@ service ID.
 
 Provider-qualified additions must use the complete `@provider/service-slug`
 form. A leading `@` with a missing, blank, whitespace-containing, or nested
-segment is rejected locally before discovery. The read-only `service search`
+segment is rejected locally before discovery. The read-only `service list --registry`
 command remains lexical and may accept incomplete `@` text as a search query.
 
 A workspace lookup permission error is not treated as absence and never falls
@@ -1138,7 +1051,7 @@ atomically updates that existing `kind: workspace` or `type: services` file and
 performs no activation by default. Review it with `workspace plan` and apply it
 through the normal declarative workflow, or add `--apply` to author the file and
 activate only these additions immediately. The command never implicitly targets
-`.fused/workspace.yaml`. `service search` remains available for explicit
+`.fused/workspace.yaml`. `service list --registry` remains available for explicit
 read-only browsing, but is not a prerequisite.
 If a later scoped activation fails, the error lists committed, failed, and
 unattempted services and prints a stable code, failed phase, composite request
@@ -1157,14 +1070,14 @@ commands when the services need different explicit versions.
 | `--interactive` | `-i` | Explicitly require service selection and Registry confirmation (the terminal default) | `false` |
 | `--apply` | | With `--file`, also activate only the services added by this command | `false` |
 
-## `workspace service delete <service-slug>`
+## `service remove <service-slug>`
 Delete a service from your Workspace configuration.
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
 | `--force` | | Force removal when the generated plan action is applied | `false` |
 
-## `workspace service deprecate <service-slug>`
+## `service deprecate <service-slug>`
 Deprecate a service in your Workspace configuration.
 
 | Argument | Short | Description | Default |
@@ -1172,24 +1085,24 @@ Deprecate a service in your Workspace configuration.
 | `--at` | | Deprecation effective date in YYYY-MM-DD | `""` |
 | `--reason` | | Reason for deprecation | `""` |
 
-## `workspace service versions <service-slug>`
+## `service version list <service-slug>`
 List versions enabled in the workspace for a service slug. Supports provider-qualified slugs such as `@provider/slug`.
 
-## `workspace service operations <service-slug>`
-List or search operationIds available for an enabled workspace service. Pagination is server-side with or without `--q`.
+## `service operation list <service-slug>`
+List or search operationIds available for an enabled service. Pagination is server-side with or without `--search`.
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
-| `--q` | | Search query for the operations action | `""` |
-| `--version` | | Enabled workspace service version; omitted uses the latest enabled version | `""` |
+| `--search` | | Search query for the operations action | `""` |
+| `--version` | | Enabled service version; omitted uses the latest enabled version | `""` |
 | `--limit` | | Maximum rows to read | `20` |
 | `--offset` | | Rows to skip before reading | `0` |
 
-## `workspace service webhooks <service-slug>`
+## `webhook list --service <service-slug>`
 List the service's workspace webhook registrations without exposing signing
 secrets.
 
-## `workspace service connect <service-slug>`
+## `service connect <service-slug>`
 Start an OAuth/OIDC connection session for an end user.
 
 | Argument | Short | Description | Default |
@@ -1207,17 +1120,17 @@ explicit `--auth-ref`. This initialization/debug command has no SDK or MCP
 identity selector. Generated runtimes instead use the
 `services.<target>.auth.ref` pinned in their app configuration.
 
-## `workspace service version add <service-slug> <version>`
-Add an allowed version to a workspace service. Inherits global flags.
+## `service version add <service-slug> <version>`
+Add an allowed version to a service. Inherits global flags.
 
-## `workspace service version delete <service-slug> <version>`
+## `service version remove <service-slug> <version>`
 Delete a specific version of a service from your Workspace configuration.
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
 | `--force` | | Force removal | `false` |
 
-## `workspace service version deprecate <service-slug> <version>`
+## `service version deprecate <service-slug> <version>`
 Deprecate a specific version of a service in your Workspace configuration.
 
 | Argument | Short | Description | Default |
@@ -1264,7 +1177,7 @@ Registry publication may commit before Fused workspace activation fails. In
 that case the command exits non-zero with the structured code
 `import_workspace_activation_failed`, phase `workspace_activation`, commit state
 `committed`, the request and operation IDs, and an exact pinned
-file-free `workspace service add ...` recovery command. The service is already
+file-free `service add ...` recovery command. The service is already
 published; run the recovery command instead of replaying the import.
 
 | Argument | Short | Description | Default |
@@ -1361,12 +1274,12 @@ discover or apply. Saved catalogs are private to the importing actor. Bearer
 connections use an existing bucket secret; never pass the provider token to CLI.
 
 ```sh
-fused-cli workspace service mcp discover demo-crm --version 1.0.0 \
+fused-cli service mcp discover demo-crm --version 1.0.0 \
   --url https://mcp.deepwiki.com/mcp --json
 # Review the preview, then use its exact id before it expires.
-fused-cli workspace service mcp apply demo-crm --version 1.0.0 \
+fused-cli service mcp apply demo-crm --version 1.0.0 \
   --draft-id <preview-id>
-fused-cli workspace service mcp show demo-crm --version 1.0.0 \
+fused-cli service mcp show demo-crm --version 1.0.0 \
   --type tools --query structure
 ```
 
@@ -1390,7 +1303,7 @@ These commands write the config, plan, and apply it. Extension preserves earlier
 selections and infers the next minor version for a changed stable SemVer app;
 repeating the same selection keeps the version. Use `-f <path>` for an explicit
 config, `--no-apply` to save desired state and available receipts for review, or
-`--no-token` to skip issuing an execution token. Existing service versions are
+`--no-token` to skip issuing an execution token. Existing service version list --registry are
 inherited on extend, so there is no need to repeat `--service`.
 
 In a terminal, omit selection flags to search and select endpoints, tools,
@@ -1437,15 +1350,15 @@ services:
 ```
 
 ```sh
-fused-cli mcp validate -f mcp.yaml
-fused-cli mcp plan -f mcp.yaml
-fused-cli mcp apply -f mcp.yaml
-fused-cli mcp operations repository-docs@1.0.0 --json
+fused-cli app validate -f mcp.yaml
+fused-cli app plan -f mcp.yaml
+fused-cli app apply -f mcp.yaml
+fused-cli app operation list repository-docs@1.0.0 --json
 ```
 
 Engine checks exact revision membership and pins definitions in the immutable app
 version. Refreshing a catalog does not change deployed apps. Imported tools use
 Fused `search_docs` and `execute`; prompts and resources remain native MCP
 capabilities. Restricted execution tokens use the exact capability identities
-returned by `mcp operations`. Provider connections and credentials remain in
+returned by `app operation list`. Provider connections and credentials remain in
 Engine; CLI never executes provider tools during import or selection.

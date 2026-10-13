@@ -258,8 +258,8 @@ var teamBucketAccessCmd = commandGroup("bucket", "Manage bucket access")
 var teamBucketGrantCmd = resourceAccessCommand("grant <team-slug-or-id> <bucket-name-or-id> <use|manage>", "Grant bucket access", "cli.team.access.bucket.grant", grantTeamBucketAccess)
 var teamBucketRevokeCmd = resourceAccessCommand("revoke <team-slug-or-id> <bucket-name-or-id> <use|manage>", "Revoke bucket access", "cli.team.access.bucket.revoke", revokeTeamBucketAccess)
 var teamAppAccessCmd = commandGroup("app", "Share SDKs and MCP servers with a team")
-var teamAppGrantCmd = appAccessCommand("grant <team-slug-or-id> <sdk-or-mcp-id> <read|use|manage>", "Grant SDK or MCP server access", "cli.team.access.app.grant", grantTeamAppAccess)
-var teamAppRevokeCmd = appAccessCommand("revoke <team-slug-or-id> <sdk-or-mcp-id> <read|use|manage>", "Revoke SDK or MCP server access", "cli.team.access.app.revoke", revokeTeamAppAccess)
+var teamAppGrantCmd = appAccessCommand("grant <team-slug-or-id> <app-id> <read|use|manage>", "Grant app access", "cli.team.access.app.grant", grantTeamAppAccess)
+var teamAppRevokeCmd = appAccessCommand("revoke <team-slug-or-id> <app-id> <read|use|manage>", "Revoke app access", "cli.team.access.app.revoke", revokeTeamAppAccess)
 
 type resourceAccessMutation func(*cliapi.Client, string, string, string) (*cliapi.TeamBindingMutationPayload, error)
 
@@ -413,6 +413,7 @@ func printAppOwningTeams(cmd *cobra.Command, teams []cliapi.AppOwningTeam) {
 	_ = w.Flush()
 }
 
+// printTeam renders access metadata without exposing credential material.
 func printTeam(cmd *cobra.Command, team cliapi.Team) {
 	fmt.Fprintf(cmd.OutOrStdout(), "Name: %s\nSlug: %s\nStatus: %s\nTeam ID: %s\nDescription: %s\n", team.Name, team.Slug, team.Status, team.ID, team.Description)
 	if len(team.Bindings) == 0 {
@@ -431,8 +432,9 @@ func printTeam(cmd *cobra.Command, team cliapi.Team) {
 	_ = w.Flush()
 }
 
+// init places workspace-owned teams alongside workspace policy and access commands.
 func init() {
-	RootCmd.AddCommand(teamCmd)
+	workspaceCmd.AddCommand(teamCmd)
 	teamCmd.AddCommand(teamListCmd, teamEligibleOwnersCmd, teamShowCmd, teamCreateCmd, teamUpdateCmd, teamArchiveCmd, teamBuildAccessCmd, teamAccessCmd)
 	addJSONOutputFlag(teamListCmd, teamShowCmd, teamEligibleOwnersCmd, teamBuildAccessCmd)
 	addListFlags(teamListCmd, &teamListFlags)

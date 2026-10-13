@@ -46,7 +46,7 @@ func runSDKInitWorkflow(cmd *cobra.Command, request scaffoldRequest, resolver sc
 	}
 	// Existing lifecycle printers are human-oriented, so refuse structured output before any remote or local mutation.
 	if wantsJSON(cmd) {
-		return errors.New("sdk init with services does not support --json; use --no-input for non-interactive lifecycle orchestration")
+		return errors.New("init with services does not support --json; use --no-input for non-interactive lifecycle orchestration")
 	}
 	return runServiceSDKInit(cmd, request, resolver, bucketResolver)
 }
@@ -477,7 +477,7 @@ func validateSDKInitExplicitOperations(client *api.Client, service sdkInitResolv
 	for _, operation := range requested {
 		// A typo must name the exact missing operation and version before any workspace receipt is applied.
 		if _, exists := available[operation]; !exists {
-			return fmt.Errorf("operation %s is not available for service %s version %s; run 'fused-cli workspace service operations %s --version %s' to search available operations", operation, service.target.slug, service.version, service.target.slug, service.version)
+			return fmt.Errorf("operation %s is not available for service %s version %s; run 'fused-cli service operation list %s --version %s' to search available operations", operation, service.target.slug, service.version, service.target.slug, service.version)
 		}
 	}
 	return nil
@@ -525,7 +525,7 @@ func validateSDKInitWebhookSelections(client *api.Client, request scaffoldReques
 		for _, eventName := range eventsByService[serviceName] {
 			// Exact matching preserves the imported event identity used by generation and runtime subscription filtering.
 			if _, exists := availableNames[eventName]; !exists {
-				return fmt.Errorf("webhook event %s is not available for service %s version %s; run 'fused-cli service webhooks %s --version %s' to list available events", eventName, serviceName, service.version, serviceName, service.version)
+				return fmt.Errorf("webhook event %s is not available for service %s version %s; run 'fused-cli service webhook list --registry %s --version %s' to list available events", eventName, serviceName, service.version, serviceName, service.version)
 			}
 		}
 	}
@@ -822,7 +822,7 @@ func publishSDKInitWorkspacePlan(draft *sdkInitWorkspaceDraft) error {
 	return nil
 }
 
-// createAndApplySDKInit keeps the hidden compatibility alias on the same plan-before-publish lifecycle as root init.
+// createAndApplySDKInit shares the plan-before-publish lifecycle with root init.
 func createAndApplySDKInit(cmd *cobra.Command, client *api.Client, request scaffoldRequest, workspaceApplied bool, resolver scaffoldRequirementsResolver, bucketResolver scaffoldBucketResolver) error {
 	return createPlanApplyUnifiedInit(cmd, client, unifiedInitModeSDK, request, workspaceApplied, false, resolver, bucketResolver)
 }

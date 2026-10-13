@@ -58,24 +58,18 @@ func resetSDKOpenAPITestState(t *testing.T) {
 	t.Helper()
 	oldEngineURL, oldAPIKey, oldTimeout := EngineURL, APIKey, RequestTimeout
 	oldOperation, oldOut, oldFormat := sdkOpenAPIOperation, sdkOpenAPIOut, sdkOpenAPIFormat
-	oldAPIOperation, oldAPIOut, oldAPIFormat := apiOpenAPIOperation, apiOpenAPIOut, apiOpenAPIFormat
 	operationFlag, outFlag, formatFlag, jsonFlag := sdkOpenAPICmd.Flags().Lookup("operation"), sdkOpenAPICmd.Flags().Lookup("out"), sdkOpenAPICmd.Flags().Lookup("format"), sdkOpenAPICmd.Flags().Lookup(jsonOutputFlag)
-	apiOperationFlag, apiOutFlag, apiFormatFlag, apiJSONFlag := apiOpenAPICmd.Flags().Lookup("operation"), apiOpenAPICmd.Flags().Lookup("out"), apiOpenAPICmd.Flags().Lookup("format"), apiOpenAPICmd.Flags().Lookup(jsonOutputFlag)
 	t.Cleanup(func() {
 		EngineURL, APIKey, RequestTimeout = oldEngineURL, oldAPIKey, oldTimeout
 		sdkOpenAPIOperation, sdkOpenAPIOut, sdkOpenAPIFormat = oldOperation, oldOut, oldFormat
-		apiOpenAPIOperation, apiOpenAPIOut, apiOpenAPIFormat = oldAPIOperation, oldAPIOut, oldAPIFormat
 		operationFlag.Changed, outFlag.Changed, formatFlag.Changed, jsonFlag.Changed = false, false, false, false
-		apiOperationFlag.Changed, apiOutFlag.Changed, apiFormatFlag.Changed, apiJSONFlag.Changed = false, false, false, false
 		_ = sdkOpenAPICmd.Flags().Set(jsonOutputFlag, "false")
-		_ = apiOpenAPICmd.Flags().Set(jsonOutputFlag, "false")
+		_ = sdkOpenAPICmd.Flags().Set(jsonOutputFlag, "false")
 	})
 	sdkOpenAPIOperation, sdkOpenAPIOut, sdkOpenAPIFormat = "", "", defaultSDKOpenAPIFormat
-	apiOpenAPIOperation, apiOpenAPIOut, apiOpenAPIFormat = "", "", defaultSDKOpenAPIFormat
 	operationFlag.Changed, outFlag.Changed, formatFlag.Changed, jsonFlag.Changed = false, false, false, false
-	apiOperationFlag.Changed, apiOutFlag.Changed, apiFormatFlag.Changed, apiJSONFlag.Changed = false, false, false, false
 	_ = sdkOpenAPICmd.Flags().Set(jsonOutputFlag, "false")
-	_ = apiOpenAPICmd.Flags().Set(jsonOutputFlag, "false")
+	_ = sdkOpenAPICmd.Flags().Set(jsonOutputFlag, "false")
 	RequestTimeout = 5 * time.Second
 }
 
@@ -105,20 +99,20 @@ func TestAPIOpenAPIExportsThroughRESTSurface(t *testing.T) {
 	defer server.Close()
 	EngineURL, APIKey = server.URL, "fsk_control"
 	// Exact operation filtering and structured metadata must behave the same on the REST API surface.
-	if err := apiOpenAPICmd.Flags().Set("operation", "issues.create/exact"); err != nil {
+	if err := sdkOpenAPICmd.Flags().Set("operation", "issues.create/exact"); err != nil {
 		t.Fatalf("set operation: %v", err)
 	}
-	if err := apiOpenAPICmd.Flags().Set(jsonOutputFlag, "true"); err != nil {
+	if err := sdkOpenAPICmd.Flags().Set(jsonOutputFlag, "true"); err != nil {
 		t.Fatalf("set JSON output: %v", err)
 	}
 	var stdout bytes.Buffer
-	apiOpenAPICmd.SetOut(&stdout)
-	if err := runAPIOpenAPI(apiOpenAPICmd, sdkDownloadTarget{Name: "jira api", Version: "1.2.0"}); err != nil {
+	sdkOpenAPICmd.SetOut(&stdout)
+	if err := runSDKOpenAPI(sdkOpenAPICmd, sdkDownloadTarget{Name: "jira api", Version: "1.2.0"}); err != nil {
 		t.Fatalf("run API OpenAPI: %v", err)
 	}
 	data, output := readSDKOpenAPICommandOutput(t, "jira-api-1.2.0.openapi.yaml", stdout.Bytes())
 	// Direct API JSON must use the API noun and never claim that a package SDK was exported.
-	if output.API != "jira api" || output.SDK != "" || output.Version != "1.2.0" {
+	if output.App != "jira api" || output.Version != "1.2.0" {
 		t.Fatalf("API metadata = %#v", output)
 	}
 	assertSDKOpenAPIHash(t, output.SHA256, data)
@@ -285,15 +279,15 @@ func TestAPIOpenAPIMetadataFailureDoesNotInvalidateCommittedFile(t *testing.T) {
 	server := httptest.NewServer(sdkOpenAPICommandTestHandler{t: t})
 	defer server.Close()
 	EngineURL, APIKey = server.URL, "fsk_control"
-	if err := apiOpenAPICmd.Flags().Set("operation", "issues.create/exact"); err != nil {
+	if err := sdkOpenAPICmd.Flags().Set("operation", "issues.create/exact"); err != nil {
 		t.Fatalf("set operation: %v", err)
 	}
-	if err := apiOpenAPICmd.Flags().Set("out", outputPath); err != nil {
+	if err := sdkOpenAPICmd.Flags().Set("out", outputPath); err != nil {
 		t.Fatalf("set output: %v", err)
 	}
-	apiOpenAPICmd.SetOut(failingOpenAPIMetadataWriter{})
+	sdkOpenAPICmd.SetOut(failingOpenAPIMetadataWriter{})
 	// A completed file is the durable command outcome even when the optional status line cannot be delivered.
-	if err := runAPIOpenAPI(apiOpenAPICmd, sdkDownloadTarget{Name: "threadify", Version: "1.0.0"}); err != nil {
+	if err := runSDKOpenAPI(sdkOpenAPICmd, sdkDownloadTarget{Name: "threadify", Version: "1.0.0"}); err != nil {
 		t.Fatalf("committed export returned failure: %v", err)
 	}
 	data, err := os.ReadFile(outputPath)
@@ -304,7 +298,7 @@ func TestAPIOpenAPIMetadataFailureDoesNotInvalidateCommittedFile(t *testing.T) {
 
 // TestSDKOpenAPICommandHelpDocumentsFileAndMetadataControls protects the public CLI surface.
 func TestSDKOpenAPICommandHelpDocumentsFileAndMetadataControls(t *testing.T) {
-	if sdkOpenAPICmd.Use != "openapi <sdk-name@version-or-version-id>" {
+	if sdkOpenAPICmd.Use != "openapi <app-name@version-or-version-id>" {
 		t.Fatalf("Use = %q", sdkOpenAPICmd.Use)
 	}
 	for _, name := range []string{"operation", "out", "format", jsonOutputFlag} {
@@ -325,12 +319,12 @@ func TestSDKOpenAPICommandHelpDocumentsFileAndMetadataControls(t *testing.T) {
 
 // TestAPIOpenAPICommandHelpUsesRESTNouns protects the direct API command from regressing into the SDK namespace.
 func TestAPIOpenAPICommandHelpUsesRESTNouns(t *testing.T) {
-	if apiCmd.Use != "api" || apiOpenAPICmd.Use != "openapi <api-name@version-or-version-id>" || !strings.Contains(apiOpenAPICmd.Short, "REST API") {
-		t.Fatalf("API commands = %q / %q (%q)", apiCmd.Use, apiOpenAPICmd.Use, apiOpenAPICmd.Short)
+	if sdkOpenAPICmd.Use != "openapi <app-name@version-or-version-id>" || !strings.Contains(sdkOpenAPICmd.Short, "app version") {
+		t.Fatalf("API commands = %q / %q (%q)", appCmd.Use, sdkOpenAPICmd.Use, sdkOpenAPICmd.Short)
 	}
 	for _, name := range []string{"operation", "out", "format", jsonOutputFlag} {
 		// The API surface must retain every exact export control supported by the shared implementation.
-		if apiOpenAPICmd.Flags().Lookup(name) == nil {
+		if sdkOpenAPICmd.Flags().Lookup(name) == nil {
 			t.Fatalf("missing API --%s", name)
 		}
 	}
@@ -364,23 +358,23 @@ func TestAPIOpenAPISchemaConflictSuggestsBoundedRepair(t *testing.T) {
 			}))
 			defer server.Close()
 			EngineURL, APIKey = server.URL, "fsk_control"
-			if err := apiOpenAPICmd.Flags().Set("out", outputPath); err != nil {
+			if err := sdkOpenAPICmd.Flags().Set("out", outputPath); err != nil {
 				t.Fatalf("set output: %v", err)
 			}
-			if err := apiOpenAPICmd.Flags().Set("operation", "gmail.users.drafts.send"); err != nil {
+			if err := sdkOpenAPICmd.Flags().Set("operation", "gmail.users.drafts.send"); err != nil {
 				t.Fatalf("set operation: %v", err)
 			}
-			if err := apiOpenAPICmd.Flags().Set("format", "json"); err != nil {
+			if err := sdkOpenAPICmd.Flags().Set("format", "json"); err != nil {
 				t.Fatalf("set format: %v", err)
 			}
-			if err := apiOpenAPICmd.Flags().Set(jsonOutputFlag, "true"); err != nil {
+			if err := sdkOpenAPICmd.Flags().Set(jsonOutputFlag, "true"); err != nil {
 				t.Fatalf("set JSON metadata: %v", err)
 			}
-			err := runAPIOpenAPI(apiOpenAPICmd, sdkDownloadTarget{Name: "threadify", Version: "1.0.0"})
+			err := runSDKOpenAPI(sdkOpenAPICmd, sdkDownloadTarget{Name: "threadify", Version: "1.0.0"})
 			_, statErr := os.Stat(outputPath)
 			message := fmt.Sprint(err)
 			// Recovery is explicit, bounded, API-named, and leaves an earlier or absent file untouched.
-			if err == nil || !errors.Is(statErr, os.ErrNotExist) || !strings.Contains(message, "workspace services refresh-missing-contracts --limit 100") || !strings.Contains(message, "fused-cli api openapi 'threadify@1.0.0'") || !strings.Contains(message, "--out '"+outputPath+"' --operation 'gmail.users.drafts.send' --format 'json' --json") || strings.Contains(message, "fused-cli sdk openapi") {
+			if err == nil || !errors.Is(statErr, os.ErrNotExist) || !strings.Contains(message, "service refresh-missing-contracts --limit 100") || !strings.Contains(message, "fused-cli app openapi 'threadify@1.0.0'") || !strings.Contains(message, "--out '"+outputPath+"' --operation 'gmail.users.drafts.send' --format 'json' --json") || strings.Contains(message, "fused-cli api openapi") {
 				t.Fatalf("error=%v statErr=%v", err, statErr)
 			}
 		})
@@ -395,8 +389,8 @@ func TestActionableAppOpenAPIRetryPreservesBothPublicSurfaces(t *testing.T) {
 		name, surface string
 		direct        bool
 	}{
-		{name: "generated SDK", surface: "sdk", direct: false},
-		{name: "direct API", surface: "api", direct: true},
+		{name: "generated SDK", surface: "app", direct: false},
+		{name: "direct API", surface: "app", direct: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			message := actionableAppOpenAPIExportError(sdkDownloadTarget{Name: "billing", Version: "1.2.0"}, options, test.direct, cause).Error()
@@ -413,14 +407,14 @@ func TestActionableAppOpenAPIRetryPreservesBothPublicSurfaces(t *testing.T) {
 func TestAPIOpenAPISchemaConflictPreservesStructuredRecovery(t *testing.T) {
 	resetSDKOpenAPITestState(t)
 	// JSON mode must be active on the executing command for the shared error writer to emit its envelope.
-	if err := apiOpenAPICmd.Flags().Set(jsonOutputFlag, "true"); err != nil {
+	if err := sdkOpenAPICmd.Flags().Set(jsonOutputFlag, "true"); err != nil {
 		t.Fatalf("set JSON output: %v", err)
 	}
 	cause := &api.APIError{HTTPStatus: http.StatusConflict, Code: "app_openapi_schema_unavailable", Message: "immutable operation schemas are unavailable or inconsistent", Category: "dependency"}
 	err := actionableAppOpenAPIExportError(sdkDownloadTarget{Name: "billing", Version: "1.2.0"}, sdkOpenAPIOptions{Format: "yaml", JSON: true}, true, cause)
 	var output bytes.Buffer
 	// Rendering must preserve the locally reviewed recovery metadata carried by the typed API error.
-	if writeErr := writeCommandError(&output, apiOpenAPICmd, err); writeErr != nil {
+	if writeErr := writeCommandError(&output, sdkOpenAPICmd, err); writeErr != nil {
 		t.Fatalf("write structured error: %v", writeErr)
 	}
 	var envelope jsonErrorEnvelope
@@ -429,7 +423,7 @@ func TestAPIOpenAPISchemaConflictPreservesStructuredRecovery(t *testing.T) {
 		t.Fatalf("decode structured error: %v", decodeErr)
 	}
 	// Recovery is an exact bounded command, while remediation retains the direct-API retry surface.
-	if envelope.Error.Code != "app_openapi_schema_unavailable" || envelope.Error.HTTPStatus != http.StatusConflict || envelope.Error.Recovery != "fused-cli workspace services refresh-missing-contracts --limit 100 --json" || !strings.Contains(envelope.Error.Remediation, "fused-cli api openapi 'billing@1.2.0' --json") || strings.Contains(envelope.Error.Remediation, "fused-cli sdk openapi") {
+	if envelope.Error.Code != "app_openapi_schema_unavailable" || envelope.Error.HTTPStatus != http.StatusConflict || envelope.Error.Recovery != "fused-cli service refresh-missing-contracts --limit 100 --json" || !strings.Contains(envelope.Error.Remediation, "fused-cli app openapi 'billing@1.2.0' --json") || strings.Contains(envelope.Error.Remediation, "fused-cli api openapi") {
 		t.Fatalf("structured error = %#v", envelope.Error)
 	}
 }

@@ -1,6 +1,6 @@
 ---
 name: fused-webhook
-description: "Use when the user wants to register inbound provider webhook ingress using fused-cli -- creating a kind: webhook config, attaching it to an SDK or MCP app via webhook_attachment, or running webhook plan/apply/validate. Trigger on 'register a webhook', 'kind: webhook', 'webhook_attachment', 'provider events in my SDK or MCP', or 'fused-cli webhook'. Fused-owned connected-auth lifecycle events need no ingress registration; read fused-sdk for generated receiver behavior. For the read-only workspace service webhooks command read fused-workspace instead."
+description: "Use when the user wants to register inbound provider webhook ingress using fused-cli -- creating a kind: webhook config, attaching it to an SDK or MCP app via webhook_attachment, or running webhook plan/apply/validate. Trigger on 'register a webhook', 'kind: webhook', 'webhook_attachment', 'provider events in my SDK or MCP', or 'fused-cli webhook'. Fused-owned connected-auth lifecycle events need no ingress registration; read fused-sdk for generated receiver behavior. For the read-only webhook list --service command read fused-workspace instead."
 ---
 
 # Webhook registration config
@@ -180,7 +180,7 @@ fused-cli webhook validate
 
 `apply` prints each registration's URL as `<engine-url>/webhook/<slug>-<service>`.
 To look up a service's registrations later without re-running apply, use the
-read-only `fused-cli workspace service webhooks <slug>` command (see
+read-only `fused-cli webhook list --service <slug>` command (see
 `fused-workspace`) -- its `SIGNATURE` column is `set`/`none` only, never the
 secret value.
 
@@ -197,17 +197,17 @@ permission requirement.
 For team ownership, preflight the team and dependencies before planning:
 
 ```shell
-fused-cli team eligible-owners
-fused-cli team build-access <team> --resource service
-fused-cli team build-access <team> --resource bucket
+fused-cli workspace team eligible-owners
+fused-cli workspace team build-access <team> --resource service
+fused-cli workspace team build-access <team> --resource bucket
 fused-cli webhook plan --owner-team <team>
 ```
 
 An authorised administrator can grant the missing dependency narrowly:
 
 ```shell
-fused-cli team access service grant <team> <service> use
-fused-cli team access bucket grant <team> <bucket> use
+fused-cli workspace team access service grant <team> <service> use
+fused-cli workspace team access bucket grant <team> <bucket> use
 ```
 
 On denial, stop the blocked action, preserve the config and plan, and tell the

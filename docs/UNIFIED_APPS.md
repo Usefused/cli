@@ -26,8 +26,8 @@ export default buildUnifiedApp({
 ```
 
 Save this TypeScript as `.fused/unified_app/customer-app.tsx` and set
-`source_path: customer-app.tsx` in the App YAML. Run `fused-cli unified-app plan`
-and `fused-cli unified-app apply`. The [step-by-step apply guide](unified-apps/example.md)
+`source_path: customer-app.tsx` in the App YAML. Run `fused-cli app plan`
+and `fused-cli app apply`. The [step-by-step apply guide](unified-apps/example.md)
 shows the files and commands. The CLI reads the file into the plan cart; the
 Fused compiles it during plan.
 
@@ -69,8 +69,8 @@ four dot-separated segments. A caller needs an app token with the
 Pass the app name directly, or read its top-level `name` from a config:
 
 ```sh
-fused-cli unified-app promote customer-app --version 1.0.0
-fused-cli unified-app promote -f .fused/unified_app/customer-app.yaml --version 1.0.0
+fused-cli app promote customer-app --version 1.0.0
+fused-cli app promote -f .fused/unified_app/customer-app.yaml --version 1.0.0
 ```
 
 An explicit name takes precedence over config selection. `--version` selects the destination without changing the YAML or TypeScript. See the [promotion command reference](COMMANDS.md#unified-app-promote-app-name---version-version) for permissions, routing behavior, and conflict handling.

@@ -22,18 +22,18 @@ func testApplicationListShowsUniqueApplications(t *testing.T, kind string) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body := decodeGraphQLTestRequest(t, r)
 		// Application grouping still reads only the authorized MCP catalogue.
-		if body.Variables["kind"] != kind {
+		if body.Variables["kind"] != "" {
 			t.Errorf("unexpected kind: %#v", body.Variables)
 		}
 		_, _ = w.Write([]byte(`{"data":{"appFamilies":{"total":1,"items":[{"app_family_id":"family-1","name":"support:tools","version_count":2,"latest_version":"2","latest_version_id":"version-2"}]}}}`))
 	}))
 	defer server.Close()
-	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{kind, "list"})
+	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"app", "list"})
 	// The application appears once and all exact version inspection stays in mcp versions.
-	if strings.Count(out, "support:tools") != 1 || strings.Contains(out, "VERSION_ID") || strings.Contains(out, "VERSION-PINNED") || !strings.Contains(out, "VERSIONS") || !strings.Contains(out, "LATEST_VERSION") {
+	if strings.Count(out, "support:tools") != 1 || strings.Contains(out, "VERSION_ID") || strings.Contains(out, "VERSION-PINNED") || !strings.Contains(out, "VERSIONS") || !strings.Contains(out, "LATEST") {
 		t.Fatalf("list table: %s", out)
 	}
-	out = runCommandInDirOutput(t, t.TempDir(), server.URL, []string{kind, "list", "--json"})
+	out = runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"app", "list", "--json"})
 	var page struct {
 		Total int              `json:"total"`
 		Items []map[string]any `json:"items"`

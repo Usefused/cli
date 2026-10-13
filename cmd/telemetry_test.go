@@ -15,12 +15,13 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
+// TestRecordAppliedChangeEmitsSecretSafeAuditEvent verifies that record applied change emits secret safe audit event.
 func TestRecordAppliedChangeEmitsSecretSafeAuditEvent(t *testing.T) {
 	exporter := tracetest.NewInMemoryExporter()
 	provider := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
 	ctx, span := provider.Tracer("test").Start(context.Background(), "apply")
 
-	recordAppliedChange(ctx, "fused-cli sdk apply", "sdk")
+	recordAppliedChange(ctx, "fused-cli app apply", "sdk")
 	span.End()
 
 	spans := exporter.GetSpans()
@@ -31,7 +32,7 @@ func TestRecordAppliedChangeEmitsSecretSafeAuditEvent(t *testing.T) {
 	for _, value := range spans[0].Events[0].Attributes {
 		attributes[string(value.Key)] = value.Value.AsInterface()
 	}
-	if attributes["user_action"] != "fused-cli sdk apply" || attributes["resource_kind"] != "sdk" {
+	if attributes["user_action"] != "fused-cli app apply" || attributes["resource_kind"] != "sdk" {
 		t.Fatalf("unexpected apply audit attributes: %#v", attributes)
 	}
 }

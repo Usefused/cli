@@ -33,30 +33,13 @@ var (
 	sdkOpenAPIOperation string
 	sdkOpenAPIOut       string
 	sdkOpenAPIFormat    string
-	apiOpenAPIOperation string
-	apiOpenAPIOut       string
-	apiOpenAPIFormat    string
 )
-
-var apiCmd = &cobra.Command{
-	Use:   "api",
-	Short: "Manage direct REST APIs",
-	Args:  cobra.NoArgs,
-	RunE:  requireSubcommand,
-}
 
 var sdkOpenAPICmd = &cobra.Command{
 	Use:   "openapi <sdk-name@version-or-version-id>",
 	Short: "Export one exact SDK version as OpenAPI",
 	Args:  validateSDKOpenAPIArgs,
 	RunE:  WithTelemetry("cli.sdk.openapi", runSDKOpenAPICommand),
-}
-
-var apiOpenAPICmd = &cobra.Command{
-	Use:   "openapi <api-name@version-or-version-id>",
-	Short: "Export one exact REST API version as OpenAPI",
-	Args:  validateAPIOpenAPIArgs,
-	RunE:  WithTelemetry("cli.api.openapi", runAPIOpenAPICommand),
 }
 
 type sdkOpenAPIOptions struct {
@@ -67,8 +50,8 @@ type sdkOpenAPIOptions struct {
 }
 
 type sdkOpenAPIOutput struct {
-	SDK        string `json:"sdk,omitempty"`
-	API        string `json:"api,omitempty"`
+	App string `json:"app,omitempty"`
+
 	Version    string `json:"version,omitempty"`
 	VersionID  string `json:"version_id"`
 	Operation  string `json:"operation,omitempty"`
@@ -83,17 +66,11 @@ type sdkOpenAPIOutput struct {
 
 // init registers the exact-version OpenAPI export and its file/output controls.
 func init() {
-	RootCmd.AddCommand(apiCmd)
 	sdkCmd.AddCommand(sdkOpenAPICmd)
-	apiCmd.AddCommand(apiOpenAPICmd)
 	sdkOpenAPICmd.Flags().StringVar(&sdkOpenAPIOperation, "operation", "", "Export only this exact operation ID")
-	sdkOpenAPICmd.Flags().StringVarP(&sdkOpenAPIOut, "out", "o", "", "Output file (defaults to an SDK/version OpenAPI filename)")
+	sdkOpenAPICmd.Flags().StringVarP(&sdkOpenAPIOut, "out", "o", "", "Output file (defaults to an app/version OpenAPI filename)")
 	sdkOpenAPICmd.Flags().StringVar(&sdkOpenAPIFormat, "format", defaultSDKOpenAPIFormat, "Document format: yaml or json")
 	sdkOpenAPICmd.Flags().Bool(jsonOutputFlag, false, "Print export metadata as JSON")
-	apiOpenAPICmd.Flags().StringVar(&apiOpenAPIOperation, "operation", "", "Export only this exact operation ID")
-	apiOpenAPICmd.Flags().StringVarP(&apiOpenAPIOut, "out", "o", "", "Output file (defaults to an API/version OpenAPI filename)")
-	apiOpenAPICmd.Flags().StringVar(&apiOpenAPIFormat, "format", defaultSDKOpenAPIFormat, "Document format: yaml or json")
-	apiOpenAPICmd.Flags().Bool(jsonOutputFlag, false, "Print export metadata as JSON")
 }
 
 // validateSDKOpenAPIArgs requires one immutable SDK version reference.
@@ -102,26 +79,12 @@ func validateSDKOpenAPIArgs(cmd *cobra.Command, args []string) error {
 	if err := cobra.ExactArgs(1)(cmd, args); err != nil {
 		return err
 	}
-	return validateExactAppReference(args[0], "sdk openapi")
-}
-
-// validateAPIOpenAPIArgs requires one immutable REST API version reference.
-func validateAPIOpenAPIArgs(cmd *cobra.Command, args []string) error {
-	// Exact arity prevents a second reference from being mistaken for an output path.
-	if err := cobra.ExactArgs(1)(cmd, args); err != nil {
-		return err
-	}
-	return validateExactAppReference(args[0], "api openapi")
+	return validateExactAppReference(args[0], "app openapi")
 }
 
 // runSDKOpenAPICommand translates the exact CLI reference before export.
 func runSDKOpenAPICommand(cmd *cobra.Command, args []string) error {
 	return runSDKOpenAPI(cmd, downloadTargetFromName(args[0]))
-}
-
-// runAPIOpenAPICommand translates the exact REST API reference before export.
-func runAPIOpenAPICommand(cmd *cobra.Command, args []string) error {
-	return runAPIOpenAPI(cmd, downloadTargetFromName(args[0]))
 }
 
 // runSDKOpenAPI resolves one Version ID, renders the document, and atomically writes the selected file.
@@ -130,17 +93,7 @@ func runSDKOpenAPI(cmd *cobra.Command, target sdkDownloadTarget) error {
 	if err != nil {
 		return err
 	}
-	return runAppOpenAPI(cmd, target, options, "SDK", false)
-}
-
-// runAPIOpenAPI resolves one direct REST API version and uses the shared immutable app export lifecycle.
-func runAPIOpenAPI(cmd *cobra.Command, target sdkDownloadTarget) error {
-	options, err := readAPIOpenAPIOptions(cmd)
-	// Invalid local flags must stop before app identity resolution or Engine access.
-	if err != nil {
-		return err
-	}
-	return runAppOpenAPI(cmd, target, options, "REST API", true)
+	return runAppOpenAPI(cmd, target, options, "app", false)
 }
 
 // runAppOpenAPI resolves one immutable app, renders its document, and atomically writes the selected file.
@@ -150,8 +103,8 @@ func runAppOpenAPI(cmd *cobra.Command, target sdkDownloadTarget, options sdkOpen
 	if err != nil {
 		return err
 	}
-	appID, err := client.ResolveSDKAppReference(target.Name, target.Version)
-	// REST APIs deliberately reuse SDK-kind immutable storage while retaining their own public command surface.
+	appID, err := client.ResolveAppReference(target.Name, target.Version)
+	// Every app type resolves through the shared immutable app identity.
 	if err != nil {
 		return fmt.Errorf("resolve %s version: %w", resourceLabel, err)
 	}
@@ -186,12 +139,7 @@ func readSDKOpenAPIOptions(cmd *cobra.Command) (sdkOpenAPIOptions, error) {
 	return readAppOpenAPIOptions(cmd, sdkOpenAPIOperation, sdkOpenAPIOut, sdkOpenAPIFormat)
 }
 
-// readAPIOpenAPIOptions validates direct REST API flags before any Engine request occurs.
-func readAPIOpenAPIOptions(cmd *cobra.Command) (sdkOpenAPIOptions, error) {
-	return readAppOpenAPIOptions(cmd, apiOpenAPIOperation, apiOpenAPIOut, apiOpenAPIFormat)
-}
-
-// readAppOpenAPIOptions applies one local validation contract to both public OpenAPI command surfaces.
+// readAppOpenAPIOptions validates export options for the shared app command.
 func readAppOpenAPIOptions(cmd *cobra.Command, operation, out, requestedFormat string) (sdkOpenAPIOptions, error) {
 	format := strings.ToLower(strings.TrimSpace(requestedFormat))
 	// Only the two deterministic encodings implemented below are accepted.
@@ -217,11 +165,8 @@ func actionableAppOpenAPIExportError(target sdkDownloadTarget, options sdkOpenAP
 	if !errors.As(cause, &apiErr) || !repairableAppOpenAPISchemaError(apiErr) {
 		return cause
 	}
-	surface := "sdk"
-	// Direct REST APIs must be retried through their own public command even though identity lookup is shared internally.
-	if directAPI {
-		surface = "api"
-	}
+	surface := "app" // Recovery uses the same shared command for every app type.
+
 	retry := "fused-cli " + surface + " openapi " + shellQuoteWorkspaceServiceArg(appOpenAPIReference(target))
 	// Preserve an explicit output path in the suggested retry so recovery writes where the user requested.
 	if strings.TrimSpace(options.Out) != "" {
@@ -239,7 +184,7 @@ func actionableAppOpenAPIExportError(target sdkDownloadTarget, options sdkOpenAP
 	if options.JSON {
 		retry += " --json"
 	}
-	repair := "fused-cli workspace services refresh-missing-contracts --limit 100"
+	repair := "fused-cli service refresh-missing-contracts --limit 100"
 	// Structured recovery stays machine-readable when the failed export requested JSON.
 	if options.JSON {
 		repair += " --json"
@@ -580,17 +525,11 @@ func newSDKOpenAPIOutput(target sdkDownloadTarget, appID string, options sdkOpen
 		Operations: operationCount, Path: filepath.Clean(path), Bytes: len(document),
 		SHA256: sdkOpenAPIDocumentHash(document), ServerURL: serverURL, Status: "completed",
 	}
-	// Name/version metadata uses the public API noun for direct REST exports.
+	// All delivery types share one app metadata field.
 	if target.Version != "" {
-		// Direct API structured output must use its public resource noun.
-		if directAPI {
-			output.API = target.Name
-		} else {
-			// Generated SDK compatibility retains the existing sdk metadata field.
-			output.SDK = target.Name
-		}
-		output.Version = target.Version
+		output.App, output.Version = target.Name, target.Version
 	}
+
 	return output
 }
 

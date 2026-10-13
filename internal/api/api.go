@@ -1055,8 +1055,7 @@ type WorkspaceService struct {
 	Version          string                    `json:"version"`
 	EnabledVersions  []WorkspaceServiceVersion `json:"enabled_versions"`
 	ServiceName      string                    `json:"service_name"`
-	// ServiceSlug is what `service <slug> show` / `workspace service <slug>
-	// operations` actually expect -- the Engine resolves it fresh from the
+	// ServiceSlug is what `service show <slug>` / `service operation list <slug>` actually expect -- the Engine resolves it fresh from the
 	// Registry on every list call, so it may be empty if that lookup failed
 	// (Registry unreachable), not just if the service genuinely has none.
 	// Already provider-qualified ("@provider/slug") for services this

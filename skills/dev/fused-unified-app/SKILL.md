@@ -1,11 +1,11 @@
 ---
 name: fused-unified-app
-description: "Build, configure, deploy, or call a hosted Fused Unified App. Use for `kind: unified_app`, `buildUnifiedApp`, `.fused/unified_app/`, `fused-cli unified-app`, selected operations, webhook events, connected-user routing, and Unified App OAuth. For generated SDK packages use fused-sdk; for credential setup use fused-bucket."
+description: "Build, configure, deploy, or call a hosted Fused Unified App. Use for `kind: unified_app`, `buildUnifiedApp`, `.fused/unified_app/`, `fused-cli app`, selected operations, webhook events, connected-user routing, and Unified App OAuth. For generated SDK packages use fused-sdk; for credential setup use fused-bucket."
 ---
 
 # Unified Apps
 
-A Unified App is hosted TypeScript that calls selected provider operations through Engine. Keep its YAML config and a default-exported `buildUnifiedApp` source file in `.fused/unified_app/`. Use `fused-cli unified-app --help` to check the installed command surface.
+A Unified App is hosted TypeScript that calls selected provider operations through Engine. Keep its YAML config and a default-exported `buildUnifiedApp` source file in `.fused/unified_app/`. Use `fused-cli app --help` to check the installed command surface.
 
 When service auth is omitted, Engine planning selects a unique compatible scheme
 with complete credentials in that service's bucket. Multiple ready schemes require
@@ -53,20 +53,46 @@ Select at least one exact operation or webhook event; operation `select_all` is 
 For provider events, add `webhook_attachment: <registration>` at the top level and `webhooks: [<exact-event-name>]` under each selected service. An event-only app can use `operations: []`. The hosted `execute({ input })` receives the normalized envelope `{body, headers, query, path:{urlSlug,eventName}}`; validate the selected `eventName` and payload before effects. Register ingress first when authoring config directly with `fused-cli webhook apply -f <webhook-config>`; the Unified App plan checks attachment coverage. The browser Unified App editor also lets you select events and name an existing registration.
 
 ```sh
-fused-cli unified-app plan -f .fused/unified_app/customer-app.yaml --json
-fused-cli unified-app apply -f .fused/unified_app/customer-app.yaml --json
+fused-cli app plan -f .fused/unified_app/customer-app.yaml --json
+fused-cli app apply -f .fused/unified_app/customer-app.yaml --json
 ```
 
-Engine compiles the linked TypeScript during plan and hosts it on apply. Save the returned `app_family_id` and one-time execution token securely. Call `POST /v1/apps/{app_family_id}/executions` with that token and `{"operation":"execute","input":{...}}`. The response exposes `appFamilyId` and the executed `version`; exact version IDs stay in internal receipts and version management. `fused-cli unified-app sync -f <config>` moves older inline source into a linked TypeScript file. `bundle_digest` and `unified-app bundle attach` are only for code compiled separately; never combine `bundle_digest` with `source_path`.
+Engine compiles the linked TypeScript during plan and hosts it on apply. Save the returned `app_family_id` and one-time execution token securely. Use the returned `execution_url`, which defaults to `POST /v1/apps/{url_encoded_app_name}/executions`; the family UUID remains accepted in the same path. Call it with that token and `{"operation":"execute","input":{...}}`. The response exposes `appFamilyId` and the executed `version`; exact version IDs stay in internal receipts and version management. `fused-cli app source extract -f <config>` moves older inline source into a linked TypeScript file. `bundle_digest` and `app bundle attach` are only for code compiled separately; never combine `bundle_digest` with `source_path`.
+
+## Schedule runs
+
+Use the ordinary Engine management login to create workspace-owned schedules.
+No execution token is required. Read the installed command surface with
+`fused-cli app schedule --help`; older CLI/Engine releases do not support it.
+
+```sh
+fused-cli app schedule create "Customer lookup" --name "Morning check" --cron '0 9 * * 1-5' --timezone Europe/London --input-file ./input.json
+fused-cli app schedule create "Customer lookup" --name "One time" --at '2026-12-01T09:00:00Z' --input-file ./input.json
+fused-cli app schedule list "Customer lookup" --json
+fused-cli app schedule update "Customer lookup" --id SCHEDULE_ID --input-file ./revised.json
+fused-cli app schedule pause "Customer lookup" --id SCHEDULE_ID
+fused-cli app schedule resume "Customer lookup" --id SCHEDULE_ID
+fused-cli app schedule delete "Customer lookup" --id SCHEDULE_ID
+```
+
+Schedules require `app.unified_app.manage`, follow active traffic, and persist
+independently of creator sign-in. Saved input is private; prefer `--input-file`
+over inline values and do not print JSON lists unnecessarily. Updates preserve
+omitted fields and reject stale revisions. Do not blindly retry an uncertain
+creation; inspect the reported schedule ID with list first. Engine must be
+running. Missed recurring times coalesce into one catch-up run; resuming skips
+paused occurrences. Failed runs are not automatically retried, and uncertain
+outcomes pause for review before more provider effects. Never create or resume
+a schedule without user authorization for its app, input, and timing.
 
 ## Switch traffic to an existing version
 
 Use the app's exact name and a human-readable version label:
 
 ```sh
-fused-cli unified-app promote "Customer lookup" --version 1.0.0
+fused-cli app promote "Customer lookup" --version 1.0.0
 # Alternatively, read the app name from the YAML config.
-fused-cli unified-app promote -f .fused/unified_app/customer-app.yaml --version 1.0.0
+fused-cli app promote -f .fused/unified_app/customer-app.yaml --version 1.0.0
 ```
 
 An explicit app name takes precedence over config selection and needs no local file. Without a name, the CLI reads the top-level `name` from the selected `kind: unified_app` config. Config discovery must select exactly one Unified App; use `-f` to disambiguate. Always pass `--version`; the YAML `version` does not select the traffic destination. Promotion leaves the YAML and linked TypeScript unchanged and does not rebuild the app.
@@ -79,7 +105,7 @@ Connect a user to each provider service in the app's selected bucket before call
 
 ## Permissions and team access
 
-Creating and applying an app requires `app.unified_app.create` or `app.unified_app.manage` as appropriate, plus `service.consume` for selected services and `bucket.use` for each selected bucket. Reading an app requires `app.unified_app.read`; token administration requires `app.unified_app.tokens.manage`. Check `fused-cli team eligible-owners`, `team build-access`, and `team access app` when ownership or access is unclear. Follow `fused-cli`'s `reference/access-management.md` for the exact resource and missing permission reported by a denial. Never self-grant access.
+Creating and applying an app requires `app.unified_app.create` or `app.unified_app.manage` as appropriate, plus `service.consume` for selected services and `bucket.use` for each selected bucket. Reading an app requires `app.unified_app.read`; token administration requires `app.unified_app.tokens.manage`. Check `fused-cli workspace team eligible-owners`, `workspace team build-access`, and `workspace team access app` when ownership or access is unclear. Follow `fused-cli`'s `reference/access-management.md` for the exact resource and missing permission reported by a denial. Never self-grant access.
 
 ## Use from an SDK or MCP server
 
@@ -101,11 +127,11 @@ unified_apps:
 Apply through the normal consumer workflow:
 
 ```bash
-fused-cli sdk plan -f .fused/sdks/customer-portal.yaml --json
-fused-cli sdk apply -f .fused/sdks/customer-portal.yaml --json
+fused-cli app plan -f .fused/sdks/customer-portal.yaml --json
+fused-cli app apply -f .fused/sdks/customer-portal.yaml --json
 ```
 
-For an existing SDK or MCP, keep its existing config and add `unified_apps`, then increment the consumer's `version`. For MCP, use `kind: mcp`, omit SDK-only `language`, provide the server's `description`, and use `fused-cli mcp plan` / `fused-cli mcp apply`. Physical `services` can remain alongside these references; they are optional for a consumer containing only hosted apps.
+For an existing SDK or MCP, keep its existing config and add `unified_apps`, then increment the consumer's `version`. For MCP, use `kind: mcp`, omit SDK-only `language`, provide the server's `description`, and use `fused-cli app plan` / `fused-cli app apply`. Physical `services` can remain alongside these references; they are optional for a consumer containing only hosted apps.
 
 Plan resolves each name and version to an immutable app ID and public schemas. The actor and owner need `app.unified_app.use` on the target, in addition to ordinary consumer permissions. Execution uses the consumer token; never copy the Unified App's token into the config. The hosted code uses its own configured credential buckets. Restricted consumer tokens must allow `unified_app:customer_lookup`.
 

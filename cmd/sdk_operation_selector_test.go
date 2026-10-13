@@ -83,7 +83,7 @@ func TestCompleteSDKInitOperationSelectionsRejectsUnknownExplicitOperation(t *te
 	}}
 	_, err := completeSDKInitOperationSelections(newCommandWithDiscardedOutput(), api.NewClient(server.URL, "test-key"), request, resolved)
 	// Registry advertises only issueUpdate, so the invalid explicit ID must remain a read-only actionable failure.
-	if err == nil || !strings.Contains(err.Error(), "operation issueTypo is not available") || !strings.Contains(err.Error(), "workspace service operations linear --version v1") {
+	if err == nil || !strings.Contains(err.Error(), "operation issueTypo is not available") || !strings.Contains(err.Error(), "service operation list linear --version v1") {
 		t.Fatalf("unknown operation error = %v", err)
 	}
 }

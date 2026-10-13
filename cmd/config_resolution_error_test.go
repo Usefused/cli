@@ -19,7 +19,7 @@ func TestConfigResolutionDiagnosticReachesJSON(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(`{"error":{"code":"config_service_unresolved","message":"Service references could not be resolved.","category":"validation","retryable":false,"details":{"server_detail":"Unresolved service references: \"google-drive\"."},"remediation":"Run fused-cli workspace services list to check available service slugs."}}`))
+		_, _ = w.Write([]byte(`{"error":{"code":"config_service_unresolved","message":"Service references could not be resolved.","category":"validation","retryable":false,"details":{"server_detail":"Unresolved service references: \"google-drive\"."},"remediation":"Run fused-cli service list to check available service slugs."}}`))
 	}))
 	defer server.Close()
 	_, planErr := cliapi.NewClient(server.URL, "fixture-key").PlanMCPConfig(cliapi.DesiredConfigPlanIntent{Config: json.RawMessage(`{}`)})
@@ -52,7 +52,7 @@ func assertConfigResolutionJSON(t *testing.T, envelope jsonErrorEnvelope) {
 		t.Fatalf("JSON error = %#v", envelope)
 	}
 	// The JSON detail and remediation must be as useful as terminal output.
-	if err.Details["server_detail"] != `Unresolved service references: "google-drive".` || err.Remediation != "Run fused-cli workspace services list to check available service slugs." {
+	if err.Details["server_detail"] != `Unresolved service references: "google-drive".` || err.Remediation != "Run fused-cli service list to check available service slugs." {
 		t.Fatalf("JSON lost diagnostic: %#v", err)
 	}
 }

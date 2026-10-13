@@ -21,25 +21,24 @@ func TestCanonicalCommandParentsRequireAction(t *testing.T) {
 	}{
 		{name: "bucket", args: []string{"bucket"}},
 		{name: "bucket secret", args: []string{"bucket", "secret"}},
-		{name: "secret", args: []string{"secret"}},
+		{name: "bucket credential", args: []string{"bucket", "credential"}},
 		{name: "service", args: []string{"service"}},
-		{name: "value", args: []string{"value"}},
+		{name: "bucket value", args: []string{"bucket", "value"}},
 		{name: "workspace", args: []string{"workspace"}},
-		{name: "workspace services", args: []string{"workspace", "services"}},
-		{name: "workspace service", args: []string{"workspace", "service"}},
-		{name: "workspace service version", args: []string{"workspace", "service", "version"}},
+
+		{name: "workspace service", args: []string{"service"}},
+		{name: "workspace service version", args: []string{"service", "version"}},
 		{name: "config", args: []string{"config"}},
 		{name: "import", args: []string{"import"}},
-		{name: "mcp", args: []string{"mcp"}},
-		{name: "mcp token", args: []string{"mcp", "token"}},
-		{name: "sdk", args: []string{"sdk"}},
-		{name: "sdk operation", args: []string{"sdk", "operation"}},
-		{name: "sdk service", args: []string{"sdk", "service"}},
-		{name: "sdk token", args: []string{"sdk", "token"}},
-		{name: "sdk webhook", args: []string{"sdk", "webhook"}},
+		{name: "app", args: []string{"app"}},
+		{name: "mcp token", args: []string{"app", "token"}},
+		{name: "app operation", args: []string{"app", "operation"}},
+		{name: "app service", args: []string{"app", "service"}},
+		{name: "app token", args: []string{"app", "token"}},
+		{name: "app webhook", args: []string{"app", "webhook"}},
 		{name: "skill", args: []string{"skill"}},
-		{name: "team", args: []string{"team"}},
-		{name: "user", args: []string{"user"}},
+		{name: "team", args: []string{"workspace", "team"}},
+		{name: "user", args: []string{"workspace", "user"}},
 	}
 	for _, parent := range parents {
 		t.Run(parent.name, func(t *testing.T) {
@@ -75,8 +74,10 @@ func TestCommandTreeUsesCanonicalCobraExecutionContract(t *testing.T) {
 	walk(RootCmd)
 }
 
+// TestCommandUsageUsesConcreteArgumentNames verifies that command usage uses concrete argument names.
 func TestCommandUsageUsesConcreteArgumentNames(t *testing.T) {
-	ambiguous := []string{"family", "<name>", "<user>", "<ref>", "service_name", "operationId", "webhookId", "app-id"}
+	// app-id is concrete now that every app type shares the same management namespace.
+	ambiguous := []string{"family", "<name>", "<user>", "<ref>", "service_name", "operationId", "webhookId"}
 	var walk func(*cobra.Command)
 	walk = func(command *cobra.Command) {
 		for _, child := range command.Commands() {
@@ -97,17 +98,18 @@ func TestCommandUsageUsesConcreteArgumentNames(t *testing.T) {
 	walk(RootCmd)
 }
 
-func TestSDKAndMCPHaveDistinctManagementRoots(t *testing.T) {
-	for name, expected := range map[string]*cobra.Command{"sdk": sdkCmd, "mcp": mcpCmd} {
+// TestAppsShareOneManagementRoot rejects all removed type-specific roots.
+func TestAppsShareOneManagementRoot(t *testing.T) {
+	for _, name := range []string{"sdk", "mcp", "api", "unified-app", "artifact"} {
 		command, _, err := RootCmd.Find([]string{name})
-		if err != nil || command != expected {
-			t.Fatalf("%s root is unavailable: command=%v err=%v", name, command, err)
-		}
+		if err == nil && command != RootCmd {
+			t.Fatalf("removed root %s remains registered", name)
+		} // No hidden compatibility commands.
 	}
-	command, _, err := RootCmd.Find([]string{"artifact"})
-	if err == nil && command != RootCmd {
-		t.Fatalf("shared artifact management root is still registered: %v", command)
-	}
+	command, _, err := RootCmd.Find([]string{"app"})
+	if err != nil || command != appCmd {
+		t.Fatalf("shared app root missing: %v", err)
+	} // Every app capability lives here.
 }
 
 // TestSDKPromptIsNotRegistered protects the temporary removal from the public SDK command surface.
@@ -119,6 +121,7 @@ func TestSDKPromptIsNotRegistered(t *testing.T) {
 	}
 }
 
+// TestCanonicalCommandsRejectSupersededForms prevents removed paths from silently acting as aliases.
 func TestCanonicalCommandsRejectSupersededForms(t *testing.T) {
 	tests := []struct {
 		name string
@@ -132,17 +135,21 @@ func TestCanonicalCommandsRejectSupersededForms(t *testing.T) {
 		{name: "secret noun first", args: []string{"secret", "github", "set", "token"}},
 		{name: "secret remove", args: []string{"secret", "remove", "github", "token"}},
 		{name: "service noun first", args: []string{"service", "github", "show"}},
-		{name: "value noun first", args: []string{"value", "prod", "list"}},
-		{name: "value remove", args: []string{"value", "remove", "prod", "github", "token"}},
-		{name: "workspace service noun first", args: []string{"workspace", "service", "github", "show"}},
-		{name: "workspace service remove", args: []string{"workspace", "service", "remove", "github"}},
-		{name: "workspace version remove", args: []string{"workspace", "service", "version", "remove", "github", "v1"}},
+		{name: "value noun first", args: []string{"bucket", "value", "prod", "list"}},
+		{name: "top-level value list", args: []string{"value", "list", "prod"}},
+		{name: "top-level value set", args: []string{"value", "set", "prod", "github", "header", "X-Region", "eu"}},
+		{name: "top-level value delete", args: []string{"value", "delete", "prod", "github", "X-Region"}},
+		{name: "bucket values shorthand", args: []string{"bucket", "values", "prod"}},
+		{name: "value remove", args: []string{"bucket", "value", "remove", "prod", "github", "token"}},
+		{name: "workspace service noun first", args: []string{"service", "github", "show"}},
+		{name: "workspace service delete", args: []string{"service", "delete", "github"}},
+		{name: "workspace version delete", args: []string{"service", "version", "delete", "github", "v1"}},
 		{name: "sdk noun-first show", args: []string{"sdk", "security@1.0.0", "show"}},
 		{name: "sdk noun-first download", args: []string{"sdk", "security@1.0.0", "download"}},
-		{name: "sdk service noun-first", args: []string{"sdk", "service", "github", "add"}},
-		{name: "sdk operation noun-first", args: []string{"sdk", "operation", "github", "add", "listUsers"}},
-		{name: "sdk token noun-first", args: []string{"sdk", "token", "security", "list"}},
-		{name: "sdk webhook noun-first", args: []string{"sdk", "webhook", "github", "add", "push"}},
+		{name: "app service noun-first", args: []string{"app", "service", "github", "add"}},
+		{name: "app operation noun-first", args: []string{"app", "operation", "github", "add", "listUsers"}},
+		{name: "app token noun-first", args: []string{"app", "token", "security", "list"}},
+		{name: "app webhook noun-first", args: []string{"app", "webhook", "github", "add", "push"}},
 		{name: "mcp noun-first remove", args: []string{"mcp", "support@1.0.0", "remove"}},
 	}
 	for _, test := range tests {
@@ -162,8 +169,8 @@ func TestActionFlagsStayOnConsumingSubcommand(t *testing.T) {
 		flag    string
 		present bool
 	}{
-		{secretCmd, "bucket", false}, {secretSetCmd, "bucket", true}, {secretListCmd, "bucket", true}, {secretDeleteCmd, "bucket", true},
-		{serviceCmd, "q", false}, {serviceWebhooksCmd, "q", false}, {serviceOperationsCmd, "q", true},
+		{secretCmd, "bucket", false}, {secretSetCmd, "bucket", true}, {secretListCmd, "bucket", false}, {secretDeleteCmd, "bucket", true},
+		{serviceCmd, "search", false}, {serviceWebhooksCmd, "search", false}, {serviceOperationsCmd, "search", true},
 		{workspaceServiceCmd, "force", false}, {workspaceServiceVersionCmd, "force", false},
 		{workspaceServiceDeleteCmd, "force", true}, {workspaceServiceVersionDeleteCmd, "force", true},
 	}
@@ -223,6 +230,7 @@ func TestSecretSetDefaultsToPromptsAndRequiresStdinWithoutInput(t *testing.T) {
 	}
 }
 
+// TestValueSetUsesExactLookupsAndEmitsAuditEvent exercises bucket value set through its public command path.
 func TestValueSetUsesExactLookupsAndEmitsAuditEvent(t *testing.T) {
 	const bucketID = "11111111-1111-4111-8111-111111111111"
 	var valueRequest map[string]any
@@ -256,7 +264,7 @@ func TestValueSetUsesExactLookupsAndEmitsAuditEvent(t *testing.T) {
 	otel.SetTracerProvider(provider)
 	t.Cleanup(func() { otel.SetTracerProvider(previousProvider) })
 
-	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"value", "set", bucketID, "github", "header", "X-Token", "sensitive-value"})
+	out := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"bucket", "value", "set", bucketID, "github", "header", "X-Token", "sensitive-value"})
 	if !strings.Contains(out, `Bucket value "X-Token" set.`) {
 		t.Fatalf("unexpected output: %q", out)
 	}

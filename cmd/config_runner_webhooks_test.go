@@ -105,7 +105,7 @@ func TestWorkspaceServiceWebhooks_ListsEngineURLs(t *testing.T) {
 	}))
 	defer server.Close()
 
-	out := runCommandInDirOutput(t, dir, server.URL, []string{"workspace", "service", "webhooks", "github"})
+	out := runCommandInDirOutput(t, dir, server.URL, []string{"webhook", "list", "--service", "github"})
 
 	if !strings.Contains(out, "repo-a") || !strings.Contains(out, "https://public.example/webhook/repo-a") {
 		t.Fatalf("expected repo-a URL line, got:\n%s", out)
@@ -151,6 +151,11 @@ func writeServiceLookupForWebhookList(t *testing.T, w http.ResponseWriter, r *ht
 func writeEngineWebhookListResponse(t *testing.T, w http.ResponseWriter, r *http.Request) {
 	t.Helper()
 	body := decodeTestGraphQLBody(t, r)
+	// Resolve the explicit service filter before reading registrations.
+	if strings.Contains(body.Query, "serviceReference") {
+		_, _ = w.Write([]byte(`{"data":{"serviceReference":{"id":"svc-github","kind":"service"}}}`))
+		return
+	}
 	// Match the bounded membership read used by catalogue and sync commands.
 	if strings.Contains(body.Query, "workspaceServicePage") {
 		_, _ = w.Write([]byte(`{"data":{"workspaceServicePage":{"data":[{"service_id":"svc-github","service_name":"GitHub REST API","version":"2026-07-01"}],"total":1}}}`))
@@ -177,6 +182,11 @@ func TestWorkspaceServiceWebhooks_NoRegistrations_PrintsMessage(t *testing.T) {
 			_, _ = w.Write([]byte(`{"data":{"service":{"id":"svc-github"}}}`))
 		case r.URL.Path == "/engine/graphql":
 			body := decodeTestGraphQLBody(t, r)
+			// Resolve the explicit service filter before reading registrations.
+			if strings.Contains(body.Query, "serviceReference") {
+				_, _ = w.Write([]byte(`{"data":{"serviceReference":{"id":"svc-github","kind":"service"}}}`))
+				return
+			}
 			// Match the bounded membership read used by catalogue and sync commands.
 			if strings.Contains(body.Query, "workspaceServicePage") {
 				_, _ = w.Write([]byte(`{"data":{"workspaceServicePage":{"data":[{"service_id":"svc-github","service_name":"GitHub REST API","version":"2026-07-01"}],"total":1}}}`))
@@ -194,8 +204,8 @@ func TestWorkspaceServiceWebhooks_NoRegistrations_PrintsMessage(t *testing.T) {
 	}))
 	defer server.Close()
 
-	out := runCommandInDirOutput(t, dir, server.URL, []string{"workspace", "service", "webhooks", "github"})
-	if !strings.Contains(out, "No webhook registrations for service github.") {
+	out := runCommandInDirOutput(t, dir, server.URL, []string{"webhook", "list", "--service", "github"})
+	if !strings.Contains(out, "No webhook registrations on this page (0 matching total).") {
 		t.Fatalf("expected no-registrations message, got:\n%s", out)
 	}
 }

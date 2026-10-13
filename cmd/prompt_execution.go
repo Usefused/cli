@@ -162,7 +162,7 @@ func deployPromptExecution(cmd *cobra.Command, client *api.Client, plan promptIn
 	result, err := applyExecutionVersion(client, parsed, planned.receipt)
 	// A published plan can be resumed without asking the model to regenerate source.
 	if err != nil {
-		return fmt.Errorf("%w; retry with fused-cli unified-app apply -f %s", err, plan.primary.path)
+		return fmt.Errorf("%w; retry with fused-cli app apply -f %s", err, plan.primary.path)
 	}
 	recordAppliedChange(cmd.Context(), cmd.CommandPath(), "unified_app")
 	fmt.Fprintf(cmd.OutOrStdout(), "Deployed Unified App %s (%s) with %d operation(s) and %d webhook event(s).\n", plan.primary.name, result.AppFamilyID, len(plan.primary.operations), len(plan.primary.events))

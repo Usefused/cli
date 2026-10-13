@@ -91,7 +91,7 @@ func TestMCPTokenGenerateJSONReturnsOneTimeCredential(t *testing.T) {
 	}))
 	defer server.Close()
 
-	output := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"mcp", "token", "generate", "support-mcp", "agent", "--json"})
+	output := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"app", "token", "generate", "support-mcp", "agent", "--json"})
 	var result api.AppTokenGenerateResponse
 	// Structured output must be valid JSON containing the one-time credential and family metadata.
 	if err := json.Unmarshal([]byte(output), &result); err != nil {
@@ -124,7 +124,7 @@ func TestMCPTokenFixedBindingRejectsInvalidShape(t *testing.T) {
 	}
 }
 
-// TestAppTokenExpiryRejectsInvalidDurations protects the shared SDK and MCP duration contract.
+// TestAppTokenExpiryRejectsInvalidDurations verifies that app token expiry rejects invalid durations.
 func TestAppTokenExpiryRejectsInvalidDurations(t *testing.T) {
 	// Representative invalid values protect positivity, precision, and syntax rules.
 	for _, value := range []string{"0s", "-1s", "1500ms", "tomorrow"} {

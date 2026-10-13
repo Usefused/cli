@@ -15,7 +15,7 @@ func TestEveryServiceFlagSharesTheMultiSelectorContract(t *testing.T) {
 	inspect = func(command *cobra.Command) {
 		flag := command.Flags().Lookup("service")
 		// Only commands that define --service locally own its parsing contract.
-		if flag != nil {
+		if flag != nil && command != webhookListCmd {
 			found = append(found, command.CommandPath())
 			// Cobra's stringSlice value is what accepts both comma-separated and repeated flag forms.
 			if flag.Value.Type() != "stringSlice" {

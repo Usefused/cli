@@ -94,7 +94,7 @@ from src import FusedSDK
 
 sdk = FusedSDK({
     "grpc_url": os.environ.get("FUSED_ENGINE_GRPC_URL"),
-    "token": os.environ["FUSED_SDK_TOKEN"],
+    "token": os.environ["FUSED_APP_TOKEN"],
 })
 
 # One client carries both surfaces: sdk.Jira is synchronous,
@@ -110,7 +110,7 @@ import { FusedSDK } from 'your-sdk-package';
 
 const sdk = new FusedSDK({
   grpcUrl: process.env.FUSED_ENGINE_GRPC_URL,
-  token: process.env.FUSED_SDK_TOKEN,
+  token: process.env.FUSED_APP_TOKEN,
 });
 
 process.on('SIGTERM', () => sdk.close());

@@ -28,7 +28,7 @@ func TestSDKInitComposesWorkspaceAndAppReceipts(t *testing.T) {
 	t.Cleanup(func() { NoInput = oldNoInput })
 
 	output := runCommandInDirOutput(t, dir, server.URL, []string{
-		"sdk", "init", "support-sdk", "--service", "linear", "--operation", "linear=issueUpdate", "--no-input",
+		"init", "--sdk", "support-sdk", "--service", "linear", "--operation", "linear=issueUpdate", "--no-input",
 	})
 	workspace, err := configfile.ParseFile(filepath.Join(dir, ".fused", "workspace.yaml"))
 	if err != nil {
@@ -211,7 +211,7 @@ func TestSDKInitPromptsOnceForCombinedIntent(t *testing.T) {
 	})
 
 	runCommandInDir(t, dir, server.URL, []string{
-		"sdk", "init", "support-sdk", "--service", "linear", "--operation", "linear=issueUpdate",
+		"init", "--sdk", "support-sdk", "--service", "linear", "--operation", "linear=issueUpdate",
 	})
 	if prompts != 1 {
 		t.Fatalf("combined prompt count = %d; want 1", prompts)
@@ -584,6 +584,13 @@ func newSDKInitLifecycleServer(t *testing.T) (*httptest.Server, *[]string) {
 		writer.Header().Set("Content-Type", "application/json")
 		// REST lifecycle endpoints record only the two distinct plan/apply boundaries.
 		switch request.URL.Path {
+		case "/sdk-config/generation/app-1":
+			_, _ = writer.Write([]byte(`{"status":"complete","app_id":"app-1","app_family_id":"family-1"}`))
+			return
+		case "/sdks/app-1/download":
+			writer.Header().Set("Content-Type", "application/zip")
+			_, _ = writer.Write(sdkTestZip(t, []sdkTestZipFile{{name: "README.md", content: "test package"}}))
+			return
 		case "/health":
 			_, _ = writer.Write([]byte(`{"environment":"development"}`))
 			return

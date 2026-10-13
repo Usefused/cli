@@ -241,25 +241,16 @@ func TestEnsureScaffoldBucketPreservesExistingSelection(t *testing.T) {
 
 // TestInitCommandsExposeOneRootCreationSurface proves compatibility scaffolds remain addressable but hidden behind unified init.
 func TestInitCommandsExposeOneRootCreationSurface(t *testing.T) {
-	for _, parent := range []*cobra.Command{workspaceCmd, sdkCmd, mcpCmd} {
-		command, _, err := parent.Find([]string{"init"})
-		// Workspace init remains public configuration authoring, while app-specific creators are compatibility-only.
-		if err != nil || command.Name() != "init" {
-			t.Fatalf("%s init is not registered: %v", parent.Name(), err)
-		}
+	command, _, err := RootCmd.Find([]string{"init"})
+	// App creation has one discoverable root and no type-specific aliases.
+	if err != nil || command == RootCmd {
+		t.Fatal("root init missing")
 	}
-	foundUnified := false
-	for _, command := range RootCmd.Commands() {
-		// Exactly one root init is now the advertised app creation path; the removed scaffold alias must not return.
-		if command.Name() == "init" {
-			foundUnified = true
-		}
-		if command.HasAlias("scaffold") {
-			t.Fatalf("legacy top-level scaffold alias remains registered as %s", command.Name())
-		}
-	}
-	if !foundUnified {
-		t.Fatal("unified top-level init is not registered")
+	for _, parent := range []*cobra.Command{sdkCmd, mcpCmd} {
+		found, rest, _ := parent.Find([]string{"init"})
+		if found != parent || len(rest) != 1 {
+			t.Fatal("legacy init remains registered")
+		} // Old paths must fail.
 	}
 }
 

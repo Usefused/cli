@@ -75,7 +75,7 @@ func validateWorkspaceServiceConfigIdentity(cfg *configfile.WorkspaceConfig, add
 }
 
 // mergeWorkspaceServiceSelection is the one additive workspace-authoring rule
-// shared by `workspace service add` and `workspace init --extend`. Reusing it
+// shared by `service add` and `workspace init --extend`. Reusing it
 // prevents either command from erasing service policy or duplicating versions.
 func mergeWorkspaceServiceSelection(config *configfile.WorkspaceConfig, serviceName, version string) bool {
 	service, exists := config.Services[serviceName]

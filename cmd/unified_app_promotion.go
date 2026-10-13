@@ -14,8 +14,8 @@ import (
 var unifiedPromoteCmd = &cobra.Command{
 	Use:   "promote [app-name] --version <version>",
 	Short: "Switch traffic to a named Unified App version",
-	Example: `  fused-cli unified-app promote "Customer lookup" --version 1.0.0
-  fused-cli unified-app promote -f .fused/unified_app/customer-app.yaml --version 1.0.0`,
+	Example: `  fused-cli app promote "Customer lookup" --version 1.0.0
+  fused-cli app promote -f .fused/unified_app/customer-app.yaml --version 1.0.0`,
 	Long: "Use the optional app name, or read it from the Unified App config, and switch traffic to the explicit --version. An explicit name takes precedence over config selection. The config and linked source are not modified. Historical results remain available. Clients using an exact version URL must call the selected version; the hosted MCP family URL follows the active version.",
 	Args: cobra.MaximumNArgs(1),
 	// An explicit promote command is the caller's authorization for this audited mutation.
@@ -24,7 +24,7 @@ var unifiedPromoteCmd = &cobra.Command{
 		version = strings.TrimSpace(version)
 		// An explicit destination label prevents an accidental switch to an inferred latest version.
 		if version == "" {
-			return fmt.Errorf("specify --version, for example: unified-app promote -f .fused/unified_app/customer-app.yaml --version 1.0.0")
+			return fmt.Errorf("specify --version, for example: app promote -f .fused/unified_app/customer-app.yaml --version 1.0.0")
 		}
 		name, err := unifiedPromotionName(args, ConfigFile)
 		// Resolve exactly one app before sending any management request.
