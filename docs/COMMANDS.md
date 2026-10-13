@@ -402,7 +402,7 @@ List or search Registry operations for a service. Passing `--search` uses the se
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|
-| `--search` | | Search query for service operation list --registry | `""` |
+| `--search` | | Search query for service operations | `""` |
 | `--version` | | Service version for operations | `""` |
 | `--limit` | | Maximum rows to read; requires `--search` | `20` |
 | `--offset` | | Rows to skip before reading; requires `--search` | `0` |
