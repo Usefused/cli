@@ -255,6 +255,11 @@ func runSharedAppInvoke(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	} // Kind must be authoritative, not inferred from the app's name.
+	// Only authored execution may select another explicitly permitted bucket.
+	request.BucketID, err = runtimeBucketInvocationFlag(cmd, info.Kind, request.Operation)
+	if err != nil {
+		return err
+	}
 	if info.Kind != "unified_app" || request.Operation != "execute" { // Existing physical/unified-operation response validation remains intact for SDK and MCP apps.
 		prepared := preparedSDKInvocation{EngineURL: client.BaseURL, AppID: id, Token: token, IdempotencyKey: effectiveSDKInvokeIdempotencyKey(), Request: request}
 		start := time.Now()
@@ -264,7 +269,9 @@ func runSharedAppInvoke(cmd *cobra.Command, args []string) error {
 		} // Never repeat an uncertain execution.
 		return writeSDKInvocationOutput(cmd, sdkInvokeOutput{AppID: id, Operation: args[1], Kind: response.Kind, StatusCode: response.StatusCode, Results: response.Results, ElapsedMS: float64(time.Since(start).Microseconds()) / 1000, EngineEndpoint: endpoint})
 	}
-	return invokeUnifiedAppHTTP(cmd, client.BaseURL, id, token, request)
+	// The family route follows traffic, so retain the exact CLI version as an atomic dispatch fence.
+	request.ExpectedAppID = id
+	return invokeUnifiedAppHTTP(cmd, client.BaseURL, info.AppFamilyID, token, request)
 }
 
 // configureAppSurface centralizes shared lifecycle commands without retaining type-specific aliases.
@@ -283,6 +290,7 @@ func configureAppSurface() {
 	relocateCommand(appCmd, sdkOpenAPICmd, "openapi <app-name@version-or-version-id>", "Export one exact app version as OpenAPI")
 	relocateCommand(appCmd, sdkInvokeCmd, "invoke <app-name@version-or-version-id> <operation>", "Invoke one operation on an exact app version")
 	sdkInvokeCmd.RunE = runSharedAppInvoke
+	sdkInvokeCmd.Flags().String("bucket-id", "", "Select a permitted runtime bucket UUID for Unified App execute")
 	sdkInvokeTokenEnv = "FUSED_APP_TOKEN"
 	sdkInvokeCmd.Flags().Lookup("token-env").DefValue = "FUSED_APP_TOKEN"
 	sdkCmd.Short = "Build, configure, and download generated SDKs"

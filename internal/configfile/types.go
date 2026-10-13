@@ -221,6 +221,8 @@ type AppConfig struct {
 	MCP      *AppMCPDelivery `yaml:"mcp,omitempty" json:"mcp,omitempty"`
 	Language string          `yaml:"language,omitempty" json:"language,omitempty"`
 	Bucket   string          `yaml:"bucket,omitempty" json:"bucket,omitempty"`
+	// RuntimeBuckets opts Unified Apps into an explicitly bounded execution scope.
+	RuntimeBuckets []string `yaml:"runtime_buckets,omitempty" json:"runtime_buckets,omitempty"`
 	// Generate is SDK-only and tri-state on purpose: absent means the
 	// historical default of building a downloadable package. Only an explicit
 	// `generate: false` suppresses codegen, publishing an app version that is

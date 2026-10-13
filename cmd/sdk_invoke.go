@@ -56,9 +56,11 @@ type sdkInvokeSelectorValue struct {
 }
 
 type sdkInvokeRequest struct {
-	Operation string                  `json:"operation"`
-	Input     json.RawMessage         `json:"input"`
-	Selector  *sdkInvokeSelectorValue `json:"selector,omitempty"`
+	ExpectedAppID string                  `json:"expected_app_id,omitempty"`
+	BucketID      string                  `json:"bucket_id,omitempty"`
+	Operation     string                  `json:"operation"`
+	Input         json.RawMessage         `json:"input"`
+	Selector      *sdkInvokeSelectorValue `json:"selector,omitempty"`
 }
 
 type preparedSDKInvocation struct {

@@ -542,6 +542,10 @@ func validateAppConfig(cfg *AppConfig, kind ConfigKind) error {
 	if err := validateAppKindFields(cfg, kind); err != nil {
 		return err
 	}
+	// Runtime bucket authority must be explicit before a config can be hashed or sent.
+	if err := validateRuntimeBucketConfig(cfg, kind); err != nil {
+		return err
+	}
 	// Hosted references grant only the explicitly named and versioned capabilities.
 	if err := validateUnifiedAppReferences(cfg, kind); err != nil {
 		return err
