@@ -1,49 +1,36 @@
 # Fused CLI
 
-`fused-cli` is the config-as-code and operations CLI for the
-[Fused](https://usefused.com) integration gateway. Use it to connect to
-Fused, import APIs, generate SDKs, and deploy MCP servers.
+The command-line interface to [Fused](https://usefused.com)—the simplification
+of integration for organizations, engineers, and agents.
 
-## Shared app management
+Use `fused-cli` to work with your Fused deployment from a terminal or coding
+agent. Discover and import services, create and deploy apps, manage credentials
+and access, and inspect execution activity. Services can be internal APIs or
+third-party APIs.
 
-All app types use `fused-cli app`: SDK, direct REST API, MCP, and Unified Apps. The config selects the type for `plan`, `apply`, and `validate`; remote commands resolve the selected app. No `sdk`, `api`, `mcp`, or `unified-app` command aliases remain.
+The CLI connects to your **Fused Engine**, where your integrations run.
+App configuration and TypeScript source live in your project; the Engine
+manages execution, credentials, and permissions.
 
-```sh
-fused-cli app list --type sdk
-fused-cli app show support@1.0.0
-fused-cli app plan -f .fused/sdks/support.yaml
-fused-cli app apply -f .fused/sdks/support.yaml
-fused-cli app versions list support
-fused-cli app token generate support agent
-fused-cli app schedule list reports
-fused-cli app download support@1.0.0
-```
+## App types
 
-`--type` accepts `sdk`, `api`, `mcp`, and `unified-app`. Downloads require generated SDKs; schedules and promotion require Unified Apps. `app source extract` externalizes Unified App source; `app sync` mirrors an exact SDK/API config. Execution and destructive version actions require `name@version` or an immutable version ID. Use `init` to create apps and `extend` to add selections.
+| Task | App or interface |
+| --- | --- |
+| Share integration logic across applications and agents | A Unified App with defined inputs and outputs, available through API, SDK, or MCP |
+| Call internal or third-party services from your application | A typed SDK with methods for your selected operations |
+| Give an AI agent access to your services | A hosted MCP server with your selected tools |
+| Call integrations over HTTP | A REST API hosted by your Engine |
+| React to service events | Verified webhooks that can trigger a Unified App or reach applications and agents |
 
-Service reads default to enabled workspace services: `service list`, `service version list`, and `service operation list`. Add `--registry` for catalog reads, for example `service list --registry --search gmail`. Use `--search` consistently for list filtering. Provider credentials live under `bucket credential`; secret metadata uses `bucket secret list <bucket>`.
+Teams can discover available services, import their own APIs, and control who
+can use each integration and credential bucket.
 
-## Installation
+## Install
 
 ### macOS and Linux
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/Usefused/cli/main/install.sh | bash
-```
-
-The script asks before installing to `/usr/local/bin`. To inspect it first:
-
-```bash
-curl -sSL -o install.sh https://raw.githubusercontent.com/Usefused/cli/main/install.sh
-less install.sh
-bash install.sh
-```
-
-For CI or a specific release:
-
-```bash
-curl -sSL https://raw.githubusercontent.com/Usefused/cli/main/install.sh | ASSUME_YES=1 bash
-curl -sSL https://raw.githubusercontent.com/Usefused/cli/main/install.sh | VERSION=v1.0.0 ASSUME_YES=1 bash
 ```
 
 ### Windows
@@ -52,294 +39,118 @@ curl -sSL https://raw.githubusercontent.com/Usefused/cli/main/install.sh | VERSI
 irm https://raw.githubusercontent.com/Usefused/cli/main/install.ps1 | iex
 ```
 
-Install a specific release:
+You can review the [macOS/Linux installer](install.sh) or
+[Windows installer](install.ps1) before running it, or download a binary from
+[Releases](https://github.com/Usefused/cli/releases).
 
-```powershell
-$env:VERSION="v1.0.0"; irm https://raw.githubusercontent.com/Usefused/cli/main/install.ps1 | iex
-```
-
-The installer writes to `%LOCALAPPDATA%\Programs\fused-cli` and adds it to the
-user `PATH`.
-
-### Go or manual download
+Check your installation:
 
 ```bash
-go install github.com/Usefused/cli@latest
+fused-cli --version
 ```
-
-Alternatively, download the archive for your platform from
-[Releases](https://github.com/Usefused/cli/releases) and place `fused-cli` on
-your `PATH`.
 
 <a id="connect-to-an-engine"></a>
 
-## Connect to a Fused deployment
+## Get started
+
+### 1. Connect to your Engine
+
+You need access to a running Fused Engine. Use the URL provided by your team
+or the address of your own deployment. Replace the example URL below:
 
 ```bash
-fused-cli --engine-url http://localhost:8081 login
+fused-cli --engine-url https://your-engine.example.com login
 fused-cli whoami
-fused-cli service list
 ```
 
-Automation can use `--key`, `FUSED_API_KEY`, or `FUSED_LICENSE_KEY` instead of
-browser login. See [CLI setup and operation](docs/SETUP.md) for configuration
-precedence, headless login, credentials, teams, and automation-safe execution.
+`login` opens your browser to sign in. `whoami` confirms the Engine and account
+you are using. For a local Engine, the usual URL is `http://localhost:8081`.
+See [connection and authentication setup](docs/SETUP.md) for other login methods.
 
-## Install skills for your coding agent
+### 2. Find a service
 
-The CLI ships task-specific skills that teach coding agents how to discover
-services, inspect authentication, prepare reviewable SDK/MCP config, and use
-plan/apply safely.
+Search the Fused service catalogue for the API you want to use:
 
 ```bash
-# See the bundled skills.
-fused-cli skill list
-
-# Install all skills for an agent.
-fused-cli skill install --for codex
-
-# Or install one skill only.
-fused-cli skill install --for codex --skill fused-sdk
-fused-cli skill install --for codex --skill fused-unified-app
+fused-cli service list --registry --search hubspot
+fused-cli service list --registry --search stripe
 ```
 
-Supported targets are `codex`, `claude`, `antigravity`, `cursor`, and
-`windsurf`. Use `--scope project` for repository-local installation or
-`--scope user` where the target supports it:
+To see services already enabled in your workspace, including imported internal
+APIs, run `fused-cli service list`.
+
+If your API is not in the catalogue, you can
+[import an API specification or discover it from its documentation](docs/IMPORTING_SERVICES.md).
+
+### 3. Describe your integration
+
+With your services available and their credentials configured, describe the
+result you want. For example, if your workspace uses HubSpot and Stripe:
 
 ```bash
-fused-cli skill install --for codex --scope project
+fused-cli describe "Find a customer in HubSpot and return their recent Stripe invoices" \
+  --name customer-brief
 ```
 
-Installation writes the files into the selected agent's normal skill or rules
-directory. Release installs use the versioned skill snapshot shipped beside the
-binary, so this also works offline. The agent discovers and loads the relevant
-skill when a task matches; the command does not inject new instructions into an
-already-running context.
+Fused finds the relevant operations and drafts a Unified App. You review its
+TypeScript source and configuration before confirming deployment. The deployed
+app can be called through its API or added to an SDK or MCP server. The same
+workflow can use your imported internal services.
 
-## Import an API
+Provider credentials are stored in a **bucket**, a named collection of
+credentials used by your apps. See [credentials and buckets](docs/SETUP.md#credentials-and-buckets)
+to configure access to the services your integration needs.
 
-Plan the import first, review it, then apply the exact plan:
+### 4. Manage your app
+
+List your apps and their published versions:
 
 ```bash
-fused-cli import plan ./openapi.json \
-  --name "Internal Billing API" \
-  --slug billing-api
-
-fused-cli import apply
+fused-cli app list
+fused-cli app versions list customer-brief
 ```
 
-For a webhook-only contract that has its own source `info.version`, attach it
-to an exact existing service version without combining specifications or
-rewriting provenance:
+To update a Unified App, edit its TypeScript source and configuration, and
+choose a new version. Use `app plan` to preview the changes, then `app apply`
+to publish them.
+See [configuration and deployment](docs/CONFIG_AS_CODE.md) for the full workflow.
 
-```bash
-fused-cli import plan ./webhooks.openapi.yaml \
-  --name "Internal Billing API" \
-  --slug billing-api \
-  --target webhooks \
-  --destination-version 2026-08-19
+## Use service operations directly
 
-fused-cli import apply
-```
-
-For a remote specification:
-
-```bash
-fused-cli import plan \
-  --url https://developer.example.com/openapi.json \
-  --name "Example API" \
-  --slug example-api
-
-fused-cli import apply
-```
-
-When you have a provider URL rather than a known specification, start one
-reviewed discovery session. Fused tries a machine-readable contract first,
-then performs a bounded documentation crawl when necessary. In an interactive
-terminal, the command opens Fused's browser review when the draft is
-ready and waits for you to finish that review:
-
-```bash
-fused-cli import discover \
-  --url https://docs.example.com/api \
-  --name "Example API" \
-  --slug example-api
-
-# Resume the same authoritative session after interruption.
-fused-cli import discover --session <session-id>
-
-fused-cli import apply
-```
-
-Pass `--no-browser` to print the review URL and wait without opening it. For
-flag-driven automation, use global `--no-input` with `--all` or repeat
-`--select METHOD:/path`, and either repeat `--accept-proposal <id>` or pass
-`--reject-enrichment`. Automation does not open or wait for browser review.
-
-Discovery never creates or activates the service. When review produces a plan,
-the CLI atomically writes `.fused/.state/import.plan.json`, replacing the
-previous import-plan receipt at that path. Use `--receipt-out <path>` to choose
-a different receipt; an existing file at that path is replaced the same way.
-Run the separate `fused-cli import apply` command to commit exactly that
-reviewed plan; with no `--receipt`, it consumes the default receipt.
-
-Fused detects the supported source format. See
-[Importing services](docs/IMPORTING_SERVICES.md) for reviewed discovery,
-GraphQL, AsyncAPI, Postman, WSDL, Google Discovery, overlays, strict mode, and
-diagnostics.
-
-## Create a Fused App
-
-Start from the service you want to use. The CLI defaults its version, lets you
-accept all operations with Enter or search a narrower set, enables the service
-when needed, and drives the existing plan/apply boundaries:
+You can also select individual service operations for an SDK, REST API, or
+MCP server. For example, create an app using Linear:
 
 ```bash
 fused-cli init support-app --service linear
-fused-cli init support-sdk --sdk --service linear
-fused-cli init support-api --rest --service linear
-fused-cli init support-agent --mcp \
-  --description "Read and update support issues" \
-  --service linear
 ```
 
-With no method flag, init creates one App with SDK, MCP, and REST delivery,
-sharing one version and execution token. `--sdk`, `--rest` (or `--api`), and
-`--mcp` retain single-method creation. The combined App downloads a typed
-package and reports hosted MCP URLs; `--rest` prints a central Fused REST
-request template without generating a package. In automation, pass
-`--no-input` and explicit `--operation` or `--select-all` for every service.
+The interactive setup lets you select operations and review the configuration.
+It creates a typed SDK, an MCP endpoint, and REST access for the same app.
+Add `--sdk`, `--mcp`, or `--rest` when you need only one of these interfaces.
+Use `extend` to add services to an existing app.
 
-Pass `--no-apply` to plan without applying. Fused writes the app config and any
-required service additions, saves every plan receipt whose
-dependencies are already active, applies no desired-state changes, and starts no
-generation or download job. When a service still needs activation, its
-workspace receipt is saved and app planning waits until that receipt is
-applied. The output prints the exact remaining commands; SDK completion
-includes `app apply --download`.
+For workflows you want to author yourself, see
+[writing a Unified App in TypeScript](docs/UNIFIED_APPS.md).
 
-Create an inbound webhook registration with `--webhook`. It requires services,
-but no operation selection or app version:
+## Use with your coding agent
+
+Install Fused skills so your coding agent can help discover services,
+configure integrations, and deploy apps from your project:
 
 ```bash
-fused-cli init alerts --webhook --service github \
-  --secret 'github=${bucket.default.secret.github_signing}'
+fused-cli skill install --for codex
 ```
 
-This writes `.fused/webhooks/alerts.yaml`, enables missing services,
-then plans and applies the webhook registration and prints its ingress URL.
-Omit `--secret` only when the provider does not require a signing secret.
-`--secret` accepts bucket references, never literal credentials. Use `--no-apply`
-to retain validated desired state and available receipts for later apply.
-To receive events in an SDK, set `webhook_attachment: alerts` and explicitly
-select that SDK's webhook events. To update the registration later, edit its
-file and use `webhook plan` / `webhook apply`.
+Supported agents include Codex, Claude Code, Cursor, Windsurf, and Antigravity.
+Run `fused-cli skill install --help` for agent names and installation options.
 
-List or search registered webhooks through the same Fused API as the UI:
+## Documentation and help
 
-```bash
-fused-cli webhook list --search invoice --limit 20 --offset 0 --json
-fused-cli webhook list --service-id <service-uuid>
-fused-cli webhook list --service github --search repo --limit 20 --offset 0
-```
+- [Setup](docs/SETUP.md): sign-in, credentials, team access, and CI authentication.
+- [Import APIs](docs/IMPORTING_SERVICES.md): add services from specifications or documentation.
+- [Configuration and deployment](docs/CONFIG_AS_CODE.md): review, version, and publish changes.
+- [Unified Apps](docs/UNIFIED_APPS.md): write and deploy hosted TypeScript workflows.
+- [Command reference](docs/COMMANDS.md): commands, flags, and automation options.
 
-Search and pagination run on Fused within your service permissions. `webhook list --json`
-returns `{ "items": [...], "total": ... }`; the service-scoped command
-keeps its JSON array format. Receiving URLs come from Fused's public URL settings;
-managed registrations do not get an invented ingress URL. These commands require
-a Fused deployment exposing `workspaceWebhookPage`.
-
-To extend an existing app without creating another file, use `extend`. It reads
-the existing YAML to infer SDK, API, or MCP mode. A real change advances a
-stable SemVer version to its next minor, while an idempotent extension keeps the
-current version. Terminal confirmation shows the inferred successor, and
-`--no-input` uses the same deterministic result:
-
-```bash
-fused-cli extend support-sdk \
-  --service slack --select-all slack --no-input
-```
-
-The YAML path and stable app family stay the same; apply creates the new
-immutable version. Pass `--version` to override inference. Prerelease and
-non-SemVer versions require an explicit successor.
-
-## Create or update from a goal
-
-Use `describe` in an interactive terminal to review and apply a natural-language request:
-
-```bash
-fused-cli describe "Create a customer onboarding app using Stripe"
-fused-cli describe --kind sdk "Create a TypeScript SDK for Stripe customer lookup"
-fused-cli describe --update billing-sdk "Add Stripe invoice lookup"
-fused-cli describe --update billing-sdk \
-  "Add one operation that creates a Stripe customer, then creates an invoice for that customer"
-```
-
-`describe` creates a hosted TypeScript Unified App by default. It shows the
-source and selected operations for review, then Fused compiles and deploys the
-App after confirmation. Use `--kind sdk|mcp|rest` for another output. For one
-App with SDK, MCP, and REST delivery, use `init` without a method flag.
-`describe` always requires interactive proposal review. See
-[`buildUnifiedApp`](docs/UNIFIED_APPS.md) for the function contract and
-the [Unified App example](docs/unified-apps/example.md) for `describe`,
-config, and REST calls.
-
-You can also name an existing SDK, MCP, or REST app in the goal: `Update billing-sdk to add Stripe invoice lookup`.
-Those updates resolve an existing local config; pass `-f <path>` when names are ambiguous.
-They preserve existing selections, language, bucket, auth, and service version list --registry.
-A changed config receives the next minor version, or the version you provide with
-`--version`. An unchanged proposal keeps its current version. Missing update targets
-never fall back to creating an app. To update a Unified App, edit its
-`.fused/unified_app/<app>.tsx` source file and deploy a new version.
-
-For sequential cross-service behavior, author a Unified App in
-`.fused/unified_app/<app>.tsx` and deploy a new immutable version. SDK and MCP
-configs select physical operations; they do not define a sequence of provider
-calls.
-
-Jev selects operation names through the licensed Fused Registry endpoint. Intent
-parsing uses Registry's configured language model and the selected immutable
-operation contracts; it does not send provider credentials or execution
-payloads. The processing disclosure appears before the request. Applying the
-proposal publishes configuration; it does not execute provider calls. SDK
-consumers still need to use the new package version.
-
-## Control an existing app explicitly
-
-Every initialized app remains ordinary config as code. Edit its YAML, then use
-the explicit lifecycle when you want separate reviews or structured output:
-
-```yaml
-apiVersion: fused/v1
-kind: sdk
-name: support-sdk
-version: "1.0.0"
-bucket: default
-services:
-  linear:
-    version: "v1"
-    operations: [getIssue, updateIssue]
-```
-
-```bash
-fused-cli app plan --json -f .fused/sdks/support-sdk.yaml
-fused-cli app apply --json -f .fused/sdks/support-sdk.yaml
-```
-
-Standalone validation remains available for offline checks, but plan already
-validates before contacting Fused.
-
-## More documentation
-
-- [CLI setup and operation](docs/SETUP.md) — authentication, automation,
-  credentials, buckets, teams, and access.
-- [Importing services](docs/IMPORTING_SERVICES.md) — supported sources,
-  diagnostics, overlays, and execution compatibility.
-- [Config as code](docs/CONFIG_AS_CODE.md) — workspace/SDK YAML, plan/apply,
-  sync, and execution policies.
-- [Command reference](docs/COMMANDS.md) — every command and flag.
-
-Run `fused-cli --help` for command discovery. `fused-cli --readme` prints this
-onboarding guide without appending the command reference.
+Run `fused-cli --help` to see available commands, or add `--help` to any command
+for details. Run `fused-cli --readme` to read this guide in your terminal.

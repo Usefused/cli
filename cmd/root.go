@@ -43,13 +43,22 @@ var (
 var RootCmd = &cobra.Command{
 	Use:           "fused-cli",
 	Version:       Version,
-	Short:         "Manage Fused, Registry, workspace, and runtime configuration.",
+	Short:         "The command-line interface to Fused.",
 	SilenceErrors: true,
 	SilenceUsage:  true,
-	Long: `Fused CLI is the config-as-code and operations CLI for the Fused
-integration layer. Use it to connect to Fused, import API services,
-apply workspace configuration, manage buckets and secrets, configure webhooks,
-generate SDKs, and deploy Unified Apps and MCP servers.`,
+	Long: `The command-line interface to Fused—the simplification of integration
+for organizations, engineers, and agents.
+
+Connect to your Fused Engine to manage services, deploy apps, configure
+credentials and access, and inspect execution activity. Services can be
+internal APIs or third-party APIs.
+
+Get started:
+  fused-cli --engine-url <your-engine-url> login
+  fused-cli service list --registry --search <service-name>
+  fused-cli describe "<the integration you want to build>"
+
+Run fused-cli --readme for the getting started guide.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		if showReadme {
 			fmt.Print(ReadmeContent)
