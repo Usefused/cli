@@ -158,16 +158,17 @@ type DiscoveryPlan struct {
 
 // DiscoveryPayload is the stable client projection used by operation selection and review.
 type DiscoveryPayload struct {
-	EffectiveWorkers int                   `json:"effective_workers,omitempty"`
-	MaxPages         int                   `json:"max_pages,omitempty"`
-	MaxDepth         int                   `json:"max_depth,omitempty"`
-	MaxSelections    int                   `json:"max_selections,omitempty"`
-	Operations       []DiscoveryOperation  `json:"operations,omitempty"`
-	Proposals        []DiscoveryProposal   `json:"proposals,omitempty"`
-	Diagnostics      []DiscoveryDiagnostic `json:"diagnostics,omitempty"`
-	Contract         *DiscoveryContract    `json:"contract,omitempty"`
-	Plan             *DiscoveryPlan        `json:"plan,omitempty"`
-	FailureCode      string                `json:"failure_code,omitempty"`
+	EffectiveWorkers int                     `json:"effective_workers,omitempty"`
+	MaxPages         int                     `json:"max_pages,omitempty"`
+	MaxDepth         int                     `json:"max_depth,omitempty"`
+	MaxSelections    int                     `json:"max_selections,omitempty"`
+	Operations       []DiscoveryOperation    `json:"operations,omitempty"`
+	Proposals        []DiscoveryProposal     `json:"proposals,omitempty"`
+	Diagnostics      []DiscoveryDiagnostic   `json:"diagnostics,omitempty"`
+	Contract         *DiscoveryContract      `json:"contract,omitempty"`
+	Plan             *DiscoveryPlan          `json:"plan,omitempty"`
+	ImportPlan       *SpecImportPlanResponse `json:"import_plan,omitempty"`
+	FailureCode      string                  `json:"failure_code,omitempty"`
 }
 
 // DiscoveryActionRequest binds a decision to the exact session and draft revisions reviewed by the caller.
@@ -273,6 +274,10 @@ func DecodeDiscoveryPayload(raw json.RawMessage) (DiscoveryPayload, error) {
 	}
 	if err := requireDiscoveryEOF(decoder); err != nil {
 		return DiscoveryPayload{}, err
+	}
+	// Embedded import reviews use the same terminal-safe diagnostics as ordinary plans.
+	if payload.ImportPlan != nil {
+		payload.ImportPlan.Diagnostics = safeSpecImportDiagnostics(payload.ImportPlan.Diagnostics)
 	}
 	return payload, nil
 }

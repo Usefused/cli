@@ -31,6 +31,7 @@ var (
 	importPlanReceiptOut         string
 	importPlanJSON               bool
 	importPlanStrict             bool
+	importPlanRepairMode         string
 )
 
 var importPlanCmd = &cobra.Command{
@@ -68,6 +69,7 @@ file that Registry will validate and canonicalize with the source.`,
 			receiptOut:         importPlanReceiptOut,
 			jsonOut:            importPlanJSON,
 			strict:             importPlanStrict,
+			repairMode:         importPlanRepairMode,
 		})
 	}),
 }
@@ -124,6 +126,7 @@ func init() {
 	importPlanCmd.Flags().StringVar(&importPlanOverlay, "overlay", "", "Local overlay file applied by the Registry during planning")
 	importPlanCmd.Flags().StringVar(&importPlanReceiptOut, "receipt-out", "", "Write the plan receipt to a specific path")
 	importPlanCmd.Flags().BoolVar(&importPlanJSON, "json", false, "Print the raw plan response as JSON instead of a summary")
+	importPlanCmd.Flags().StringVar(&importPlanRepairMode, "repair-mode", "safe", "Source correction policy: safe or report-only")
 	importPlanCmd.Flags().BoolVar(&importPlanStrict, "strict", false, "Reject plans containing warning or error diagnostics")
 	importPlanCmd.MarkFlagRequired("name")
 

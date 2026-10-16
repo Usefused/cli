@@ -2538,6 +2538,7 @@ func (c *Client) UpdateWorkspacePlanAction(planID string, actions []map[string]a
 // (RESTProxyMountPaths), so the CLI needs no separate Registry URL concept.
 
 type SpecImportPlanRequest struct {
+	RepairMode         string  `json:"repair_mode,omitempty"`
 	Name               string  `json:"name"`
 	Slug               string  `json:"slug"`
 	Version            string  `json:"version,omitempty"`
@@ -2556,11 +2557,12 @@ type SpecImportPlanRequest struct {
 }
 
 type SpecImportDiff struct {
-	Added        int      `json:"added"`
-	Changed      int      `json:"changed"`
-	Removed      int      `json:"removed"`
-	ChangedNames []string `json:"changed_names"`
-	RemovedNames []string `json:"removed_names"`
+	SettingsChanged bool     `json:"settings_changed,omitempty"`
+	Added           int      `json:"added"`
+	Changed         int      `json:"changed"`
+	Removed         int      `json:"removed"`
+	ChangedNames    []string `json:"changed_names"`
+	RemovedNames    []string `json:"removed_names"`
 }
 
 type SpecImportSDKUsage struct {
@@ -2580,25 +2582,34 @@ type SpecImportUsage struct {
 	Workspaces []SpecImportWorkspaceUsage `json:"workspaces"`
 }
 
+// SpecImportCorrection mirrors Registry's hash-only evidence for an applied source correction.
+type SpecImportCorrection struct {
+	Rule       string `json:"rule"`
+	Version    string `json:"version"`
+	BeforeHash string `json:"before_hash"`
+	AfterHash  string `json:"after_hash"`
+}
+
 type SpecImportDiagnostic struct {
-	Severity           string   `json:"severity"`
-	Code               string   `json:"code"`
-	Scope              string   `json:"scope"`
-	Method             string   `json:"method,omitempty"`
-	Path               string   `json:"path,omitempty"`
-	OperationID        string   `json:"operation_id,omitempty"`
-	Message            string   `json:"message"`
-	Detail             string   `json:"detail,omitempty"`
-	Recommendation     string   `json:"recommendation,omitempty"`
-	Source             string   `json:"source,omitempty"`
-	SourceFormat       string   `json:"source_format,omitempty"`
-	SourceVersion      string   `json:"source_version,omitempty"`
-	Pointer            string   `json:"pointer,omitempty"`
-	Service            string   `json:"service,omitempty"`
-	Disposition        string   `json:"disposition,omitempty"`
-	RequiredCapability string   `json:"required_capability,omitempty"`
-	Provenance         string   `json:"provenance,omitempty"`
-	Confidence         *float64 `json:"confidence,omitempty"`
+	Correction         *SpecImportCorrection `json:"correction,omitempty"`
+	Severity           string                `json:"severity"`
+	Code               string                `json:"code"`
+	Scope              string                `json:"scope"`
+	Method             string                `json:"method,omitempty"`
+	Path               string                `json:"path,omitempty"`
+	OperationID        string                `json:"operation_id,omitempty"`
+	Message            string                `json:"message"`
+	Detail             string                `json:"detail,omitempty"`
+	Recommendation     string                `json:"recommendation,omitempty"`
+	Source             string                `json:"source,omitempty"`
+	SourceFormat       string                `json:"source_format,omitempty"`
+	SourceVersion      string                `json:"source_version,omitempty"`
+	Pointer            string                `json:"pointer,omitempty"`
+	Service            string                `json:"service,omitempty"`
+	Disposition        string                `json:"disposition,omitempty"`
+	RequiredCapability string                `json:"required_capability,omitempty"`
+	Provenance         string                `json:"provenance,omitempty"`
+	Confidence         *float64              `json:"confidence,omitempty"`
 }
 
 type SpecImportStrictError struct {
@@ -2617,26 +2628,30 @@ func (e *SpecImportStrictError) Error() string {
 }
 
 type SpecImportPlanResponse struct {
-	PlanID             string                 `json:"plan_id"`
-	SourceHash         string                 `json:"source_hash"`
-	OverlayPresent     bool                   `json:"overlay_present"`
-	OverlayHash        string                 `json:"overlay_hash,omitempty"`
-	SourceBundleHash   string                 `json:"source_bundle_hash"`
-	ReviewHash         string                 `json:"review_hash"`
-	SourceFormat       string                 `json:"source_format"`
-	AdapterVersion     string                 `json:"adapter_version"`
-	ServiceID          string                 `json:"service_id"`
-	Slug               string                 `json:"slug"`
-	Name               string                 `json:"name"`
-	IsNewService       bool                   `json:"is_new_service"`
-	SourceVersion      string                 `json:"source_version,omitempty"`
-	TargetVersion      string                 `json:"target_version"`
-	DestinationVersion string                 `json:"destination_version,omitempty"`
-	TargetType         string                 `json:"target_type"`
-	Action             string                 `json:"action"`
-	Diff               SpecImportDiff         `json:"diff"`
-	Usage              *SpecImportUsage       `json:"usage,omitempty"`
-	Diagnostics        []SpecImportDiagnostic `json:"diagnostics,omitempty"`
+	RepairMode               string                 `json:"repair_mode"`
+	SourceExtensionInventory json.RawMessage        `json:"source_extension_inventory,omitempty"`
+	ExpectedTarget           json.RawMessage        `json:"expected_target,omitempty"`
+	WebhookDraft             json.RawMessage        `json:"webhook_draft,omitempty"`
+	PlanID                   string                 `json:"plan_id"`
+	SourceHash               string                 `json:"source_hash"`
+	OverlayPresent           bool                   `json:"overlay_present"`
+	OverlayHash              string                 `json:"overlay_hash,omitempty"`
+	SourceBundleHash         string                 `json:"source_bundle_hash"`
+	ReviewHash               string                 `json:"review_hash"`
+	SourceFormat             string                 `json:"source_format"`
+	AdapterVersion           string                 `json:"adapter_version"`
+	ServiceID                string                 `json:"service_id"`
+	Slug                     string                 `json:"slug"`
+	Name                     string                 `json:"name"`
+	IsNewService             bool                   `json:"is_new_service"`
+	SourceVersion            string                 `json:"source_version,omitempty"`
+	TargetVersion            string                 `json:"target_version"`
+	DestinationVersion       string                 `json:"destination_version,omitempty"`
+	TargetType               string                 `json:"target_type"`
+	Action                   string                 `json:"action"`
+	Diff                     SpecImportDiff         `json:"diff"`
+	Usage                    *SpecImportUsage       `json:"usage,omitempty"`
+	Diagnostics              []SpecImportDiagnostic `json:"diagnostics,omitempty"`
 }
 
 type SpecImportApplyRequest struct {
@@ -2718,8 +2733,9 @@ func (c *Client) PlanSpecImport(req SpecImportPlanRequest) (*SpecImportPlanRespo
 	}
 	defer resp.Body.Close()
 
+	// Import review errors can contain one diagnostic per operation and use their own bounded envelope.
 	if resp.StatusCode >= 400 {
-		respBody := readBoundedHTTPErrorBody(resp.Body)
+		respBody := readImportReviewError(resp.Body)
 		if strictError := decodeSpecImportStrictError(resp.StatusCode, respBody); strictError != nil {
 			return nil, strictError
 		}
@@ -2734,7 +2750,7 @@ func (c *Client) PlanSpecImport(req SpecImportPlanRequest) (*SpecImportPlanRespo
 }
 
 // decodeSpecImportStrictError admits only the current nested strict-import
-// rejection while leaving every removed or unrelated 422 shape opaque.
+// and report-only rejections while leaving unrelated 422 shapes opaque.
 func decodeSpecImportStrictError(status int, body []byte) *SpecImportStrictError {
 	// The purpose-specific diagnostic contract is valid only for strict import rejection status.
 	if status != http.StatusUnprocessableEntity {
@@ -2748,11 +2764,11 @@ func decodeSpecImportStrictError(status int, body []byte) *SpecImportStrictError
 		} `json:"error"`
 	}
 	// Exact code admission prevents another nested validation response from being misclassified as strict diagnostics.
-	if err := json.Unmarshal(body, &response); err != nil || response.Error.Code != "strict_import_rejected" {
+	if err := json.Unmarshal(body, &response); err != nil || (response.Error.Code != "strict_import_rejected" && response.Error.Code != "import_repairs_required") {
 		return nil
 	}
 	return &SpecImportStrictError{
-		HTTPStatus: status, Code: "strict_import_rejected", Message: safeServerDetail(response.Error.Message),
+		HTTPStatus: status, Code: response.Error.Code, Message: safeServerDetail(response.Error.Message),
 		Diagnostics: safeSpecImportDiagnostics(response.Error.Diagnostics),
 	}
 }
@@ -2787,6 +2803,15 @@ func safeSpecImportDiagnostic(diagnostic SpecImportDiagnostic) SpecImportDiagnos
 	diagnostic.Disposition = safeErrorMetadataToken(diagnostic.Disposition)
 	diagnostic.RequiredCapability = safeErrorMetadataToken(diagnostic.RequiredCapability)
 	diagnostic.Provenance = safeCredentialMetadata(diagnostic.Provenance)
+	// Detached metadata preserves the reviewed record while excluding terminal control characters.
+	if diagnostic.Correction != nil {
+		correction := *diagnostic.Correction
+		correction.Rule = safeErrorMetadataToken(correction.Rule)
+		correction.Version = safeErrorMetadataToken(correction.Version)
+		correction.BeforeHash = safeErrorMetadataToken(correction.BeforeHash)
+		correction.AfterHash = safeErrorMetadataToken(correction.AfterHash)
+		diagnostic.Correction = &correction
+	}
 	return diagnostic
 }
 

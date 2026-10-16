@@ -939,29 +939,47 @@ func safeDiscoveryDiagnosticMessage(value string) string {
 	return value
 }
 
-// finish writes the ordinary import receipt and never calls the apply endpoint implicitly.
+// finish preserves the ordinary receipt and exposes its corrections before an explicit apply.
 func (runner *discoverySessionRunner) finish(snapshot *cliapi.DiscoverySnapshot) error {
 	payload, err := cliapi.DecodeDiscoveryPayload(snapshot.Payload)
+	// Invalid payloads cannot authorize a receipt.
 	if err != nil {
 		return err
 	}
+	// Both immutable identifiers are required to bind a later apply to this review.
 	if payload.Plan == nil || strings.TrimSpace(payload.Plan.PlanID) == "" || strings.TrimSpace(payload.Plan.ReviewHash) == "" {
 		return errors.New("plan-ready discovery snapshot omitted plan_id or review_hash")
 	}
+	// An embedded review must describe the exact receipt being saved.
+	if payload.ImportPlan != nil && (payload.ImportPlan.PlanID != payload.Plan.PlanID || payload.ImportPlan.ReviewHash != payload.Plan.ReviewHash) {
+		return errors.New("discovery import review does not match its plan receipt")
+	}
 	receipt := importPlanReceipt{
-		Slug: strings.TrimSpace(runner.options.slug), PlanID: payload.Plan.PlanID,
+		RepairMode: "safe",
+		Slug:       strings.TrimSpace(runner.options.slug), PlanID: payload.Plan.PlanID,
 		ReviewHash: payload.Plan.ReviewHash, EngineURL: canonicalEngineURLOrRaw(runner.client.BaseURL),
 		CreatedAt: time.Now().UTC().Format(time.RFC3339),
 	}
+	// Discovery receipts retain the policy explicitly returned with their import plan.
+	if payload.ImportPlan != nil && payload.ImportPlan.RepairMode != "" {
+		receipt.RepairMode = payload.ImportPlan.RepairMode
+	}
 	path := strings.TrimSpace(runner.options.receiptOut)
+	// Preserve the standard receipt location unless the caller selected one.
 	if path == "" {
 		path = defaultImportReceiptPath
 	}
+	// Do not report a usable plan when its receipt could not be persisted.
 	if err := writeImportPlanReceiptFile(path, receipt); err != nil {
 		return err
 	}
+	// Machine output remains one complete snapshot without human prose.
 	if runner.options.jsonOut {
 		return json.NewEncoder(runner.cmd.OutOrStdout()).Encode(snapshot)
+	}
+	// Older Registry versions may omit the embedded review.
+	if payload.ImportPlan != nil {
+		printImportDiagnostics(runner.cmd.OutOrStdout(), payload.ImportPlan.Diagnostics)
 	}
 	fmt.Fprintf(runner.cmd.OutOrStdout(), "Import plan ready: %s\nReview hash: %s\nReceipt: %s\nRun `fused-cli import apply` to create or update the service.\n", payload.Plan.PlanID, payload.Plan.ReviewHash, path)
 	return nil

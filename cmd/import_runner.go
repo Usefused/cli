@@ -44,6 +44,7 @@ type importSpecPlanOptions struct {
 	receiptOut string
 	jsonOut    bool
 	strict     bool
+	repairMode string
 }
 
 type importSpecApplyOptions struct {
@@ -106,6 +107,7 @@ func safeImportOperationID(value string) string {
 // "import apply" (possibly a different process/CI step) knows what plan_id
 // and review_hash to send without re-planning.
 type importPlanReceipt struct {
+	RepairMode       string `json:"repair_mode"`
 	Slug             string `json:"slug,omitempty"`
 	PlanID           string `json:"plan_id"`
 	ReviewHash       string `json:"review_hash"`
@@ -167,6 +169,18 @@ func runImportPlan(cmd *cobra.Command, specArg string, opts importSpecPlanOption
 // normalizeAndValidateImportPlanResponse applies rollout compatibility only
 // after Registry returns a complete reviewed planning response.
 func normalizeAndValidateImportPlanResponse(req api.SpecImportPlanRequest, resp *api.SpecImportPlanResponse) error {
+	// Older Registries cannot acknowledge report-only; refuse to write a misleading receipt.
+	if req.RepairMode == "report_only" && resp.RepairMode != "report_only" {
+		return errors.New("Registry did not acknowledge report-only mode; upgrade the Registry and plan again")
+	}
+	// Omitted responses retain the historical safe behavior for existing clients.
+	if resp.RepairMode == "" {
+		resp.RepairMode = "safe"
+	}
+	// Unsolicited policy changes cannot reach a durable receipt.
+	if req.RepairMode != "" && resp.RepairMode != req.RepairMode {
+		return errors.New("Registry returned a different repair mode")
+	}
 	// Why: older Registries already honor target_type but do not echo it.
 	// Preserve the reviewed request scope in CLI/JSON output during rollout.
 	if strings.TrimSpace(resp.TargetType) == "" {
@@ -229,9 +243,18 @@ func buildSpecImportRequest(specArg string, opts importSpecPlanOptions) (api.Spe
 		TargetType:         targetType,
 		Category:           opts.category,
 		Strict:             opts.strict,
+		RepairMode:         strings.ReplaceAll(opts.repairMode, "-", "_"),
 	}
 	if err != nil {
 		return req, err
+	}
+	// Omission preserves automatic safe repairs; typos must never silently enable them.
+	if req.RepairMode == "" {
+		req.RepairMode = "safe"
+	}
+	// Reject unsupported policies before reading source files or making a request.
+	if req.RepairMode != "safe" && req.RepairMode != "report_only" {
+		return req, errors.New("--repair-mode must be safe or report-only")
 	}
 	// Identity must be valid before reading either optional overlay or source bytes.
 	if err := validateSpecImportIdentity(req); err != nil {
@@ -338,6 +361,7 @@ func isURL(s string) bool {
 // restarts without turning it into an apply credential or storage locator.
 func newImportPlanReceipt(resp *api.SpecImportPlanResponse) importPlanReceipt {
 	receipt := importPlanReceipt{
+		RepairMode:       resp.RepairMode,
 		Slug:             resp.Slug,
 		PlanID:           resp.PlanID,
 		ReviewHash:       resp.ReviewHash,
@@ -365,6 +389,7 @@ func persistImportPlanReceipt(receipt importPlanReceipt, opts importSpecPlanOpti
 // printImportPlanSummary exposes the reviewed bundle digest while keeping
 // Registry object-storage implementation details out of the CLI surface.
 func printImportPlanSummary(out io.Writer, resp *api.SpecImportPlanResponse) {
+	fmt.Fprintf(out, "Source corrections: %s\n", resp.RepairMode)
 	fmt.Fprintf(out, "Plan %s for %q (slug: %s, version: %s, target: %s) -- plan ID: %s\n", resp.Action, resp.Name, resp.Slug, resp.TargetVersion, displayImportTarget(resp.TargetType), resp.PlanID)
 	fmt.Fprintf(out, "Source format: %s\n", resp.SourceFormat)
 	sourceVersion := strings.TrimSpace(resp.SourceVersion)
@@ -418,21 +443,39 @@ func importPlanOutcome(action string) string {
 	}
 }
 
+// printImportDiagnostics distinguishes completed corrections from unresolved contract warnings.
 func printImportDiagnostics(out io.Writer, diagnostics []api.SpecImportDiagnostic) {
+	// Empty diagnostics need no review section.
 	if len(diagnostics) == 0 {
 		return
 	}
 	fmt.Fprintf(out, "Diagnostics (%d):\n", len(diagnostics))
 	for _, diagnostic := range diagnostics {
 		severity := strings.ToUpper(strings.TrimSpace(diagnostic.Severity))
+		// Older servers may omit an informational severity.
 		if severity == "" {
 			severity = "INFO"
+		}
+		// Completed repairs are informational; incomplete contracts remain clearly distinguished.
+		if diagnostic.Correction != nil {
+			label := "Corrected"
+			// Report-only describes required authoring work, never completed repairs.
+			if diagnostic.Disposition == "suggested" {
+				label = "Suggested"
+			}
+			// Unknown response bodies are a documented limitation, not a completed schema repair.
+			if diagnostic.Disposition == "incomplete" {
+				label = "Unspecified"
+			}
+			fmt.Fprintf(out, "  %s: %s\n    Source: %s · rule %s v%s\n", label, compactDiagnosticText(diagnostic.Message), compactDiagnosticText(diagnostic.Pointer), compactDiagnosticText(diagnostic.Correction.Rule), compactDiagnosticText(diagnostic.Correction.Version))
+			continue
 		}
 		fmt.Fprintf(out, "  - %s %s [%s]: %s\n", severity, compactDiagnosticText(diagnostic.Code), importDiagnosticLocation(diagnostic), compactDiagnosticText(diagnostic.Message))
 		// Actionable detail is separate from the stable summary so scripts and people receive the same repair reason.
 		if detail := compactDiagnosticText(diagnostic.Detail); detail != "" {
 			fmt.Fprintf(out, "    Detail: %s\n", detail)
 		}
+		// Suggested actions belong only to diagnostics that still require attention.
 		if recommendation := compactDiagnosticText(diagnostic.Recommendation); recommendation != "" {
 			fmt.Fprintf(out, "    Recommendation: %s\n", recommendation)
 		}

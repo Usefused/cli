@@ -143,6 +143,26 @@ hashes are informational and are not apply guards.
 
 ## Diagnostics and strict mode
 
+Registry applies safe documentation corrections by default before importing
+OpenAPI contracts. Examples include relocating a misplaced scalar-body
+`required` flag, expressing fixed constant tuples without losing their order,
+and adding missing response descriptions. Original source artifacts remain
+unchanged; the reviewed adapter version pins the effective contract used by
+both plan and apply. Receipts from an older adapter require a new plan.
+
+The CLI and UI show completed corrections separately from unspecified schemas.
+API and `--json` responses include `diagnostics[].correction`, containing
+`rule`, `version`, `before_hash`, and `after_hash`, alongside the source
+`pointer` and human-readable explanation. Hashes identify the affected JSON
+fragment without copying source values into review diagnostics.
+
+A missing local schema used only as a direct JSON error-response body can
+remain explicitly unspecified, with disposition `incomplete` and a warning.
+It does not block ordinary imports, but `--strict` rejects it. Missing request
+or successful-response schemas, authentication definitions, and ambiguous
+corrections remain blocking. Safe corrections use disposition `repaired` and
+informational severity, so they also work with `--strict`.
+
 Import planning reports structured diagnostics whenever provider metadata
 cannot be represented exactly.
 
@@ -182,3 +202,22 @@ use the file-free `fused-cli service add <slug>` command explicitly.
 
 See the [command reference](COMMANDS.md) for every import flag and receipt
 option.
+
+### Report corrections without applying them
+
+Safe source corrections are enabled by default. To review the original definition
+without accepting automatic corrections, use:
+
+```sh
+fused-cli import plan ./openapi.yaml --name "Example" --slug example --repair-mode report-only
+```
+
+The API equivalent is `repair_mode: "report_only"`; the default is `"safe"`.
+In the import UI, choose **Source corrections → Report only**. Required changes
+are returned as suggested corrections with source locations. No applyable plan
+or receipt is created until the source is corrected. Clean definitions still
+produce a plan. `--strict` remains independent and rejects remaining warnings.
+
+Successful receipts save `repair_mode`. Registry binds it to the review hash
+and rechecks it during preflight and apply. Change the mode by creating a new
+plan; editing a receipt does not change Registry's reviewed policy.
