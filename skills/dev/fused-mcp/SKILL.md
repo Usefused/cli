@@ -410,6 +410,18 @@ apply does not reveal it again. Store it immediately. After an Engine database
 reset, Registry cannot restore the MCP or its token; reapply the exact config
 and securely distribute the newly issued token.
 
+Every MCP server serves its own Agent Skill as the MCP resource
+`fused://skills/server` (listed beside `fused://guides/workflows`). Read it with
+`resources/read` after connecting. It is a `SKILL.md` covering the server's
+purpose, when to use it, the `search_docs`/`execute` convention, and the
+operations grouped by service, filtered to what the connecting token may call.
+It never contains a token or URL. Facts come from the reviewed plan; at plan
+time Engine also asks the Registry LLM to rewrite only the purpose and
+"when to use" prose, sending the server name, description, service names and
+operation IDs. When that model is unavailable or its answer is unsafe, the
+template prose is used and planning still succeeds. Versions planned before
+this feature serve a template skill that points to `search_docs`.
+
 `app token generate --json` reveals the plaintext once in a structured object
 with exact expiry, allowlist, binding metadata, and creation time. Use JSON for
 automation and store the token immediately. Omit `--expires-in` for
