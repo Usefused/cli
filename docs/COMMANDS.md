@@ -860,12 +860,17 @@ fused-cli app openapi billing-api@1.2.0 --out billing.openapi.yaml
 
 ## `app invoke <app-name@version-or-version-id> <operation>`
 
-Invoke one JSON operation through the Fused REST execution route configured by
+Invoke one JSON operation on an SDK, REST, or Unified App through the Fused REST execution route configured by
 the global `--engine-url` / `FUSED_ENGINE_URL` setting. The SDK execution token
 comes from `FUSED_APP_TOKEN`, a variable named by `--token-env`, or stdin with
 `--token-stdin`; management and provider credentials are never substituted.
 Generated SDKs retain their broader gRPC transports; this CLI smoke-test surface
 accepts only buffered JSON provider responses up to 1 MiB.
+
+Call MCP apps through an MCP client. The CLI checks the app type before reading
+an execution token and reports `unsupported_app_type` for MCP apps without
+sending an execution request. MCP deployment, inspection, and token management
+remain available under `app`.
 
 | Argument | Short | Description | Default |
 |----------|-------|-------------|---------|

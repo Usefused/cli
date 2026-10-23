@@ -237,16 +237,12 @@ func appTokenCommand() *cobra.Command {
 	return parent
 }
 
-// runSharedAppInvoke preserves SDK/MCP execution validation and Unified App's distinct success envelope.
+// runSharedAppInvoke limits CLI execution to SDK/REST and Unified Apps; MCP calls belong to MCP clients.
 func runSharedAppInvoke(cmd *cobra.Command, args []string) error {
 	request, err := buildSDKInvokeRequest(args[1], cmd.InOrStdin())
 	if err != nil {
 		return err
 	} // Malformed input must not reach a phone or provider.
-	token, err := readSDKInvokeToken(cmd.InOrStdin())
-	if err != nil {
-		return err
-	} // Runtime tokens remain distinct from management credentials.
 	client, id, err := appClientAndVersion(args[0])
 	if err != nil {
 		return err
@@ -255,12 +251,24 @@ func runSharedAppInvoke(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	} // Kind must be authoritative, not inferred from the app's name.
+	// MCP apps use their MCP transport; reject before reading a runtime token or sending an execution request.
+	if info.Kind == "mcp" {
+		return &sdkInvokeError{
+			code: "unsupported_app_type", category: "validation",
+			message: "app invoke supports SDK, REST, and Unified Apps; use an MCP client to call MCP apps",
+		}
+	}
+	token, err := readSDKInvokeToken(cmd.InOrStdin())
+	// Supported apps still require an explicit runtime token, never the management credential.
+	if err != nil {
+		return err
+	}
 	// Only authored execution may select another explicitly permitted bucket.
 	request.BucketID, err = runtimeBucketInvocationFlag(cmd, info.Kind, request.Operation)
 	if err != nil {
 		return err
 	}
-	if info.Kind != "unified_app" || request.Operation != "execute" { // Existing physical/unified-operation response validation remains intact for SDK and MCP apps.
+	if info.Kind != "unified_app" || request.Operation != "execute" { // SDK/REST operations retain their existing response validation.
 		prepared := preparedSDKInvocation{EngineURL: client.BaseURL, AppID: id, Token: token, IdempotencyKey: effectiveSDKInvokeIdempotencyKey(), Request: request}
 		start := time.Now()
 		response, endpoint, err := executeSDKInvocation(cmd.Context(), prepared)
@@ -287,7 +295,7 @@ func configureAppSurface() {
 	service.AddCommand(appReadCommand("list <app-name@version-or-version-id>", "List services selected by one app version", runAppServices))
 	appCmd.AddCommand(service)
 	relocateCommand(appCmd, sdkOpenAPICmd, "openapi <app-name@version-or-version-id>", "Export one exact app version as OpenAPI")
-	relocateCommand(appCmd, sdkInvokeCmd, "invoke <app-name@version-or-version-id> <operation>", "Invoke one operation on an exact app version")
+	relocateCommand(appCmd, sdkInvokeCmd, "invoke <app-name@version-or-version-id> <operation>", "Invoke one operation on an exact SDK, REST, or Unified App version")
 	sdkInvokeCmd.RunE = runSharedAppInvoke
 	sdkInvokeCmd.Flags().String("bucket-id", "", "Select a permitted runtime bucket UUID for Unified App execute")
 	sdkInvokeTokenEnv = "FUSED_APP_TOKEN"
