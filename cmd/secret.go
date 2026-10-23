@@ -26,6 +26,7 @@ var secretSetInteractive bool
 var secretSetValueStdin bool
 var secretSetBucketID string
 var secretSetExpiresAt string
+var secretSetExportable bool
 var secretSetType string
 var secretSetAuthName string
 var secretSetWebhook inboundWebhookFlag
@@ -158,7 +159,7 @@ func runSecretSet(cmd *cobra.Command, serviceSlug, value string) error {
 		return err
 	}
 	return setSecretForAuth(client, info.ID, bucketID, auth, value, expiresAt, serviceSlug, cmd.OutOrStdout(), credentialMutationOptions{
-		auditCtx: cmd.Context(), auditAction: cmd.CommandPath(), resourceKind: "secret",
+		auditCtx: cmd.Context(), auditAction: cmd.CommandPath(), resourceKind: "secret", exportable: secretSetExportable,
 	})
 }
 
@@ -291,6 +292,7 @@ func promptSecretAuthSelect(info *api.ServiceInfo) (*api.AuthConfig, error) {
 }
 
 type secretCredentialInput struct {
+	exportable   bool
 	username     string
 	password     string
 	cert         string
@@ -307,6 +309,10 @@ var collectSecretCredentialInput = resolveSecretCredentialInput
 // collecting credentials so an operator can keep a valid plan without supplying
 // material. Explicit secret writes retain the same validation and persistence.
 func setSecretForAuth(client *api.Client, serviceID, bucketID string, auth *api.AuthConfig, value string, expiresAt *time.Time, serviceDisplay string, out io.Writer, mutation credentialMutationOptions) error {
+	// Exportability is restricted before prompting, so unsupported families never collect input.
+	if mutation.exportable && canonicalSecretAuthType(auth) != "api_key" {
+		return fmt.Errorf("--exportable supports only API keys")
+	}
 	// Declining optional setup must not first require a valid credential pair.
 	if err := authorizeCredentialMutation(mutation); err != nil {
 		return err
@@ -316,6 +322,7 @@ func setSecretForAuth(client *api.Client, serviceID, bucketID string, auth *api.
 	if err != nil {
 		return err
 	}
+	input.exportable = mutation.exportable
 	// A failed write remains visible; it cannot be treated as skipped setup.
 	if err := persistSecretCredential(client, serviceID, bucketID, auth, input, expiresAt); err != nil {
 		return err
@@ -365,7 +372,7 @@ func persistSecretCredential(client *api.Client, serviceID, bucketID string, aut
 			Values: map[string]string{"client_id": input.clientID, "client_secret": input.clientSecret}, ExpiresAt: expiresAt,
 		})
 	default:
-		return client.UpsertSecret(serviceID, name, canonicalSecretAuthType(auth), input.token, bucketID, expiresAt)
+		return client.UpsertSecret(serviceID, name, canonicalSecretAuthType(auth), input.token, bucketID, expiresAt, input.exportable)
 	}
 }
 
@@ -618,6 +625,7 @@ func secretAuthCredentialName(auth *api.AuthConfig) string {
 	return ""
 }
 
+// runSecretList projects identity and export policy while keeping credential values private.
 func runSecretList(cmd *cobra.Command) error {
 	client, err := getAPIClient()
 	if err != nil {
@@ -646,7 +654,7 @@ func runSecretList(cmd *cobra.Command) error {
 				expiry += " (EXPIRED)"
 			}
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "Service: %s, Key: %s, Bucket: %s, Type: %s, Expires: %s, Updated: %s\n", s.ServiceID, s.KeyName, bucket, s.CredentialType, expiry, s.UpdatedAt.Format("2006-01-02 15:04:05"))
+		fmt.Fprintf(cmd.OutOrStdout(), "ID: %s, Exportable: %t, Service: %s, Key: %s, Bucket: %s, Type: %s, Expires: %s, Updated: %s\n", s.ID, s.Exportable, s.ServiceID, s.KeyName, bucket, s.CredentialType, expiry, s.UpdatedAt.Format("2006-01-02 15:04:05"))
 	}
 	printPageSummary(cmd.OutOrStdout(), page.Total, secretListFlags)
 	return nil
@@ -687,10 +695,11 @@ func resolveOptionalBucketID(value string) (string, error) {
 // init registers resource-specific flags before the public command tree is assembled.
 func init() {
 	RootCmd.AddCommand(secretCmd)
-	secretCmd.AddCommand(secretSetCmd, secretListCmd, secretDeleteCmd)
+	secretCmd.AddCommand(secretListCmd, secretDeleteCmd)
 	addJSONOutputFlag(secretListCmd)
 
 	secretSetCmd.Flags().StringVar(&secretSetBucketID, "bucket", "", "Bucket name or UUID; omit to use the default bucket")
+	secretSetCmd.Flags().BoolVar(&secretSetExportable, "exportable", false, "Allow callers with credentials.reveal to retrieve this API key")
 	secretSetCmd.Flags().StringVar(&secretSetExpiresAt, "expires-at", "", "RFC3339 expiry timestamp; omit for no expiry")
 	secretSetCmd.Flags().StringVar(&secretSetType, "type", "", "Authentication family, such as bearer, api_key, oauth, or mtls")
 	secretSetCmd.Flags().StringVar(&secretSetAuthName, "auth-name", "", "Exact provider auth scheme name; required when --type matches multiple schemes")

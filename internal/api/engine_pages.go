@@ -137,12 +137,13 @@ func (c *Client) ListBucketValuesPage(bucketID string, opts PageOptions) (*Bucke
 	return &resp.Page, err
 }
 
+// ListSecretMetaPage exposes export policy and opaque IDs without secret values.
 func (c *Client) ListSecretMetaPage(bucketID string, opts PageOptions) (*SecretMetaPageResponse, error) {
 	query := `
 		query SecretMetaPage($bucketId: String!, $limit: Int!, $offset: Int!) {
 			secretMetaPage(bucket_id: $bucketId, limit: $limit, offset: $offset) {
 				total
-				items { id bucket_id service_id key_name credential_type expires_at created_at updated_at }
+				items { id bucket_id service_id key_name key_names credential_type exportable expires_at created_at updated_at }
 			}
 		}
 	`

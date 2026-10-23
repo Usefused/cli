@@ -10,6 +10,7 @@ import (
 var errCredentialStorageDeclined = errors.New("credential storage cancelled; plan was not retried")
 
 type credentialMutationOptions struct {
+	exportable   bool
 	confirmation string
 	auditCtx     context.Context
 	auditAction  string
@@ -19,7 +20,7 @@ type credentialMutationOptions struct {
 var promptCredentialMutationConfirmation = confirmCredentialMutation
 
 // authorizeCredentialMutation keeps confirmation semantics shared by every
-// compound workflow while explicit `bucket credential set` remains confirmation-free
+// compound workflow while explicit `connect` remains confirmation-free
 // because naming that command is already the user's intent.
 func authorizeCredentialMutation(opts credentialMutationOptions) error {
 	if opts.confirmation == "" {

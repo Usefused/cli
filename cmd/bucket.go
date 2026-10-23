@@ -158,9 +158,9 @@ func runBucketSecrets(cmd *cobra.Command, nameOrID string) error {
 		return writeJSONPage(cmd, page.Items, page.Total, bucketSecretsFlags)
 	}
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 8, 2, ' ', 0)
-	fmt.Fprintln(w, "SERVICE_ID\tKEY_NAME\tTYPE\tEXPIRES")
+	fmt.Fprintln(w, "ID\tSERVICE_ID\tKEY_NAME\tTYPE\tEXPORTABLE\tEXPIRES")
 	for _, secret := range page.Items {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", secret.ServiceID, secret.KeyName, secret.CredentialType, formatOptionalTime(secret.ExpiresAt))
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%t\t%s\n", secret.ID, secret.ServiceID, secret.KeyName, secret.CredentialType, secret.Exportable, formatOptionalTime(secret.ExpiresAt))
 	}
 	w.Flush()
 	printPageSummary(cmd.OutOrStdout(), page.Total, bucketSecretsFlags)

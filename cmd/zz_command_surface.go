@@ -143,13 +143,12 @@ func requireRegistryMutation(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
-// configureSecretSurface separates provider authentication from service-independent secret storage.
+// configureSecretSurface keeps provider removal under buckets while connect owns credential setup.
 func configureSecretSurface() {
 	RootCmd.RemoveCommand(secretCmd)
 	bucketCmd.RemoveCommand(bucketSecretsCmd)
 	credential := commandGroup("credential", "Manage provider authentication credentials stored in a bucket")
 	bucketCmd.AddCommand(credential)
-	relocateCommand(credential, secretSetCmd, secretSetCmd.Use, secretSetCmd.Short)
 	relocateCommand(credential, secretDeleteCmd, secretDeleteCmd.Use, secretDeleteCmd.Short)
 	relocateCommand(bucketSecretCmd, secretListCmd, "list <bucket-name-or-id>", "List all secret and credential metadata in a bucket")
 	secretListCmd.Args = cobra.ExactArgs(1)

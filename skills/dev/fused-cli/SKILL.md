@@ -11,7 +11,7 @@ diff against the Engine, `apply` pushes it.
 
 ## Shared app management
 
-All app types use `fused-cli app`: SDK, direct REST API, MCP, and Unified Apps. The config selects the type for `plan`, `apply`, and `validate`; remote commands resolve the selected app. No `sdk`, `api`, `mcp`, or `unified-app` command aliases remain.
+All app types use `fused-cli app`: SDK, direct REST API, MCP, and Unified Apps. The config selects the type for `plan`, `apply`, and `validate`; remote commands resolve the selected app. No standalone `sdk`, `rest`, `api`, `mcp`, or `unified-app` commands or aliases remain.
 
 ```sh
 fused-cli app list --type sdk
@@ -24,9 +24,9 @@ fused-cli app schedule list reports
 fused-cli app download support@1.0.0
 ```
 
-`--type` accepts `sdk`, `api`, `mcp`, and `unified-app`. Downloads require generated SDKs; schedules and promotion require Unified Apps. `app source extract` externalizes Unified App source; `app sync` mirrors an exact SDK/API config. Execution and destructive version actions require `name@version` or an immutable version ID. Use `init` to create apps and `extend` to add selections.
+`app list --type` accepts `sdk`, `rest`, `mcp`, and `unified-app`; omit it to list all app types. Downloads require generated SDKs; schedules and promotion require Unified Apps. `app source extract` externalizes Unified App source; `app sync` mirrors an exact SDK/API config. Execution and destructive version actions require `name@version` or an immutable version ID. Use `init` to create apps and `extend` to add selections.
 
-Service reads default to enabled workspace services: `service list`, `service version list`, and `service operation list`. Add `--registry` for catalog reads, for example `service list --registry --search gmail`. Use `--search` consistently for list filtering. Provider credentials live under `bucket credential`; secret metadata uses `bucket secret list <bucket>`.
+Service reads default to enabled workspace services: `service list`, `service version list`, and `service operation list`. Add `--registry` for catalog reads, for example `service list --registry --search gmail`. Use `--search` consistently for list filtering. Use `connect <service-name>` to set up or edit provider authentication (the picker highlights configured methods, `--bucket` defaults to `default`, and one quoted `"name=value, name=value"` argument with `--no-input` supports automation, including shell-expanded values). Named `bucket secret`, `bucket env`, and `bucket cert` entries support `set <name>[=<value>]`, `get <name>`, and `remove <name>` with `--bucket`. Provider credential administration also lives under `bucket credential`; secret metadata uses `bucket secret list <bucket>`.
 
 ## Standing up an Engine (before you have one to connect to)
 
@@ -777,11 +777,10 @@ workspace.yaml field. This ordinary example uses `default`:
 
 ```shell
 fused-cli bucket list
-printf '%s' 'client_id=...;client_secret=...' | \
-  fused-cli bucket credential set jira --bucket default --type oauth --auth-name oauth2 --value-stdin
+fused-cli connect jira "client_id=$CLIENT_ID, client_secret=$CLIENT_SECRET" --bucket default --type oauth --auth-name oauth2 --no-input
 ```
 
-(Omit the value and add `-i` to be prompted per field instead.) Always provide
+(Omit the assignment argument and `--no-input` for interactive setup.) Always provide
 the complete pair atomically. Do not provide a redirect URI; Engine derives it
 from its validated canonical public URL.
 
@@ -792,7 +791,7 @@ add one explicitly.
 Start one user's OAuth session (see `fused-bucket`):
 
 ```shell
-fused-cli service connect jira --bucket default \
+fused-cli service connect jira "client_id=$CLIENT_ID, client_secret=$CLIENT_SECRET" --bucket default \
   --user-ref user_123 \
   --scope read:jira-work --scope write:jira-work --scope offline_access
 ```

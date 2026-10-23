@@ -313,7 +313,7 @@ func TestDecodeSDKInvokeMissingCredentialBuildsSafeCommand(t *testing.T) {
 	bucketID, serviceID := uuid.NewString(), uuid.NewString()
 	body := fmt.Sprintf(`{"error":{"code":"bucket_credentials_missing","message":"provider credentials are not configured","details":{"bucket_id":%q,"service_id":%q,"auth_type":"api_key","auth_name":"providerKey","command":"ignored-server-command"}}}`, bucketID, serviceID)
 	err := decodeSDKInvokeHTTPError(http.StatusConflict, []byte(body))
-	want := "fused-cli bucket credential set " + serviceID + " --bucket " + bucketID + " --type 'api_key' --auth-name 'providerKey' --interactive"
+	want := "fused-cli connect " + serviceID + " --bucket " + bucketID + " --type 'api_key' --auth-name 'providerKey'"
 	if !strings.Contains(err.Error(), want) || strings.Contains(err.Error(), "ignored-server-command") {
 		t.Fatalf("credential invocation error = %q", err.Error())
 	}
@@ -324,7 +324,7 @@ func TestDecodeSDKInvokeMissingCredentialBuildsSafeCommand(t *testing.T) {
 	}
 	providerAppBody := fmt.Sprintf(`{"error":{"code":"bucket_credentials_missing","message":"provider credentials are not configured","details":{"bucket_id":%q,"service_id":%q,"auth_type":"oauth","auth_name":"oauth2"}}}`, bucketID, serviceID)
 	providerAppErr := decodeSDKInvokeHTTPError(http.StatusConflict, []byte(providerAppBody))
-	providerAppWant := "fused-cli bucket credential set " + serviceID + " --bucket " + bucketID + " --type 'oauth' --auth-name 'oauth2' --interactive"
+	providerAppWant := "fused-cli connect " + serviceID + " --bucket " + bucketID + " --type 'oauth' --auth-name 'oauth2'"
 	// OAuth remediation configures only the application client pair through the secure family-aware prompt.
 	if !strings.Contains(providerAppErr.Error(), providerAppWant) {
 		t.Fatalf("OAuth application credential error = %q", providerAppErr.Error())
@@ -410,7 +410,7 @@ func TestSDKInvokeCredentialNamesRemainShellArguments(t *testing.T) {
 	details := map[string]any{"service_id": uuid.NewString(), "bucket_id": uuid.NewString(), "service_slug": "@stripe/payments", "bucket_name": "team's $(bucket)", "auth_type": "basic", "auth_name": "basicAuth", "command": "untrusted"}
 	command := sdkInvokeCredentialCommand("bucket_credentials_missing", details)
 	// Quotes must enclose the complete imported name, including command substitution characters.
-	if !strings.Contains(command, "bucket credential set '@stripe/payments' --bucket 'team'\"'\"'s $(bucket)'") || strings.Contains(command, "untrusted") {
+	if !strings.Contains(command, "connect '@stripe/payments' --bucket 'team'\"'\"'s $(bucket)'") || strings.Contains(command, "untrusted") {
 		t.Fatalf("unexpected command: %s", command)
 	}
 }

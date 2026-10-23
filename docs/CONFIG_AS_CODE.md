@@ -220,7 +220,7 @@ version during planning and records its exact identity.
 Each version entry can carry `public`, `execution_policy`, and
 `connection_profiles` overrides. Credentials, including OAuth/OIDC application
 `client_id`/`client_secret` pairs, do not belong in workspace YAML; use
-`bucket credential set`.
+`connect`.
 
 ## Plan and apply
 

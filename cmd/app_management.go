@@ -76,7 +76,7 @@ func appListCommand() *cobra.Command {
 		printPageSummary(cmd.OutOrStdout(), page.Total, appListFlags)
 		return nil
 	}
-	c.Flags().String("type", "", "Filter by sdk, api, mcp, or unified-app")
+	c.Flags().String("type", "", "Filter by sdk, rest, mcp, or unified-app")
 	addListFlags(c, &appListFlags)
 	addJSONOutputFlag(c)
 	return c
@@ -277,7 +277,6 @@ func runSharedAppInvoke(cmd *cobra.Command, args []string) error {
 // configureAppSurface centralizes shared lifecycle commands without retaining type-specific aliases.
 func configureAppSurface() {
 	RootCmd.AddCommand(appCmd)
-	RootCmd.RemoveCommand(sdkCmd, mcpCmd, unifiedCmd)
 	sdkCmd.RemoveCommand(sdkListCmd, sdkVersionsCmd, sdkShowCmd, sdkServicesCmd, sdkBucketsCmd, sdkDeactivateCmd, sdkTokenCmd, sdkOpenAPICmd, sdkInvokeCmd, sdkActivityCmd)
 	mcpCmd.RemoveCommand(mcpListCmd, mcpVersionsCmd, mcpDeactivateCmd, mcpTokenCmd)
 	appCmd.AddCommand(appListCommand(), appReadCommand("show <app-name@version-or-version-id>", "Show one exact app version", runAppShow), appReadCommand("deactivate <app-name@version-or-version-id>", "Permanently deactivate one exact app version", runAppDeactivate), appTokenCommand())
@@ -381,16 +380,18 @@ func applicationType(a api.ApplicationSummary) string {
 	return strings.ReplaceAll(a.Kind, "_", "-")
 }
 
-// appTypeFilter maps public type spelling to the Engine's authoritative catalog filter.
+// appTypeFilter maps public delivery types to Engine filters without changing persisted app kinds.
 func appTypeFilter(cmd *cobra.Command) (string, error) {
 	kind, _ := cmd.Flags().GetString("type")
 	switch kind { // Reject typos instead of returning an unrelated inventory.
-	case "", "sdk", "api", "mcp":
+	case "", "sdk", "mcp":
 		return kind, nil
+	case "rest":
+		return "api", nil
 	case "unified-app":
 		return "unified_app", nil
 	default:
-		return "", fmt.Errorf("unsupported app type %q: choose sdk, api, mcp, or unified-app", kind)
+		return "", fmt.Errorf("unsupported app type %q: choose sdk, rest, mcp, or unified-app", kind)
 	}
 }
 

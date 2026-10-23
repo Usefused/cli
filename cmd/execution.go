@@ -138,9 +138,8 @@ func applyUnifiedAppConfigsJSON(client *api.Client, prepared []preparedConfigApp
 	return json.NewEncoder(output).Encode(results)
 }
 
-// init registers the dedicated hosted App workflow beside SDK and MCP commands.
+// init prepares hosted workflow handlers for app authoring without exposing a standalone Unified App command.
 func init() {
-	RootCmd.AddCommand(unifiedCmd)
 	unifiedCmd.AddCommand(unifiedPlanCmd, unifiedApplyCmd, unifiedSyncCmd)
 	unifiedPlanCmd.Flags().Bool("json", false, "Print plan result JSON")
 	unifiedPlanCmd.Flags().String("receipt-out", "", "Write the plan receipt to this path")

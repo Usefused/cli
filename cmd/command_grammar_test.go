@@ -130,8 +130,6 @@ func TestCanonicalCommandsRejectSupersededForms(t *testing.T) {
 		{name: "bucket noun first", args: []string{"bucket", "prod", "create"}},
 		{name: "bucket remove", args: []string{"bucket", "remove", "prod"}},
 		{name: "bucket artifacts", args: []string{"bucket", "artifacts", "prod"}},
-		{name: "connect noun first", args: []string{"connect", "github", "get"}},
-		{name: "connect remove", args: []string{"connect", "remove", "github"}},
 		{name: "secret noun first", args: []string{"secret", "github", "set", "token"}},
 		{name: "secret remove", args: []string{"secret", "remove", "github", "token"}},
 		{name: "service noun first", args: []string{"service", "github", "show"}},
@@ -153,8 +151,10 @@ func TestCanonicalCommandsRejectSupersededForms(t *testing.T) {
 		{name: "mcp noun-first remove", args: []string{"mcp", "support@1.0.0", "remove"}},
 	}
 	for _, test := range tests {
+		// Execute each removed path to catch accidental forwarding aliases.
 		t.Run(test.name, func(t *testing.T) {
 			message := runCommandInDirExpectError(t, t.TempDir(), "http://unused.invalid", test.args)
+			// Cobra's ordinary command lookup should be the only removed-path behavior.
 			if !strings.Contains(message, "unknown command") {
 				t.Fatalf("expected removed form to be rejected, got %q", message)
 			}

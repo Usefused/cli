@@ -60,7 +60,7 @@ output and stderr receives one JSON object before the CLI exits non-zero:
       "service_id": "22222222-2222-4222-8222-222222222222",
       "service_slug": "stripe",
       "bucket_name": "production",
-      "command": "fused-cli bucket credential set 'stripe' --bucket 'production' --type 'api_key' --auth-name 'providerKey' --interactive"
+      "command": "fused-cli connect 'stripe' --bucket 'production' --type 'api_key' --auth-name 'providerKey'"
     },
     "trace_id": "...",
     "http_status": 409,
@@ -426,47 +426,42 @@ do not unnecessarily fill an agent's context.
 List Registry webhook definitions for a service.
 Pass `--json` to return webhook definitions directly.
 
-## `bucket credential set <service-slug>`
-Set authentication credentials for a service. In a terminal, the
-command prompts for a supported authentication method and securely collects its
-value by default. Use `--value-stdin` for automation; it is required with
-`--no-input` or `CI=true`. Credential values are rejected in argv so they cannot
-leak through shell history or process listings.
-If the service supports multiple authentication families, use `--type` to
-specify the family. If that family has multiple named schemes, also pass the
-exact `--auth-name`; the CLI never silently chooses the first same-family
-scheme. Interactive mode selects the exact scheme directly.
+## `connect <service-name>`
 
-> **Paired credentials are ONE structured value, not two commands.** There is no
-> `--username`/`--password`/`--cert`/`--key` flag and no separate `set` call
-> per field. Send both fields as one `;`-delimited
-> `key=value;key=value` value over stdin:
-> ```shell
-> printf '%s' 'username=x;password=y' | fused-cli bucket credential set jira --type basic --value-stdin
-> printf '%s' 'cert=...;key=...' | fused-cli bucket credential set jira --type mtls --value-stdin
-> printf '%s' 'client_id=...;client_secret=...' | fused-cli bucket credential set gmail --bucket default --type oauth --auth-name oauth2 --value-stdin
-> ```
-> Without `--value-stdin`, a terminal supplies both fields through protected prompts.
+Configure authentication for a service in a bucket. `--bucket` accepts a name or
+UUID and defaults to `default`. The picker lists every matching method with
+`Configured`, `Not configured`, `Expired`, or `Incomplete` status. Configured
+methods have a checkmark and an edit label; select one to replace its values.
+Status comes from metadata, and existing secret values are never displayed or
+prefilled. Cancelling leaves credentials unchanged.
 
-OAuth/OIDC application credentials are encrypted bucket credentials, separate from
-each connected user's access, refresh, and ID tokens. Fused derives the
-callback from its canonical public URL; `redirect_uri` is never accepted as
-credential input.
+In a terminal, choose an authentication method and enter its fields. Secret
+fields are masked. The picker also appears for a sole method or when assignments
+are supplied; values never infer or filter the authentication type.
+Use `--type` to select an authentication family and
+`--auth-name` to select an exact scheme when needed. OAuth/OIDC input is the
+application client ID and secret; starting end-user OAuth consent remains
+`service connect`.
 
-> **Recommended Pattern:** Pipe API keys, tokens, and service credentials to `fused-cli bucket credential set <service-slug> --value-stdin`. OAuth/OIDC application pairs must include the exact `--bucket <bucket-name>`; other schemes may use it to override the default. This stores secrets securely in Fused's encrypted vault.
+```shell
+fused-cli connect stripe
+fused-cli connect stripe --bucket production
+fused-cli connect stripe "<auth-name>=$STRIPE_KEY" --type api_key --no-input --json
+fused-cli connect gmail "client_id=$CLIENT_ID, client_secret=$CLIENT_SECRET" --type oauth --no-input
+```
 
-> **Tip:** To see available authentication families and their exact scheme names, run `fused-cli service show --registry <service-slug>`.
-
-| Argument | Short | Description | Default |
-|----------|-------|-------------|---------|
-| `--interactive` | `-i` | Explicitly require authentication prompts (the terminal default) | `false` |
-| `--value-stdin` | | Read the credential value from stdin | `false` |
-| `--type` | | Authentication family (for example `bearer`, `api_key`, or `oauth`) | `""` |
-| `--auth-name` | | Exact Registry auth scheme name; required when the selected family has multiple schemes | `""` |
-| `--bucket` | | Bucket name or full UUID; required for OAuth/OIDC application credentials | `""` |
-| `--expires-at` | | RFC3339 expiry timestamp (e.g. 2026-12-31T23:59:59Z) | `""` |
-
-
+Supply credentials in one quoted `"name=value, name=value"` argument. Single-value schemes use
+the exact auth scheme name; paired families use `client_id`/`client_secret`,
+`username`/`password`, or `cert`/`key`. Quote shell variables as `"name=$VARIABLE"`;
+the shell resolves them before invocation. Commas separate fields; spaces before
+field names are optional. Values retain embedded `=` and `;`. Use interactive
+setup for values containing literal commas. `--no-input`,
+CI, and JSON output require explicit input when setup is needed and never open
+prompts. With multiple matching methods, these modes require `--type` and/or
+`--auth-name` to select exactly one method. Explicit assignments set or replace
+the selected method. With no assignments, an already configured method returns
+its status; missing credentials require input. `--expires-at` accepts an optional RFC3339 expiry. JSON contains only
+bucket ID, auth family, scheme name, and `configured` or `saved` status.
 
 ## `bucket credential delete <service-slug> <key-name>`
 Delete a workspace secret. Use `--bucket <bucket-name-or-id>` for an override secret.
@@ -501,23 +496,43 @@ List secret metadata in a bucket without reading secret values.
 | `--limit` | | Maximum rows to read | `20` |
 | `--offset` | | Rows to skip before reading | `0` |
 
-## `bucket secret set <bucket-name-or-id> [secret-name]`
-Set a service-independent secret for SDK/MCP injection or webhook references.
-The bucket is always required. In a terminal, the secret name may be omitted
-and the value is collected through a masked prompt. Automation must pass the
-name and pipe the value with `--value-stdin`; values are never accepted in
-argv. `--json` returns only bucket ID, secret name, and optional expiry.
+## `bucket secret|env|cert set|get|remove`
+
+Use `--bucket <name-or-id>` to select a bucket; omission selects `default`.
+`set` accepts one or more `<name>[=<value>]` arguments. The first equals sign separates
+the name from the value, preserving later equals signs and colons in URLs or tokens. If the value
+is omitted, a terminal prompt collects it; secret prompts are masked and
+certificate prompts support multiline PEM. Use separate arguments for multiple
+entries. `get` and `remove` each accept one name without a value.
 
 ```shell
-printf '%s' "$WEBHOOK_SECRET" | fused-cli --no-input bucket secret set default webhook_signing --value-stdin
+fused-cli bucket secret set webhook_signing
+fused-cli bucket env set REGION=eu API_URL=https://api.example.com
+fused-cli bucket env get REGION --bucket production
+fused-cli bucket env remove REGION
+fused-cli bucket cert set "root=$ROOT_CERT"
+fused-cli bucket cert get root
+fused-cli bucket cert remove root
+fused-cli bucket secret set "webhook_signing=$WEBHOOK_SECRET" --no-input --exportable
+fused-cli bucket secret get webhook_signing
+fused-cli bucket secret remove webhook_signing
 ```
 
-| Argument | Short | Description | Default |
-|----------|-------|-------------|---------|
-| `--interactive` | `-i` | Explicitly require prompts (the terminal default) | `false` |
-| `--value-stdin` | | Read the secret value from stdin | `false` |
-| `--expires-at` | | Optional RFC3339 expiry timestamp | `""` |
-| `--json` | | Print non-sensitive mutation metadata as JSON | `false` |
+Values may be literal or supplied by shell environment expansion (`"name=$VARIABLE"`).
+`--no-input`, CI, and JSON writes require explicit assignments.
+Environment entries may contain an explicitly empty value (`NAME=`). Generic
+secrets are encrypted, service-independent values. Environment entries are
+non-secret bucket-wide values; service-specific values take precedence during
+runtime lookup. Certificates are public X.509 PEM certificates or chains, stored
+separately from same-name environment entries; private keys are not accepted.
+
+Secret `set` additionally supports `--expires-at` and `--exportable`. Secret
+`get` uses the audited reveal endpoint and requires both export opt-in and
+`credentials.reveal`; it never changes that policy. `get` prints the exact value
+without an added newline, or a JSON object with `name` and `value`. Mutations
+return metadata only. A multi-entry set validates and collects the batch before
+writing; a server failure stops the batch and reports how many entries were
+confirmed saved, without replaying the failed write.
 
 ## `bucket connections <bucket-name-or-id>`
 List connected users in a bucket. Filters are sent to Fused GraphQL.
@@ -772,11 +787,11 @@ Validate the selected app config offline. The config determines its type. Suppor
 
 ## `app list`
 
-List each visible app once across SDK, REST API, MCP, and Unified Apps. `--type sdk|api|mcp|unified-app` filters on the server before pagination. `--limit` defaults to 20 and `--offset` to 0. `--json` returns `items` and `total`, stable family identity, kind, delivery mode, version count, latest/stable version metadata, and applicable transport URLs.
+List each visible app once across SDK, REST API, MCP, and Unified Apps. `--type sdk|rest|mcp|unified-app` filters on the server before pagination. Omit `--type` to list all app types. `--limit` defaults to 20 and `--offset` to 0. `--json` returns `items` and `total`, stable family identity, kind, delivery mode, version count, latest/stable version metadata, and applicable transport URLs.
 
 ```sh
 fused-cli app list
-fused-cli app list --type api --json
+fused-cli app list --type rest --json
 ```
 
 ## `app versions list [app-name-or-id]`

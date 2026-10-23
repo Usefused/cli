@@ -98,7 +98,16 @@ app can be called through its API or added to an SDK or MCP server. The same
 workflow can use your imported internal services.
 
 Provider credentials are stored in a **bucket**, a named collection of
-credentials used by your apps. See [credentials and buckets](docs/SETUP.md#credentials-and-buckets)
+credentials used by your apps. Run `fused-cli connect <service-name>` to choose
+an authentication method and enter its fields. The picker highlights configured
+methods; select one to edit it, or choose a missing method to set it up.
+`--bucket` defaults
+to `default`. Automation can use one quoted `"name=value, name=value"` argument with `--type`, `--auth-name`, and
+`--no-input`; values may come from shell environment variables.
+
+Named bucket entries use `fused-cli bucket secret|env|cert set <name>[=<value>]`,
+`get <name>`, and `remove <name>`. Omit the value to enter it interactively,
+or pass an assignment such as `"token=$TOKEN"`. Certificates contain public PEM only. See [credentials and buckets](docs/SETUP.md#credentials-and-buckets)
 to configure access to the services your integration needs.
 
 ### 4. Manage your app
@@ -107,8 +116,14 @@ List your apps and their published versions:
 
 ```bash
 fused-cli app list
+fused-cli app list --type mcp
 fused-cli app versions list customer-brief
 ```
+
+All app management uses `fused-cli app`. Filter the list with `--type sdk`,
+`--type rest`, `--type mcp`, or `--type unified-app`; omit the filter to see all
+types. There are no standalone `sdk`, `rest`, `api`, `mcp`, or `unified-app`
+command groups.
 
 To update a Unified App, edit its TypeScript source and configuration, and
 choose a new version. Use `app plan` to preview the changes, then `app apply`

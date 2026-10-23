@@ -42,8 +42,8 @@ Three related but distinct things use different owners:
   or app YAML (see `fused-bucket`).
 - SDK/MCP `services.<target>.connect.scopes` is the service-specific consent
   ceiling for the interactive per-user OAuth/OIDC flow. Store the application's
-  complete `client_id`/`client_secret` pair atomically with `fused-cli bucket credential set <service-slug> --bucket <bucket> --type oauth|oidc --auth-name <scheme>
-  --value-stdin|--interactive`. The pair uses deterministic encrypted bucket
+  complete `client_id`/`client_secret` pair atomically with `fused-cli connect <service-slug> --bucket <bucket> --type oauth|oidc --auth-name <scheme>`. Omit values for interactive setup or supply one
+  `"client_id=value, client_secret=value"` argument with `--no-input`. The pair uses deterministic encrypted bucket
   secret rows and is distinct from connected-user access, refresh, and ID
   tokens. Blank, partial, extra, token, and `redirect_uri` fields are rejected.
 

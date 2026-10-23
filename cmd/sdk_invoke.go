@@ -147,7 +147,7 @@ func sdkInvokeCredentialCommand(code string, details map[string]any) string {
 	if name, ok := details["bucket_name"].(string); ok && !invalidSDKInvokeAuthName(name) && !strings.HasPrefix(name, "-") {
 		canonicalBucketID = shellQuoteSDKInvokeArgument(name)
 	}
-	return fmt.Sprintf("fused-cli bucket credential set %s --bucket %s --type %s --auth-name %s --interactive",
+	return fmt.Sprintf("fused-cli connect %s --bucket %s --type %s --auth-name %s",
 		canonicalServiceID, canonicalBucketID, shellQuoteSDKInvokeArgument(authType), shellQuoteSDKInvokeArgument(authName))
 }
 

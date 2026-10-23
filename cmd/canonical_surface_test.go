@@ -12,6 +12,21 @@ import (
 	"github.com/spf13/pflag"
 )
 
+// TestProviderCredentialSetupHasOnePublicEntryPoint keeps setup under connect while retaining scoped removal.
+func TestProviderCredentialSetupHasOnePublicEntryPoint(t *testing.T) {
+	command, _, err := RootCmd.Find([]string{"bucket", "credential"})
+	// Provider deletion still needs a public owner even after setup moves to connect.
+	if err != nil || command.Name() != "credential" {
+		t.Fatal("provider credential group is missing")
+	}
+	for _, child := range command.Commands() {
+		// Removing the duplicate means no visible, hidden, or forwarding set command remains.
+		if child.Name() == "set" {
+			t.Fatal("provider credential setup is duplicated")
+		}
+	}
+}
+
 // TestPublicCommandTreeRejectsCompatibilityAliases prevents hidden forwarding commands from returning unnoticed.
 func TestPublicCommandTreeRejectsCompatibilityAliases(t *testing.T) {
 	var walk func(*cobra.Command)
@@ -33,7 +48,7 @@ func TestPublicCommandTreeRejectsCompatibilityAliases(t *testing.T) {
 		}
 	}
 	walk(RootCmd)
-	for _, name := range []string{"sdk", "mcp", "api", "unified-app", "secret", "value", "team", "user"} {
+	for _, name := range []string{"sdk", "mcp", "rest", "api", "unified-app", "secret", "value", "team", "user"} {
 		command, _, err := RootCmd.Find([]string{name})
 		// Assert exact removal separately so a visible forwarding command also fails the contract.
 		if err == nil && command != RootCmd {

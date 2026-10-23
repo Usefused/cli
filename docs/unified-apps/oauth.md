@@ -46,9 +46,8 @@ If your workspace uses its own provider application, store its client pair
 before running `service connect`:
 
 ```bash
-printf '%s' 'client_id=...;client_secret=...' |
-  fused-cli bucket credential set crm --bucket default \
-    --type oauth --auth-name crmOAuth --value-stdin
+fused-cli connect crm "client_id=$CLIENT_ID, client_secret=$CLIENT_SECRET" --bucket default \
+    --type oauth --auth-name crmOAuth --no-input
 ```
 
 If your service supports a Fused Managed App, set the service's `auth.ref` to

@@ -78,14 +78,14 @@ structured error to stderr on failure and exits non-zero.
 
 ```bash
 fused-cli bucket list
-printf '%s' "$GITHUB_TOKEN" | fused-cli bucket credential set github --value-stdin
+fused-cli connect github
 ```
 
 Use `fused-cli service show --registry <slug> --json` to inspect a service's available
 authentication schemes before setting credentials. OAuth/OIDC app
-credentials use `fused-cli bucket credential set <slug> --bucket <bucket> --type
-oauth|oidc --auth-name <scheme> --value-stdin` with
-`client_id=...;client_secret=...`. They remain
+credentials use `fused-cli connect <slug> --bucket <bucket> --type
+oauth|oidc --auth-name <scheme>` with one optional
+`"client_id=..., client_secret=..."` argument. They remain
 separate from connected-user tokens and workspace configuration.
 
 ## Teams, people, and shared access

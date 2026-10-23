@@ -1006,9 +1006,8 @@ func selectedIndex(rawChoice string, size int) (int, error) {
 	return choice - 1, nil
 }
 
-// init registers SDK application discovery separately from exact-version lifecycle commands.
+// init prepares SDK handlers for the shared app surface without exposing a standalone SDK command.
 func init() {
-	RootCmd.AddCommand(sdkCmd)
 	sdkCmd.AddCommand(sdkListCmd, sdkVersionsCmd, sdkPlanCmd, sdkApplyCmd, sdkValidateCmd, sdkDownloadCmd, sdkShowCmd, sdkServicesCmd, sdkBucketsCmd, sdkDeactivateCmd)
 	addJSONOutputFlag(sdkListCmd, sdkVersionsCmd, sdkValidateCmd, sdkShowCmd, sdkServicesCmd, sdkBucketsCmd)
 	addListFlags(sdkListCmd, &sdkListFlags)

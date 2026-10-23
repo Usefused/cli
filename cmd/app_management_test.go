@@ -9,11 +9,43 @@ import (
 	"testing"
 )
 
+// TestStandaloneAppCommandsAreRejected prevents old entry points from surviving as executable aliases.
+func TestStandaloneAppCommandsAreRejected(t *testing.T) {
+	for _, name := range []string{"sdk", "mcp", "rest", "api", "unified-app"} {
+		// Exercise command execution as well as discovery so removed groups cannot forward to app.
+		t.Run(name, func(t *testing.T) {
+			output := runCommandInDirExpectError(t, t.TempDir(), "http://unused.invalid", []string{name, "list"})
+			// Rejection must happen at command parsing, before any Engine access.
+			if !strings.Contains(output, "unknown command") {
+				t.Fatalf("expected removed command rejection, got %s", output)
+			}
+		})
+	}
+}
+
+// TestSharedAppListRejectsInvalidType prevents misspelled filters from widening the app inventory.
+func TestSharedAppListRejectsInvalidType(t *testing.T) {
+	calls := 0
+	// Any request means invalid input escaped local validation.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		http.Error(w, "unexpected request", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+	output := runCommandInDirExpectError(t, t.TempDir(), server.URL, []string{"app", "list", "--type", "unknown"})
+	// Keep remediation aligned with the four public delivery types.
+	if calls != 0 || !strings.Contains(output, "choose sdk, rest, mcp, or unified-app") {
+		t.Fatalf("calls=%d error=%s", calls, output)
+	}
+}
+
 // TestSharedAppListTypeFilters keeps filtering on Engine before pagination for all four delivery types.
 func TestSharedAppListTypeFilters(t *testing.T) {
-	for _, test := range []struct{ public, engine string }{{"sdk", "sdk"}, {"api", "api"}, {"mcp", "mcp"}, {"unified-app", "unified_app"}} {
+	for _, test := range []struct{ public, engine string }{{"sdk", "sdk"}, {"rest", "api"}, {"mcp", "mcp"}, {"unified-app", "unified_app"}} {
+		// Each type must reach the catalog with its own delivery filter and pagination bounds.
 		t.Run(test.public, func(t *testing.T) {
 			calls := 0
+			// Inspect the wire request so filtering cannot silently move after pagination.
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				calls++
 				request := decodeGraphQLTestRequest(t, r)

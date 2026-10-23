@@ -37,7 +37,7 @@ closed policy and `reference/connection-profiles.md` for runtime behavior.
 When workspace bucket auth selects a type with several named schemes, carry
 both `auth_type` and the exact `auth_name`; never choose the first scheme in
 that type. The same identity rule applies to version connection-profile
-attachments and to `bucket credential set --type ... --auth-name ...`.
+attachments and to `connect --type ... --auth-name ...`.
 
 Provider documentation and similarly named vendor extensions are evidence,
 not executable policy. During curation, prefer standard OpenAPI security and
@@ -103,7 +103,7 @@ baseline), read `fused-notifications`.
 
 Never put a real credential value inline in a config file being committed to
 source control. For a static `auth` credential (token/api_key/basic/mtls),
-use a bucket secret (`fused-cli bucket credential set <service-slug>` -- see
+use a bucket secret (`fused-cli connect <service-slug>` -- see
 `fused-bucket`): it's resolved by the Engine itself, so it works the same
 whether `apply` runs from a laptop or CI. Binding literal values have the
 same bucket-secret path via `fused-cli bucket value`.
@@ -128,9 +128,9 @@ does not make private Fused bucket values readable or silently fill missing
 credentials. Managed webhook sources use `relay.source`; see `fused-webhook`.
 
 For your own OAuth/OIDC application, `client_id`/`client_secret` pairs follow the
-bucket-secret path. Store the pair with `fused-cli bucket credential set <service-slug> --bucket
-<bucket> --type oauth|oidc --auth-name <scheme>
---interactive|--value-stdin`; never
+bucket-secret path. Store the pair with `fused-cli connect <service-slug> --bucket
+<bucket> --type oauth|oidc --auth-name <scheme>`; omit values for interactive setup or provide one
+`"client_id=value, client_secret=value"` argument with `--no-input`. Never
 supply a redirect URI. Engine derives the callback from its canonical public
 URL and resolves direct or `${bucket.auth.<source>.<authName>}` application
 credential families for consent and refresh. Application credentials remain
@@ -149,7 +149,7 @@ Follow the lifecycle of the command that owns the config:
   even when the caller otherwise has workspace access.
 - Importing `x-fused-connect` through OpenAPI/Postman needs `catalogue.import`;
   reading the import session needs `catalogue.read`.
-- OAuth/OIDC application `bucket credential set` needs `credentials.manage`; starting a
+- OAuth/OIDC application `connect` needs `credentials.manage`; starting a
   connect session needs `connection.manage`, `bucket.use`, and
   `service.consume`.
 

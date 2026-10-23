@@ -465,7 +465,6 @@ func TestCLISkillsUseCurrentCommandLanguage(t *testing.T) {
 	stale := []string{
 		"fused-cli bucket <",
 		"fused-cli secret <",
-		"fused-cli connect <",
 		"fused-cli service <",
 		"sdk-name-or-family",
 		"app-family-id",
@@ -474,14 +473,18 @@ func TestCLISkillsUseCurrentCommandLanguage(t *testing.T) {
 		"<service_name>",
 		"name@version-or-app-id",
 	}
+	// Inspect every shipped skill rather than only the CLI onboarding guide.
 	err := filepath.WalkDir(filepath.Join("..", "skills"), func(path string, entry os.DirEntry, walkErr error) error {
+		// An unreadable directory cannot count as a successful documentation audit.
 		if walkErr != nil {
 			return walkErr
 		}
+		// Only Markdown documents carry command guidance.
 		if entry.IsDir() || filepath.Ext(path) != ".md" {
 			return nil
 		}
 		data, readErr := os.ReadFile(path)
+		// Preserve read failures instead of silently skipping guidance.
 		if readErr != nil {
 			return readErr
 		}
@@ -494,6 +497,7 @@ func TestCLISkillsUseCurrentCommandLanguage(t *testing.T) {
 		}
 		return nil
 	})
+	// Report traversal failures alongside stale command findings.
 	if err != nil {
 		t.Fatalf("scan CLI skills: %v", err)
 	}

@@ -11,9 +11,11 @@ import (
 )
 
 type SecretMetaResponse struct {
+	Exportable     bool       `json:"exportable"`
 	ID             string     `json:"id"`
 	ServiceID      string     `json:"service_id"`
 	KeyName        string     `json:"key_name"`
+	KeyNames       []string   `json:"key_names"`
 	CredentialType string     `json:"credential_type"`
 	BucketID       string     `json:"bucket_id"`
 	ExpiresAt      *time.Time `json:"expires_at,omitempty"`
@@ -21,39 +23,48 @@ type SecretMetaResponse struct {
 	UpdatedAt      time.Time  `json:"updated_at"`
 }
 
+// UnmarshalJSON preserves export policy while normalizing optional GraphQL timestamps.
 func (s *SecretMetaResponse) UnmarshalJSON(data []byte) error {
 	type rawSecretMetaResponse struct {
-		ID             string `json:"id"`
-		ServiceID      string `json:"service_id"`
-		KeyName        string `json:"key_name"`
-		CredentialType string `json:"credential_type"`
-		BucketID       string `json:"bucket_id"`
-		ExpiresAt      string `json:"expires_at"`
-		CreatedAt      string `json:"created_at"`
-		UpdatedAt      string `json:"updated_at"`
+		Exportable     bool     `json:"exportable"`
+		ID             string   `json:"id"`
+		ServiceID      string   `json:"service_id"`
+		KeyName        string   `json:"key_name"`
+		KeyNames       []string `json:"key_names"`
+		CredentialType string   `json:"credential_type"`
+		BucketID       string   `json:"bucket_id"`
+		ExpiresAt      string   `json:"expires_at"`
+		CreatedAt      string   `json:"created_at"`
+		UpdatedAt      string   `json:"updated_at"`
 	}
 	var raw rawSecretMetaResponse
+	// Invalid metadata cannot establish that a credential family is configured.
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
 
 	expiresAt, err := parseOptionalGraphQLTime(raw.ExpiresAt)
+	// Invalid expiry must not turn stale credentials into usable ones.
 	if err != nil {
 		return fmt.Errorf("parse secret expires_at: %w", err)
 	}
 	createdAt, err := parseGraphQLTime(raw.CreatedAt)
+	// Preserve malformed server metadata as an error rather than a partial record.
 	if err != nil {
 		return fmt.Errorf("parse secret created_at: %w", err)
 	}
 	updatedAt, err := parseGraphQLTime(raw.UpdatedAt)
+	// A failed timestamp decode invalidates the entire metadata record.
 	if err != nil {
 		return fmt.Errorf("parse secret updated_at: %w", err)
 	}
 
 	*s = SecretMetaResponse{
 		ID:             raw.ID,
+		Exportable:     raw.Exportable,
 		ServiceID:      raw.ServiceID,
 		KeyName:        raw.KeyName,
+		KeyNames:       raw.KeyNames,
 		CredentialType: raw.CredentialType,
 		BucketID:       raw.BucketID,
 		ExpiresAt:      expiresAt,
@@ -90,8 +101,9 @@ type SecretMetaPageResponse struct {
 }
 
 // UpsertSecret stores one credential value and safely bounds Engine failures.
-func (c *Client) UpsertSecret(serviceID, keyName, credentialType, value string, bucketID string, expiresAt *time.Time) error {
+func (c *Client) UpsertSecret(serviceID, keyName, credentialType, value string, bucketID string, expiresAt *time.Time, exportable ...bool) error {
 	reqBody := map[string]interface{}{
+		"exportable":      len(exportable) > 0 && exportable[0],
 		"service_id":      serviceID,
 		"key_name":        keyName,
 		"credential_type": credentialType,
@@ -129,12 +141,13 @@ func (c *Client) UpsertSecret(serviceID, keyName, credentialType, value string, 
 
 // UpsertBucketSecret stores one service-independent secret in an explicitly
 // selected bucket without exposing the value in the URL.
-func (c *Client) UpsertBucketSecret(bucketID, keyName, value string, expiresAt *time.Time) error {
+func (c *Client) UpsertBucketSecret(bucketID, keyName, value string, expiresAt *time.Time, exportable ...bool) error {
 	reqBody := struct {
-		KeyName   string     `json:"key_name"`
-		Value     string     `json:"value"`
-		ExpiresAt *time.Time `json:"expires_at,omitempty"`
-	}{KeyName: keyName, Value: value, ExpiresAt: expiresAt}
+		Exportable bool       `json:"exportable"`
+		KeyName    string     `json:"key_name"`
+		Value      string     `json:"value"`
+		ExpiresAt  *time.Time `json:"expires_at,omitempty"`
+	}{KeyName: keyName, Value: value, ExpiresAt: expiresAt, Exportable: len(exportable) > 0 && exportable[0]}
 	body, err := json.Marshal(reqBody)
 	// Serialization must finish before a credential-bearing request is constructed.
 	if err != nil {
@@ -165,6 +178,7 @@ func (c *Client) UpsertBucketSecret(bucketID, keyName, value string, expiresAt *
 }
 
 type SecretUpsertRequest struct {
+	Exportable     bool       `json:"exportable"`
 	ServiceID      string     `json:"service_id"`
 	KeyName        string     `json:"key_name"`
 	CredentialType string     `json:"credential_type"`

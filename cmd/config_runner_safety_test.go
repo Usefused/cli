@@ -52,7 +52,7 @@ func TestPrintPlanResultIncludesEngineSummary(t *testing.T) {
 		"Required permissions:", `Ability to manage service "GitHub"`,
 		"Ability to use the selected bucket",
 		`Credential readiness for workspace: 1 authentication requirement(s) are missing.`,
-		"fused-cli bucket credential set 'Okta' --bucket 'production' --type 'api_key' --auth-name 'oktaKey' --interactive",
+		"fused-cli connect 'Okta' --bucket 'production' --type 'api_key' --auth-name 'oktaKey'",
 	} {
 		if !strings.Contains(out, expected) {
 			t.Fatalf("expected %q in plan output:\n%s", expected, out)

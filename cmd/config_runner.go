@@ -488,12 +488,12 @@ func printCredentialReadiness(out io.Writer, configKey string, readiness *api.Cr
 		}
 		service := readinessCommandName(requirement.Service, requirement.ServiceID)
 		bucketName := readinessCommandName(bucket.Name, bucket.ID)
-		fmt.Fprintf(out, "  fused-cli bucket credential set %s --bucket %s --type %s", shellQuoteWorkspaceServiceArg(service), shellQuoteWorkspaceServiceArg(bucketName), shellQuoteWorkspaceServiceArg(requirement.AuthType))
+		fmt.Fprintf(out, "  fused-cli connect %s --bucket %s --type %s", shellQuoteWorkspaceServiceArg(service), shellQuoteWorkspaceServiceArg(bucketName), shellQuoteWorkspaceServiceArg(requirement.AuthType))
 		// Named alternatives must remain exact when several schemes share one auth type.
 		if requirement.AuthName != "" {
 			fmt.Fprintf(out, " --auth-name %s", shellQuoteWorkspaceServiceArg(requirement.AuthName))
 		}
-		fmt.Fprintln(out, " --interactive")
+		fmt.Fprintln(out)
 	}
 	fmt.Fprintln(out, "Publication can continue, but affected calls will fail until credentials are set.")
 }

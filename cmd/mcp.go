@@ -253,9 +253,8 @@ func runMCPDeactivate(cmd *cobra.Command, target string) error {
 	return nil
 }
 
-// init registers the MCP lifecycle and exact-version inspection commands.
+// init prepares MCP handlers for the shared app surface without exposing a standalone MCP command.
 func init() {
-	RootCmd.AddCommand(mcpCmd)
 	mcpCmd.AddCommand(mcpListCmd, mcpVersionsCmd, mcpOperationsCmd, mcpPlanCmd, mcpApplyCmd, mcpValidateCmd, mcpDeactivateCmd)
 	addJSONOutputFlag(mcpListCmd, mcpVersionsCmd, mcpOperationsCmd, mcpValidateCmd)
 	addListFlags(mcpListCmd, &mcpListFlags)

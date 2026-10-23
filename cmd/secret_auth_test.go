@@ -9,35 +9,24 @@ import (
 	"github.com/Usefused/cli/internal/api"
 )
 
-// TestSecretSetRejectsMalformedInlineInputBeforeRequests verifies Basic and
-// mTLS callers share command-level validation before service resolution.
-func TestSecretSetRejectsMalformedInlineInputBeforeRequests(t *testing.T) {
-	previousInteractive, previousStdin := secretSetInteractive, secretSetValueStdin
-	previousType := secretSetType
-	t.Cleanup(func() {
-		secretSetInteractive, secretSetValueStdin = previousInteractive, previousStdin
-		secretSetType = previousType
-		secretSetCmd.SetIn(nil)
-	})
-	secretSetInteractive, secretSetValueStdin = false, true
-
+// TestConnectRejectsMalformedInputBeforeRequests keeps malformed credential lists away from the network.
+func TestConnectRejectsMalformedInputBeforeRequests(t *testing.T) {
 	requests := 0
+	// Count requests without accepting any supplied material.
 	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		requests++
 	}))
 	defer server.Close()
-
-	secretSetCmd.SetIn(strings.NewReader("username=alice;password"))
 	out := runCommandInDirExpectError(t, t.TempDir(), server.URL, []string{
-		"bucket", "credential", "set", "jira", "--type", "basic", "--value-stdin",
+		"connect", "jira", "username=alice, password", "--type", "basic",
 	})
-	// The local diagnostic should identify the exact malformed segment.
-	if !strings.Contains(out, "segment 2 must contain '='") {
+	// Diagnostics describe the grammar without echoing credential values.
+	if !strings.Contains(out, "credentials must use name=value, name=value") {
 		t.Fatalf("expected actionable local validation error, got %q", out)
 	}
-	// No metadata or mutation request may occur after malformed credential input.
+	// Invalid lists must fail before service resolution or credential mutation.
 	if requests != 0 {
-		t.Fatalf("malformed secret input sent %d request(s)", requests)
+		t.Fatalf("malformed input sent %d request(s)", requests)
 	}
 }
 
