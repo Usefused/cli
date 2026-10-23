@@ -415,10 +415,15 @@ Every MCP server serves its own Agent Skill as the MCP resource
 `resources/read` after connecting. It is a `SKILL.md` covering the server's
 purpose, when to use it, the `search_docs`/`execute` convention, and the
 operations grouped by service, filtered to what the connecting token may call.
-It never contains a token or URL. Facts come from the reviewed plan; at plan
-time Engine also asks the Registry LLM to rewrite only the purpose and
-"when to use" prose, sending the server name, description, service names and
-operation IDs. When that model is unavailable or its answer is unsafe, the
+It never contains a token or URL. Facts come from the reviewed plan. By
+default the prose is a template built from the authored description. MCP
+creation may opt into `fused-skill-polish: true`, or
+`fused-cli init --mcp --fused-skill-polish`; then at plan time Engine asks the
+Registry LLM to rewrite only the purpose and "when to use" prose, sending the
+server name, description, service names and operation IDs (never credentials,
+schemas or tokens). Plan prints this disclosure. Ask the user before opting in.
+Like the classifier, it is immutable version metadata: changing it requires a
+successor version. When the model is unavailable or its answer is unsafe, the
 template prose is used and planning still succeeds. Versions planned before
 this feature serve a template skill that points to `search_docs`.
 

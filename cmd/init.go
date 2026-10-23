@@ -43,6 +43,7 @@ type unifiedInitOptions struct {
 	version                    string
 	description                string
 	fusedIntelligentClassifier bool
+	fusedSkillPolish           bool
 	language                   string
 	bucket                     string
 	webhookAttachment          string
@@ -142,6 +143,7 @@ Non-interactive runs print readiness warnings without prompting or storing secre
 	command.Flags().StringVar(&opts.language, "language", defaultScaffoldLanguage, "Generated SDK target language")
 	command.Flags().StringVar(&opts.bucket, "bucket", "", "Existing bucket to bind to this app")
 	command.Flags().BoolVar(&opts.fusedIntelligentClassifier, "fused-intelligent-classifier", false, "Enable MCP intelligent search using Jev via Fused Registry")
+	command.Flags().BoolVar(&opts.fusedSkillPolish, "fused-skill-polish", false, "Let the Fused Registry LLM write the prose of this MCP server's skill resource")
 	command.Flags().StringVar(&opts.description, "description", "", "Hosted MCP summary; combined Apps derive one from the name when omitted")
 	command.Flags().BoolVar(&opts.noApply, "no-apply", false, "Plan initialization without applying, generating, or downloading")
 	command.Flags().BoolVar(&opts.noToken, "no-token", false, "Apply without an auto-issued execution token; create one yourself later with 'app token generate'")
@@ -285,6 +287,10 @@ func validateWorkflowInitModeFlags(cmd *cobra.Command, mode unifiedInitMode, opt
 	if cmd.Flags().Changed("fused-intelligent-classifier") && mode != unifiedInitModeApp && mode != unifiedInitModeMCP {
 		return errors.New("--fused-intelligent-classifier requires a combined App or --mcp")
 	}
+	// Only standalone MCP versions serve a skill snapshot whose prose can be polished.
+	if cmd.Flags().Changed("fused-skill-polish") && mode != unifiedInitModeMCP {
+		return errors.New("--fused-skill-polish requires --mcp")
+	}
 	// Signing-secret declarations belong only to inbound webhook registration.
 	if len(opts.secrets) > 0 {
 		return errors.New("--secret can only be used with --webhook")
@@ -301,6 +307,10 @@ func validateNonReceiverInitFlags(cmd *cobra.Command, mode unifiedInitMode, opts
 	// Classifier settings require a hosted MCP runtime.
 	if cmd.Flags().Changed("fused-intelligent-classifier") {
 		return errors.New("--fused-intelligent-classifier requires --mcp")
+	}
+	// Skill prose consent likewise requires a hosted MCP runtime.
+	if cmd.Flags().Changed("fused-skill-polish") {
+		return errors.New("--fused-skill-polish requires --mcp")
 	}
 	// Secret registration is never part of ordinary direct API initialization.
 	if mode != unifiedInitModeWebhook && len(opts.secrets) > 0 {
@@ -366,6 +376,7 @@ func unifiedInitIdentityRequest(cmd *cobra.Command, mode unifiedInitMode, name s
 	request.version, request.description = opts.version, opts.description
 	request.bucket, request.webhookAttachment = strings.TrimSpace(opts.bucket), strings.TrimSpace(opts.webhookAttachment)
 	request.fusedIntelligentClassifier, request.classifierSet = opts.fusedIntelligentClassifier, cmd.Flags().Changed("fused-intelligent-classifier")
+	request.fusedSkillPolish, request.skillPolishSet = opts.fusedSkillPolish, cmd.Flags().Changed("fused-skill-polish")
 	request.versionSet, request.languageSet = cmd.Flags().Changed("version"), cmd.Flags().Changed("language")
 	request.descriptionSet = (mode == unifiedInitModeMCP || mode == unifiedInitModeApp) && strings.TrimSpace(opts.description) != ""
 	request.bucketSet, request.webhookAttachmentSet = cmd.Flags().Changed("bucket"), cmd.Flags().Changed("webhook-attachment")

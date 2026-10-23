@@ -33,6 +33,7 @@ type scaffoldOptions struct {
 	version                    string
 	description                string
 	fusedIntelligentClassifier bool
+	fusedSkillPolish           bool
 	language                   string
 	bucket                     string
 	webhookAttachment          string
@@ -53,6 +54,8 @@ type scaffoldRequest struct {
 	description                string
 	fusedIntelligentClassifier bool
 	classifierSet              bool
+	fusedSkillPolish           bool
+	skillPolishSet             bool
 	language                   string
 	bucket                     string
 	webhookAttachment          string
@@ -202,6 +205,7 @@ merge services into that file.`
 	// MCP descriptions are authored by the calling agent and become server identity metadata, not tool documentation.
 	if kind == configfile.KindMCP {
 		command.Flags().BoolVar(&opts.fusedIntelligentClassifier, "fused-intelligent-classifier", false, "Enable MCP intelligent search using Jev via Fused Registry")
+		command.Flags().BoolVar(&opts.fusedSkillPolish, "fused-skill-polish", false, "Let the Fused Registry LLM write the prose of this MCP server's skill resource")
 		command.Flags().StringVar(&opts.description, "description", "", "Human-readable summary naming selected services and capabilities")
 	}
 	addJSONOutputFlag(command)
@@ -305,7 +309,8 @@ func buildScaffoldRequest(cmd *cobra.Command, kind configfile.ConfigKind, args [
 	return scaffoldRequest{
 		kind: kind, name: name, path: path, extend: opts.extend,
 		services: services, operations: operations, selectAll: selectAll, events: events,
-		version: opts.version, description: strings.TrimSpace(opts.description), fusedIntelligentClassifier: opts.fusedIntelligentClassifier, classifierSet: cmd.Flags().Changed("fused-intelligent-classifier"), language: opts.language, bucket: strings.TrimSpace(opts.bucket), webhookAttachment: webhookAttachment,
+		version: opts.version, description: strings.TrimSpace(opts.description), fusedIntelligentClassifier: opts.fusedIntelligentClassifier, classifierSet: cmd.Flags().Changed("fused-intelligent-classifier"),
+		fusedSkillPolish: opts.fusedSkillPolish, skillPolishSet: kind == configfile.KindMCP && cmd.Flags().Changed("fused-skill-polish"), language: opts.language, bucket: strings.TrimSpace(opts.bucket), webhookAttachment: webhookAttachment,
 		versionSet: cmd.Flags().Changed("version"), languageSet: cmd.Flags().Changed("language"),
 		descriptionSet: descriptionSet, bucketSet: cmd.Flags().Changed("bucket"), webhookAttachmentSet: (kind == configfile.KindSDK || kind == configfile.KindMCP) && cmd.Flags().Changed("webhook-attachment"),
 	}, nil
@@ -515,6 +520,7 @@ func newScaffoldData(request scaffoldRequest, resolver scaffoldRequirementsResol
 	if request.kind == configfile.KindMCP {
 		config.Description = request.description
 		config.FusedIntelligentClassifier = request.fusedIntelligentClassifier
+		config.FusedSkillPolish = request.fusedSkillPolish
 	}
 	if request.kind == configfile.KindSDK {
 		config.Language = request.language
@@ -655,6 +661,11 @@ func mergeAppIdentity(config *configfile.AppConfig, request scaffoldRequest) (bo
 	if err != nil {
 		return false, err
 	}
+	// Skill-prose consent is immutable like classifier consent.
+	polishChanged, err := mergeMCPFusedSkillPolish(config, request, versionChanged)
+	if err != nil {
+		return false, err
+	}
 	descriptionChanged, err := mergeMCPDescription(config, request, versionChanged)
 	// Authored server prose may change only alongside an explicit successor identity.
 	if err != nil {
@@ -676,7 +687,7 @@ func mergeAppIdentity(config *configfile.AppConfig, request scaffoldRequest) (bo
 		return false, err
 	}
 	webhookAttachmentChanged, err := mergeSDKWebhookAttachment(config, request)
-	return changed || searchChanged || languageChanged || descriptionChanged || hostedChanged || generateChanged || bucketChanged || webhookAttachmentChanged, err
+	return changed || searchChanged || polishChanged || languageChanged || descriptionChanged || hostedChanged || generateChanged || bucketChanged || webhookAttachmentChanged, err
 }
 
 // hostedMCPDescription creates a stable server summary when the default combined mode has no authored prose.
@@ -1196,6 +1207,20 @@ func mergeMCPFusedIntelligentClassifier(config *configfile.AppConfig, request sc
 		return false, fmt.Errorf("changing fused-intelligent-classifier requires an MCP successor version")
 	}
 	config.FusedIntelligentClassifier = request.fusedIntelligentClassifier
+	return true, nil
+}
+
+// mergeMCPFusedSkillPolish prevents extensions from silently changing consent to send server metadata to the Registry LLM.
+func mergeMCPFusedSkillPolish(config *configfile.AppConfig, request scaffoldRequest, versionChanged bool) (bool, error) {
+	// Omission preserves the existing immutable setting.
+	if !request.skillPolishSet || request.fusedSkillPolish == config.FusedSkillPolish {
+		return false, nil
+	}
+	// Only an explicit MCP successor can change where its skill prose comes from.
+	if request.kind != configfile.KindMCP || !versionChanged {
+		return false, fmt.Errorf("changing fused-skill-polish requires an MCP successor version")
+	}
+	config.FusedSkillPolish = request.fusedSkillPolish
 	return true, nil
 }
 

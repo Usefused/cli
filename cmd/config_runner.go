@@ -344,6 +344,10 @@ func planOneConfig(client *api.Client, cfg *configfile.ParsedConfig, engineURL, 
 			credentialReadiness: resp.CredentialReadiness, requiredPermissions: resp.RequiredPermissions,
 		}, nil
 	case configfile.KindMCP:
+		// Planning is when the Engine sends server metadata to the Registry LLM, so disclose it before the request.
+		if cfg.MCP.FusedSkillPolish {
+			fmt.Fprintln(os.Stderr, mcpSkillPolishDisclosure)
+		}
 		raw, _ := json.Marshal(cfg.MCP)
 		resp, err := client.PlanMCPConfig(desiredConfigPlanIntent(cfg, raw, ownerTeamSlug))
 		if err != nil {
@@ -1046,6 +1050,9 @@ func sdkApplyGenerationStageStatus(resp *api.SDKConfigApplyResponse, generatesPa
 	}
 	return "completed"
 }
+
+// mcpSkillPolishDisclosure states exactly what fused-skill-polish sends and what happens when the model is unavailable.
+const mcpSkillPolishDisclosure = "Skill prose uses the Fused Registry LLM. The server name, description, service names and operation IDs are sent; no credentials, schemas or tokens. If the model is unavailable, the template skill is used."
 
 // applyPreparedMCP publishes one immutable version and surfaces its stable and pinned connection routes.
 func applyPreparedMCP(client *api.Client, cfg *configfile.ParsedConfig, receipt planReceipt) error {
