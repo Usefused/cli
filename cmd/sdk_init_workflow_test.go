@@ -291,16 +291,18 @@ func TestSDKInitDefaultsAnEmptyInteractiveSelectionToAllOperations(t *testing.T)
 	}
 }
 
-// TestSDKInitNoInputRequiresOperationScope keeps unattended capability grants explicit and fails before either config is written.
+// TestSDKInitNoInputRequiresOperationScope keeps incomplete internal requests from silently acquiring capabilities.
 func TestSDKInitNoInputRequiresOperationScope(t *testing.T) {
 	oldNoInput := NoInput
 	NoInput = true
+	// Restore interactive behavior for subsequent tests.
 	t.Cleanup(func() { NoInput = oldNoInput })
 
 	_, err := completeSDKInitOperationSelections(&cobra.Command{}, nil, scaffoldRequest{name: "support-sdk"}, []sdkInitResolvedService{{
 		target: workspaceServiceAddTarget{slug: "linear"}, version: "v1",
 	}})
-	if err == nil || !strings.Contains(err.Error(), "--no-input requires --operation 'linear=<operationId>' or --select-all 'linear'") {
+	// Remediation must teach the service-scoped selection syntax.
+	if err == nil || !strings.Contains(err.Error(), "--no-input requires --service 'linear=<operationId>[,<operationId>...]' or --select-all 'linear'") {
 		t.Fatalf("missing explicit operation remediation: %v", err)
 	}
 }

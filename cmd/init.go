@@ -100,7 +100,9 @@ func newUnifiedInitCommandWithRunner(runner unifiedInitRunner) *cobra.Command {
 The default App shares one identity, version, selected scope, and token across
 SDK, MCP, and REST delivery. Choose --sdk, --rest, --mcp, or --webhook for one
 method or ingress registration.
-App modes select operations; webhook mode registers inbound delivery.
+Use --service 'jira;slack' for all operations, or
+--service 'jira=issueUpdate;slack=chatPostMessage' for selected operations.
+Quote the value so the shell preserves semicolons. Webhook mode registers inbound delivery.
 The command enables missing services, writes the config, plans, applies, and returns the
 runtime outcome. Pass --no-apply to write validated local desired state and
 retain available plan receipts without applying Fused state.
@@ -133,8 +135,8 @@ Non-interactive runs print readiness warnings without prompting or storing secre
 	command.Flags().BoolVar(&opts.mcp, "mcp", false, "Create and deploy a Fused-hosted MCP server")
 	command.Flags().BoolVar(&opts.webhook, "webhook", false, "Create and apply an inbound webhook registration")
 	command.Flags().StringArrayVar(&opts.secrets, "secret", nil, "Webhook signing reference as <service>=${bucket.<name>.secret.<key>}; repeatable")
-	command.Flags().StringSliceVar(&opts.services, "service", nil, "Registry service as <service>[@<version>]; comma-separated or repeatable")
-	command.Flags().StringSliceVar(&opts.operations, "operation", nil, "Selected operation as <service>=<operationId>; repeatable")
+	command.Flags().StringArrayVar(&opts.services, "service", nil, "Services as '<service>[@<version>][=<operationId>,...];...'; bare services select all operations; quote semicolons")
+	command.Flags().StringSliceVar(&opts.operations, "operation", nil, "Legacy operation selector <service>=<operationId>; prefer --service 'service=operation1,operation2'")
 	command.Flags().StringSliceVar(&opts.selectAll, "select-all", nil, "Service whose complete operation surface should be selected; repeatable")
 	command.Flags().StringVar(&opts.webhookAttachment, "webhook-attachment", "", "Existing webhook registration bundle to attach to an SDK or MCP app")
 	command.Flags().StringArrayVar(&opts.events, "events", nil, "Webhook events as <service>=<event>[,<event>...]; repeatable")
@@ -313,7 +315,7 @@ func validateNonReceiverInitFlags(cmd *cobra.Command, mode unifiedInitMode, opts
 func parseUnifiedInitSelections(opts *unifiedInitOptions) (scaffoldRequest, error) {
 	request := scaffoldRequest{}
 	var err error
-	request.services, err = parseScaffoldServices(opts.services, false)
+	request.services, request.operations, err = parseAppServiceSelections(opts.services, opts.operations)
 	// Reject ambiguous service flag syntax before remote resolution.
 	if err != nil {
 		return request, err
@@ -321,11 +323,6 @@ func parseUnifiedInitSelections(opts *unifiedInitOptions) (scaffoldRequest, erro
 	// A working app needs an explicit provider scope.
 	if len(request.services) == 0 {
 		return request, errors.New("init requires at least one --service")
-	}
-	request.operations, err = parseScaffoldOperations(opts.operations)
-	// Invalid operation selectors must not become partial workspace scope.
-	if err != nil {
-		return request, err
 	}
 	request.selectAll, err = parseScaffoldNames("--select-all", opts.selectAll)
 	// Invalid bulk selectors must fail alongside explicit operation validation.
@@ -338,7 +335,12 @@ func parseUnifiedInitSelections(opts *unifiedInitOptions) (scaffoldRequest, erro
 		return request, err
 	}
 	request.mcpRequests, err = parseMCPInitFlags(opts.importedMCP)
-	return request, err
+	// Invalid imported scope must never fall back to all physical operations.
+	if err != nil {
+		return request, err
+	}
+	request.defaultAllOperations = true
+	return request, nil
 }
 
 // validateUnifiedInitAttachment requires an explicit registration before a new app can receive selected events.

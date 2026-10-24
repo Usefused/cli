@@ -11,16 +11,18 @@ editable workspace skeleton:
 ```bash
 fused-cli workspace init
 fused-cli init customer-app \
-  --service okta@v2 \
-  --operation okta=listLogEvents
+  --service 'okta@v2=listLogEvents'
 fused-cli init my-sdk --sdk \
-  --service okta@v2 \
-  --operation okta=listLogEvents
+  --service 'okta@v2=listLogEvents'
 fused-cli init support-agent --mcp \
-  --description "Help support teams manage issues" \
-  --service jira@v3 \
-  --select-all jira
+  --description "Update support issues and notify the owning team in Slack." \
+  --service 'jira@v3=issueUpdate;slack=chatPostMessage'
 ```
+
+Quote the service value: semicolons separate services, and commas separate
+operations within one service. `--service 'jira;slack'` selects all operations
+from both services. `--service 'slack=chatPostMessage,conversationsList;jira=issueUpdate'`
+selects only those operations. Bare and scoped services can be mixed.
 
 The default output follows `.fused/` discovery; `-f <path>` overrides it. An
 existing file is never replaced implicitly. Use top-level `extend` to merge
@@ -29,8 +31,7 @@ existing YAML to infer SDK, API, or MCP mode:
 
 ```bash
 fused-cli extend my-sdk \
-  --service stripe@2026-08-01 \
-  --operation stripe=createPayment
+  --service 'stripe@2026-08-01=createPayment'
 ```
 
 The same YAML path is updated; Fused keeps the stable app family and creates a
@@ -43,14 +44,16 @@ always pass it when the current version is a prerelease or not SemVer.
 Top-level init requires at least one service and resolves an omitted provider
 version to one concrete enabled or latest public version. With no method flag,
 it creates one App with SDK, MCP, and REST delivery. Use `--sdk`, `--mcp`, or
-`--rest` (also available as `--api`) for a single method. In a terminal, omit
-operation flags to choose all operations or search a narrower set. The combined
+`--rest` (also available as `--api`) for a single method. Bare services select
+all operations automatically; inline lists select a narrower set. The combined
 App uses one `kind: sdk` file with `generate: true` and an `mcp` section. Its
 immutable version and execution token are shared by all three methods.
 If a version is not enabled, the CLI asks once to enable it and create the app; workspace and app changes
 still receive separate plan receipts. `--no-input` and `CI=true` skip prompts
-and require explicit selections for each service: `--operation`, `--select-all`,
-or imported capability flags such as `--mcp-tool` for standalone MCP apps. Top-level init does not support `--json`.
+and accept the same bare or scoped service selectors. Repeated service flags,
+comma-separated bare services, `--operation`, and `--select-all` remain supported.
+Explicit legacy operation, event, or imported capability selections preserve
+their scope without adding all operations. Top-level init does not support `--json`.
 
 Use `--no-apply` on init or extend when only preparing files for later review.
 The CLI still resolves concrete service version list --registry, operation selections,

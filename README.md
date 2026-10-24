@@ -133,14 +133,20 @@ See [configuration and deployment](docs/CONFIG_AS_CODE.md) for the full workflow
 ## Use service operations directly
 
 You can also select individual service operations for an SDK, REST API, or
-MCP server. For example, create an app using Linear:
+MCP server. For example, create an app using Jira and Slack:
 
 ```bash
-fused-cli init support-app --service linear
+fused-cli init support-app --service 'jira=issueUpdate;slack=chatPostMessage'
 ```
 
-The interactive setup lets you select operations and review the configuration.
-It creates a typed SDK, an MCP endpoint, and REST access for the same app.
+Semicolons separate services, and commas separate operations within one service:
+`--service 'slack=chatPostMessage,conversationsList;jira=issueUpdate'`.
+Quote the value so the shell preserves the semicolons. Bare services, such as
+`--service 'jira;slack'`, automatically select all operations, including with
+`--no-input`.
+
+Setup lets you review the configuration, then creates a typed SDK, an MCP
+endpoint, and REST access for the same app.
 Add `--sdk`, `--mcp`, or `--rest` when you need only one of these interfaces.
 Use `extend` to add services to an existing app.
 

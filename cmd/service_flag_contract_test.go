@@ -7,7 +7,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// TestEveryServiceFlagSharesTheMultiSelectorContract prevents singular service flags from bypassing comma, repetition, or version syntax.
+// TestEveryServiceFlagSharesTheMultiSelectorContract verifies grouped app selectors and legacy service-only command selectors retain their distinct grammars.
 func TestEveryServiceFlagSharesTheMultiSelectorContract(t *testing.T) {
 	found := make([]string, 0)
 	var inspect func(*cobra.Command)
@@ -17,12 +17,17 @@ func TestEveryServiceFlagSharesTheMultiSelectorContract(t *testing.T) {
 		// Only commands that define --service locally own its parsing contract.
 		if flag != nil && command != webhookListCmd {
 			found = append(found, command.CommandPath())
-			// Cobra's stringSlice value is what accepts both comma-separated and repeated flag forms.
-			if flag.Value.Type() != "stringSlice" {
-				t.Errorf("%s --service uses %s, want stringSlice", command.CommandPath(), flag.Value.Type())
+			wantType, wantHelp := "stringSlice", "comma-separated or repeatable"
+			// App selectors own comma-separated operation lists and must bypass Cobra's CSV splitting.
+			if command.Parent() == RootCmd && (command.Name() == "init" || command.Name() == "extend") {
+				wantType, wantHelp = "stringArray", "bare services select all operations; quote semicolons"
+			}
+			// The flag type must preserve the delimiters owned by that command's grammar.
+			if flag.Value.Type() != wantType {
+				t.Errorf("%s --service uses %s, want %s", command.CommandPath(), flag.Value.Type(), wantType)
 			}
 			// Help must expose both canonical version syntax and the two supported multi-value forms.
-			if !strings.Contains(flag.Usage, "<service>") || !strings.Contains(flag.Usage, "@<version>") || !strings.Contains(flag.Usage, "comma-separated or repeatable") {
+			if !strings.Contains(flag.Usage, "<service>") || !strings.Contains(flag.Usage, "@<version>") || !strings.Contains(flag.Usage, wantHelp) {
 				t.Errorf("%s --service help does not describe the shared selector contract: %q", command.CommandPath(), flag.Usage)
 			}
 		}

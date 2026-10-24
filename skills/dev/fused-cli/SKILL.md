@@ -266,14 +266,17 @@ types. `workspace plan|apply` and `webhook plan|apply` manage their own configs.
 Use top-level `init` for a working SDK, central API app, or MCP server; do not
 hand-build the base fields:
 
-Every `--service` flag accepts comma-separated selectors or repeated flags.
-Use canonical `<service>@<version>` when pinning an immutable version; omit the
-suffix where the command permits all versions or its documented default.
+For `init` and `extend`, use one quoted `--service 'jira;slack'` to select all
+operations, or `--service 'slack=chatPostMessage,conversationsList;jira=issueUpdate'`
+for per-service operation lists. Semicolons separate services; commas separate
+operations. Keep the value quoted for the shell. Use `<service>@<version>` to
+pin an immutable version. Repeated flags, comma-separated bare services, and
+legacy `--operation`/`--select-all` remain supported.
 
 ```shell
-fused-cli init <name> --sdk --service '<service>[@<version>]' --operation '<service>=<operationId>'
-fused-cli init <name> --rest --service '<service>[@<version>]' --select-all '<service>'
-fused-cli init <name> --mcp --description '<user-facing purpose>' --service '<service>[@<version>]' --select-all '<service>'
+fused-cli init <name> --sdk --service '<service>[@<version>]=<operationId>[,<operationId>...]'
+fused-cli init <name> --rest --service '<service>[@<version>]'
+fused-cli init <name> --mcp --description '<user-facing purpose>' --service '<service>[@<version>]'
 ```
 
 Result: missing services are enabled, the app file is created under
@@ -299,10 +302,11 @@ runtime contract hash, float to another version, or repeat the repair. API,
 MCP, ordinary `app plan`, and unrelated errors remain read-only with respect to
 snapshot refresh.
 
-In a terminal, omit the mode to choose one. Omit operation flags to accept all
-operations with Enter or open the shared searchable selector. With `--no-input`
-or `CI=true`, provide exactly one mode and explicit `--operation` or
-`--select-all` coverage for every service.
+Omitting the mode creates the combined App. Bare services automatically select
+all physical operations, including with `--no-input` or `CI=true`; inline lists
+select only the named operations. Explicit legacy operations, event selections,
+or imported MCP flags preserve their scope without adding all physical operations.
+Non-interactive standalone MCP creation also requires `--description`.
 
 To add another selection, use `fused-cli extend <name>`. It reads the existing
 YAML to infer SDK, API, or MCP mode. Existing identity and selections remain, new entries are merged once, and an

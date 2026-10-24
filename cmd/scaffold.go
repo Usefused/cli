@@ -68,6 +68,8 @@ type scaffoldRequest struct {
 	generateSet                bool
 	skipConfirmation           bool
 	webhookSecrets             map[string]string
+	// Apply bare-service defaults only after aliases resolve, so explicit scopes cannot accidentally gain all operations.
+	defaultAllOperations bool
 }
 
 type scaffoldService struct {

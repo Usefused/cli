@@ -44,7 +44,10 @@ func newUnifiedExtendCommandWithRunner(runner unifiedInitRunner) *cobra.Command 
 
 The config determines whether the app is a generated SDK, direct API app, or
 MCP server. A real change without --version advances a stable version to its
-next minor release; pass --version to choose a different immutable successor.`,
+next minor release; pass --version to choose a different immutable successor.
+Use --service 'jira;slack' for all operations, or
+--service 'jira=issueUpdate;slack=chatPostMessage' for selected operations.
+Quote the value so the shell preserves semicolons.`,
 		Args: cobra.ExactArgs(1),
 		RunE: WithTelemetry("cli.extend", func(cmd *cobra.Command, args []string) error {
 			target, err := resolveUnifiedExtendTarget(args[0])
@@ -64,8 +67,8 @@ next minor release; pass --version to choose a different immutable successor.`,
 	addMCPInitFlags(command, &opts.importedMCP)
 	command.Flags().BoolVar(&opts.noApply, "no-apply", false, "Plan extension without applying, generating, or downloading")
 	command.Flags().BoolVar(&opts.noToken, "no-token", false, "Apply without an auto-issued execution token")
-	command.Flags().StringSliceVar(&opts.services, "service", nil, "Registry service as <service>[@<version>]; comma-separated or repeatable")
-	command.Flags().StringSliceVar(&opts.operations, "operation", nil, "Selected operation as <service>=<operationId>; repeatable")
+	command.Flags().StringArrayVar(&opts.services, "service", nil, "Services as '<service>[@<version>][=<operationId>,...];...'; bare services select all operations; quote semicolons")
+	command.Flags().StringSliceVar(&opts.operations, "operation", nil, "Legacy operation selector <service>=<operationId>; prefer --service 'service=operation1,operation2'")
 	command.Flags().StringSliceVar(&opts.selectAll, "select-all", nil, "Service whose complete operation surface should be selected; repeatable")
 	command.Flags().StringVar(&opts.version, "version", "", "Explicit immutable successor version")
 	command.Flags().StringVar(&opts.description, "description", "", "Complete replacement for the MCP description on the successor")
@@ -249,17 +252,12 @@ func buildUnifiedExtendRequest(cmd *cobra.Command, target unifiedExtendTarget, o
 func parseUnifiedExtendSelections(target unifiedExtendTarget, opts *unifiedExtendOptions) (scaffoldRequest, error) {
 	request := scaffoldRequest{}
 	var err error
-	request.services, err = parseScaffoldServices(opts.services, false)
+	request.services, request.operations, err = parseAppServiceSelections(opts.services, opts.operations)
 	// Malformed service references must not be inherited into the existing config.
 	if err != nil {
 		return request, err
 	}
 	request.services = inheritUnifiedExtendServiceVersions(request.services, target.config)
-	request.operations, err = parseScaffoldOperations(opts.operations)
-	// Operation syntax must be valid before merging any additions.
-	if err != nil {
-		return request, err
-	}
 	request.selectAll, err = parseScaffoldNames("--select-all", opts.selectAll)
 	// Physical flag errors remain authoritative before imported selection parsing.
 	if err != nil {
@@ -270,7 +268,13 @@ func parseUnifiedExtendSelections(target unifiedExtendTarget, opts *unifiedExten
 		return request, errors.New("imported MCP capability flags require an MCP app")
 	}
 	request.mcpRequests, err = parseMCPInitFlags(opts.importedMCP)
-	return request, err
+	// Invalid imported scope must never fall back to all physical operations.
+	if err != nil {
+		return request, err
+	}
+	// A bare terminal extension still opens the existing-service picker; only explicit service flags opt into defaults.
+	request.defaultAllOperations = len(opts.services) > 0
+	return request, nil
 }
 
 // validateUnifiedExtendOverrides prevents empty or mode-incompatible replacements from changing app identity.

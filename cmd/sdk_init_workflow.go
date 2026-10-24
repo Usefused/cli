@@ -403,6 +403,10 @@ func resolveSDKInitServices(request scaffoldRequest, client *api.Client) (scaffo
 	// Binding step names remain stable while their provider selectors follow canonical workspace aliases.
 	request.selectAll = rewriteSDKInitNames(request.selectAll, aliases)
 	request.events = rewriteSDKInitEvents(request.events, aliases)
+	// Resolve aliases before assigning defaults so legacy or imported scope expressed by another name stays narrow.
+	if request.defaultAllOperations {
+		completeAppServiceSelections(&request, aliases)
+	}
 	return request, resolved, nil
 }
 
@@ -414,15 +418,16 @@ func completeSDKInitOperationSelections(cmd *cobra.Command, client *api.Client, 
 		usesSelectAll := containsString(request.selectAll, service.target.slug)
 		// Mutually exclusive selection encodings must fail before a missing workspace service is activated.
 		if len(explicitOperations) > 0 && usesSelectAll {
-			return scaffoldRequest{}, fmt.Errorf("service %q cannot combine --operation with --select-all", service.target.slug)
+			return scaffoldRequest{}, fmt.Errorf("service %q cannot combine explicit operations with --select-all", service.target.slug)
 		}
 		// Explicit operation IDs are verified against the pinned Registry version before workspace planning can mutate membership.
 		if len(explicitOperations) > 0 {
+			// Reject an unavailable operation before activating any requested provider version.
 			if err := validateSDKInitExplicitOperations(client, service, explicitOperations); err != nil {
 				return scaffoldRequest{}, err
 			}
 		}
-		// Explicit --operation and --select-all selections remain authoritative and bypass discovery prompts.
+		// Explicit service operation lists, legacy --operation, and --select-all bypass discovery prompts.
 		if sdkInitServiceHasOperationSelection(request, service.target.slug) {
 			continue
 		}
@@ -432,9 +437,10 @@ func completeSDKInitOperationSelections(cmd *cobra.Command, client *api.Client, 
 		}
 		// Automation must declare its capability boundary rather than silently accepting a Registry-wide operation set.
 		if nonInteractive() {
-			return scaffoldRequest{}, fmt.Errorf("--no-input requires --operation '%s=<operationId>' or --select-all '%s'", service.target.slug, service.target.slug)
+			return scaffoldRequest{}, fmt.Errorf("--no-input requires --service '%s=<operationId>[,<operationId>...]' or --select-all '%s'", service.target.slug, service.target.slug)
 		}
 		operations, selectAll, err := selectSDKOperationsForService(client, service.target.serviceID, service.target.slug, service.version, input, cmd.OutOrStdout())
+		// A cancelled selection must not become an implicit capability grant.
 		if err != nil {
 			return scaffoldRequest{}, err
 		}

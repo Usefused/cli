@@ -18,10 +18,14 @@ func buildWebhookInitRequest(cmd *cobra.Command, name string, opts *unifiedInitO
 			return scaffoldRequest{}, fmt.Errorf("--%s cannot be used with --webhook", flag)
 		}
 	}
-	services, err := parseScaffoldServices(opts.services, false)
+	services, operations, err := parseAppServiceSelections(opts.services, nil)
 	// Ambiguous service syntax must fail before selecting a local destination.
 	if err != nil {
 		return scaffoldRequest{}, err
+	}
+	// Ingress registrations accept grouped services but cannot expose callable operation scope.
+	if len(operations) > 0 {
+		return scaffoldRequest{}, errors.New("--service operation lists cannot be used with --webhook")
 	}
 	// A registration without services cannot receive any delivery.
 	if len(services) == 0 {

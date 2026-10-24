@@ -119,24 +119,25 @@ functions; it does not introduce a new resource kind or receipt boundary.
 ```bash
 # Create one App with all three delivery methods
 fused-cli init customer-app \
-  --service '@google/drive' \
-  --operation '@google/drive=listFiles'
+  --service '@google/drive=listFiles'
 
 # Generate, apply, and download a typed SDK
 fused-cli init google-workspace --sdk \
-  --service '@google/drive' \
-  --operation '@google/drive=listFiles'
+  --service '@google/drive=listFiles'
 
 # Apply the same unified app without generating a package
 fused-cli init google-api --rest \
-  --service '@google/drive' \
-  --select-all '@google/drive'
+  --service '@google/drive'
 
 # Deploy an Engine-hosted MCP server
 fused-cli init support-agent --mcp \
-  --description 'Help support teams manage issues' \
-  --service jira \
-  --select-all jira
+  --description 'Update support issues and notify the owning team in Slack.' \
+  --service 'jira=issueUpdate;slack=chatPostMessage'
+
+# Select all operations from both services
+fused-cli init support-tools --mcp \
+  --description 'Manage support issues and Slack conversations.' \
+  --service 'jira;slack'
 ```
 
 The default writes one `kind: sdk` config with `generate: true` and an
@@ -144,9 +145,17 @@ The default writes one `kind: sdk` config with `generate: true` and an
 downloads the typed package and reports the hosted MCP URLs. The issued
 execution token works for generated SDK, MCP, and REST calls to that App.
 
-`--service <service>[@<version>]` accepts comma-separated values or repeated
-flags. `--operation <service>=<operationId>` and `--select-all <service>` are
-repeatable. An omitted provider version resolves to
+Use one quoted `--service '<service>[@<version>][=<operationId>,...];...'`
+value. Semicolons separate services; commas separate operations within a service.
+A bare service selects all its operations, including with `--no-input`.
+For example, `--service 'slack=chatPostMessage,conversationsList;jira@v3=issueUpdate'`
+selects two Slack operations and one Jira operation at version `v3`.
+Mix bare and scoped services with `--service 'jira;slack=chatPostMessage'`.
+Always quote values containing semicolons so the shell passes one argument.
+Repeated service flags, comma-separated bare services, legacy `--operation`,
+and `--select-all` remain supported. Explicit legacy operation, event, or
+imported MCP selections preserve their scope without adding all operations.
+An omitted provider version resolves to
 the latest enabled workspace version, or the latest public Registry version
 when activation is needed. New SDK/MCP configs default to app version `1.0.0`;
 generated SDKs default to TypeScript. Use `--language go` for a Go module or
@@ -166,15 +175,11 @@ including `app apply --download` for generated SDKs, and tells users to re-plan
 if a retained receipt becomes stale.
 
 Omitting the method flag creates the combined App in terminals and automation.
-If a
-service has no operation flags, standalone MCP apps with imported capabilities
-show a searchable combined picker with nothing preselected. Other services use
-the endpoint selector, whose highlighted default is **All operations**;
-choose the narrower path to search by operation ID, method, path, description,
-or tag. In automation, `--no-input` or `CI=true` requires
-explicit endpoint flags or, for standalone MCP apps, imported flags such as
-`--mcp-tool` for every service. Non-interactive
-MCP creation also requires `--description`.
+Bare services select all physical operations without an operation picker.
+Use an inline operation list for a narrower scope, or imported flags such as
+`--mcp-tool` for standalone MCP capabilities. `--no-input` and `CI=true`
+accept the same bare or scoped service selectors. Non-interactive MCP creation
+also requires `--description`.
 
 Creation refuses to replace an existing path before any remote plan. Extension is additive and
 idempotent through the top-level `extend` command described below.
@@ -303,8 +308,7 @@ Add services or operations to an existing SDK, direct API app, or MCP server:
 
 ```bash
 fused-cli extend support-sdk \
-  --service slack \
-  --select-all slack
+  --service 'slack=chatPostMessage,conversationsList;jira=issueUpdate'
 ```
 
 The command finds the existing `.fused/sdks/<name>.yaml` or
@@ -321,10 +325,12 @@ confirmation shows that identity, and `--no-input` or `CI=true` uses the same
 deterministic inference. An idempotent repeat keeps the current version. Pass
 `--version` to override inference; prerelease and non-SemVer versions require it.
 
-`--service <service>[@<version>]`, `--operation
-<service>=<operationId>`, and `--select-all <service>` retain the same meanings
-as init. Omit operation flags in a terminal to accept all operations or use the
-searchable selector. The command reuses the same activation, plan, apply, SDK
+`--service '<service>[@<version>][=<operationId>,...];...'` retains the same
+meaning as init: bare services select all operations; inline lists add only
+those operations. Omitted provider versions inherit existing app pins.
+Legacy `--operation` and `--select-all` remain supported. Running `extend`
+without selection flags in a terminal opens the searchable selector for
+existing services. The command reuses the same activation, plan, apply, SDK
 download, API next-step, and MCP deployment functions as initial creation.
 
 ## `skill`
@@ -1326,9 +1332,10 @@ config, `--no-apply` to save desired state and available receipts for review, or
 `--no-token` to skip issuing an execution token. Existing service version list --registry are
 inherited on extend, so there is no need to repeat `--service`.
 
-In a terminal, omit selection flags to search and select endpoints, tools,
-prompts, resources, and resource templates in one picker. No imported capability
-is preselected. Services with no imported capabilities retain the endpoint picker.
+Bare `--service` selectors select all physical operations. Use imported
+capability flags to select tools, prompts, resources, or resource templates.
+Running `extend` without selection flags in a terminal opens the combined
+picker for existing services; no imported capability is preselected.
 
 For automation or precise selection, repeat any of:
 
@@ -1337,8 +1344,8 @@ For automation or precise selection, repeat any of:
 - `--mcp-resource '<service>=<URI>'`
 - `--mcp-resource-template '<service>=<URI-template>'`
 
-Values retain commas and equals signs. Physical `--operation` and `--select-all`
-flags can be combined with these flags. `--mcp-all <service>` freezes all currently
+Values retain commas and equals signs. Physical `--service 'service=operation1,operation2'`
+selections and `--select-all` can be combined with these flags. `--mcp-all <service>` freezes all currently
 saved capabilities into explicit lists; future catalog additions are excluded.
 It cannot be combined with individual imported choices for that service.
 Imported flags require standalone `--mcp` on init or an existing `kind: mcp`

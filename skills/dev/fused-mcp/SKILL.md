@@ -247,9 +247,10 @@ config, `--no-apply` to save desired state and available receipts for review, or
 `--no-token` to skip issuing an execution token. Existing service version list --registry are
 inherited on extend, so there is no need to repeat `--service`.
 
-In a terminal, omit selection flags to search and select endpoints, tools,
-prompts, resources, and resource templates in one picker. No imported capability
-is preselected. Services with no imported capabilities retain the endpoint picker.
+Bare `--service` selectors select all physical operations. Use imported flags
+to select tools, prompts, resources, and resource templates. Running `extend`
+without selection flags in a terminal opens the combined picker for existing
+services; no imported capability is preselected.
 
 For automation or precise selection, repeat any of:
 
@@ -258,7 +259,7 @@ For automation or precise selection, repeat any of:
 - `--mcp-resource '<service>=<URI>'`
 - `--mcp-resource-template '<service>=<URI-template>'`
 
-Values retain commas and equals signs. Physical `--operation` and `--select-all`
+Values retain commas and equals signs. Physical `--service 'service=operation1,operation2'` and `--select-all`
 flags can be combined with these flags. `--mcp-all <service>` freezes all currently
 saved capabilities into explicit lists; future catalog additions are excluded.
 It cannot be combined with individual imported choices for that service.
@@ -346,12 +347,17 @@ to both. Registry stores no MCP runtime/config/package data.
 This list may be behind the CLI's actual flags/subcommands -- run
 `fused-cli app <subcommand> --help` to confirm before relying on one. The
 `fused-cli` skill documents init's batched server-variable enrichment.
-`--service` accepts comma-separated selectors or repeated flags; MCP selections
-use canonical `<service>@<version>` to name their exact immutable version.
+`init` and `extend` accept one quoted `--service 'jira;slack'` for all physical
+operations, or `--service 'slack=chatPostMessage,conversationsList;jira=issueUpdate'`
+for selected operations. Semicolons separate services; commas separate operations.
+Use `<service>@<version>` to pin an immutable version. Bare services select all
+physical operations in terminals and automation. Explicit legacy operations,
+events, or imported capability flags retain their narrower scope. Repeated
+service flags and legacy `--operation`/`--select-all` remain supported.
 
 ```shell
-fused-cli init <name> --mcp --description '<LLM-authored capability summary>' --service '<service>[@<version>]' [--operation '<service>=<operationId>'] [--webhook-attachment <name> --events '<service>=<event>[,<event>...]']
-fused-cli extend <name> [--version <new>] [--description '<replacement capability summary>'] --service '<service>[@<version>]' --select-all '<service>'
+fused-cli init <name> --mcp --description '<LLM-authored capability summary>' --service '<service>[@<version>][=<operationId>,...]' [--webhook-attachment <name> --events '<service>=<event>[,<event>...]']
+fused-cli extend <name> [--version <new>] [--description '<replacement capability summary>'] --service '<service>[@<version>][=<operationId>,...]'
 fused-cli app plan
 fused-cli app apply
 fused-cli app validate
