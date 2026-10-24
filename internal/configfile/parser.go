@@ -585,10 +585,6 @@ func validateSDKKindFields(cfg *AppConfig) error {
 	if cfg.FusedIntelligentClassifier {
 		return fmt.Errorf("sdk config must not set fused-intelligent-classifier")
 	}
-	// Skill prose is generated only for standalone MCP versions, which own a served skill snapshot.
-	if cfg.FusedSkillPolish {
-		return fmt.Errorf("sdk config must not set fused-skill-polish")
-	}
 	// SDK generation supports only Registry-owned emitters.
 	if !isSDKLanguage(cfg.Language) {
 		return fmt.Errorf("invalid language %q", cfg.Language)
@@ -639,8 +635,8 @@ func validateUnifiedAppKindFields(cfg *AppConfig) error {
 	if err := validateExecutionCodeSource(cfg); err != nil {
 		return err
 	}
-	// Classifier and skill-prose consent have no effect on authored execution and must not enter its immutable state.
-	if cfg.FusedIntelligentClassifier || cfg.FusedSkillPolish {
+	// Classifier consent has no effect on authored execution and must not enter its immutable state.
+	if cfg.FusedIntelligentClassifier {
 		return fmt.Errorf("Unified App config must not set MCP-only discovery fields")
 	}
 	// The browser editor includes a human-readable summary; keep it bounded like other app metadata.

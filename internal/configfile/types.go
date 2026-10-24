@@ -217,8 +217,6 @@ type AppConfig struct {
 	Description string `yaml:"description,omitempty" json:"description,omitempty"`
 	// FusedIntelligentClassifier opts an immutable MCP version into Registry-hosted Jev classification.
 	FusedIntelligentClassifier bool `yaml:"fused-intelligent-classifier,omitempty" json:"fused-intelligent-classifier,omitempty"`
-	// FusedSkillPolish opts an immutable MCP version into Registry LLM prose for its served skill resource.
-	FusedSkillPolish bool `yaml:"fused-skill-polish,omitempty" json:"fused-skill-polish,omitempty"`
 	// MCP opts an SDK-kind version into hosted transport using the same App ID and execution token.
 	MCP      *AppMCPDelivery `yaml:"mcp,omitempty" json:"mcp,omitempty"`
 	Language string          `yaml:"language,omitempty" json:"language,omitempty"`
