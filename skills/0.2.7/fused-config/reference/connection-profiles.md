@@ -8,8 +8,8 @@ document (see `reference/openapi-postman.md`).
 
 ## Auth vs. connect vs. profile
 
-Three related but distinct things, all under a bucket's
-`service_config.<slug>` (see `fused-bucket`):
+Authentication metadata, stored credentials, and routing profiles are separate
+(see `fused-bucket` for credential setup):
 
 - `auth` (`AuthConfig`) — a static credential the Engine attaches to every
   call for this service. Which fields it needs depends on `auth_type`:
@@ -20,40 +20,19 @@ Three related but distinct things, all under a bucket's
   | `api_key` | `api_key` |
   | `mtls` | `cert`, `key` |
   | `bearer` | `token` |
-  | `oauth` / `oidc` | `token` — a *pre-obtained* static token, not the interactive flow below |
+  | `oauth` / `oidc` | `client_id`, `client_secret` — application pair for the flow below |
 
   Credential values themselves belong in a bucket secret (see
   `fused-bucket`), not inline here.
-- `connect` — the interactive per-user OAuth/OIDC flow: app registration
-  (`client_id`/`client_secret`) plus `redirect_uri`. Only `auth_type: oauth`
-  or `oidc` are valid here — `basic`/`api_key`/`bearer`/`mtls` credentials
-  don't have a browser consent step, so they only ever go through `auth`
-  above.
-
-  Registered via `fused-cli connect set <service-slug>` only (see
-  `fused-bucket`) — there is no workspace.yaml field for it. This registers
-  the app registration directly against the Engine admin endpoint — no
-  plan/apply, immediate effect, the same "upsert with no separate apply
-  step" category as `secret set`/`value set`. It is also *not* the same
-  storage as `auth`'s bucket secrets: `auth` credentials and `connect`'s
-  client_id/client_secret used to be reachable through the same `fused-cli
-  secret set <service-slug>` command and the same derived key, which meant a
-  static credential and an app registration could silently overwrite each
-  other if both were ever configured for the same service+bucket. `connect
-  set` writes to its own dedicated storage instead, so that collision cannot
-  happen. It also supports partial updates — e.g. `fused-cli connect set jira
-  'redirect_uri=https://...'` rotates only `redirect_uri` without resupplying
-  `client_id`/`client_secret`, since the admin API never returns decrypted
-  values for a caller to resend anyway. A declarative workspace.yaml
-  `connect:` block used to exist alongside this command but was removed —
-  it always required every field on every apply, which `connect set`'s
-  partial-update support made strictly worse, and having two ways to
-  register the same app was the exact kind of duplicated decision-making
-  workspace.yaml is meant to avoid.
-
-  Registering the app is separate from any one user connecting: start an
-  actual user session with `fused-cli workspace service connect <slug>
-  --user-ref <end-user-reference>` (see `fused-bucket`).
+- `connect` — OAuth/OIDC application credentials and user consent.
+  Store the complete `client_id`/`client_secret` pair with
+  `fused-cli connect <service-slug> --bucket <bucket> --type oauth --auth-name <scheme>`.
+  Terminal prompts collect both fields; automation uses one quoted
+  `"client_id=value, client_secret=value"` argument and `--no-input`.
+  The pair is saved atomically. Partial updates and `redirect_uri` input are
+  rejected; Engine derives the callback from its public URL.
+  Start user consent separately with `fused-cli service connect <service-slug>
+  --bucket <bucket> --user-ref <end-user-reference>`.
 - `profile` — the fuller `resource_discovery`/`resource_input`/`metadata`/
   `bindings` rule set below, for OAuth/OIDC services where one token can
   reach several sites/shops/portals/accounts.

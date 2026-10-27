@@ -39,15 +39,14 @@ baseline), read `fused-notifications`.
 
 Never put a real credential value inline in a config file being committed to
 source control. For a static `auth` credential (token/api_key/basic/mtls),
-use a bucket secret (`fused-cli secret set <service-slug>` -- see
+use a bucket secret (`fused-cli connect <service-slug>` -- see
 `fused-bucket`): it's resolved by the Engine itself, so it works the same
 whether `apply` runs from a laptop or CI. Binding literal values have the
 same bucket-secret path via `fused-cli value`.
 
-OAuth `connect` app registration's `client_secret` uses this same
-bucket-secret path -- `${bucket.secret.<key>}` -- resolved by the Engine at
-apply time against this connect config's own bucket, same as `auth` (see
-`reference/connection-profiles.md`).
+Store OAuth/OIDC application credentials as a complete pair with
+`fused-cli connect <service-slug> --bucket <bucket> --type oauth --auth-name <scheme>`.
+Engine derives the callback URL (see `reference/connection-profiles.md`).
 
 ## Permissions and team access
 
@@ -61,7 +60,7 @@ Follow the lifecycle of the command that owns the config:
   even when the caller otherwise has workspace access.
 - Importing `x-fused-connect` through OpenAPI/Postman needs `catalogue.import`;
   reading the import session needs `catalogue.read`.
-- `connect set` needs `credentials.manage` and `service.consume`; starting a
+- `connect` needs `credentials.manage` and `service.consume`; starting a
   connect session needs `connection.manage`, `bucket.use`, and
   `service.consume`.
 

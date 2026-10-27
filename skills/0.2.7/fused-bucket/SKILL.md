@@ -1,6 +1,6 @@
 ---
 name: fused-bucket
-description: "Use when the user wants to manage Fused bucket credentials using fused-cli -- storing static secrets or values, registering or checking a service's OAuth/OIDC app (client_id/client_secret/redirect_uri), starting an OAuth/OIDC connect session for a user, or listing/selecting a connected user's provider resources. Trigger on 'bucket', 'secret', 'fused-cli secret', 'fused-cli value', 'fused-cli connect', 'OAuth connect', 'register OAuth app', 'check connect config', 'connection resources', or 'connected resource'. For the auth_type/connect config field shapes themselves, or how a resource's fields get bound into a request, read fused-config."
+description: "Use when the user wants to manage Fused bucket credentials using fused-cli -- storing static secrets or values, registering or checking a service's OAuth/OIDC app (client_id/client_secret), starting an OAuth/OIDC connect session for a user, or listing/selecting a connected user's provider resources. Trigger on 'bucket', 'secret', 'fused-cli connect', 'fused-cli bucket value', 'OAuth connect', 'register OAuth app', 'check connect config', 'connection resources', or 'connected resource'. For the auth_type/connect config field shapes themselves, or how a resource's fields get bound into a request, read fused-config."
 ---
 
 # Buckets, secrets, and connections
@@ -14,7 +14,7 @@ A workspace commonly has more than one bucket for the same service -- e.g.
 a `staging` bucket and a `production` bucket each holding a different
 Stripe API key, or a per-customer bucket in a multi-tenant setup. Bucket
 read/value commands and workspace connect take bucket names (or full UUIDs as
-an automation fallback); secret set/delete may omit `--bucket` to use the default.
+an automation fallback); connect and credential deletion may omit `--bucket` to use the default.
 
 Ownership and access are separate. A team can manage a bucket while a platform
 administrator grants everyone bounded use with `fused-cli workspace access
@@ -23,33 +23,13 @@ select the bucket for an SDK or MCP server, but does not let workspace members
 read values, change secrets, or manage connections. Use `workspace access
 bucket revoke <bucket-name>` to remove only that global use binding.
 
-```yaml
-buckets:
-  <bucket-name>:
-    service_config:
-      <service-slug>:
-        auth: {...}       # see fused-config for the auth_type shape
-```
-
-That `buckets:` block is real -- workspace.yaml can declaratively set
-`service_config.<slug>.auth` and generic `secrets.<key>` ($ENV-only, no
-literals) for a bucket, and `plan`/`apply` does read and apply it. What it
-cannot do is **create the bucket itself**: apply resolves each
-`buckets.<name>` key against an existing bucket by name, and if no bucket
-with that name exists yet, apply fails outright with "bucket not found" --
-it never creates one implicitly. **The only way to create a bucket is
-`fused-cli bucket create <bucket-name>`** below. Always create the
-bucket first if it might not exist yet, before declaring `buckets.<name>...`
-in workspace.yaml or running any `--bucket <name>` command against it.
-
-A service's OAuth/OIDC app registration (`connect`) is never a workspace.yaml
-field -- it's set only via `fused-cli connect set <slug>` below, an immediate
-admin action against its own endpoint, not something `plan`/`apply` sees or
-touches.
+Create the bucket with `fused-cli bucket create <bucket-name>` before configuring
+credentials. Store service credentials with `fused-cli connect <service-slug>
+--bucket <bucket-name>`; credential setup takes effect immediately.
 
 Every command list below may be behind the CLI's actual flags/subcommands --
 run `fused-cli <command> --help` (e.g. `fused-cli bucket --help`, `fused-cli
-secret --help`, `fused-cli connection resources --help`) to confirm before
+connect --help`, `fused-cli connection resources --help`) to confirm before
 relying on one (see `fused-cli` skill).
 
 ## `${bucket...}` reference syntax across contexts
@@ -63,10 +43,9 @@ rules -- easy to conflate since they look alike:
 | `kind: webhook` `services.<slug>.secret` (`fused-webhook`) | `${bucket.<name>.env\|secret.<key>}` or `${bucket.env\|secret.<key>}` (default bucket) | Explicit (or defaults to `default`) -- webhook verification has no app/dispatch context to fall back on | No -- must be the entire field value |
 | Connection profile `${resource.*}` (`fused-config`) | `${resource.provider_resource_id\|base_url\|metadata.<key>}` | N/A -- not a bucket reference at all, resolves against the selected connection's resource | No -- must be the entire field value |
 
-`fused-cli connect set <slug>` (below) takes `client_id`/`client_secret`/
-`redirect_uri` as literal values only -- it's an immediate admin action, not
-a declarative field, so there is no `${bucket...}`/`$ENV` reference form for
-it to resolve.
+`fused-cli connect <service-slug>` accepts literal credential assignments.
+The shell can expand environment variables; the CLI does not resolve bucket
+references in those assignments. Engine derives the OAuth callback URL.
 
 Using the wrong form in the wrong place is rejected with an explicit error
 naming the unsupported reference -- e.g. a webhook-style named-bucket
@@ -102,7 +81,7 @@ Bucket operations use separate permissions by lifecycle:
   connection listings need `connection.read`.
 - Creating a bucket needs workspace `bucket.manage`. Changing bucket values
   needs `bucket.manage`; changing secrets needs `credentials.manage`.
-- `connect set` needs `credentials.manage` and `service.consume`.
+- `connect` needs `credentials.manage` and `service.consume`.
 - Starting a user connect session needs `connection.manage`, `bucket.use`, and
   `service.consume`. Changing or rediscovering connection resources needs
   `connection.manage`.
@@ -130,96 +109,44 @@ skill's `reference/access-management.md` for the complete role matrix.
 ## Static secrets and values
 
 ```shell
-fused-cli secret list --bucket <bucket-name-or-id>
-# single-value scheme (api_key, bearer, oauth/oidc static token):
-printf '%s' "$TOKEN" | fused-cli secret set <service-slug> --value-stdin [--bucket <bucket-name-or-id>] [--type <scheme>] [--expires-at <RFC3339>]
-# multi-field scheme (basic, mtls): send ONE ';'-joined value over stdin:
-printf '%s' 'username=x;password=y' | fused-cli secret set <service-slug> --value-stdin [--bucket <bucket-name-or-id>] --type basic
-printf '%s' 'cert=...;key=...' | fused-cli secret set <service-slug> --value-stdin [--bucket <bucket-name-or-id>] --type mtls
-fused-cli secret set <service-slug> --interactive [--bucket <bucket-name-or-id>]
-fused-cli secret delete <service-slug> <key-name> [--bucket <bucket-name-or-id>]
-fused-cli value set <bucket-name-or-id> <service-slug> <location> <key-name> <value>
-fused-cli value list <bucket-name-or-id>
-fused-cli value delete <bucket-name-or-id> <service-slug> <key-name>
+fused-cli bucket secret list <bucket-name-or-id>
+fused-cli connect <service-slug> --bucket <bucket-name-or-id>
+fused-cli connect <service-slug> "<scheme>=$TOKEN" --bucket <bucket-name-or-id> --type bearer --auth-name <scheme> --no-input
+fused-cli connect <service-slug> "username=$USERNAME, password=$PASSWORD" --bucket <bucket-name-or-id> --type basic --no-input
+fused-cli connect <service-slug> "cert=$CERT_PEM, key=$KEY_PEM" --bucket <bucket-name-or-id> --type mtls --no-input
+fused-cli bucket credential delete <service-slug> <key-name> --bucket <bucket-name-or-id>
+fused-cli bucket value set <bucket-name-or-id> <service-slug> <location> <key-name> <value>
+fused-cli bucket value list <bucket-name-or-id>
+fused-cli bucket value delete <bucket-name-or-id> <service-slug> <key-name>
 ```
 
-**There is no `--username`/`--password`/`--cert`/`--key` flag, and `basic`/
-`mtls` are not two separate secrets.** The stdin value is *itself* the whole
-credential: for these schemes it is a `key=value;key=value` string -- not
-comma-separated, not JSON, and not two sequential `set` calls. Credential
-values in argv are rejected so shell history and process listings cannot
-retain them.
+In a terminal, `connect` selects the authentication method and prompts for masked
+credential values. For automation, pass one comma-separated assignment argument
+and `--no-input`. Single values use the auth scheme name; pairs use the field
+names shown above. Use terminal prompts for values containing commas.
+`--type` selects the authentication family; `--auth-name` selects the exact
+scheme. `--bucket` defaults to `default`.
 
-`secret set` is an **upsert with no separate apply step** -- unlike
-workspace/SDK/MCP config, writing a secret takes effect for the *next*
-request immediately, there's nothing to `plan`/`apply` afterward. That also
-means re-running `set` with a new value is how you rotate a credential;
-there's no versioning or grace period, the old value is simply gone.
+Supplying values replaces the selected credentials immediately, with no
+plan/apply step. Supply both fields together for paired credentials.
+`--expires-at <RFC3339>` adds advisory expiry metadata.
 
-If a service declares more than one auth scheme (e.g. both `api_key` and
-`oauth` as alternatives), a bare `set` only auto-picks the scheme when
-there's exactly one -- otherwise pass `--type <scheme-name>` or use `-i` to
-pick interactively. They are always stored as two separate secret keys
-(`<name>_username`/`<name>_password`, or `<name>_cert`/`<name>_key`) once
-parsed out of that one `;`-delimited value, and a client cert/key pair is
-validated (matching pair, not expired) before it's ever stored.
+Generic secrets use `fused-cli bucket secret set <name> --bucket <bucket>` for
+masked entry, or `fused-cli bucket secret set "name=$VALUE" --bucket <bucket>
+--no-input` for automation. Bucket values store non-secret binding values.
 
-`--expires-at` is optional and purely advisory metadata (`secret list` and
-`bucket secrets <bucket-name-or-id>` flag an expired one) -- nothing auto-rotates or
-blocks requests when a secret passes its expiry.
-
-`value` stores arbitrary bucket-scoped values, including literal binding
-values a connection profile references (see `fused-config`).
-
-Prefer bucket secrets/values over local `_env`/`$VAR` handoffs for anything
-committed to source control -- a bucket secret is resolved server-side by
-the Engine, not read off the machine running `apply`. This covers `auth`
-static credentials and binding literals. It does *not* cover `connect`'s
-`client_id`/`client_secret` -- those have their own dedicated command below,
-not `secret set` (a static `auth` credential and a `connect` app registration
-used to be reachable through the same `secret set` command and the same
-derived key, which meant the two could silently overwrite each other if both
-were ever configured for the same service+bucket; `connect set` writes to
-its own storage instead).
-
-## Registering a service's OAuth/OIDC app (connect)
+## Storing a service's OAuth/OIDC application credentials
 
 ```shell
-printf '%s' 'client_id=...;client_secret=...;redirect_uri=https://...' | fused-cli connect set <service-slug> --bucket <bucket-name-or-id> --value-stdin [--type oauth|oidc]
-fused-cli connect set <service-slug> --bucket <bucket-name-or-id> --interactive
+fused-cli connect <service-slug> "client_id=$CLIENT_ID, client_secret=$CLIENT_SECRET" --bucket <bucket-name-or-id> --type oauth --auth-name <scheme> --no-input
+fused-cli connect <service-slug> --bucket <bucket-name-or-id> --type oidc --auth-name <scheme>
 ```
 
-This registers (or rotates) the app credentials a service's interactive
-OAuth/OIDC flow uses -- distinct from any one end user connecting, see the
-next section for that. Like `secret set`/`value set`, this is an **immediate
-admin action**: no workspace.yaml block, no plan/apply, takes effect on save.
-`--type` disambiguates only when a service declares both `oauth` and `oidc`;
-otherwise the sole supported scheme is picked automatically.
-
-Every field is required the first time (there is nothing to fall back to),
-but afterward **omitting a field leaves it unchanged** -- rotating just
-`redirect_uri` does not require resupplying `client_id`/`client_secret`. A
-key present but blank (`'client_secret='`, or an empty interactive answer) is
-different from a key never mentioned: the former is rejected as an attempt
-to blank out a credential, the latter means "leave as-is." This works even
-though the admin API never returns decrypted values back to a caller --
-Engine merges an omitted field in from the existing encrypted row itself, not
-from anything the CLI resent.
-
-```shell
-fused-cli connect get <service-slug> --bucket <bucket-name-or-id>
-```
-
-Reads back whatever the last `set` saved -- `auth_type`, `enabled`,
-`redirect_uri` in plaintext, plus `has_client_id`/`has_client_secret` as
-booleans (never the actual `client_id`/`client_secret`, same as `set`'s
-response). This is the only way to check registration state on demand:
-`bucket services <bucket-name-or-id>` shows just a connect-config count, and
-workspace.yaml/`workspace sync` never reflect this at all -- app
-registration was deliberately taken out of the declarative surface entirely
-(see above), so there is nothing for `plan`/`apply`/`sync` to show. `get`
-fails with a clear error, not a raw 404, when nothing has been registered
-yet for that bucket+service.
+Supply exactly `client_id` and `client_secret` together, including when rotating
+the pair. Partial updates and `redirect_uri` are rejected. Engine derives the
+callback from its public URL. Application credentials are separate from each
+connected user's tokens. Inspect credential metadata with `fused-cli bucket
+services <bucket-name-or-id>`; saved values are never returned.
 
 ## Starting an OAuth/OIDC connection
 

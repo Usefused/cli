@@ -305,32 +305,15 @@ fused-cli workspace plan
 fused-cli workspace apply
 ```
 
-Then register the OAuth app under the bucket that will hold the resulting
-user tokens -- `auth`/`connect` live under `buckets.<bucket>.service_config.
-<slug>`, not under the service itself (see `fused-bucket`). Registering the
-app is a separate, immediate admin action, not a workspace.yaml field:
+Then store the OAuth application pair in the bucket that will hold user tokens:
 
 ```shell
-printf '%s' 'client_id=...;client_secret=...;redirect_uri=https://engine.example.com/workspace/connect/callback' | \
-  fused-cli connect set jira --bucket company-credentials --value-stdin
+fused-cli connect jira "client_id=$CLIENT_ID, client_secret=$CLIENT_SECRET" --bucket company-credentials --type oauth --no-input
 ```
 
-(Omit the value and add `-i` to be prompted per field instead, or see
-`fused-bucket` for how to rotate just one field later without resupplying
-the others.) This is the only way to register the app -- there is no
-workspace.yaml `connect:` field; it was removed in favor of this single
-imperative command, since two ways to declare the same registration (one
-requiring every field on every apply, one supporting partial updates) was
-duplicated decision-making with no upside.
-
-```shell
-fused-cli connect get jira --bucket company-credentials
-```
-
-Checks what's actually registered (`auth_type`/`enabled`/`redirect_uri` plus
-`has_client_id`/`has_client_secret` -- never the decrypted values) -- useful
-since neither `workspace.yaml` nor `workspace sync` reflect this at all, not
-even read-only.
+Omit the assignments and `--no-input` for masked terminal prompts. Both fields
+are required together, including for rotation. Engine derives the callback URL.
+Inspect registration metadata with `fused-cli bucket services company-credentials`.
 
 The `profile` block is omitted above because Registry has exactly one public
 match for this version/auth_type -- see `fused-config` for when you'd need to

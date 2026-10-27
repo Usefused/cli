@@ -15,7 +15,7 @@ import (
 )
 
 // defaultWebhookName is the reserved kind: webhook config name used when
-// `secret set --webhook generate` creates a service's default inbound
+// the legacy webhook setup helper creates a service's default inbound
 // registration. `(service, "default")` is globally unique per account, so a
 // repeat generate reuses the existing registration rather than applying a
 // conflicting duplicate.
@@ -224,7 +224,7 @@ func printRotateSigningSecretHint(client *api.Client, serviceID, serviceSlug str
 // printRotateSigningSecretCommand prints the masked-prompt command that
 // replaces the generated default signing secret in place.
 func printRotateSigningSecretCommand(serviceSlug string) {
-	fmt.Printf("\nTo rotate the signing secret later:\n  fused-cli bucket secret set default %s --interactive\n", webhookSigningSecretKey(serviceSlug))
+	fmt.Printf("\nTo rotate the signing secret later:\n  fused-cli bucket secret set %s --bucket default\n", webhookSigningSecretKey(serviceSlug))
 }
 
 // printSigningSecretOnce reveals the just-generated signing secret and the

@@ -11,7 +11,7 @@ import (
 )
 
 // remediateSDKPlanReadiness optionally applies the successful plan's typed
-// warning through the same secure secret mutation path used by secret set.
+// warning through the same secure secret mutation path used by connect.
 func remediateSDKPlanReadiness(client *api.Client, cfg *configfile.ParsedConfig, readiness *api.CredentialReadiness, opts planOptions) error {
 	targets, err := credentialReadinessTargets(cfg, readiness)
 	// All current and legacy target metadata must validate before the first credential is collected.

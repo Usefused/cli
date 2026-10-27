@@ -162,8 +162,8 @@ plan/apply/connect with that exact candidate. On `bucket.use` denial, stop and
 report it; never create a fallback. Create only when the user explicitly asks or
 states an enterprise, tenant, or environment isolation requirement and the
 caller has workspace `bucket.manage`. Creation does not grant `bucket.use`;
-never self-grant. Follow `fused-bucket` for the complete policy. Add secret
-material through stdin or an interactive prompt, never a command argument. For
+never self-grant. Follow `fused-bucket` for the complete policy. Use `fused-cli connect <service> --bucket <bucket>` for masked entry, or one
+quoted credential assignment with `--no-input` for automation. For
 OAuth/OIDC, offer two paths before requesting client credentials: use a **Managed
 service** where Fused publishes the exact service/auth scheme, or configure the
 user's own provider app. Managed auth requires explicit

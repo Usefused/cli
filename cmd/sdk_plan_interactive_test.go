@@ -99,7 +99,7 @@ func assertSDKPlanBearerSecretRequest(t *testing.T, request *http.Request, secre
 	}
 }
 
-// TestSDKPlanInteractiveRegistersOAuthAppWithoutProviderToken stores only the application pair through secret set.
+// TestSDKPlanInteractiveRegistersOAuthAppWithoutProviderToken stores only the application pair through connect.
 func TestSDKPlanInteractiveRegistersOAuthAppWithoutProviderToken(t *testing.T) {
 	const clientSecret = "oauth-client-secret-never-print"
 	planCalls, secretCalls := 0, 0

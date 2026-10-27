@@ -465,6 +465,9 @@ func TestCLISkillsUseCurrentCommandLanguage(t *testing.T) {
 	stale := []string{
 		"fused-cli bucket <",
 		"fused-cli secret <",
+		"fused-cli secret set",
+		"fused-cli connect set",
+		"fused-cli connect get",
 		"fused-cli service <",
 		"sdk-name-or-family",
 		"app-family-id",

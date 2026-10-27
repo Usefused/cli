@@ -8,8 +8,8 @@ document (see `reference/openapi-postman.md`).
 
 ## Auth vs. connect vs. profile
 
-Three related but distinct things, all under a bucket's
-`service_config.<slug>` (see `fused-bucket`):
+Authentication metadata, stored credentials, and routing profiles are separate
+(see `fused-bucket` for credential setup):
 
 - `auth` (`AuthConfig`) — a static credential the Engine attaches to every
   call for this service. Which fields it needs depends on `auth_type`:
@@ -20,24 +20,19 @@ Three related but distinct things, all under a bucket's
   | `api_key` | `api_key` |
   | `mtls` | `cert`, `key` |
   | `bearer` | `token` |
-  | `oauth` / `oidc` | `token` — a *pre-obtained* static token, not the interactive flow below |
+  | `oauth` / `oidc` | `client_id`, `client_secret` — application pair for the flow below |
 
   Credential values themselves belong in a bucket secret (see
   `fused-bucket`), not inline here.
-- `connect` (`ConnectConfig`) — the interactive per-user OAuth/OIDC flow:
-  app registration (`client_id`/`client_secret`) plus `redirect_uri`. Only
-  `auth_type: oauth` or `oidc` are valid here — `basic`/`api_key`/`bearer`/
-  `mtls` credentials don't have a browser consent step, so they only ever go
-  through `auth` above. `client_secret` must be `${bucket.secret.<key>}` —
-  set the value once as a bucket secret (`fused-cli secret set <service-slug>`
-  -- see `fused-bucket`) and reference it here; Engine resolves it
-  server-side at apply time against this connect config's own bucket, the
-  same as `auth` credentials, so nothing needs to be re-supplied on every
-  apply. The named-bucket form (`${bucket.<name>.secret.<key>}`) is rejected
-  here -- a connect config already belongs to one specific bucket, so naming
-  a different one would only ever mean reading a secret out of the wrong
-  bucket. Start an actual user session with `fused-cli workspace service
-  connect <service-slug> --user-ref <end-user-reference>` (see `fused-bucket`).
+- `connect` — OAuth/OIDC application credentials and user consent.
+  Store the complete `client_id`/`client_secret` pair with
+  `fused-cli connect <service-slug> --bucket <bucket> --type oauth --auth-name <scheme>`.
+  Terminal prompts collect both fields; automation uses one quoted
+  `"client_id=value, client_secret=value"` argument and `--no-input`.
+  The pair is saved atomically. Partial updates and `redirect_uri` input are
+  rejected; Engine derives the callback from its public URL.
+  Start user consent separately with `fused-cli service connect <service-slug>
+  --bucket <bucket> --user-ref <end-user-reference>`.
 - `profile` — the fuller `resource_discovery`/`resource_input`/`metadata`/
   `bindings` rule set below, for OAuth/OIDC services where one token can
   reach several sites/shops/portals/accounts.

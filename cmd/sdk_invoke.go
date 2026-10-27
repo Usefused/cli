@@ -197,7 +197,7 @@ func invalidSDKInvokeUserReference(value string) bool {
 }
 
 // sdkInvokeConfigurableAuthType admits only credential families whose values
-// can be collected safely by the shared secret set command.
+// can be collected safely by the shared connect command.
 func sdkInvokeConfigurableAuthType(value string) bool {
 	switch value {
 	case "api_key", "bearer", "basic", "mtls", "oauth", "oidc":
