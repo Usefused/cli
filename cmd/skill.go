@@ -55,7 +55,7 @@ var skillSpecs = []skillSpec{
 	},
 	{
 		name:    "fused-workspace",
-		summary: "Workspace service allowlist: enabling services and versions, policy, deprecations",
+		summary: "Workspace services, visibility, deprecation, and Registry deletion or deletion dates",
 		manifest: []string{
 			"SKILL.md",
 		},

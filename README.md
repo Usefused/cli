@@ -153,6 +153,33 @@ Use `extend` to add services to an existing app.
 For workflows you want to author yourself, see
 [writing a Unified App in TypeScript](docs/UNIFIED_APPS.md).
 
+## Delete or deprecate a Registry service
+
+Removing a service with `service remove` affects your workspace. To delete an
+owned service from the shared Registry, including every version and consumer:
+
+```bash
+fused-cli service registry lifecycle <service> --json
+fused-cli service registry delete <service> --yes
+```
+
+To deprecate it now and automatically delete it at a future time, or cancel that
+schedule before its deadline:
+
+```bash
+fused-cli service registry deprecate <service> --delete-at 2027-01-01T00:00:00Z --yes
+fused-cli service registry cancel-deletion <service>
+```
+
+Repeat `deprecate` with a new future timestamp to change the deadline. These
+commands require Registry ownership and Engine `service.manage` for mutations;
+they accept an owned slug, `@provider/slug`, or UUID. Full definitions are removed,
+while small service/version/operation identities remain for history. Consumers
+reconcile through their Engines; deletion does not synchronously contact every
+offline Engine. Use the UUID to inspect lifecycle after deletion. The CLI,
+Engine, and Registry must all support these endpoints. The existing
+`service deprecate --at` is advisory and does not automatically delete anything.
+
 ## Use with your coding agent
 
 Install Fused skills so your coding agent can help discover services,

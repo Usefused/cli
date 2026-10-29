@@ -1,6 +1,6 @@
 ---
 name: fused-workspace
-description: "Use when the user wants to configure a Fused workspace's service allowlist using fused-cli -- enabling/disabling or publishing services or versions, distinguishing service visibility from version visibility, listing a service's existing webhook registrations (read-only), or scheduling a deprecation. Trigger on 'workspace config', 'enable a service', 'publish a service', 'service visibility', 'version visibility', 'fused-cli workspace', 'deprecate a service version', 'kind: workspace', or 'type: services' files. For registering a new inbound webhook read fused-webhook instead; for rate limits/retries/pagination/outbound-webhook-verification (execution_policy), connection-profile attachments, or SDK/MCP auth/connect config, read fused-config instead; for bucket credentials read fused-bucket."
+description: "Manage Fused workspace services and Registry service lifecycle with fused-cli: enable or remove services/versions, publish visibility, inspect webhook registrations, delete an owned Registry service, or schedule, inspect, change, or cancel its deletion. Use for workspace config, service allowlists, deprecation, deletion dates, and retained service history. For webhook registration use fused-webhook; for execution policy and connection profiles use fused-config; for credentials use fused-bucket."
 ---
 
 # Workspace config
@@ -87,7 +87,11 @@ merely because the version is public. Version visibility is an independent
 staging control for versions of a public service. After validation, set the
 service `public: true` and confirm the intended version is not staged private.
 
-## Deprecating and removing a service
+## Workspace removal and advisory deprecation
+
+`service remove` changes only workspace membership/configuration. It does not
+delete the Registry definition, even for a private service you own. For deletion
+across consumers, use the explicit Registry lifecycle commands below.
 
 `deprecations` is a **soft, advisory** signal, not an immediate cutoff:
 adding one does not deactivate anything by itself. It records intent (a
@@ -100,10 +104,10 @@ Removal itself is blocked by default if any SDK/MCP config in the same
 Registry account still references the service or version being removed --
 the plan comes back with a blocker requiring an explicit decision rather
 than silently breaking those configs. Pass `--force` on the corresponding
-delete command to accept that and remove it anyway.
+remove command to accept that and remove it anyway.
 There's no automatic date-triggered cutover from `effective_at` alone --
-treat it as the value you'll pass to the eventual `delete --force` once
-you've actually confirmed nothing still needs the service.
+perform the workspace removal separately when appropriate. Do not describe
+`service deprecate --at` or YAML `effective_at` as scheduled Registry deletion.
 
 Overriding the blocker with `--force` also writes a
 `workspace_service_removed`/`workspace_version_removed` notification -- a
@@ -111,6 +115,60 @@ record that you made that decision, not a new warning. See
 `fused-notifications` for what that (and the separate, proactive
 `registry_*` notifications a service you depend on can trigger just by
 being changed upstream) actually means and where you see it.
+
+## Registry deletion and scheduled deprecation
+
+Use these commands only when the user intends to change the shared Registry
+definition. Workspace removal does not implicitly authorize Registry deletion.
+Private and public services use the same owner-only lifecycle; every version
+and consuming workspace is affected. Existing user authorization is sufficient;
+do not ask again solely because the command requires `--yes`.
+
+```shell
+# Inspect the pending deadline or confirmed deletion.
+fused-cli service registry lifecycle <service> --json
+
+# Irreversibly delete the Registry definition now.
+fused-cli service registry delete <service> --yes --json
+
+# Deprecate now and automatically delete at an explicit future instant.
+fused-cli service registry deprecate <service> --delete-at 2027-01-01T00:00:00Z --yes --json
+
+# Cancel before the existing deadline; repeating deprecate above changes it.
+fused-cli service registry cancel-deletion <service> --json
+```
+
+`<service>` accepts an owned slug, `@provider/slug`, or an exact service UUID.
+These commands work independently of workspace activation. After deletion,
+use the retained UUID to inspect lifecycle state because normal catalogue lookup
+no longer resolves deleted definitions. Never substitute a similarly named service.
+
+`--delete-at` requires a future RFC3339 timestamp with a timezone (`Z` or an
+explicit offset). The CLI normalizes it to UTC; the Registry validates it again
+against its clock. Scheduling is a service-wide deprecation with an actual
+automatic cutoff. Changing or cancelling is allowed only before the existing
+deadline and cannot restore a deleted service. Independently deprecated versions
+remain deprecated after cancelling the service deletion schedule.
+
+Reads require Engine `service.read`; mutations require `service.manage`, and
+Registry independently checks service ownership. Slug resolution also needs
+catalogue access. An ownership or permission rejection is final for that identity:
+do not switch credentials, self-grant permissions, or retry a broader target.
+
+A successful mutation returns a JSON receipt with `ok`, `scope: "registry"`,
+`service_id`, `action`, and `delete_at`. It acknowledges the Registry mutation,
+not completed reconciliation by every Engine. On a timeout or lost response,
+inspect `lifecycle <UUID>` before deciding whether to retry; do not infer failure
+or silently replay deletion. Old CLI, Engine, or Registry builds must be upgraded
+to support this lifecycle; never substitute advisory deprecation for a missing endpoint.
+
+Confirmed deletion removes full definitions, schemas, documentation, profiles,
+policies, and import payloads. Small service/version/operation IDs and names plus
+ownership/deletion metadata remain for audit/history. Source files shared with a
+live service are retained; unshared files are cleaned asynchronously. Connected
+Engines reconcile through their changelog poll. An Engine enforces a deadline it
+already received while offline, but waits for Registry confirmation before
+permanently purging snapshots so a newer cancellation can still reconcile.
 
 ## Commands
 

@@ -28,6 +28,13 @@ fused-cli app download support@1.0.0
 
 Service reads default to enabled workspace services: `service list`, `service version list`, and `service operation list`. Add `--registry` for catalog reads, for example `service list --registry --search gmail`. Use `--search` consistently for list filtering. Use `connect <service-name>` to set up or edit provider authentication (the picker highlights configured methods, `--bucket` defaults to `default`, and one quoted `"name=value, name=value"` argument with `--no-input` supports automation, including shell-expanded values). Named `bucket secret`, `bucket env`, and `bucket cert` entries support `set <name>[=<value>]`, `get <name>`, and `remove <name>` with `--bucket`. Provider credential administration also lives under `bucket credential`; secret metadata uses `bucket secret list <bucket>`.
 
+For deleting an owned Registry service, scheduling its deletion, or keeping named
+audit history, use `service registry lifecycle|delete|deprecate|cancel-deletion`.
+Read the `fused-workspace` skill's Registry deletion section for exact flags,
+ownership, confirmation, and propagation semantics. `service remove` remains
+workspace-only; `service deprecate --at` remains advisory. Check
+`fused-cli service registry --help` before using these commands with an older CLI.
+
 ## Standing up an Engine (before you have one to connect to)
 
 Everything below this section assumes an Engine is already running somewhere
@@ -868,7 +875,7 @@ workspace/bucket/connect steps above do not change.
 
 | Skill | Covers |
 |---|---|
-| `fused-workspace` | The service allowlist: enabling services/versions, execution policy, deprecations |
+| `fused-workspace` | Workspace services, visibility, advisory deprecation, and owner-only Registry deletion or deletion dates |
 | `fused-sdk` | Generating a typed SDK package and constructing physical Engine execution API calls |
 | `fused-unified-app` | Building and deploying a hosted TypeScript Unified App, including connected-user routing |
 | `fused-mcp` | Generating an Engine-hosted MCP server from selected operations and explicit provider event resources |
