@@ -46,8 +46,9 @@ var RootCmd = &cobra.Command{
 	Short:         "The command-line interface to Fused.",
 	SilenceErrors: true,
 	SilenceUsage:  true,
-	Long: `The command-line interface to Fused—the simplification of integration
-for organizations, engineers, and agents.
+	Long: `Fused - Connect Your APIs Once, Use Everywhere
+
+Manage API integrations in your Fused workspace.
 
 Connect to your Fused Engine to manage services, deploy apps, configure
 credentials and access, and inspect execution activity. Services can be

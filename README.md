@@ -1,7 +1,8 @@
 # Fused CLI
 
-The command-line interface to [Fused](https://usefused.com)—the simplification
-of integration for organizations, engineers, and agents.
+**Fused - Connect Your APIs Once, Use Everywhere**
+
+Bring internal, partner, and third-party APIs into Fused. Reuse integrations across projects, teams, and AI agents while staying in control of who can access what.
 
 Use `fused-cli` to work with your Fused deployment from a terminal or coding
 agent. Discover and import services, create and deploy apps, manage credentials
