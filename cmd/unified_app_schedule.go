@@ -14,10 +14,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// newUnifiedScheduleCommand keeps UI and CLI on one durable Engine scheduling contract.
+// newUnifiedScheduleCommand describes schedule timing separately from the app's opt-in recovery policy.
 func newUnifiedScheduleCommand() *cobra.Command {
 	parent := &cobra.Command{Use: "schedule", Short: "Schedule one-time or recurring Unified App runs", Args: cobra.NoArgs, RunE: requireSubcommand,
-		Long: "Schedules belong to the app and execute its active version with saved input. Engine must be running. Missed recurring times produce one catch-up run; failed runs are not automatically retried. App management permission is required."}
+		Long: "Schedules belong to the app and execute its active version with saved input. Engine must be running. Missed recurring times produce one catch-up run. Failed runs are retried when the app enables automatic recovery, subject to its attempt limit and backoff. Without automatic recovery, the next occurrence runs at its normal time. App management permission is required."}
 	// Explicit verbs authorize only the selected schedule mutation, never app deployment or execution now.
 	for _, action := range []string{"list", "create", "update", "pause", "resume", "delete"} {
 		action := action
