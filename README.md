@@ -2,204 +2,133 @@
 
 **Fused - Connect Your APIs Once, Use Everywhere**
 
-Bring internal, partner, and third-party APIs into Fused. Reuse integrations across projects, teams, and AI agents while staying in control of who can access what.
+Bring internal, partner, and third-party APIs into Fused. Use the CLI to turn those connections into tools your apps and AI agents can share, with control over who can use them.
 
-Use `fused-cli` to work with your Fused deployment from a terminal or coding
-agent. Discover and import services, create and deploy apps, manage credentials
-and access, and inspect execution activity. Services can be internal APIs or
-third-party APIs.
-
-The CLI connects to your **Fused Engine**, where your integrations run.
-App configuration and TypeScript source live in your project; the Engine
-manages execution, credentials, and permissions.
-
-## App types
-
-| Task | App or interface |
-| --- | --- |
-| Share integration logic across applications and agents | A Unified App with defined inputs and outputs, available through API, SDK, or MCP |
-| Call internal or third-party services from your application | A typed SDK with methods for your selected operations |
-| Give an AI agent access to your services | A hosted MCP server with your selected tools |
-| Call integrations over HTTP | A REST API hosted by your Engine |
-| React to service events | Verified webhooks that can trigger a Unified App or reach applications and agents |
-
-Teams can discover available services, import their own APIs, and control who
-can use each integration and credential bucket.
+[📦 Install](#install) · [🚀 Build a customer brief](#get-started) · [🤖 Coding agent setup](#use-with-your-coding-agent) · [📖 Command reference](docs/COMMANDS.md)
 
 ## Install
 
-### macOS and Linux
+**macOS and Linux**
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/Usefused/cli/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Usefused/cli/main/install.sh | bash
 ```
 
-### Windows
+**Windows PowerShell**
 
 ```powershell
 irm https://raw.githubusercontent.com/Usefused/cli/main/install.ps1 | iex
 ```
 
-You can review the [macOS/Linux installer](install.sh) or
-[Windows installer](install.ps1) before running it, or download a binary from
-[Releases](https://github.com/Usefused/cli/releases).
-
-Check your installation:
-
-```bash
-fused-cli --version
-```
+Run `fused-cli --version` to check your installation. You can also download a [release binary](https://github.com/Usefused/cli/releases) or review the [shell installer](install.sh) and [PowerShell installer](install.ps1).
 
 <a id="connect-to-an-engine"></a>
 
 ## Get started
 
-### 1. Connect to your Engine
+Build a customer brief that finds an account in HubSpot and returns its recent Stripe invoices. The CLI drafts the integration in your project. Your Engine holds the credentials and runs the published app.
 
-You need access to a running Fused Engine. Use the URL provided by your team
-or the address of your own deployment. Replace the example URL below:
+### 1. Sign in to your Engine
+
+Use your team’s Engine URL or `http://localhost:8081` for a local deployment. Login opens your browser. Check the active account with `whoami`.
 
 ```bash
 fused-cli --engine-url https://your-engine.example.com login
 fused-cli whoami
 ```
 
-`login` opens your browser to sign in. `whoami` confirms the Engine and account
-you are using. For a local Engine, the usual URL is `http://localhost:8081`.
-See [connection and authentication setup](docs/SETUP.md) for other login methods.
-
-### 2. Find a service
-
-Search the Fused service catalogue for the API you want to use:
+### 2. Find and connect your services
 
 ```bash
 fused-cli service list --registry --search hubspot
 fused-cli service list --registry --search stripe
 ```
 
-To see services already enabled in your workspace, including imported internal
-APIs, run `fused-cli service list`.
+Run `fused-cli service list` to see which services your workspace has enabled. Once HubSpot and Stripe are available, connect the accounts this app will use:
 
-If your API is not in the catalogue, you can
-[import an API specification or discover it from its documentation](docs/IMPORTING_SERVICES.md).
+```bash
+fused-cli connect hubspot
+fused-cli connect stripe
+```
 
-### 3. Describe your integration
+Choose an authentication method at the prompt. By default, Fused stores credentials in the `default` bucket. Use `--bucket` to select a different one. See [credentials and buckets](docs/SETUP.md#credentials-and-buckets) for named secrets, certificates, and unattended setup.
 
-With your services available and their credentials configured, describe the
-result you want. For example, if your workspace uses HubSpot and Stripe:
+### 3. Describe the result
 
 ```bash
 fused-cli describe "Find a customer in HubSpot and return their recent Stripe invoices" \
   --name customer-brief
 ```
 
-Fused finds the relevant operations and drafts a Unified App. You review its
-TypeScript source and configuration before confirming deployment. The deployed
-app can be called through its API or added to an SDK or MCP server. The same
-workflow can use your imported internal services.
+Review the generated TypeScript and configuration before confirming deployment. You can call the resulting Unified App through its API or add it to an SDK or MCP server. The same workflow works with [your own APIs](docs/IMPORTING_SERVICES.md).
 
-Provider credentials are stored in a **bucket**, a named collection of
-credentials used by your apps. Run `fused-cli connect <service-name>` to choose
-an authentication method and enter its fields. The picker highlights configured
-methods; select one to edit it, or choose a missing method to set it up.
-`--bucket` defaults
-to `default`. Automation can use one quoted `"name=value, name=value"` argument with `--type`, `--auth-name`, and
-`--no-input`; values may come from shell environment variables.
-
-Named bucket entries use `fused-cli bucket secret|env|cert set <name>[=<value>]`,
-`get <name>`, and `remove <name>`. Omit the value to enter it interactively,
-or pass an assignment such as `"token=$TOKEN"`. Certificates contain public PEM only. See [credentials and buckets](docs/SETUP.md#credentials-and-buckets)
-to configure access to the services your integration needs.
-
-### 4. Manage your app
-
-List your apps and their published versions:
+### 4. Inspect the published app
 
 ```bash
 fused-cli app list
-fused-cli app list --type mcp
 fused-cli app versions list customer-brief
 ```
 
-All app management uses `fused-cli app`. Filter the list with `--type sdk`,
-`--type rest`, `--type mcp`, or `--type unified-app`; omit the filter to see all
-types. There are no standalone `sdk`, `rest`, `api`, `mcp`, or `unified-app`
-command groups.
+Filter `app list` with `--type sdk`, `rest`, `mcp`, or `unified-app`. To publish a change, edit the source and configuration, select a new version, then review it with `app plan` before running `app apply`. See [configuration and deployment](docs/CONFIG_AS_CODE.md).
 
-To update a Unified App, edit its TypeScript source and configuration, and
-choose a new version. Use `app plan` to preview the changes, then `app apply`
-to publish them.
-See [configuration and deployment](docs/CONFIG_AS_CODE.md) for the full workflow.
+## App types
+
+| What are you building? | Start with |
+| --- | --- |
+| 🧩 A workflow that several apps or teams can reuse | [Unified App](docs/UNIFIED_APPS.md) with defined inputs and outputs |
+| 💻 An application that calls selected API operations | [Typed SDK](https://usefused.com/docs/app/build-an-sdk) |
+| 🤖 Tools for an AI agent | [Hosted MCP server](https://usefused.com/docs/mcp/deploy-a-server) |
+| 🌐 An integration callable over HTTP | [REST API](https://usefused.com/docs/app/testing/over-rest) |
+| 🔔 A reaction to a provider event | [Verified webhook](https://usefused.com/docs/mcp/receive-events) delivered to a Unified App, SDK, or MCP server |
 
 ## Use service operations directly
 
-You can also select individual service operations for an SDK, REST API, or
-MCP server. For example, create an app using Jira and Slack:
+To give a support app two existing operations, select them by name:
 
 ```bash
 fused-cli init support-app --service 'jira=issueUpdate;slack=chatPostMessage'
 ```
 
-Semicolons separate services, and commas separate operations within one service:
-`--service 'slack=chatPostMessage,conversationsList;jira=issueUpdate'`.
-Quote the value so the shell preserves the semicolons. Bare services, such as
-`--service 'jira;slack'`, automatically select all operations, including with
-`--no-input`.
+- **Choose interfaces.** Review the configuration to create SDK, MCP, and REST access for the same app. Add `--sdk`, `--mcp`, or `--rest` for a single interface. Use `extend` to add services later.
+- **Choose operations.** Separate operations with commas and services with semicolons. Quote the selector so the shell passes it intact.
+- **Select whole services.** A bare selector such as `--service 'jira;slack'` selects all operations for both services, including with `--no-input`.
 
-Setup lets you review the configuration, then creates a typed SDK, an MCP
-endpoint, and REST access for the same app.
-Add `--sdk`, `--mcp`, or `--rest` when you need only one of these interfaces.
-Use `extend` to add services to an existing app.
+## Use with your coding agent
 
-For workflows you want to author yourself, see
-[writing a Unified App in TypeScript](docs/UNIFIED_APPS.md).
+Install the Fused skills in your project:
+
+```bash
+fused-cli skill install --for codex
+```
+
+Supported agents include Codex, Claude Code, Cursor, Windsurf, and Antigravity. Run `fused-cli skill install --help` for installation options.
 
 ## Delete or deprecate a Registry service
 
-Removing a service with `service remove` affects your workspace. To delete an
-owned service from the shared Registry, including every version and consumer:
+`service remove` removes a service from your workspace. Registry deletion affects every version and consumer of a service you own. Inspect its lifecycle before deleting it:
 
 ```bash
 fused-cli service registry lifecycle <service> --json
 fused-cli service registry delete <service> --yes
 ```
 
-To deprecate it now and automatically delete it at a future time, or cancel that
-schedule before its deadline:
+To deprecate now and delete later, schedule a date. You can change the deadline by repeating the command or cancel before deletion:
 
 ```bash
 fused-cli service registry deprecate <service> --delete-at 2027-01-01T00:00:00Z --yes
 fused-cli service registry cancel-deletion <service>
 ```
 
-Repeat `deprecate` with a new future timestamp to change the deadline. These
-commands require Registry ownership and Engine `service.manage` for mutations;
-they accept an owned slug, `@provider/slug`, or UUID. Full definitions are removed,
-while small service/version/operation identities remain for history. Consumers
-reconcile through their Engines; deletion does not synchronously contact every
-offline Engine. Use the UUID to inspect lifecycle after deletion. The CLI,
-Engine, and Registry must all support these endpoints. The existing
-`service deprecate --at` is advisory and does not automatically delete anything.
-
-## Use with your coding agent
-
-Install Fused skills so your coding agent can help discover services,
-configure integrations, and deploy apps from your project:
-
-```bash
-fused-cli skill install --for codex
-```
-
-Supported agents include Codex, Claude Code, Cursor, Windsurf, and Antigravity.
-Run `fused-cli skill install --help` for agent names and installation options.
+Registry mutations require ownership and Engine `service.manage` permission. Commands accept an owned slug, `@provider/slug`, or UUID. After deletion, use the UUID to inspect lifecycle history. Consumers reconcile through their Engines when online. The CLI, Engine, and Registry must support these endpoints. The separate `service deprecate --at` command is advisory.
 
 ## Documentation and help
 
-- [Setup](docs/SETUP.md): sign-in, credentials, team access, and CI authentication.
-- [Import APIs](docs/IMPORTING_SERVICES.md): add services from specifications or documentation.
-- [Configuration and deployment](docs/CONFIG_AS_CODE.md): review, version, and publish changes.
-- [Unified Apps](docs/UNIFIED_APPS.md): write and deploy hosted TypeScript workflows.
-- [Command reference](docs/COMMANDS.md): commands, flags, and automation options.
+| Guide | Use it to |
+| --- | --- |
+| [Setup](docs/SETUP.md) | Configure sign-in, team access, credentials, or CI. |
+| [API imports](docs/IMPORTING_SERVICES.md) | Import specifications or discover APIs from documentation. |
+| [Configuration and deployment](docs/CONFIG_AS_CODE.md) | Review, version, and publish changes. |
+| [Unified Apps](docs/UNIFIED_APPS.md) | Write and deploy hosted TypeScript workflows. |
+| [Command reference](docs/COMMANDS.md) | Look up commands, flags, and automation options. |
 
-Run `fused-cli --help` to see available commands, or add `--help` to any command
-for details. Run `fused-cli --readme` to read this guide in your terminal.
+Use `fused-cli --help` for commands, `fused-cli <command> --help` for flags, or `fused-cli --readme` to read this guide in your terminal.
