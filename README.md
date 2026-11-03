@@ -1,10 +1,10 @@
-# Fused CLI
+# <img src=".github/readme/cli.svg" width="30" height="30" alt=""> Fused CLI
 
 **Fused - Connect Your APIs Once, Use Everywhere**
 
 Bring internal, partner, and third-party APIs into Fused. Use the CLI to turn those connections into tools your apps and AI agents can share, with control over who can use them.
 
-[📦 Install](#install) · [🚀 Build a customer brief](#get-started) · [🤖 Coding agent setup](#use-with-your-coding-agent) · [📖 Command reference](docs/COMMANDS.md)
+[Install](#install) · [Build a customer brief](#get-started) · [Coding agent setup](#use-with-your-coding-agent) · [Command reference](docs/COMMANDS.md)
 
 ## Install
 
@@ -73,13 +73,13 @@ Filter `app list` with `--type sdk`, `rest`, `mcp`, or `unified-app`. To publish
 
 ## App types
 
-| What are you building? | Start with |
+| Use case | Interface |
 | --- | --- |
-| 🧩 A workflow that several apps or teams can reuse | [Unified App](docs/UNIFIED_APPS.md) with defined inputs and outputs |
-| 💻 An application that calls selected API operations | [Typed SDK](https://usefused.com/docs/app/build-an-sdk) |
-| 🤖 Tools for an AI agent | [Hosted MCP server](https://usefused.com/docs/mcp/deploy-a-server) |
-| 🌐 An integration callable over HTTP | [REST API](https://usefused.com/docs/app/testing/over-rest) |
-| 🔔 A reaction to a provider event | [Verified webhook](https://usefused.com/docs/mcp/receive-events) delivered to a Unified App, SDK, or MCP server |
+| A workflow that several apps or teams can reuse | [Unified App](docs/UNIFIED_APPS.md) with defined inputs and outputs |
+| An application that calls selected API operations | [Typed SDK](https://usefused.com/docs/app/build-an-sdk) |
+| Tools for an AI agent | [Hosted MCP server](https://usefused.com/docs/mcp/deploy-a-server) |
+| An integration callable over HTTP | [REST API](https://usefused.com/docs/app/testing/over-rest) |
+| A reaction to a provider event | [Verified webhook](https://usefused.com/docs/mcp/receive-events) delivered to a Unified App, SDK, or MCP server |
 
 ## Use service operations directly
 
