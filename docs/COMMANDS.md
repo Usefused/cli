@@ -5,6 +5,25 @@ The full list of commands and flags for `fused-cli`. Start with the main
 [setup and operation](SETUP.md), [service imports](IMPORTING_SERVICES.md), and
 [config as code](CONFIG_AS_CODE.md).
 
+## Built-in clients
+
+These fixed clients download locally without an Engine connection or login:
+
+```sh
+fused-cli app auth-client --language ts --out ./vendor
+fused-cli app admin-client --language ts --out ./vendor
+fused-cli app runtime-client --out ./vendor
+npm install ./vendor/fused-runtime/fused-runtime-0.1.0.tgz
+```
+
+`runtime-client` distributes Engine's `@fused/runtime` package for TypeScript and
+Node 24+, including compiled code, declarations and the gRPC protocol. It prints
+the exact install command for its bundled version. Runtime calls authenticate an
+existing app with its immutable app ID and execution token. It supports bounded
+JSON execution, authorized per-call bucket selection and selected Bridge aliases;
+it does not generate provider-specific types. Engine owns the source and the CLI
+embeds a compiled release snapshot with a checksum manifest.
+
 ## Global Flags
 All commands support the following global flags:
 

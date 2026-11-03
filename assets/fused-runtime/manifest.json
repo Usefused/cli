@@ -1,0 +1,8 @@
+{
+  "name": "@fused/runtime",
+  "version": "0.1.0",
+  "filename": "fused-runtime-0.1.0.tgz",
+  "sha256": "1cf9758aebb7ddece944e5e64f402b1563aad35453188e2d1c93b4e829608748",
+  "source": "Usefused/engine:runtime/sdk",
+  "sourceSha256": "8f5870d2db318519f2c0fe6ff53055782a7d16f03acce00cba11e4de852c6dae"
+}

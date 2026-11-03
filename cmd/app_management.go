@@ -470,7 +470,7 @@ func runAppValidate(cmd *cobra.Command, _ []string) error {
 
 // configureAppAuthoring moves each supported capability under app without retaining typed root aliases.
 func configureAppAuthoring(service, operations *cobra.Command) {
-	for _, c := range []*cobra.Command{sdkPlanCmd, sdkApplyCmd, sdkValidateCmd, sdkDownloadCmd, sdkSyncCmd, authClientCmd, adminClientCmd, sdkWebhookCmd} {
+	for _, c := range []*cobra.Command{sdkPlanCmd, sdkApplyCmd, sdkValidateCmd, sdkDownloadCmd, sdkSyncCmd, authClientCmd, adminClientCmd, runtimeClientCmd, sdkWebhookCmd} {
 		relocateCommand(appCmd, c, c.Use, c.Short)
 	}
 	sdkPlanCmd.Short, sdkApplyCmd.Short, sdkValidateCmd.Short = "Plan the app type declared by config", "Apply the app type declared by config", "Validate the selected app config"

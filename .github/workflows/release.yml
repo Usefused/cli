@@ -63,6 +63,10 @@ jobs:
         # Shared contract fixtures live in the source workspace, so the standalone release checkout validates every test binary without executing fixture-dependent cases.
         run: go test -run '^$' ./...
 
+      - name: Test embedded runtime client
+        # These offline tests exercise real release assets without external Engine fixtures.
+        run: go test . ./cmd -run '^Test(EmbeddedRuntime|RuntimeClient)' -count=1
+
       - name: Bump version and push tag
         if: github.ref == 'refs/heads/main'
         id: tag

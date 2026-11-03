@@ -30,6 +30,12 @@ var fusedAuthAssetFS embed.FS
 //go:embed assets/fused-admin
 var fusedAdminAssetFS embed.FS
 
+// Engine owns this compiled runtime snapshot; the CLI distributes it offline like the auth client.
+//
+//go:embed assets/fused-runtime
+var fusedRuntimeAssetFS embed.FS
+
+// main supplies embedded release assets before dispatching a CLI command.
 func main() {
 	// Keep --readme aligned with the intentionally short onboarding document;
 	// detailed command help remains available through --help and docs/.
@@ -37,5 +43,6 @@ func main() {
 	cmd.EmbeddedSkillFS = skillFS
 	cmd.FusedAuthAssets = fusedAuthAssetFS
 	cmd.FusedAdminAssets = fusedAdminAssetFS
+	cmd.FusedRuntimeAssets = fusedRuntimeAssetFS
 	cmd.Execute()
 }

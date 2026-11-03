@@ -5,6 +5,15 @@ description: "Build, generate, configure, manage, or call a typed Fused SDK dire
 
 # SDK package config
 
+For the shared Node gRPC client instead of a generated provider SDK, run
+`fused-cli app runtime-client --out ./vendor`, then the printed `npm install`
+command. This exports Engine's compiled `@fused/runtime` offline, like
+`app auth-client`; no login is needed for download. Node 24+ is required. Runtime
+calls still need an existing immutable app ID and execution token. Minion consumes
+the same Engine-owned package. This client supports bounded JSON execution and
+per-call `bucketId`, but does not generate provider-specific types or expose
+binary/SSE/webhook receiver APIs.
+
 ## IDE-agent workflow boundary
 
 Run the deterministic CLI workflow directly. Do not delegate the work to another agent or call an AI endpoint.
