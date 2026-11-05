@@ -132,3 +132,21 @@ Registry mutations require ownership and Engine `service.manage` permission. Com
 | [Command reference](docs/COMMANDS.md) | Look up commands, flags, and automation options. |
 
 Use `fused-cli --help` for commands, `fused-cli <command> --help` for flags, or `fused-cli --readme` to read this guide in your terminal.
+
+### Readable Bridge selections
+
+App configs can group local capabilities by paired Bridge name, Profile, and saved connection name:
+
+```yaml
+bridges:
+  home:
+    bridge: home-bridge
+    profile: echo-live
+    connections:
+      echo-show-8:
+        operations: [device.info, volume.set, speech.speak]
+```
+
+Use `operations: "*"` to select every currently available unary read and command on one connection. Lists and wildcards can coexist on different connections. `app plan` resolves names, shows the selected operations, and pins the manifest/contracts; `app apply` rejects a changed selection rather than silently adding permissions. New operations require planning and publishing a new app version. The maximum expanded Bridge selection is 100 operations. Ambiguous Bridge names must be made distinct; use the exact name from `bridge list` (older pairings default to `Fused Bridge`).
+
+Hosted Unified Apps import `bridges` from `@fused/operations` and call `bridges.home["echo-show-8"].volume.set({ level: 25 })`. Method inputs and outputs are generated from the selected schemas. Internal IDs and hashes stay in the resolved plan. Legacy explicit `pairing_id`/`profile_id`/`manifest_hash`/`connection_id`/`operation_id` bindings remain supported, including SDK event bindings. Events are not included by the callable-operation wildcard.

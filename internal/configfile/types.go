@@ -208,6 +208,7 @@ type UnifiedAppReference struct {
 
 type AppConfig struct {
 	// UnifiedApps adds hosted capabilities without embedding source or credentials.
+	Bridges     map[string]BridgeReference     `yaml:"bridges,omitempty" json:"bridges,omitempty"`
 	UnifiedApps map[string]UnifiedAppReference `yaml:"unified_apps,omitempty" json:"unified_apps,omitempty"`
 	BaseConfig  `yaml:",inline"`
 	Name        string `yaml:"name" json:"name"`

@@ -509,7 +509,7 @@ func readBoundedSDKInvokeResponse(reader io.Reader) ([]byte, error) {
 	return data, nil
 }
 
-// decodeSDKInvokeHTTPResponse validates the physical success envelope.
+// decodeSDKInvokeHTTPResponse validates provider and Bridge unary execution envelopes.
 func decodeSDKInvokeHTTPResponse(data []byte) (sdkInvokeHTTPResponse, error) {
 	var response sdkInvokeHTTPResponse
 	// Malformed response bodies must not be reported as successful execution.
@@ -520,18 +520,22 @@ func decodeSDKInvokeHTTPResponse(data []byte) (sdkInvokeHTTPResponse, error) {
 	if _, err := uuid.Parse(response.AppID); err != nil || strings.TrimSpace(response.Operation) == "" || response.Results == nil {
 		return sdkInvokeHTTPResponse{}, invalidSDKInvokeHTTPResponse("Fused returned an incomplete execution response", nil)
 	}
-	// The SDK invoke route serves physical selections only.
-	if response.Kind != "physical" {
+	// Only known unary execution kinds can satisfy the shared result contract.
+	if response.Kind != "physical" && response.Kind != "bridge" {
 		return sdkInvokeHTTPResponse{}, invalidSDKInvokeHTTPResponse("Fused returned an unknown execution kind", nil)
 	}
-	return response, validateSDKInvokePhysicalResponse(response)
+	// Bridge responses must identify the local namespace instead of impersonating provider operations.
+	if response.Kind == "bridge" && !strings.HasPrefix(response.Operation, "bridge:") {
+		return sdkInvokeHTTPResponse{}, invalidSDKInvokeHTTPResponse("Fused returned an invalid Bridge operation", nil)
+	}
+	return response, validateSDKInvokeUnaryResponse(response)
 }
 
-// validateSDKInvokePhysicalResponse requires one successful JSON provider document.
-func validateSDKInvokePhysicalResponse(response sdkInvokeHTTPResponse) error {
-	// Physical execution must return exactly one provider receipt with a status.
+// validateSDKInvokeUnaryResponse requires one status-bearing JSON result from a provider or Bridge.
+func validateSDKInvokeUnaryResponse(response sdkInvokeHTTPResponse) error {
+	// Unary execution must retain exactly one result and its status in the shared envelope.
 	if response.StatusCode == 0 || len(response.Results) != 1 {
-		return invalidSDKInvokeHTTPResponse("Fused returned an invalid physical execution response", nil)
+		return invalidSDKInvokeHTTPResponse("Fused returned an invalid unary execution response", nil)
 	}
 	return nil
 }

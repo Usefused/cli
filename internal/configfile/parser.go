@@ -550,8 +550,12 @@ func validateAppConfig(cfg *AppConfig, kind ConfigKind) error {
 	if err := validateUnifiedAppReferences(cfg, kind); err != nil {
 		return err
 	}
+	// Local capabilities must include immutable catalogue pins before planning.
+	if err := validateBridgeReferences(cfg); err != nil {
+		return err
+	}
 	// Empty consumers cannot publish a runtime with no selected capabilities.
-	if len(cfg.Services) == 0 && len(cfg.UnifiedApps) == 0 {
+	if len(cfg.Services) == 0 && len(cfg.UnifiedApps) == 0 && len(cfg.Bridges) == 0 {
 		return fmt.Errorf("%s config requires at least one service", kind)
 	}
 	// Per-service validation owns webhook and selection invariants for both app kinds.
@@ -646,7 +650,7 @@ func validateUnifiedAppKindFields(cfg *AppConfig) error {
 	if err := validateExecutionDeliveryFields(cfg); err != nil {
 		return err
 	}
-	return validateExecutionOperationScope(cfg.Services, len(cfg.UnifiedApps))
+	return validateExecutionOperationScope(cfg.Services, len(cfg.UnifiedApps)+len(cfg.Bridges))
 }
 
 // validateExecutionCodeSource admits either Engine-compiled source or a precompiled digest, never competing authorities.
