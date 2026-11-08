@@ -13,6 +13,15 @@ import * as z from "zod/mini";
 import { buildUnifiedApp, fused } from "@fused/unified-app";
 import { services } from "@fused/operations";
 
+export const fusedConfig = {
+  "name": "customer-app",
+  "version": "1.0.0",
+  "bucket": "default",
+  "services": {
+    "crm": { "version": "2026-01-01", "operations": ["createCustomer"] }
+  }
+};
+
 export default buildUnifiedApp({
   input: z.object({ name: z.string() }),
   output: z.object({ customerId: z.string() }),
@@ -25,11 +34,12 @@ export default buildUnifiedApp({
 });
 ```
 
-Save this TypeScript as `.fused/unified_app/customer-app.tsx` and set
-`source_path: customer-app.tsx` in the App YAML. Run `fused-cli app plan`
-and `fused-cli app apply`. The [step-by-step apply guide](unified-apps/example.md)
-shows the files and commands. The CLI reads the file into the plan cart; the
-Fused compiles it during plan.
+Save this TypeScript as `.fused/unified_app/customer-app.tsx`. Run
+`fused-cli app plan -f .fused/unified_app/customer-app.tsx` and
+`fused-cli app apply -f .fused/unified_app/customer-app.tsx`.
+The [step-by-step apply guide](unified-apps/example.md) shows the complete
+workflow. The CLI derives the Engine config from `fusedConfig`; Fused compiles
+the source during plan.
 
 ## Builder parts
 
@@ -52,7 +62,7 @@ for the shared SDK and Unified App route and their different response shapes.
 The selected workspace operations are available through typed
 `services.<service>.<operation>(input)` methods or `fused.fetch({ service,
 operation, input })`. Both run through Fused's connection and execution
-policy. App code can call only operations selected in its config; it cannot
+policy. App code can call only operations selected in `fusedConfig`; it cannot
 send an arbitrary URL request. The optional `selector` in `fused.fetch`
 chooses an environment, connected user, auth scheme, or resource when needed.
 
@@ -70,10 +80,10 @@ Pass the app name directly, or read its top-level `name` from a config:
 
 ```sh
 fused-cli app promote customer-app --version 1.0.0
-fused-cli app promote -f .fused/unified_app/customer-app.yaml --version 1.0.0
+fused-cli app promote -f .fused/unified_app/customer-app.tsx --version 1.0.0
 ```
 
-An explicit name takes precedence over config selection. `--version` selects the destination without changing the YAML or TypeScript. See the [promotion command reference](COMMANDS.md#unified-app-promote-app-name---version-version) for permissions, routing behavior, and conflict handling.
+An explicit name takes precedence over config selection. `--version` selects the destination without changing the TypeScript. See the [promotion command reference](COMMANDS.md#unified-app-promote-app-name---version-version) for permissions, routing behavior, and conflict handling.
 
 ## Next steps
 

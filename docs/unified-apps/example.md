@@ -1,6 +1,6 @@
 # Unified App example
 
-Use `describe` to draft and deploy from a goal, or author the config directly.
+Use `describe` to draft and deploy from a goal, or author the TypeScript directly.
 The manual example below selects one workspace operation, stores a searchable
 customer ID, and returns a typed output. Replace `crm`, its version, and
 `createCustomer` with an operation enabled in your workspace. Use a bucket you
@@ -23,38 +23,22 @@ apply the proposal. Review the provider calls and output schema. If they do
 not match your goal, cancel and make the request more specific.
 
 After confirmation, the CLI saves `.fused/unified_app/customer-onboarding.tsx`,
-sends its source to Fused for compilation, plans the App, saves
-`.fused/unified_app/customer-onboarding.yaml`, and applies
-the plan. A successful run prints the App ID and one-time execution token.
+sends its source to Fused for compilation, plans the App, and applies the plan.
+A successful run prints the App ID and one-time execution token.
 `describe` requires terminal review; it cannot run unattended in CI. To
-change the App later, edit that saved config, increase the version, and run
+change the App later, edit that saved TypeScript, increase the version, and run
 `app plan` and `app apply` with its path:
 
 ```bash
-fused-cli app plan -f .fused/unified_app/customer-onboarding.yaml
-fused-cli app apply -f .fused/unified_app/customer-onboarding.yaml
+fused-cli app plan -f .fused/unified_app/customer-onboarding.tsx
+fused-cli app apply -f .fused/unified_app/customer-onboarding.tsx
 ```
 
 `describe --update` does not update Unified Apps.
 
-## Author the config yourself
+## Author the app yourself
 
-### 1. Create the config and TypeScript file
-
-Create `.fused/unified_app/customer-app.yaml`:
-
-```yaml
-apiVersion: fused/v1
-kind: unified_app
-name: customer-app
-version: "1.0.0"
-bucket: default
-source_path: customer-app.tsx
-services:
-  crm:
-    version: "2026-01-01"
-    operations: [createCustomer]
-```
+### 1. Create one TypeScript file
 
 Create `.fused/unified_app/customer-app.tsx`:
 
@@ -62,6 +46,15 @@ Create `.fused/unified_app/customer-app.tsx`:
 import * as z from "zod/mini";
 import { buildUnifiedApp, fused } from "@fused/unified-app";
 import { services } from "@fused/operations";
+
+export const fusedConfig = {
+  "name": "customer-app",
+  "version": "1.0.0",
+  "bucket": "default",
+  "services": {
+    "crm": { "version": "2026-01-01", "operations": ["createCustomer"] }
+  }
+};
 
 export default buildUnifiedApp({
   input: z.object({ name: z.string() }),
@@ -75,13 +68,11 @@ export default buildUnifiedApp({
 });
 ```
 
-`source_path` is relative to the YAML file. You can edit and lint the `.tsx`
-file directly. Omit `language` and `generate`; Unified Apps always use
-TypeScript and do not generate an SDK package. For an older inline `source: |`
-config, `fused-cli app source extract -f <config.yaml>` creates the `.tsx` file and
-replaces the inline block with `source_path`. `app plan` also performs this
-conversion before planning. An existing file with different contents causes
-an error instead of being overwritten.
+`fusedConfig` is a literal JSON object inside TypeScript. The CLI derives the
+Engine config from it, including the `apiVersion`, `kind`, and source bytes.
+You can edit and lint the `.tsx` file directly. Omit `language` and `generate`;
+Unified Apps always use TypeScript and do not generate an SDK package. Older
+YAML configs with `source_path` remain readable during migration.
 
 `bucket: default` supplies the default credentials. As with SDK configs,
 `services.crm.bucket: crm-team` can select another bucket for that service.
@@ -91,11 +82,11 @@ an error instead of being overwritten.
 Run these commands from the directory containing `.fused/`:
 
 ```bash
-fused-cli app plan -f .fused/unified_app/customer-app.yaml --json
-fused-cli app apply -f .fused/unified_app/customer-app.yaml --json
+fused-cli app plan -f .fused/unified_app/customer-app.tsx --json
+fused-cli app apply -f .fused/unified_app/customer-app.tsx --json
 ```
 
-`app plan` reads the linked TypeScript and sends its bytes and selected operations to the
+`app plan` reads the TypeScript declaration and sends its bytes and selected operations to
 Fused, where the TypeScript is validated and compiled. `app apply`
 uses that plan to host the compiled bundle and activate the App. There is no
 local `tsc` step or separate `.ts` upload command. Save the returned App ID and

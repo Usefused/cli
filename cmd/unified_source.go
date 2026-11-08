@@ -15,6 +15,10 @@ import (
 func unifiedSourceConfigPaths(explicit string) ([]string, error) {
 	// An explicit file is the only declaration the caller authorized this command to rewrite.
 	if explicit != "" {
+		// Source-owned TypeScript is already the final authoring file and must never be rewritten as YAML.
+		if strings.HasSuffix(explicit, ".ts") || strings.HasSuffix(explicit, ".tsx") {
+			return nil, nil
+		}
 		return []string{explicit}, nil
 	}
 	paths := make([]string, 0)

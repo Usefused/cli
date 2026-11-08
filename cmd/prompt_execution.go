@@ -11,7 +11,6 @@ import (
 	"github.com/Usefused/cli/internal/api"
 	"github.com/Usefused/cli/internal/configfile"
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
 )
 
 // promptExecutionDraft binds reviewed TypeScript to the workspace plan shown before approval.
@@ -129,23 +128,22 @@ func executePromptExecutionPlan(cmd *cobra.Command, plan promptInitPlan) error {
 	return deployPromptExecution(cmd, client, plan, workspaceApplied)
 }
 
-// deployPromptExecution submits source and selected capabilities through Engine's normal App plan/apply lifecycle.
+// deployPromptExecution publishes one TypeScript declaration and submits its derived cart through Engine's normal plan/apply lifecycle.
 func deployPromptExecution(cmd *cobra.Command, client *api.Client, plan promptInitPlan, workspaceApplied bool) error {
-	sourceFile, sourceRef, err := unifiedAppSourcePaths(plan.primary.path, plan.primary.name)
+	sourceFile := plan.primary.path
+	// A prompted Unified App writes the selected TypeScript path directly, so a YAML destination cannot be silently ignored.
+	if extension := filepath.Ext(sourceFile); extension != ".ts" && extension != ".tsx" {
+		return errors.New("Unified App describe destination must be a .ts or .tsx file")
+	}
+	data, err := promptUnifiedAppSource(plan.primary, plan.execution.source)
 	if err != nil {
 		return err
 	}
-	// The reviewed draft becomes an editable local file before the CLI resolves its plan cart.
-	if err := atomicCreateFile(sourceFile, []byte(plan.execution.source), 0o644, nil); err != nil {
+	// The reviewed draft and selections become one editable local file before the CLI resolves its plan cart.
+	if err := atomicCreateFile(sourceFile, data, 0o644, nil); err != nil {
 		return err
 	}
-	config := promptUnifiedAppConfig(plan.primary, sourceRef)
-	data, err := yaml.Marshal(config)
-	if err != nil {
-		_ = os.Remove(sourceFile)
-		return err
-	}
-	parsed, err := configfile.Parse(data, plan.primary.path)
+	parsed, err := configfile.ParseFile(sourceFile)
 	if err != nil {
 		_ = os.Remove(sourceFile)
 		return err
@@ -156,13 +154,14 @@ func deployPromptExecution(cmd *cobra.Command, client *api.Client, plan promptIn
 		_ = os.Remove(sourceFile)
 		return contextualizeUnifiedInitPrecommitFailure("Unified App plan and Fused compilation", plan.mode, plan.primary, workspaceApplied, err)
 	}
-	if err := publishPromptExecutionPlan(plan.primary.path, data, parsed, planned); err != nil {
+	// The source file is already published; only its exact plan receipt remains to be recorded.
+	if err := writePlanReceiptFile(defaultReceiptPath(parsed.ConfigKey), planned.receipt); err != nil {
 		return err
 	}
 	result, err := applyExecutionVersion(client, parsed, planned.receipt)
 	// A published plan can be resumed without asking the model to regenerate source.
 	if err != nil {
-		return fmt.Errorf("%w; retry with fused-cli app apply -f %s", err, plan.primary.path)
+		return fmt.Errorf("%w; retry with fused-cli app apply -f %s", err, sourceFile)
 	}
 	recordAppliedChange(cmd.Context(), cmd.CommandPath(), "unified_app")
 	fmt.Fprintf(cmd.OutOrStdout(), "Deployed Unified App %s (%s) with %d operation(s) and %d webhook event(s).\n", plan.primary.name, result.AppFamilyID, len(plan.primary.operations), len(plan.primary.events))
@@ -174,7 +173,7 @@ func deployPromptExecution(cmd *cobra.Command, client *api.Client, plan promptIn
 	return nil
 }
 
-// unifiedAppSourcePaths keeps generated code beside its YAML while allowing an explicit config destination.
+// unifiedAppSourcePaths keeps legacy YAML extraction beside its TypeScript target.
 func unifiedAppSourcePaths(configPath, name string) (string, string, error) {
 	fileName := safeConfigFileName(name)
 	// A source filename must not escape the dedicated local authoring directory.
@@ -194,16 +193,19 @@ func unifiedAppSourcePaths(configPath, name string) (string, string, error) {
 	return sourceFile, reference, err
 }
 
-// publishPromptExecutionPlan stores the reviewed cart and its exact apply receipt.
-func publishPromptExecutionPlan(path string, data []byte, parsed *configfile.ParsedConfig, planned plannedConfig) error {
-	if err := atomicCreateFile(path, data, 0o644, nil); err != nil {
-		return err
+// promptUnifiedAppSource places reviewed metadata beside executable code in one TypeScript file.
+func promptUnifiedAppSource(request scaffoldRequest, body string) ([]byte, error) {
+	config := promptUnifiedAppConfig(request)
+	metadata, err := json.MarshalIndent(config, "", "  ")
+	// JSON object syntax is valid TypeScript and admits deterministic parsing without local execution.
+	if err != nil {
+		return nil, err
 	}
-	return writePlanReceiptFile(defaultReceiptPath(parsed.ConfigKey), planned.receipt)
+	return []byte("export const fusedConfig = " + string(metadata) + ";\n\n" + body), nil
 }
 
-// promptUnifiedAppConfig preserves reviewed event scope and source-file identity in the Engine cart.
-func promptUnifiedAppConfig(request scaffoldRequest, sourcePath string) configfile.AppConfig {
+// promptUnifiedAppConfig preserves reviewed event and operation scope for the source-owned cart.
+func promptUnifiedAppConfig(request scaffoldRequest) configfile.AppConfig {
 	services := make(map[string]configfile.AppService, len(request.services))
 	for _, service := range request.services {
 		services[service.name] = configfile.AppService{Version: service.version}
@@ -221,6 +223,6 @@ func promptUnifiedAppConfig(request scaffoldRequest, sourcePath string) configfi
 	return configfile.AppConfig{
 		BaseConfig: configfile.BaseConfig{APIVersion: configfile.APIVersionV1, Kind: configfile.KindUnifiedApp},
 		Name:       request.name, Version: request.version,
-		Bucket: request.bucket, SourcePath: sourcePath, WebhookAttachment: request.webhookAttachment, Services: services,
+		Bucket: request.bucket, WebhookAttachment: request.webhookAttachment, Services: services,
 	}
 }

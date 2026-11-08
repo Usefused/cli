@@ -291,8 +291,8 @@ sending them. SDK and MCP proposals can attach provider webhook events; direct
 REST apps have no event receiver.
 
 Unified App creation needs 1–16 explicit operations. `describe` saves
-`.fused/unified_app/<app>.tsx` and a YAML `source_path` reference. Edit that
-TypeScript file and deploy a new version to update it. `app source extract` moves
+one `.fused/unified_app/<app>.tsx` file with `fusedConfig` and executable code.
+Edit that TypeScript file and deploy a new version to update it. `app source extract` moves
 inline YAML source into the editable file. `--update <app-name>` applies to
 existing SDK, MCP, and REST configs and publishes an immutable successor when
 the reviewed proposal changes it. Use `-f <path>` when a name is ambiguous.
@@ -722,17 +722,17 @@ Switch new traffic to an existing Unified App version without recompiling or cha
 
 ```sh
 fused-cli app promote "Customer lookup" --version 1.0.0
-fused-cli app promote -f .fused/unified_app/customer-app.yaml --version 1.0.0
+fused-cli app promote -f .fused/unified_app/customer-app.tsx --version 1.0.0
 ```
 
 | Argument | Description |
 |----------|-------------|
 | `[app-name]` | Exact app name; takes precedence over config selection and needs no local config |
-| `-f <path>` | Read the app's top-level `name` from this Unified App config when no positional name is supplied |
+| `-f <path>` | Read the app's `name` from this Unified App TypeScript declaration when no positional name is supplied |
 | `--version <version>` | Required exact destination version label; never inferred from the config or latest version |
 | `--json` | Print `name`, `version`, `app_family_id`, and `active_app_id` in the traffic receipt |
 
-Without a positional name or `-f`, config discovery must find exactly one `kind: unified_app` declaration. Use `-f` when multiple apps are present. The config's `name` identifies the app; its `version` and linked TypeScript remain unchanged by promotion.
+Without a positional name or `-f`, config discovery must find exactly one Unified App declaration. Use `-f` when multiple apps are present. The declared `name` identifies the app; its `version` and TypeScript remain unchanged by promotion.
 
 You need `app.unified_app.read` and `app.unified_app.manage`. The destination must be a retained version with a runnable bundle; a deleted version cannot be promoted. Historical results remain available after the switch.
 

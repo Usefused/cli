@@ -274,8 +274,19 @@ func appendDesiredConfigs(run *Run, configDir string, expectedKind ConfigKind) e
 }
 
 func appendDesiredConfig(run *Run, p string, d fs.DirEntry, walkErr error, expectedKind ConfigKind) error {
-	if walkErr != nil || d.IsDir() || !isYAMLFile(d.Name()) {
+	// Unified App TypeScript can own its declaration; other resources still require YAML.
+	if walkErr != nil || d.IsDir() || (!isYAMLFile(d.Name()) && !(expectedKind == KindUnifiedApp && isTypeScriptFile(d.Name()))) {
 		return walkErr
+	}
+	// Linked legacy source files are implementation inputs, not independent app declarations.
+	if isTypeScriptFile(d.Name()) {
+		source, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		if !HasUnifiedAppSourceConfig(source) {
+			return nil
+		}
 	}
 	parsed, err := ParseFile(p)
 	if err != nil {
@@ -290,6 +301,11 @@ func appendDesiredConfig(run *Run, p string, d fs.DirEntry, walkErr error, expec
 
 func isYAMLFile(name string) bool {
 	return strings.HasSuffix(name, ".yaml") || strings.HasSuffix(name, ".yml")
+}
+
+// isTypeScriptFile limits source-owned declarations to the two hosted TypeScript extensions.
+func isTypeScriptFile(name string) bool {
+	return strings.HasSuffix(name, ".ts") || strings.HasSuffix(name, ".tsx")
 }
 
 // rejectDuplicateConfigIdentities allows independently versioned apps while
@@ -313,6 +329,10 @@ func ParseFile(path string) (*ParsedConfig, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config file %q: %w", path, err)
+	}
+	// A source-owned app needs no sibling YAML; the static declaration is normalized into the usual Engine cart.
+	if isTypeScriptFile(path) {
+		return ParseUnifiedAppSource(data, path)
 	}
 
 	return Parse(data, path)

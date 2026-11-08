@@ -86,27 +86,27 @@ safety rules.
 
 ## Unified App configuration
 
-A Unified App is a distinct `kind: unified_app` resource. Its config selects
-explicit workspace operations and links one TypeScript `source_path` export using
-`buildUnifiedApp({ input, output, execute, fetch? })`. Input and output use
-Zod. The CLI reads the `.tsx` file and sends its bytes to Fused, which
+A Unified App is a distinct hosted resource authored in one TypeScript file.
+Export a literal JSON `fusedConfig` object for name, version, bucket, and exact
+service selections, alongside `buildUnifiedApp({ input, output, execute, fetch? })`.
+Input and output use Zod. The CLI derives the Engine config from the file and sends its bytes to Fused, which
 compiles them during `app plan` and publishes the bundle during
 `app apply`. `app source extract` moves legacy inline `source: |` into a `.tsx`
 file and updates the YAML. `language` and `generate` are unnecessary here.
 
-Store the config and source under `.fused/unified_app/` and run:
+Store the TypeScript under `.fused/unified_app/` and run:
 
 ```bash
-fused-cli app plan -f .fused/unified_app/customer-app.yaml --json
-fused-cli app apply -f .fused/unified_app/customer-app.yaml --json
+fused-cli app plan -f .fused/unified_app/customer-app.tsx --json
+fused-cli app apply -f .fused/unified_app/customer-app.tsx --json
 ```
 
 Fused returns the immutable App version ID and shows its family execution
-token once. A new source revision needs a new App version. `source_path` and a
-`bundle_digest` for code compiled outside Fused are mutually exclusive;
+token once. A new source revision needs a new App version. Legacy YAML
+declarations with `source_path` remain readable; `bundle_digest` is for code compiled outside Fused;
 `select_all` is not valid for Unified Apps. See
 the [`buildUnifiedApp` guide](UNIFIED_APPS.md) for the function contract,
-or the [complete example](unified-apps/example.md) for YAML, apply, and API
+or the [complete example](unified-apps/example.md) for authoring, apply, and API
 calls.
 
 ## SDK configuration

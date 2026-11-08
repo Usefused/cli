@@ -901,14 +901,13 @@ This creation-time selection does not enable an MCP's runtime intelligent search
 Describe creates a hosted TypeScript Unified App by default. It drafts one
 `buildUnifiedApp` source draft from exact Registry operation contracts and
 shows the full source and operation scope for review. It saves the selected
-cart in `.fused/unified_app/<name>.yaml` and source in
-`.fused/unified_app/<name>.tsx`, then sends the resolved config to
+metadata and source in one `.fused/unified_app/<name>.tsx` file, then sends the derived config to
 Engine through the regular Unified App plan/apply lifecycle. Engine resolves
 operation IDs, compiles TypeScript, and deploys the bundle. No local compiler
 or `FUSED_EXECUTION_BUILD` variable is needed.
 `--kind sdk`, `--kind mcp`, and `--kind rest` retain their existing output paths.
 Unified App describe currently requires 1 to 16 explicit operations and a
-creation goal. To change an existing Unified App, edit the linked TypeScript
+creation goal. To change an existing Unified App, edit the TypeScript
 file and deploy a reviewed new version with `fused-cli app plan/apply`.
 `fused-cli app source extract` converts legacy inline source into the canonical
 TypeScript file and rewrites the YAML to use `source_path`.

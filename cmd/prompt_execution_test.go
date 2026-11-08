@@ -14,10 +14,9 @@ import (
 	"github.com/Usefused/cli/internal/configfile"
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
 )
 
-// TestPromptUnifiedAppConfigProducesEngineCompiledCart verifies describe preserves a lintable file without sending its path.
+// TestPromptUnifiedAppConfigProducesEngineCompiledCart verifies describe preserves one lintable file without sending its path.
 func TestPromptUnifiedAppConfigProducesEngineCompiledCart(t *testing.T) {
 	t.Chdir(t.TempDir())
 	if err := os.MkdirAll(filepath.Join(".fused", "unified_app"), 0o755); err != nil {
@@ -25,17 +24,13 @@ func TestPromptUnifiedAppConfigProducesEngineCompiledCart(t *testing.T) {
 	}
 	request := scaffoldRequest{name: "billing", version: "1.0.0", bucket: "main", services: []scaffoldService{{name: "crm", version: "v1"}}, operations: []scaffoldOperation{{service: "crm", operation: "createCustomer"}}, events: []scaffoldEvent{{service: "crm", event: "customer.created"}}, webhookAttachment: "billing-webhooks"}
 	source := "export default buildUnifiedApp({});"
-	if err := os.WriteFile(filepath.Join(".fused", "unified_app", "billing.tsx"), []byte(source), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	config := promptUnifiedAppConfig(request, "billing.tsx")
-	data, err := yaml.Marshal(config)
+	data, err := promptUnifiedAppSource(request, source)
 	if err != nil {
 		t.Fatal(err)
 	}
-	parsed, err := configfile.Parse(data, ".fused/unified_app/billing.yaml")
+	parsed, err := configfile.ParseUnifiedAppSource(data, ".fused/unified_app/billing.tsx")
 	// The shared parser must admit source-only hosted desired state and retain exact scope.
-	if err != nil || parsed.Kind != configfile.KindUnifiedApp || parsed.UnifiedApp.Source != source || parsed.UnifiedApp.SourcePath != "billing.tsx" || parsed.UnifiedApp.BundleDigest != "" {
+	if err != nil || parsed.Kind != configfile.KindUnifiedApp || parsed.UnifiedApp.Source != string(data) || parsed.UnifiedApp.SourcePath != "" || parsed.UnifiedApp.BundleDigest != "" {
 		t.Fatalf("hosted config = %#v, %v", parsed, err)
 	}
 	if got := parsed.UnifiedApp.Services["crm"]; len(got.Operations) != 1 || got.Operations[0] != "createCustomer" {
@@ -94,7 +89,7 @@ func TestDeployPromptExecutionSendsCartToEngine(t *testing.T) {
 	server := newPromptExecutionTestServer(t, appID, &paths)
 	defer server.Close()
 	client := api.NewClient(server.URL, "fsk_test")
-	request := scaffoldRequest{name: "billing", version: "1.0.0", bucket: "main", path: filepath.Join(".fused", "unified_app", "billing.yaml"), services: []scaffoldService{{name: "crm", version: "v1"}}, operations: []scaffoldOperation{{service: "crm", operation: "create"}}}
+	request := scaffoldRequest{name: "billing", version: "1.0.0", bucket: "main", path: filepath.Join(".fused", "unified_app", "billing.tsx"), services: []scaffoldService{{name: "crm", version: "v1"}}, operations: []scaffoldOperation{{service: "crm", operation: "create"}}}
 	source := "export default buildUnifiedApp({});"
 	plan := promptInitPlan{mode: unifiedInitModeUnified, primary: request, execution: &promptExecutionDraft{source: source}}
 	command := &cobra.Command{}
@@ -111,16 +106,17 @@ func TestDeployPromptExecutionSendsCartToEngine(t *testing.T) {
 	if !strings.Contains(output.String(), server.URL+"/v1/apps/billing/executions") || strings.Contains(output.String(), "/v1/apps/"+appID+"/executions") {
 		t.Fatalf("unstable execution URL: %s", output.String())
 	}
-	parsed, err := configfile.ParseFile(request.path)
-	if err != nil || parsed.Kind != configfile.KindUnifiedApp || parsed.UnifiedApp.Source != source || parsed.UnifiedApp.SourcePath != "billing.tsx" {
+	sourcePath := filepath.Join(".fused", "unified_app", "billing.tsx")
+	parsed, err := configfile.ParseFile(sourcePath)
+	if err != nil || parsed.Kind != configfile.KindUnifiedApp || !strings.Contains(parsed.UnifiedApp.Source, source) || parsed.UnifiedApp.SourcePath != "" {
 		t.Fatalf("published config=%#v err=%v", parsed, err)
 	}
-	// Describe must leave reviewable YAML linked to TypeScript, never embed the generated code.
-	if savedConfig, err := os.ReadFile(request.path); err != nil || !strings.Contains(string(savedConfig), "source_path: billing.tsx") || strings.Contains(string(savedConfig), "source: |") {
-		t.Fatalf("saved config = %q, %v", savedConfig, err)
+	// Describe publishes no sibling YAML declaration for a source-owned app.
+	if _, err := os.Stat(filepath.Join(".fused", "unified_app", "billing.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("unexpected YAML declaration: %v", err)
 	}
-	// A successful describe keeps its reviewed TypeScript in a standalone editable file.
-	if saved, err := os.ReadFile(filepath.Join(".fused", "unified_app", "billing.tsx")); err != nil || string(saved) != source {
+	// A successful describe keeps selections and execution in the same editable file.
+	if saved, err := os.ReadFile(sourcePath); err != nil || !strings.Contains(string(saved), "export const fusedConfig") || !strings.Contains(string(saved), source) {
 		t.Fatalf("saved source = %q, %v", saved, err)
 	}
 }

@@ -343,9 +343,9 @@ func scaffoldTargetPath(kind configfile.ConfigKind, name, explicit string) (stri
 	if kind == configfile.KindMCP {
 		directory = "mcps"
 	}
-	// Hosted code has its own discovered desired-state directory.
+	// Hosted code owns its metadata and behavior in one discovered TypeScript file.
 	if kind == configfile.KindUnifiedApp {
-		directory = "unified_app"
+		return filepath.Join(".fused", "unified_app", fileName+".tsx"), nil
 	}
 	// Ingress bundles must be discovered as webhooks rather than app configs.
 	if kind == configfile.KindWebhook {
