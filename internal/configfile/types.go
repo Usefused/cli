@@ -236,8 +236,6 @@ type AppConfig struct {
 	BundleDigest string `yaml:"bundle_digest,omitempty" json:"bundle_digest,omitempty"`
 	// Source is compiled by Engine during plan; keeping it in desired state binds review and source_hash to the exact code.
 	Source string `yaml:"source,omitempty" json:"source,omitempty"`
-	// SourcePath is local authoring input; only its bytes enter the Engine cart.
-	SourcePath string `yaml:"source_path,omitempty" json:"-"`
 	// WebhookAttachment names one kind: webhook config (its own top-level
 	// `name:`) this SDK/MCP wants webhook delivery from. Deliberately a
 	// single scalar, not a list, and hoisted here at the app's top

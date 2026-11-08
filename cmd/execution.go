@@ -17,36 +17,12 @@ var unifiedCmd = &cobra.Command{Use: "unified-app", Short: "Manage hosted Unifie
 var unifiedPlanCmd = &cobra.Command{
 	Use: "plan", Short: "Plan a Unified App", Args: cobra.NoArgs,
 	RunE: WithTelemetry("cli.unified.plan", func(cmd *cobra.Command, _ []string) error {
-		changed, err := syncUnifiedAppSources(effectiveConfigFile(), false)
-		if err != nil {
-			return err
-		}
-		// Local source extraction is a user-triggered write and belongs in the same audit trail as apply.
-		if changed > 0 {
-			recordAppliedChange(cmd.Context(), cmd.CommandPath(), "unified_app.source")
-		}
+		// Planning reads the single TypeScript declaration without rewriting local authoring files.
 		jsonOut, _ := cmd.Flags().GetBool("json")
 		receiptOut, _ := cmd.Flags().GetString("receipt-out")
 		ownerTeam, _ := cmd.Flags().GetString("owner-team")
 		return runConfigPlan(planOptions{filter: filterUnified, jsonOut: jsonOut, receiptOut: receiptOut, ownerTeamSlug: ownerTeam,
 			output: cmd.OutOrStdout(), auditCtx: cmd.Context(), auditAction: cmd.CommandPath()})
-	}),
-}
-
-// unifiedSyncCmd externalizes local authoring source without changing the deployed App version.
-var unifiedSyncCmd = &cobra.Command{
-	Use: "sync", Short: "Create editable TypeScript files for local Unified App configs", Args: cobra.NoArgs,
-	RunE: WithTelemetry("cli.unified.sync", func(cmd *cobra.Command, _ []string) error {
-		changed, err := syncUnifiedAppSources(effectiveConfigFile(), true)
-		if err != nil {
-			return err
-		}
-		// Sync records only actual local mutations so no-op reads do not appear as changes.
-		if changed > 0 {
-			recordAppliedChange(cmd.Context(), cmd.CommandPath(), "unified_app.source")
-		}
-		fmt.Fprintf(cmd.OutOrStdout(), "Synchronized %d Unified App source file(s).\n", changed)
-		return nil
 	}),
 }
 
@@ -140,7 +116,7 @@ func applyUnifiedAppConfigsJSON(client *api.Client, prepared []preparedConfigApp
 
 // init prepares hosted workflow handlers for app authoring without exposing a standalone Unified App command.
 func init() {
-	unifiedCmd.AddCommand(unifiedPlanCmd, unifiedApplyCmd, unifiedSyncCmd)
+	unifiedCmd.AddCommand(unifiedPlanCmd, unifiedApplyCmd)
 	unifiedPlanCmd.Flags().Bool("json", false, "Print plan result JSON")
 	unifiedPlanCmd.Flags().String("receipt-out", "", "Write the plan receipt to this path")
 	unifiedPlanCmd.Flags().String("owner-team", "", "Optional owning team slug")

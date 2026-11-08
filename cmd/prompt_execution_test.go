@@ -30,7 +30,7 @@ func TestPromptUnifiedAppConfigProducesEngineCompiledCart(t *testing.T) {
 	}
 	parsed, err := configfile.ParseUnifiedAppSource(data, ".fused/unified_app/billing.tsx")
 	// The shared parser must admit source-only hosted desired state and retain exact scope.
-	if err != nil || parsed.Kind != configfile.KindUnifiedApp || parsed.UnifiedApp.Source != string(data) || parsed.UnifiedApp.SourcePath != "" || parsed.UnifiedApp.BundleDigest != "" {
+	if err != nil || parsed.Kind != configfile.KindUnifiedApp || parsed.UnifiedApp.Source != string(data) || parsed.UnifiedApp.BundleDigest != "" {
 		t.Fatalf("hosted config = %#v, %v", parsed, err)
 	}
 	if got := parsed.UnifiedApp.Services["crm"]; len(got.Operations) != 1 || got.Operations[0] != "createCustomer" {
@@ -108,7 +108,7 @@ func TestDeployPromptExecutionSendsCartToEngine(t *testing.T) {
 	}
 	sourcePath := filepath.Join(".fused", "unified_app", "billing.tsx")
 	parsed, err := configfile.ParseFile(sourcePath)
-	if err != nil || parsed.Kind != configfile.KindUnifiedApp || !strings.Contains(parsed.UnifiedApp.Source, source) || parsed.UnifiedApp.SourcePath != "" {
+	if err != nil || parsed.Kind != configfile.KindUnifiedApp || !strings.Contains(parsed.UnifiedApp.Source, source) {
 		t.Fatalf("published config=%#v err=%v", parsed, err)
 	}
 	// Describe publishes no sibling YAML declaration for a source-owned app.

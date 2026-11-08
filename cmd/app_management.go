@@ -428,7 +428,7 @@ func selectedAppConfigKind() (configKindFilter, int, error) {
 	return kind, count, nil
 }
 
-// runAppPlan dispatches from the config kind while retaining SDK credential review and Unified App source extraction.
+// runAppPlan dispatches from the config kind while retaining SDK credential review.
 func runAppPlan(cmd *cobra.Command, args []string) error {
 	kind, _, err := selectedAppConfigKind()
 	if err != nil {
@@ -436,7 +436,7 @@ func runAppPlan(cmd *cobra.Command, args []string) error {
 	} // Determine scope before planning.
 	if kind == filterUnified {
 		return unifiedPlanCmd.RunE(cmd, args)
-	} // Unified source preparation precedes its plan.
+	} // Unified Apps plan directly from their TypeScript declaration.
 	if err := validateSDKPlanInteraction(); err != nil {
 		return err
 	} // Conflicting interaction flags cannot produce mixed JSON.

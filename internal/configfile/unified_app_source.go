@@ -10,11 +10,6 @@ import (
 
 var fusedConfigDeclaration = regexp.MustCompile(`(?m)^[ \t]*export[ \t]+const[ \t]+fusedConfig[ \t]*=`)
 
-// HasUnifiedAppSourceConfig distinguishes a source-owned app from TypeScript linked by legacy YAML.
-func HasUnifiedAppSourceConfig(source []byte) bool {
-	return len(sourceConfigDeclarations(source)) != 0
-}
-
 // sourceConfigDeclarations accepts only declarations in code, not examples inside comments or strings.
 func sourceConfigDeclarations(source []byte) [][2]int {
 	candidates := fusedConfigDeclaration.FindAllIndex(source, -1)
@@ -77,7 +72,7 @@ func sourceConfigDeclarations(source []byte) [][2]int {
 
 // ParseUnifiedAppSource turns a literal TypeScript declaration into the existing Engine plan shape.
 func ParseUnifiedAppSource(source []byte, path string) (*ParsedConfig, error) {
-	// The same bounded source limit applies whether code is linked from YAML or owns its own declaration.
+	// Bound the full declaration and code before passing it to Engine compilation.
 	if len(source) == 0 || len(source) > 256*1024 {
 		return nil, fmt.Errorf("Unified App TypeScript source must be nonempty and at most 256 KiB")
 	}
@@ -94,8 +89,8 @@ func ParseUnifiedAppSource(source []byte, path string) (*ParsedConfig, error) {
 		return nil, fmt.Errorf("decode fusedConfig in %s: use a literal JSON object: %w", path, err)
 	}
 	// Local source and bundle fields would create two competing authorities for the immutable version.
-	if config.Source != "" || config.SourcePath != "" || config.BundleDigest != "" {
-		return nil, fmt.Errorf("fusedConfig must not declare source, source_path, or bundle_digest")
+	if config.Source != "" || config.BundleDigest != "" {
+		return nil, fmt.Errorf("fusedConfig must not declare source or bundle_digest")
 	}
 	// The author supplies product metadata; the CLI owns the fixed wire discriminator.
 	if config.APIVersion != "" && config.APIVersion != APIVersionV1 {
@@ -116,7 +111,7 @@ func ParseUnifiedAppSource(source []byte, path string) (*ParsedConfig, error) {
 	hash := sha256.Sum256(source)
 	parsed := &ParsedConfig{Kind: KindUnifiedApp, Path: path, SourceHash: fmt.Sprintf("sha256:%x", hash), UnifiedApp: &config}
 	parsed.ConfigKey = appConfigKey(KindUnifiedApp, config.Name, config.Version)
-	// Shared validation keeps TypeScript and YAML declarations subject to identical selection rules.
+	// Shared app validation checks the normalized Engine cart against the hosted runtime rules.
 	if err := validateAppConfig(&config, KindUnifiedApp); err != nil {
 		return nil, err
 	}

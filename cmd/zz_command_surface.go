@@ -155,11 +155,8 @@ func configureSecretSurface() {
 	secretListCmd.RunE = func(cmd *cobra.Command, args []string) error { secretListBucketID = args[0]; return runSecretList(cmd) }
 }
 
-// configureRemainingSurface gives source extraction and registration discovery one public path.
+// configureRemainingSurface keeps registration discovery under its canonical command path.
 func configureRemainingSurface() {
-	source := commandGroup("source", "Manage local Unified App source files")
-	unifiedCmd.AddCommand(source)
-	relocateCommand(source, unifiedSyncCmd, "extract", "Extract editable TypeScript from local Unified App configs")
 	// Only one registration-list command remains; it accepts an ordinary service reference.
 	workspaceServiceCmd.RemoveCommand(workspaceServiceWebhooksCmd)
 }

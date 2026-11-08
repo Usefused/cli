@@ -173,26 +173,6 @@ func deployPromptExecution(cmd *cobra.Command, client *api.Client, plan promptIn
 	return nil
 }
 
-// unifiedAppSourcePaths keeps legacy YAML extraction beside its TypeScript target.
-func unifiedAppSourcePaths(configPath, name string) (string, string, error) {
-	fileName := safeConfigFileName(name)
-	// A source filename must not escape the dedicated local authoring directory.
-	if fileName == "" {
-		return "", "", errors.New("unified app requires a safe source filename")
-	}
-	sourceFile := filepath.Join(".fused", "unified_app", fileName+".tsx")
-	absoluteSource, err := filepath.Abs(sourceFile)
-	if err != nil {
-		return "", "", err
-	}
-	absoluteConfig, err := filepath.Abs(configPath)
-	if err != nil {
-		return "", "", err
-	}
-	reference, err := filepath.Rel(filepath.Dir(absoluteConfig), absoluteSource)
-	return sourceFile, reference, err
-}
-
 // promptUnifiedAppSource places reviewed metadata beside executable code in one TypeScript file.
 func promptUnifiedAppSource(request scaffoldRequest, body string) ([]byte, error) {
 	config := promptUnifiedAppConfig(request)

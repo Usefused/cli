@@ -292,8 +292,7 @@ REST apps have no event receiver.
 
 Unified App creation needs 1–16 explicit operations. `describe` saves
 one `.fused/unified_app/<app>.tsx` file with `fusedConfig` and executable code.
-Edit that TypeScript file and deploy a new version to update it. `app source extract` moves
-inline YAML source into the editable file. `--update <app-name>` applies to
+Edit that TypeScript file and deploy a new version to update it. `--update <app-name>` applies to
 existing SDK, MCP, and REST configs and publishes an immutable successor when
 the reviewed proposal changes it. Use `-f <path>` when a name is ambiguous.
 `--name`, `--version`, `--language`, and `--bucket` constrain creation; updates
@@ -780,26 +779,13 @@ one-time schedules need a new future `--at` to run again.
 
 ## `app bundle attach <app-version-id>`
 
-You usually do not need this command. With `source_path`, Fused compiles the
-TypeScript during `app plan`.
+You usually do not need this command. For source-owned Unified Apps, Fused
+compiles the TypeScript during `app plan`.
 
-Use `bundle attach` only if you compiled the code yourself. Put the compiled
-file's checksum in the config as `bundle_digest`, then run `app plan`
-and `app apply`. The attach command uploads that JavaScript file and
+Use `bundle attach` only for an existing precompiled Engine plan. The attach command uploads that JavaScript file and
 the compiler's metadata file to the new App version. Pass the plan's
 `source_hash` with `--source-hash`, the JavaScript file with `--bundle`, and the
 metadata file with `--manifest`.
-
-## `app source extract`
-
-Create `.fused/unified_app/<app>.tsx` from a local Unified App's inline
-`source: |`, and replace that block with a relative `source_path`. A linked
-source in another location is copied into the canonical path. Existing files
-with different contents are left untouched and reported as conflicts.
-
-Usage: `fused-cli app source extract -f .fused/unified_app/<app>.yaml`. Omit `-f` to
-sync all discovered local Unified App configs. `app plan` performs the
-inline-source conversion automatically before sending the cart to Fused.
 
 ## `app sync`
 Full-mirror a local SDK config from the exact Fused app version declared in that file. There is no implicit latest lookup or sync-time version upgrade.

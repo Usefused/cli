@@ -24,7 +24,7 @@ fused-cli app schedule list reports
 fused-cli app download support@1.0.0
 ```
 
-`app list --type` accepts `sdk`, `rest`, `mcp`, and `unified-app`; omit it to list all app types. Downloads require generated SDKs; schedules and promotion require Unified Apps. `app source extract` externalizes Unified App source; `app sync` mirrors an exact SDK/API config. Execution and destructive version actions require `name@version` or an immutable version ID. Use `init` to create apps and `extend` to add selections.
+`app list --type` accepts `sdk`, `rest`, `mcp`, and `unified-app`; omit it to list all app types. Downloads require generated SDKs; schedules and promotion require Unified Apps. Unified App source and metadata live in one TypeScript file; `app sync` mirrors an exact SDK/API config. Execution and destructive version actions require `name@version` or an immutable version ID. Use `init` to create apps and `extend` to add selections.
 
 Service reads default to enabled workspace services: `service list`, `service version list`, and `service operation list`. Add `--registry` for catalog reads, for example `service list --registry --search gmail`. Use `--search` consistently for list filtering. Use `connect <service-name>` to set up or edit provider authentication (the picker highlights configured methods, `--bucket` defaults to `default`, and one quoted `"name=value, name=value"` argument with `--no-input` supports automation, including shell-expanded values). Named `bucket secret`, `bucket env`, and `bucket cert` entries support `set <name>[=<value>]`, `get <name>`, and `remove <name>` with `--bucket`. Provider credential administration also lives under `bucket credential`; secret metadata uses `bucket secret list <bucket>`.
 
@@ -909,5 +909,4 @@ or `FUSED_EXECUTION_BUILD` variable is needed.
 Unified App describe currently requires 1 to 16 explicit operations and a
 creation goal. To change an existing Unified App, edit the TypeScript
 file and deploy a reviewed new version with `fused-cli app plan/apply`.
-`fused-cli app source extract` converts legacy inline source into the canonical
-TypeScript file and rewrites the YAML to use `source_path`.
+Unified App metadata belongs in the exported TypeScript `fusedConfig` object.

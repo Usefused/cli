@@ -65,10 +65,16 @@ func TestSharedAppListTypeFilters(t *testing.T) {
 
 // TestSharedAppPlanRoutesByConfig exercises the actual command and preserves each Engine plan contract.
 func TestSharedAppPlanRoutesByConfig(t *testing.T) {
-	for _, test := range []struct{ kind, extra, route string }{{"sdk", "language: typescript", "sdk"}, {"sdk", "language: typescript\ngenerate: false", "sdk"}, {"mcp", "description: Test tools", "mcp"}, {"unified_app", "source: 'export default buildUnifiedApp({});'", "unified-app"}} {
+	for _, test := range []struct{ kind, extra, route string }{{"sdk", "language: typescript", "sdk"}, {"sdk", "language: typescript\ngenerate: false", "sdk"}, {"mcp", "description: Test tools", "mcp"}, {"unified_app", "", "unified-app"}} {
 		t.Run(test.kind+test.extra, func(t *testing.T) {
 			dir := t.TempDir()
-			path := writeSprintConfig(t, dir, "app.yaml", fmt.Sprintf("apiVersion: fused/v1\nkind: %s\nname: tools\nversion: 1.0.0\nbucket: default\n%s\nservices:\n  crm:\n    version: v1\n    operations: [createCustomer]\n", test.kind, test.extra))
+			path := ""
+			// Unified Apps are authored as TypeScript while the other app kinds retain YAML.
+			if test.kind == "unified_app" {
+				path = writeSprintConfig(t, dir, "app.ts", "export const fusedConfig = {\"name\":\"tools\",\"version\":\"1.0.0\",\"bucket\":\"default\",\"services\":{\"crm\":{\"version\":\"v1\",\"operations\":[\"createCustomer\"]}}};\nexport default buildUnifiedApp({});\n")
+			} else {
+				path = writeSprintConfig(t, dir, "app.yaml", fmt.Sprintf("apiVersion: fused/v1\nkind: %s\nname: tools\nversion: 1.0.0\nbucket: default\n%s\nservices:\n  crm:\n    version: v1\n    operations: [createCustomer]\n", test.kind, test.extra))
+			}
 			plans := 0
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path == "/health" {

@@ -2,20 +2,28 @@
 
 Runtime bucket selection is disabled by default. An immutable Unified App version opts in by declaring a finite allowlist of existing bucket names:
 
-```yaml
-apiVersion: fused/v1
-kind: unified_app
-name: customer-lookup
-version: "1.1.0"
-bucket: default
-runtime_buckets:
-  - tenant-a
-  - tenant-b
-source_path: customer-lookup.ts
-services:
-  crm:
-    version: "2026-01-01"
-    operations: [getCustomer]
+```ts
+import * as z from "zod/mini";
+import { buildUnifiedApp } from "@fused/unified-app";
+import { services } from "@fused/operations";
+
+export const fusedConfig = {
+  "name": "customer-lookup",
+  "version": "1.1.0",
+  "bucket": "default",
+  "runtime_buckets": ["tenant-a", "tenant-b"],
+  "services": {
+    "crm": { "version": "2026-01-01", "operations": ["getCustomer"] }
+  }
+};
+
+export default buildUnifiedApp({
+  input: z.object({ customerId: z.string() }),
+  output: z.object({ customer: z.unknown() }),
+  async execute({ input }) {
+    return { customer: await services.crm.getCustomer({ customerId: input.customerId }) };
+  },
+});
 ```
 
 Omit `runtime_buckets`, or use `[]`, to disable selection. Up to 32 distinct names are allowed; wildcards are rejected. Adding or removing permitted buckets requires a new version. Plan resolves names to immutable bucket IDs and includes `bucket.use` requirements for every permitted bucket in the normal actor/owner authorization. Apply rechecks the name-to-ID mapping, so deleting and recreating a bucket cannot inherit a reviewed plan's authority.
@@ -49,8 +57,8 @@ The management OpenAPI export advertises `bucket_id` only for opted-in versions,
 ## CLI and generated client
 
 ```sh
-fused-cli app plan -f .fused/unified_app/customer-lookup.yaml
-fused-cli app apply -f .fused/unified_app/customer-lookup.yaml
+fused-cli app plan -f .fused/unified_app/customer-lookup.ts
+fused-cli app apply -f .fused/unified_app/customer-lookup.ts
 fused-cli app invoke customer-lookup@1.1.0 execute \
   --params '{"customerId":"cus_123"}' \
   --bucket-id 11111111-1111-4111-8111-111111111111 \
@@ -67,6 +75,6 @@ await client.execute({customerId: "cus_123"}, {bucketId: selectedBucketId});
 
 ## UI
 
-In Unified App setup, choose **Choose at runtime** in the **Bucket** dropdown, select permitted buckets, and retain a default bucket for calls without a selection. The form and YAML editor preserve the same scope and invalidate any earlier plan when it changes. Existing apps require a new version.
+In Unified App setup, choose **Choose at runtime** in the **Bucket** dropdown, select permitted buckets, and retain a default bucket for calls without a selection. The form and TypeScript editor preserve the same scope and invalidate any earlier plan when it changes. Existing apps require a new version.
 
 On an opted-in version's overview, expand **Run with a runtime bucket**, select a permitted bucket, and enter values directly in the input chips supplied by the app's schema. Required fields are marked; optional fields remain omitted until filled. Changes apply as you type, with schema errors and incomplete values blocking execution. Use **JSON** for advanced input or schemas that cannot be represented as fields. Supply an execution token, then run. The UI also copies the complete request JSON. Tokens remain local to the component, are cleared after the request, and are not saved. Execution is never retried automatically.

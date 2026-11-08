@@ -91,8 +91,7 @@ Export a literal JSON `fusedConfig` object for name, version, bucket, and exact
 service selections, alongside `buildUnifiedApp({ input, output, execute, fetch? })`.
 Input and output use Zod. The CLI derives the Engine config from the file and sends its bytes to Fused, which
 compiles them during `app plan` and publishes the bundle during
-`app apply`. `app source extract` moves legacy inline `source: |` into a `.tsx`
-file and updates the YAML. `language` and `generate` are unnecessary here.
+`app apply`. `language` and `generate` are unnecessary here.
 
 Store the TypeScript under `.fused/unified_app/` and run:
 
@@ -102,9 +101,9 @@ fused-cli app apply -f .fused/unified_app/customer-app.tsx --json
 ```
 
 Fused returns the immutable App version ID and shows its family execution
-token once. A new source revision needs a new App version. Legacy YAML
-declarations with `source_path` remain readable; `bundle_digest` is for code compiled outside Fused;
-`select_all` is not valid for Unified Apps. See
+token once. A new source revision needs a new App version. Unified App YAML
+declarations are no longer accepted by the CLI; put their metadata in the
+TypeScript `fusedConfig` export. `select_all` is not valid for Unified Apps. See
 the [`buildUnifiedApp` guide](UNIFIED_APPS.md) for the function contract,
 or the [complete example](unified-apps/example.md) for authoring, apply, and API
 calls.

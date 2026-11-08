@@ -41,6 +41,7 @@ func loadSingleConfig(path string) (*Run, error) {
 	return &Run{Configs: []*ParsedConfig{parsed}}, nil
 }
 
+// loadFusedDirectory collects the supported local declarations into one planning run.
 func loadFusedDirectory() (*Run, error) {
 	fusedDir := ".fused"
 	if err := ensureFusedDirectory(fusedDir); err != nil {
@@ -55,10 +56,6 @@ func loadFusedDirectory() (*Run, error) {
 	}
 	// Unified App declarations retain their own family identity and directory.
 	if err := appendDesiredConfigs(run, filepath.Join(fusedDir, "unified_app"), KindUnifiedApp); err != nil {
-		return nil, err
-	}
-	// Older generated carts remain discoverable so a source-directory rename cannot hide deployed intent.
-	if err := appendDesiredConfigs(run, filepath.Join(fusedDir, "unified"), KindUnifiedApp); err != nil {
 		return nil, err
 	}
 	if err := appendDesiredConfigs(run, filepath.Join(fusedDir, "mcps"), KindMCP); err != nil {
@@ -273,20 +270,11 @@ func appendDesiredConfigs(run *Run, configDir string, expectedKind ConfigKind) e
 	})
 }
 
+// appendDesiredConfig admits only source-owned Unified Apps and preserves YAML discovery for other kinds.
 func appendDesiredConfig(run *Run, p string, d fs.DirEntry, walkErr error, expectedKind ConfigKind) error {
-	// Unified App TypeScript can own its declaration; other resources still require YAML.
+	// Other resources still require YAML while Unified Apps require TypeScript.
 	if walkErr != nil || d.IsDir() || (!isYAMLFile(d.Name()) && !(expectedKind == KindUnifiedApp && isTypeScriptFile(d.Name()))) {
 		return walkErr
-	}
-	// Linked legacy source files are implementation inputs, not independent app declarations.
-	if isTypeScriptFile(d.Name()) {
-		source, err := os.ReadFile(p)
-		if err != nil {
-			return err
-		}
-		if !HasUnifiedAppSourceConfig(source) {
-			return nil
-		}
 	}
 	parsed, err := ParseFile(p)
 	if err != nil {
@@ -356,6 +344,10 @@ func Parse(data []byte, sourcePath string) (*ParsedConfig, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Unified App metadata must live beside its executable source in one TypeScript file.
+	if kind == KindUnifiedApp {
+		return nil, fmt.Errorf("Unified App YAML is no longer supported; move its metadata into exported fusedConfig in a .ts or .tsx file")
+	}
 
 	hash := sha256.Sum256(data)
 	parsed := &ParsedConfig{
@@ -368,55 +360,11 @@ func Parse(data []byte, sourcePath string) (*ParsedConfig, error) {
 		return nil, err
 	}
 
-	// A linked source file must join the same reviewed content identity as the YAML.
-	if err := resolveExecutionSourcePath(parsed, data); err != nil {
-		return nil, err
-	}
-
 	if err := validateConfig(parsed); err != nil {
 		return nil, err
 	}
 
 	return parsed, nil
-}
-
-// resolveExecutionSourcePath loads local TypeScript before validation and hashes both authoring inputs.
-func resolveExecutionSourcePath(parsed *ParsedConfig, document []byte) error {
-	// Other config kinds cannot gain file-reading behavior through a shared app shape.
-	if parsed.Kind != KindUnifiedApp || parsed.UnifiedApp.SourcePath == "" {
-		return nil
-	}
-	app := parsed.UnifiedApp
-	// One source authority keeps a plan from compiling code different from the reviewed declaration.
-	if app.Source != "" || app.BundleDigest != "" {
-		return fmt.Errorf("unified_app source_path cannot be combined with source or bundle_digest")
-	}
-	// Relative TypeScript paths are portable with their YAML file and avoid accidental absolute-file uploads.
-	if filepath.IsAbs(app.SourcePath) || (filepath.Ext(app.SourcePath) != ".ts" && filepath.Ext(app.SourcePath) != ".tsx") {
-		return fmt.Errorf("unified_app source_path must be a relative .ts or .tsx file")
-	}
-	path := filepath.Join(filepath.Dir(parsed.Path), app.SourcePath)
-	info, err := os.Stat(path)
-	// A missing or non-file authoring target should fail before any Engine plan is sent.
-	if err != nil {
-		return fmt.Errorf("read unified_app source_path %q: %w", app.SourcePath, err)
-	}
-	if !info.Mode().IsRegular() || info.Size() > 256*1024 {
-		return fmt.Errorf("unified_app source_path must be a regular TypeScript file of at most 256 KiB")
-	}
-	source, err := os.ReadFile(path)
-	// Preserve the authoring path in errors without leaking source contents.
-	if err != nil {
-		return fmt.Errorf("read unified_app source_path %q: %w", app.SourcePath, err)
-	}
-	app.Source = string(source)
-	// A changed .ts file must invalidate an earlier plan receipt even when YAML is unchanged.
-	hasher := sha256.New()
-	_, _ = hasher.Write(document)
-	_, _ = hasher.Write([]byte{0})
-	_, _ = hasher.Write(source)
-	parsed.SourceHash = fmt.Sprintf("sha256:%x", hasher.Sum(nil))
-	return nil
 }
 
 // effectiveConfigKind maps the local-only type: services discriminator onto the existing workspace execution path.
@@ -456,8 +404,6 @@ func parseTypedConfig(data []byte, kind ConfigKind, parsed *ParsedConfig) error 
 		}
 		parsed.SDK = &sdkConfig
 		parsed.ConfigKey = appConfigKey(KindSDK, sdkConfig.Name, sdkConfig.Version)
-	case KindUnifiedApp:
-		return parseUnifiedAppConfig(data, parsed)
 	case KindMCP:
 		// MCP and SDK share the app shape but keep distinct key prefixes so
 		// Engine can route each desired state to its own executor without legacy targets.
@@ -480,17 +426,6 @@ func parseTypedConfig(data []byte, kind ConfigKind, parsed *ParsedConfig) error 
 	default:
 		return fmt.Errorf("unknown config kind: %q", kind)
 	}
-	return nil
-}
-
-// parseUnifiedAppConfig keeps the hosted App shape shared while its config key remains distinct.
-func parseUnifiedAppConfig(data []byte, parsed *ParsedConfig) error {
-	var config UnifiedAppConfig
-	if err := strictUnmarshal(data, &config); err != nil {
-		return fmt.Errorf("failed to parse Unified App config: %w", err)
-	}
-	parsed.UnifiedApp = &config
-	parsed.ConfigKey = appConfigKey(KindUnifiedApp, config.Name, config.Version)
 	return nil
 }
 
@@ -639,8 +574,8 @@ func validateSDKKindFields(cfg *AppConfig) error {
 // validateSDKBundleDigest binds authored code only to the supported runtime and exact compiler bytes.
 func validateSDKBundleDigest(cfg *AppConfig) error {
 	// SDK package identity never owns a compiler bundle; that is a separate App family kind.
-	if cfg.BundleDigest != "" || cfg.Source != "" || cfg.SourcePath != "" {
-		return fmt.Errorf("source, source_path, and bundle_digest require kind: unified_app")
+	if cfg.BundleDigest != "" || cfg.Source != "" {
+		return fmt.Errorf("source and bundle_digest require kind: unified_app")
 	}
 	return nil
 }
@@ -648,7 +583,7 @@ func validateSDKBundleDigest(cfg *AppConfig) error {
 // validateUnifiedAppKindFields admits one immutable compiler bundle under its own hosted App kind.
 func validateUnifiedAppKindFields(cfg *AppConfig) error {
 	// The Engine bundle route compares exact emitted bytes to this planned compiler identity.
-	// The runtime is TypeScript by kind; legacy explicit declarations remain valid.
+	// The runtime is TypeScript by kind, including normalized source-owned declarations.
 	if cfg.Language != "" && cfg.Language != "typescript" {
 		return fmt.Errorf("Unified App config supports only TypeScript")
 	}
@@ -734,8 +669,8 @@ func validateExecutionOperationScope(services map[string]AppService, attachmentC
 // validateMCPKindFields admits only fields consumed by the hosted MCP runtime.
 func validateMCPKindFields(cfg *AppConfig) error {
 	// Authored execution code belongs to the separate hosted App family kind.
-	if cfg.Source != "" || cfg.SourcePath != "" {
-		return fmt.Errorf("source and source_path require kind: unified_app")
+	if cfg.Source != "" {
+		return fmt.Errorf("source requires kind: unified_app")
 	}
 	// A standalone MCP config cannot recursively request another hosted delivery.
 	if cfg.MCP != nil {

@@ -51,7 +51,7 @@ fused-cli app plan -f .fused/unified_app/customer-app.tsx --json
 fused-cli app apply -f .fused/unified_app/customer-app.tsx --json
 ```
 
-Engine compiles the TypeScript during plan and hosts it on apply. Save the returned `app_family_id` and one-time execution token securely. Use the returned `execution_url`, which defaults to `POST /v1/apps/{url_encoded_app_name}/executions`; the family UUID remains accepted in the same path. Call it with that token and `{"operation":"execute","input":{...}}`. The response exposes `appFamilyId` and the executed `version`; exact version IDs stay in internal receipts and version management. Older YAML declarations remain readable during migration.
+Engine compiles the TypeScript during plan and hosts it on apply. Save the returned `app_family_id` and one-time execution token securely. Use the returned `execution_url`, which defaults to `POST /v1/apps/{url_encoded_app_name}/executions`; the family UUID remains accepted in the same path. Call it with that token and `{"operation":"execute","input":{...}}`. The response exposes `appFamilyId` and the executed `version`; exact version IDs stay in internal receipts and version management. Unified App YAML declarations are no longer accepted by the CLI.
 
 
 ## Schedule runs

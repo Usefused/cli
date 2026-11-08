@@ -71,8 +71,7 @@ export default buildUnifiedApp({
 `fusedConfig` is a literal JSON object inside TypeScript. The CLI derives the
 Engine config from it, including the `apiVersion`, `kind`, and source bytes.
 You can edit and lint the `.tsx` file directly. Omit `language` and `generate`;
-Unified Apps always use TypeScript and do not generate an SDK package. Older
-YAML configs with `source_path` remain readable during migration.
+Unified Apps always use TypeScript and do not generate an SDK package.
 
 `bucket: default` supplies the default credentials. As with SDK configs,
 `services.crm.bucket: crm-team` can select another bucket for that service.
@@ -159,8 +158,7 @@ curl -X POST -H "Authorization: Bearer $FUSED_APP_TOKEN" \
 A Unified App needs at least one explicit selected operation. `select_all`
 is invalid for this kind. A source change needs a new
 immutable version; only one version in the App family receives new traffic.
-`source_path` uses Fused compilation. `bundle_digest` is for code compiled
-separately and uploaded with `app bundle attach`; use one or the other.
+The CLI sends the complete TypeScript file to Fused for compilation.
 Source is limited to 256 KiB, and authored imports are limited to
 `@fused/unified-app`, `@fused/operations`, `zod`, and `zod/mini`.
 

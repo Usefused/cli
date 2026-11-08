@@ -71,9 +71,6 @@ func TestSourceOwnedUnifiedAppRejectsCompetingAuthority(t *testing.T) {
 func TestSourceOwnedUnifiedAppRejectsAmbiguousMetadata(t *testing.T) {
 	commented := "/*\n" + sourceOwnedAppFixture("return {};") + "\n*/\nexport default buildUnifiedApp({});"
 	// A block comment is not an exported declaration even when a line matches the authoring spelling.
-	if HasUnifiedAppSourceConfig([]byte(commented)) {
-		t.Fatal("commented metadata was discovered as an app")
-	}
 	if _, err := ParseUnifiedAppSource([]byte(commented), "app.ts"); err == nil {
 		t.Fatal("commented metadata was accepted")
 	}
@@ -84,27 +81,25 @@ func TestSourceOwnedUnifiedAppRejectsAmbiguousMetadata(t *testing.T) {
 	}
 }
 
-// TestSourceOwnedDiscoverySkipsLegacyLinkedFiles keeps old YAML projects deployable during migration.
-func TestSourceOwnedDiscoverySkipsLegacyLinkedFiles(t *testing.T) {
+// TestUnifiedAppYAMLRejected requires a single TypeScript authority for both explicit and discovered files.
+func TestUnifiedAppYAMLRejected(t *testing.T) {
 	root := t.TempDir()
 	dir := filepath.Join(root, ".fused", "unified_app")
+	// Discovery must report an obsolete declaration rather than silently omit it.
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	legacySource := "export default buildUnifiedApp({});"
-	if err := os.WriteFile(filepath.Join(dir, "legacy.ts"), []byte(legacySource), 0o600); err != nil {
+	legacyYAML := "apiVersion: fused/v1\nkind: unified_app\nname: legacy\nversion: 1.0.0\nbucket: default\nsource: 'export default buildUnifiedApp({});'\n"
+	path := filepath.Join(dir, "legacy.yaml")
+	if err := os.WriteFile(path, []byte(legacyYAML), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	legacyYAML := "apiVersion: fused/v1\nkind: unified_app\nname: legacy\nversion: 1.0.0\nbucket: default\nsource_path: legacy.ts\nservices:\n  crm:\n    version: v1\n    operations: [createCustomer]\n"
-	if err := os.WriteFile(filepath.Join(dir, "legacy.yaml"), []byte(legacyYAML), 0o600); err != nil {
-		t.Fatal(err)
+	// Explicit selection and directory planning must give the same migration instruction.
+	if _, err := ParseFile(path); err == nil || !strings.Contains(err.Error(), "fusedConfig") {
+		t.Fatalf("explicit YAML result = %v", err)
 	}
 	run := &Run{}
-	if err := appendDesiredConfigs(run, dir, KindUnifiedApp); err != nil {
-		t.Fatal(err)
-	}
-	// Only the YAML-owned version should enter the plan cart.
-	if len(run.Configs) != 1 || run.Configs[0].UnifiedApp.Source != legacySource {
-		t.Fatalf("discovered %#v", run.Configs)
+	if err := appendDesiredConfigs(run, dir, KindUnifiedApp); err == nil || !strings.Contains(err.Error(), "fusedConfig") {
+		t.Fatalf("discovered YAML result = %v", err)
 	}
 }
