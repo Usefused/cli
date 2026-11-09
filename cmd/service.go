@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"text/tabwriter"
 
@@ -28,6 +29,14 @@ var serviceOperationIncludeRequest bool
 var serviceOperationIncludeResponses bool
 var serviceWebhooksVersion string
 
+// visibleServiceOperations omits retired methods from text and JSON views of older catalogues.
+func visibleServiceOperations(ops []cliapi.Integration) []cliapi.Integration {
+	return slices.DeleteFunc(ops, func(op cliapi.Integration) bool {
+		return strings.EqualFold(op.Method, "SOAP")
+	})
+}
+
+// runServiceOperations presents the Registry list or search results in the requested output format.
 func runServiceOperations(cmd *cobra.Command, serviceSlug string) error {
 	client, err := getAPIClient()
 	if err != nil {
@@ -44,6 +53,7 @@ func runServiceOperations(cmd *cobra.Command, serviceSlug string) error {
 	if err != nil {
 		return err
 	}
+	ops = visibleServiceOperations(ops)
 	if wantsJSON(cmd) {
 		return writeJSON(cmd, ops)
 	}
@@ -341,7 +351,12 @@ func runServiceOperationShow(cmd *cobra.Command, serviceSlug, operationName stri
 	return renderServiceOperation(cmd, detail)
 }
 
+// renderServiceOperation applies catalogue visibility before printing exact-version details.
 func renderServiceOperation(cmd *cobra.Command, detail *cliapi.ServiceOperationDetail) error {
+	// Older servers can still resolve a retired operation by name.
+	if strings.EqualFold(detail.Method, "SOAP") || strings.EqualFold(detail.ProviderProtocol, "soap") {
+		return errors.New("operation is unavailable")
+	}
 	if wantsJSON(cmd) {
 		return writeJSON(cmd, detail)
 	}

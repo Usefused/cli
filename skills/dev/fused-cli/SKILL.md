@@ -586,7 +586,7 @@ the service `public: true` and independently confirm the intended version is
 not staged private. Never substitute version visibility for the service gate.
 
 Supported spec inputs are OpenAPI 3.0/3.1, Swagger 2.0, Google Discovery REST
-Descriptions, AsyncAPI, Postman Collection, WSDL, GraphQL SDL, and
+Descriptions, AsyncAPI, Postman Collection, GraphQL SDL, and
 introspectable GraphQL endpoints. Swagger 2 is converted through the shared
 OpenAPI adapter. Google Discovery is mapped natively into the same canonical
 endpoint contract: nested resources, JSON request/response schemas, Google
