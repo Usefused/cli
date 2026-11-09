@@ -106,7 +106,7 @@ browser and is not printed.
 |----------|-------|-------------|---------|
 | `--no-browser` | | Print the sign-in URL instead of opening a browser | `false` |
 
-## `oauth client register`
+## `oauth register`
 
 Register a one-hour OAuth client for a local application without an existing
 client ID, API key, or CLI login. Engine generates a confidential client ID and
@@ -114,19 +114,18 @@ secret. Registration grants no Fused access: the user must still sign in,
 review the requested permissions, and complete Authorization Code with PKCE S256.
 
 ```sh
-fused-cli oauth client register \
-  --name "Local app" \
-  --redirect-uri http://localhost:4321/callback \
-  --scope service.read \
-  --json
+fused-cli oauth register --redirect-uri http://localhost:4321/callback
 ```
 
-`--redirect-uri` must be an HTTP loopback URL. Repeat `--scope` for each exact
-Fused permission; one to 64 scopes are required. The `--json` result contains
-`client_id`, `client_secret`, and RFC 3339 `client_id_expires_at`. Human output
-prints the same one-time pair. Keep the secret private; the CLI does not save
-it to disk. To register an MCP client with a remote callback, use that server's
-automatic OAuth registration flow instead.
+`--redirect-uri` must be an HTTP loopback URL. With no `--scope`, an interactive
+checkbox picker reads current supported permissions from Engine's public OAuth
+discovery metadata; it selects none by default. Repeat `--scope` for each exact
+permission to skip the picker. `--json`, `--no-input`, and CI require explicit
+scopes. `--name` is optional; the CLI generates a unique consent label when it
+is omitted. The result contains `name`, `client_id`, `client_secret`, and RFC
+3339 `client_id_expires_at`. Keep the one-time secret private; the CLI does not
+save it to disk. To register an MCP client with a remote callback, use that
+server's automatic OAuth registration flow instead.
 
 ## `whoami`
 

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"time"
 )
 
@@ -22,6 +23,55 @@ type TemporaryOAuthClientRegistration struct {
 	ClientID          string    `json:"client_id"`
 	ClientSecret      string    `json:"client_secret"`
 	ClientIDExpiresAt time.Time `json:"client_id_expires_at"`
+}
+
+// OAuthRegistrationScopes reads Engine's public issuer metadata so an anonymous CLI can offer current permission names.
+func (c *Client) OAuthRegistrationScopes() ([]string, error) {
+	request, err := http.NewRequest(http.MethodGet, c.BaseURL+"/.well-known/oauth-authorization-server", nil)
+	// Invalid Engine URLs cannot be used to infer a local scope catalog.
+	if err != nil {
+		return nil, err
+	}
+	// Public discovery must not follow a redirect into another origin.
+	response, err := c.doRequestWithoutRedirect(request)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+	// Failed metadata reads retain the shared bounded error projection.
+	if response.StatusCode != http.StatusOK {
+		errorBody, _ := io.ReadAll(io.LimitReader(response.Body, 4<<10))
+		return nil, fmt.Errorf("read OAuth scopes (HTTP %d): %w", response.StatusCode, newHTTPError(response.StatusCode, errorBody))
+	}
+	metadataBody, err := io.ReadAll(io.LimitReader(response.Body, (16<<10)+1))
+	// An incomplete or oversized catalog must not produce a misleading partial picker.
+	if err != nil || len(metadataBody) > 16<<10 {
+		return nil, errors.New("Fused returned an invalid OAuth scope catalog")
+	}
+	var metadata struct {
+		Scopes []string `json:"scopes_supported"`
+	}
+	// A missing scope list cannot support informed terminal review.
+	if err := json.Unmarshal(metadataBody, &metadata); err != nil || len(metadata.Scopes) == 0 {
+		return nil, errors.New("Fused returned an empty OAuth scope catalog")
+	}
+	// Stable unique values keep terminal selection independent of issuer ordering.
+	seen := make(map[string]struct{}, len(metadata.Scopes))
+	values := make([]string, 0, len(metadata.Scopes))
+	for _, scope := range metadata.Scopes {
+		// Empty values are not usable permission identities.
+		if scope == "" {
+			return nil, errors.New("Fused returned an invalid OAuth scope catalog")
+		}
+		// Duplicate issuer entries must not appear as duplicate checkboxes.
+		if _, duplicate := seen[scope]; duplicate {
+			continue
+		}
+		seen[scope] = struct{}{}
+		values = append(values, scope)
+	}
+	sort.Strings(values)
+	return values, nil
 }
 
 // RegisterTemporaryOAuthClient requests an ephemeral pair without sending a saved CLI control credential.

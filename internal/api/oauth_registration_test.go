@@ -37,6 +37,24 @@ func TestRegisterTemporaryOAuthClientUsesAnonymousEndpoint(t *testing.T) {
 	}
 }
 
+// TestOAuthRegistrationScopesReadsPublicMetadata proves the picker needs no control credential or hardcoded scope list.
+func TestOAuthRegistrationScopesReadsPublicMetadata(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Discovery must read only the public issuer metadata and send no saved API key.
+		if r.URL.Path != "/.well-known/oauth-authorization-server" || r.Method != http.MethodGet || r.Header.Get("X-API-Key") != "" {
+			t.Errorf("unexpected scope discovery request: %s %s", r.Method, r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"scopes_supported":["service.read","app.sdk.read","service.read"]}`))
+	}))
+	defer server.Close()
+	client := NewClient(server.URL, "saved-control-key")
+	values, err := client.OAuthRegistrationScopes()
+	// Unique alphabetical values make the terminal picker stable across Engine ordering changes.
+	if err != nil || len(values) != 2 || values[0] != "app.sdk.read" || values[1] != "service.read" {
+		t.Fatalf("scope catalog = %v, %v", values, err)
+	}
+}
+
 // TestRegisterTemporaryOAuthClientRejectsIncompleteResponses keeps partial or malformed pairs out of output.
 func TestRegisterTemporaryOAuthClientRejectsIncompleteResponses(t *testing.T) {
 	for _, body := range []string{

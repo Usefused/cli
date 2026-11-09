@@ -11,11 +11,12 @@ import (
 	"time"
 
 	"github.com/Usefused/cli/internal/api"
+	"github.com/spf13/cobra"
 )
 
-// TestTemporaryOAuthClientCommandCreatesOneTimePair exercises the public command without a saved CLI login.
+// TestTemporaryOAuthClientCommandCreatesOneTimePair exercises explicit scopes without a saved CLI login.
 func TestTemporaryOAuthClientCommandCreatesOneTimePair(t *testing.T) {
-	command, remaining, err := RootCmd.Find([]string{"oauth", "client", "register"})
+	command, remaining, err := RootCmd.Find([]string{"oauth", "register"})
 	// The complete command path must be discoverable without a parent-command fallback.
 	if err != nil || len(remaining) != 0 || command == nil || command.Name() != "register" {
 		t.Fatalf("OAuth registration command = %v, remaining=%v, err=%v", command, remaining, err)
@@ -37,11 +38,82 @@ func TestTemporaryOAuthClientCommandCreatesOneTimePair(t *testing.T) {
 		_, _ = fmt.Fprintf(w, `{"client_id":"foc_test","client_secret":"fos_once","client_id_expires_at":%q}`, expiry.Format(time.RFC3339))
 	}))
 	defer server.Close()
-	output := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"oauth", "client", "register", "--name", "Local app", "--redirect-uri", "http://localhost:4321/callback", "--scope", "service.read", "--scope", "app.sdk.read", "--json"})
-	var result api.TemporaryOAuthClientRegistration
+	output := runCommandInDirOutput(t, t.TempDir(), server.URL, []string{"oauth", "register", "--name", "Local app", "--redirect-uri", "http://localhost:4321/callback", "--scope", "service.read", "--scope", "app.sdk.read", "--json"})
+	var result temporaryOAuthClientReceipt
 	// Structured output must contain the pair and expiry exactly once for automation.
-	if err := json.Unmarshal([]byte(output), &result); err != nil || calls != 1 || result.ClientID != "foc_test" || result.ClientSecret != "fos_once" || !result.ClientIDExpiresAt.Equal(expiry) {
+	if err := json.Unmarshal([]byte(output), &result); err != nil || calls != 1 || result.Name != "Local app" || result.ClientID != "foc_test" || result.ClientSecret != "fos_once" || !result.ClientIDExpiresAt.Equal(expiry) {
 		t.Fatalf("registration output = %q, calls=%d, err=%v", output, calls, err)
+	}
+}
+
+// TestTemporaryOAuthClientInteractiveScopesAndGeneratedName verifies discovery feeds the terminal picker before registration.
+func TestTemporaryOAuthClientInteractiveScopesAndGeneratedName(t *testing.T) {
+	oldURL, oldKey, oldNoInput := EngineURL, APIKey, NoInput
+	oldPicker := selectTemporaryOAuthScopes
+	// Restore shared command settings and the real terminal picker after this fixture.
+	t.Cleanup(func() {
+		EngineURL, APIKey, NoInput = oldURL, oldKey, oldNoInput
+		selectTemporaryOAuthScopes = oldPicker
+	})
+	NoInput = false
+	t.Setenv("CI", "false")
+	selectedCatalog := false
+	// The picker receives Engine's public catalog, without preselecting every permission.
+	selectTemporaryOAuthScopes = func(_ *cobra.Command, values []string) ([]string, error) {
+		selectedCatalog = len(values) == 2 && values[0] == "app.sdk.read" && values[1] == "service.read"
+		return []string{"service.read"}, nil
+	}
+	expiry := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
+	registeredName := ""
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Discovery is public, while registration carries only the reviewed subset.
+		switch r.URL.Path {
+		case "/.well-known/oauth-authorization-server":
+			if r.Header.Get("X-API-Key") != "" {
+				t.Error("scope discovery sent an API key")
+			}
+			_, _ = w.Write([]byte(`{"scopes_supported":["service.read","app.sdk.read"]}`))
+		case "/oauth/register":
+			var input api.TemporaryOAuthClientRequest
+			if err := json.NewDecoder(r.Body).Decode(&input); err != nil || len(input.Scopes) != 1 || input.Scopes[0] != "service.read" || !strings.HasPrefix(input.Name, "Local client ") {
+				t.Errorf("registration input = %#v, %v", input, err)
+			}
+			registeredName = input.Name
+			w.WriteHeader(http.StatusCreated)
+			_, _ = fmt.Fprintf(w, `{"client_id":"foc_test","client_secret":"fos_once","client_id_expires_at":%q}`, expiry.Format(time.RFC3339))
+		default:
+			t.Errorf("unexpected route %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	EngineURL, APIKey = server.URL, "ambient-control-key"
+	command := newTemporaryOAuthClientCommand()
+	var output bytes.Buffer
+	command.SetOut(&output)
+	command.SetErr(&output)
+	command.SetArgs([]string{"--redirect-uri", "http://localhost:4321/callback"})
+	// The human receipt must identify the generated label and the returned one-time pair.
+	if err := command.Execute(); err != nil || !selectedCatalog || !strings.Contains(output.String(), "Name: "+registeredName) || !strings.Contains(output.String(), "Client secret: fos_once") {
+		t.Fatalf("interactive registration = %v, catalog=%v, output=%q", err, selectedCatalog, output.String())
+	}
+}
+
+// TestTemporaryOAuthClientNoScopeInJSONModeRejectsBeforeNetwork prevents unattended clients from silently choosing authority.
+func TestTemporaryOAuthClientNoScopeInJSONModeRejectsBeforeNetwork(t *testing.T) {
+	oldURL, oldNoInput := EngineURL, NoInput
+	t.Cleanup(func() { EngineURL, NoInput = oldURL, oldNoInput })
+	NoInput = false
+	t.Setenv("CI", "false")
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls++ }))
+	defer server.Close()
+	EngineURL = server.URL
+	command := newTemporaryOAuthClientCommand()
+	command.SetArgs([]string{"--redirect-uri", "http://localhost:4321/callback", "--json"})
+	err := command.Execute()
+	// Machine-readable output cannot trigger an interactive scope picker or a mutation.
+	if err == nil || !strings.Contains(err.Error(), "--scope is required") || calls != 0 {
+		t.Fatalf("missing-scope result = %v, calls=%d", err, calls)
 	}
 }
 
