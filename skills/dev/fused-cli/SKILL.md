@@ -28,6 +28,8 @@ fused-cli app download support@1.0.0
 
 Service reads default to enabled workspace services: `service list`, `service version list`, and `service operation list`. Add `--registry` for catalog reads, for example `service list --registry --search gmail`. Use `--search` consistently for list filtering. Use `connect <service-name>` to set up or edit provider authentication (the picker highlights configured methods, `--bucket` defaults to `default`, and one quoted `"name=value, name=value"` argument with `--no-input` supports automation, including shell-expanded values). Named `bucket secret`, `bucket env`, and `bucket cert` entries support `set <name>[=<value>]`, `get <name>`, and `remove <name>` with `--bucket`. Provider credential administration also lives under `bucket credential`; secret metadata uses `bucket secret list <bucket>`.
 
+For a local application's one-hour OAuth client, run `fused-cli oauth client register --name <label> --redirect-uri http://localhost:<port>/callback --scope <exact-permission> --json`. Engine generates the client ID and one-time secret without a CLI login; the client still needs user consent and PKCE. The callback must be HTTP loopback, scopes must be explicit, and the CLI does not save the pair. This is separate from storing provider OAuth credentials with `fused-cli connect`.
+
 For deleting an owned Registry service, scheduling its deletion, or keeping named
 audit history, use `service registry lifecycle|delete|deprecate|cancel-deletion`.
 Read the `fused-workspace` skill's Registry deletion section for exact flags,
