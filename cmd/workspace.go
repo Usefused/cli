@@ -848,6 +848,7 @@ func runWorkspaceServiceVersions(cmd *cobra.Command, serviceSlug string) error {
 	return nil
 }
 
+// runWorkspaceServiceOperations displays only available operations for the resolved workspace version.
 func runWorkspaceServiceOperations(cmd *cobra.Command, serviceSlug, version string) error {
 	client, err := getAPIClient()
 	if err != nil {
@@ -869,6 +870,8 @@ func runWorkspaceServiceOperations(cmd *cobra.Command, serviceSlug, version stri
 	if err != nil {
 		return err
 	}
+	endpoints = visibleServiceOperations(endpoints)
+	// Legacy rows alone do not make a workspace version browsable.
 	if len(endpoints) == 0 {
 		return fmt.Errorf("no operations found for service %s version %s", serviceSlug, resolvedVersion)
 	}

@@ -1192,7 +1192,7 @@ Deprecate a specific version of a service in your Workspace configuration.
 | `--reason` | | Reason for deprecation | `""` |
 
 ## `import plan`
-Parse an auto-detected OpenAPI 3, Swagger 2, Google Discovery, AsyncAPI, Postman Collection, WSDL, GraphQL SDL, or introspectable GraphQL endpoint, resolve the provider-version action, and diff it against the live service. Read-only apart from the plan record.
+Parse an auto-detected OpenAPI 3, Swagger 2, Google Discovery, AsyncAPI, Postman Collection, GraphQL SDL, or introspectable GraphQL endpoint, resolve the provider-version action, and diff it against the live service. Read-only apart from the plan record.
 
 Usage: `fused-cli import plan [spec-path]` or `fused-cli import plan --url <http(s)-url>`
 

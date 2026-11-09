@@ -176,7 +176,7 @@ func TestServiceOperationsJSONIncludesDescriptionAndSecurity(t *testing.T) {
 		case strings.Contains(body.Query, "GetServiceInfo"):
 			_, _ = w.Write([]byte(`{"data":{"service":{"id":"svc-1","name":"Payments","description":"Payment APIs","slug":"payments","base_url":"https://api.example.test","provider":null,"is_owner":true,"servers":[],"auth_configs":[]}}}`))
 		case strings.Contains(body.Query, "searchEndpoints"):
-			_, _ = w.Write([]byte(`{"data":{"searchEndpoints":[{"id":"op-1","name":"createPayment","description":"Create a payment","path":"/payments","method":"POST","service_id":"svc-1","security_requirements":[{"schemes":[{"scheme":"oauth","scopes":["payments:write"]}]}]}]}}`))
+			_, _ = w.Write([]byte(`{"data":{"searchEndpoints":[{"id":"retired","method":"SoAp"},{"id":"op-1","name":"createPayment","description":"Create a payment","path":"/payments","method":"POST","service_id":"svc-1","security_requirements":[{"schemes":[{"scheme":"oauth","scopes":["payments:write"]}]}]}]}}`))
 		default:
 			t.Fatalf("unexpected query: %s", body.Query)
 		}

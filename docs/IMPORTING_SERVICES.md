@@ -2,7 +2,7 @@
 
 Use `import plan` and `import apply` for a machine-readable API description.
 The Registry detects supported formats automatically: OpenAPI 3, Swagger 2,
-Google Discovery, AsyncAPI, Postman Collection, WSDL, GraphQL SDL, and
+Google Discovery, AsyncAPI, Postman Collection, GraphQL SDL, and
 introspectable GraphQL endpoints.
 
 ## Basic reviewed import
