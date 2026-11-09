@@ -60,7 +60,7 @@ func TestTemporaryOAuthClientInteractiveScopesAndGeneratedName(t *testing.T) {
 	selectedCatalog := false
 	// The picker receives Engine's public catalog, without preselecting every permission.
 	selectTemporaryOAuthScopes = func(_ *cobra.Command, values []string) ([]string, error) {
-		selectedCatalog = len(values) == 2 && values[0] == "app.sdk.read" && values[1] == "service.read"
+		selectedCatalog = len(values) == 3 && values[0] == "app.sdk.read" && values[1] == "mcp.execute" && values[2] == "service.read"
 		return []string{"service.read"}, nil
 	}
 	expiry := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
@@ -73,6 +73,8 @@ func TestTemporaryOAuthClientInteractiveScopesAndGeneratedName(t *testing.T) {
 				t.Error("scope discovery sent an API key")
 			}
 			_, _ = w.Write([]byte(`{"scopes_supported":["service.read","app.sdk.read"]}`))
+		case "/.well-known/oauth-authorization-server/mcp/oauth":
+			_, _ = w.Write([]byte(`{"scopes_supported":["mcp.execute"]}`))
 		case "/oauth/register":
 			var input api.TemporaryOAuthClientRequest
 			if err := json.NewDecoder(r.Body).Decode(&input); err != nil || len(input.Scopes) != 1 || input.Scopes[0] != "service.read" || !strings.HasPrefix(input.Name, "Local client ") {
@@ -126,6 +128,7 @@ func TestTemporaryOAuthClientCommandRejectsUnsafeInput(t *testing.T) {
 		{"remote callback", "https://example.com/callback", []string{"service.read"}},
 		{"missing scope", "http://localhost:4321/callback", nil},
 		{"duplicate scope", "http://localhost:4321/callback", []string{"service.read", "service.read"}},
+		{"mixed MCP scope", "http://localhost:4321/callback", []string{"mcp.execute", "service.read"}},
 	} {
 		// Unsafe input must fail before an anonymous network mutation is attempted.
 		t.Run(test.name, func(t *testing.T) {

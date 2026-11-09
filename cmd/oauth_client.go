@@ -130,6 +130,15 @@ func validateTemporaryOAuthClientOptions(options temporaryOAuthClientOptions) er
 	if len(options.scopes) == 0 || len(options.scopes) > 64 {
 		return errors.New("--scope must select 1 to 64 exact Fused permissions")
 	}
+	// The MCP issuer's runtime-only permission cannot be combined with management grants.
+	if len(options.scopes) > 1 {
+		for _, scope := range options.scopes {
+			// A combined selection cannot pass Engine's runtime-only scope admission.
+			if scope == "mcp.execute" {
+				return errors.New("mcp.execute must be the only selected OAuth scope")
+			}
+		}
+	}
 	seen := make(map[string]struct{}, len(options.scopes))
 	for _, scope := range options.scopes {
 		// Whitespace and duplicates would change or ambiguously repeat the consent ceiling.

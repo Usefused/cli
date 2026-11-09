@@ -27,7 +27,33 @@ type TemporaryOAuthClientRegistration struct {
 
 // OAuthRegistrationScopes reads Engine's public issuer metadata so an anonymous CLI can offer current permission names.
 func (c *Client) OAuthRegistrationScopes() ([]string, error) {
-	request, err := http.NewRequest(http.MethodGet, c.BaseURL+"/.well-known/oauth-authorization-server", nil)
+	management, err := c.oauthIssuerScopes("/.well-known/oauth-authorization-server", false)
+	if err != nil {
+		return nil, err
+	}
+	// The MCP issuer advertises a separate scope that the UI also lists for client registration.
+	mcp, err := c.oauthIssuerScopes("/.well-known/oauth-authorization-server/mcp/oauth", true)
+	if err != nil {
+		return nil, err
+	}
+	// Stable unique values keep terminal selection independent of issuer ordering.
+	seen := make(map[string]struct{}, len(management)+len(mcp))
+	values := make([]string, 0, len(management)+len(mcp))
+	for _, scope := range append(management, mcp...) {
+		// Duplicate issuer entries must not appear as duplicate checkboxes.
+		if _, duplicate := seen[scope]; duplicate {
+			continue
+		}
+		seen[scope] = struct{}{}
+		values = append(values, scope)
+	}
+	sort.Strings(values)
+	return values, nil
+}
+
+// oauthIssuerScopes reads one bounded public discovery document and tolerates an absent optional MCP issuer.
+func (c *Client) oauthIssuerScopes(path string, optional bool) ([]string, error) {
+	request, err := http.NewRequest(http.MethodGet, c.BaseURL+path, nil)
 	// Invalid Engine URLs cannot be used to infer a local scope catalog.
 	if err != nil {
 		return nil, err
@@ -38,6 +64,10 @@ func (c *Client) OAuthRegistrationScopes() ([]string, error) {
 		return nil, err
 	}
 	defer response.Body.Close()
+	// Engines without an MCP issuer have no MCP scope to add to the picker.
+	if optional && response.StatusCode == http.StatusNotFound {
+		return nil, nil
+	}
 	// Failed metadata reads retain the shared bounded error projection.
 	if response.StatusCode != http.StatusOK {
 		errorBody, _ := io.ReadAll(io.LimitReader(response.Body, 4<<10))
@@ -55,23 +85,13 @@ func (c *Client) OAuthRegistrationScopes() ([]string, error) {
 	if err := json.Unmarshal(metadataBody, &metadata); err != nil || len(metadata.Scopes) == 0 {
 		return nil, errors.New("Fused returned an empty OAuth scope catalog")
 	}
-	// Stable unique values keep terminal selection independent of issuer ordering.
-	seen := make(map[string]struct{}, len(metadata.Scopes))
-	values := make([]string, 0, len(metadata.Scopes))
 	for _, scope := range metadata.Scopes {
 		// Empty values are not usable permission identities.
 		if scope == "" {
 			return nil, errors.New("Fused returned an invalid OAuth scope catalog")
 		}
-		// Duplicate issuer entries must not appear as duplicate checkboxes.
-		if _, duplicate := seen[scope]; duplicate {
-			continue
-		}
-		seen[scope] = struct{}{}
-		values = append(values, scope)
 	}
-	sort.Strings(values)
-	return values, nil
+	return metadata.Scopes, nil
 }
 
 // RegisterTemporaryOAuthClient requests an ephemeral pair without sending a saved CLI control credential.

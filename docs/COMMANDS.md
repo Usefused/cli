@@ -119,7 +119,8 @@ fused-cli oauth register --redirect-uri http://localhost:4321/callback
 
 `--redirect-uri` must be an HTTP loopback URL. With no `--scope`, an interactive
 checkbox picker reads current supported permissions from Engine's public OAuth
-discovery metadata; it selects none by default. Repeat `--scope` for each exact
+issuer metadata, including the MCP connection scope when available. It selects
+none by default; `mcp.execute` must be selected alone. Repeat `--scope` for each exact
 permission to skip the picker. `--json`, `--no-input`, and CI require explicit
 scopes. `--name` is optional; the CLI generates a unique consent label when it
 is omitted. The result contains `name`, `client_id`, `client_secret`, and RFC

@@ -41,16 +41,41 @@ func TestRegisterTemporaryOAuthClientUsesAnonymousEndpoint(t *testing.T) {
 func TestOAuthRegistrationScopesReadsPublicMetadata(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Discovery must read only the public issuer metadata and send no saved API key.
-		if r.URL.Path != "/.well-known/oauth-authorization-server" || r.Method != http.MethodGet || r.Header.Get("X-API-Key") != "" {
+		if r.Method != http.MethodGet || r.Header.Get("X-API-Key") != "" {
 			t.Errorf("unexpected scope discovery request: %s %s", r.Method, r.URL.Path)
 		}
-		_, _ = w.Write([]byte(`{"scopes_supported":["service.read","app.sdk.read","service.read"]}`))
+		// The main and MCP issuers contribute their distinct advertised scopes.
+		switch r.URL.Path {
+		case "/.well-known/oauth-authorization-server":
+			_, _ = w.Write([]byte(`{"scopes_supported":["service.read","app.sdk.read","service.read"]}`))
+		case "/.well-known/oauth-authorization-server/mcp/oauth":
+			_, _ = w.Write([]byte(`{"scopes_supported":["mcp.execute"]}`))
+		default:
+			t.Errorf("unexpected discovery route %s", r.URL.Path)
+		}
 	}))
 	defer server.Close()
 	client := NewClient(server.URL, "saved-control-key")
 	values, err := client.OAuthRegistrationScopes()
 	// Unique alphabetical values make the terminal picker stable across Engine ordering changes.
-	if err != nil || len(values) != 2 || values[0] != "app.sdk.read" || values[1] != "service.read" {
+	if err != nil || len(values) != 3 || values[0] != "app.sdk.read" || values[1] != "mcp.execute" || values[2] != "service.read" {
+		t.Fatalf("scope catalog = %v, %v", values, err)
+	}
+}
+
+// TestOAuthRegistrationScopesAllowsAbsentMCPIssuer keeps local management registration usable on older Engines.
+func TestOAuthRegistrationScopesAllowsAbsentMCPIssuer(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// An absent MCP route does not invalidate the main issuer's scope list.
+		if r.URL.Path == "/.well-known/oauth-authorization-server/mcp/oauth" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_, _ = w.Write([]byte(`{"scopes_supported":["service.read"]}`))
+	}))
+	defer server.Close()
+	values, err := NewClient(server.URL, "").OAuthRegistrationScopes()
+	if err != nil || len(values) != 1 || values[0] != "service.read" {
 		t.Fatalf("scope catalog = %v, %v", values, err)
 	}
 }
