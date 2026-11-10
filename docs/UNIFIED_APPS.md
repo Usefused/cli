@@ -13,16 +13,15 @@ import * as z from "zod/mini";
 import { buildUnifiedApp, fused } from "@fused/unified-app";
 import { services } from "@fused/operations";
 
-export const fusedConfig = {
-  "name": "customer-app",
-  "version": "1.0.0",
-  "bucket": "default",
-  "services": {
-    "crm": { "version": "2026-01-01", "operations": ["createCustomer"] }
-  }
-};
-
 export default buildUnifiedApp({
+  config: {
+    "name": "customer-app",
+    "version": "1.0.0",
+    "bucket": "default",
+    "services": {
+      "crm": { "version": "2026-01-01", "operations": ["createCustomer"] }
+    }
+  },
   input: z.object({ name: z.string() }),
   output: z.object({ customerId: z.string() }),
   fetch: { searchable: ["customerId"] },
@@ -38,13 +37,16 @@ Save this TypeScript as `.fused/unified_app/customer-app.tsx`. Run
 `fused-cli app plan -f .fused/unified_app/customer-app.tsx` and
 `fused-cli app apply -f .fused/unified_app/customer-app.tsx`.
 The [step-by-step apply guide](unified-apps/example.md) shows the complete
-workflow. The CLI derives the Engine config from `fusedConfig`; Fused compiles
+workflow. The CLI derives the Engine config from `config`; Fused compiles
 the source during plan.
+
+The builder's Config form and Code editor update each other. Valid metadata edits in Code update the form; incomplete metadata stays in the editor and blocks validation until corrected. Form edits preserve the executable implementation. Only `buildUnifiedApp({ config: { … }, … })` is accepted. Engine startup migrates saved older authoring formats before serving the editor.
 
 ## Builder parts
 
 | Part | Purpose |
 | --- | --- |
+| `config` | Static JSON deployment metadata: name, version, buckets and selected services. |
 | `input` | Required Zod schema. Fused validates the request before calling `execute`. |
 | `output` | Required Zod schema for the object returned by `execute`. |
 | `execute({ input })` | Required synchronous or asynchronous function. `input` is typed from the input schema; its return value is typed from the output schema. |
@@ -62,7 +64,7 @@ for the shared SDK and Unified App route and their different response shapes.
 The selected workspace operations are available through typed
 `services.<service>.<operation>(input)` methods or `fused.fetch({ service,
 operation, input })`. Both run through Fused's connection and execution
-policy. App code can call only operations selected in `fusedConfig`; it cannot
+policy. App code can call only operations selected in `config`; it cannot
 send an arbitrary URL request. The optional `selector` in `fused.fetch`
 chooses an environment, connected user, auth scheme, or resource when needed.
 
@@ -76,7 +78,7 @@ four dot-separated segments. A caller needs an app token with the
 
 ## Switch traffic to a retained version
 
-Pass the app name directly, or read its top-level `name` from a config:
+Pass the app name directly, or read its `config.name` from the app definition:
 
 ```sh
 fused-cli app promote customer-app --version 1.0.0

@@ -71,7 +71,7 @@ func TestSharedAppPlanRoutesByConfig(t *testing.T) {
 			path := ""
 			// Unified Apps are authored as TypeScript while the other app kinds retain YAML.
 			if test.kind == "unified_app" {
-				path = writeSprintConfig(t, dir, "app.ts", "export const fusedConfig = {\"name\":\"tools\",\"version\":\"1.0.0\",\"bucket\":\"default\",\"services\":{\"crm\":{\"version\":\"v1\",\"operations\":[\"createCustomer\"]}}};\nexport default buildUnifiedApp({});\n")
+				path = writeSprintConfig(t, dir, "app.ts", "export default buildUnifiedApp({ config: {\"name\":\"tools\",\"version\":\"1.0.0\",\"bucket\":\"default\",\"services\":{\"crm\":{\"version\":\"v1\",\"operations\":[\"createCustomer\"]}}} });\n")
 			} else {
 				path = writeSprintConfig(t, dir, "app.yaml", fmt.Sprintf("apiVersion: fused/v1\nkind: %s\nname: tools\nversion: 1.0.0\nbucket: default\n%s\nservices:\n  crm:\n    version: v1\n    operations: [createCustomer]\n", test.kind, test.extra))
 			}

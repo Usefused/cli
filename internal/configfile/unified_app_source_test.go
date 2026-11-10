@@ -8,12 +8,12 @@ import (
 	"testing"
 )
 
-// sourceOwnedAppFixture supplies one valid declaration with a code body that changes independently.
+// sourceOwnedAppFixture supplies current inline metadata with an independently editable code body.
 func sourceOwnedAppFixture(body string) string {
-	return "export const fusedConfig = {\n" +
+	return "export default buildUnifiedApp({ config: {\n" +
 		`  "name": "customer", "version": "1.0.0", "bucket": "default",` + "\n" +
 		`  "services": {"crm": {"version": "v1", "operations": ["createCustomer"]}}` + "\n" +
-		"};\nexport default buildUnifiedApp({ input: z.object({}), output: z.object({}), execute() { " + body + " } });\n"
+		"}, input: z.object({}), output: z.object({}), execute() { " + body + " } });\n"
 }
 
 // TestSourceOwnedUnifiedAppPlansFromOneFile checks Engine transport and receipt identity from TypeScript alone.
@@ -95,11 +95,51 @@ func TestUnifiedAppYAMLRejected(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Explicit selection and directory planning must give the same migration instruction.
-	if _, err := ParseFile(path); err == nil || !strings.Contains(err.Error(), "fusedConfig") {
+	if _, err := ParseFile(path); err == nil || !strings.Contains(err.Error(), "config") {
 		t.Fatalf("explicit YAML result = %v", err)
 	}
 	run := &Run{}
-	if err := appendDesiredConfigs(run, dir, KindUnifiedApp); err == nil || !strings.Contains(err.Error(), "fusedConfig") {
+	if err := appendDesiredConfigs(run, dir, KindUnifiedApp); err == nil || !strings.Contains(err.Error(), "config") {
 		t.Fatalf("discovered YAML result = %v", err)
+	}
+}
+
+// TestInlineUnifiedAppConfig proves canonical metadata is parsed without executing the implementation or confusing nested settings.
+func TestInlineUnifiedAppConfig(t *testing.T) {
+	metadata := []byte(`{"name":"customer","version":"1.0.0","bucket":"default","runtime_buckets":["default","deployment"],"services":{"crm":{"version":"v1","operations":["createCustomer"]}}}`)
+	source, err := EmbedUnifiedAppConfig([]byte(`import {buildUnifiedApp} from "@fused/unified-app";
+export default buildUnifiedApp({ input: z.object({config:z.string()}), execute() { throw new Error("must not run"); } });`), metadata)
+	// Metadata extraction must not evaluate the deliberately throwing app body.
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := ParseUnifiedAppSource(source, "app.ts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Inline and legacy documents share the same portable cart and source-bound receipt.
+	if parsed.UnifiedApp.Name != "customer" || parsed.UnifiedApp.Source != string(source) || len(parsed.UnifiedApp.RuntimeBuckets) != 2 {
+		t.Fatalf("inline config = %#v", parsed)
+	}
+	// Strings and comments containing default-app examples must not acquire metadata authority.
+	examples := "/* export default buildUnifiedApp({config:{}}); */\nconst example = `export const fusedConfig = {};`;\n"
+	if _, err := ParseUnifiedAppSource(append([]byte(examples), source...), "app.ts"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestInlineUnifiedAppRejectsCompetingMetadata prevents property ordering and spreads from choosing another deployment scope.
+func TestInlineUnifiedAppRejectsCompetingMetadata(t *testing.T) {
+	for _, source := range []string{
+		`export default buildUnifiedApp({config:{},config:{}});`,
+		`export const fusedConfig = {}; export default buildUnifiedApp({config:{}});`,
+		`export default buildUnifiedApp({config:{},...options});`,
+		`export default buildUnifiedApp({input:z.object({config:{}})});`,
+		`export default buildUnifiedApp({config:loadConfig()});`,
+	} {
+		// Every ambiguous source must fail before any Engine request or local authored-code execution.
+		if _, err := ParseUnifiedAppSource([]byte(source), "app.ts"); err == nil {
+			t.Fatalf("accepted %s", source)
+		}
 	}
 }

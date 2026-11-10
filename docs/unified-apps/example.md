@@ -47,16 +47,15 @@ import * as z from "zod/mini";
 import { buildUnifiedApp, fused } from "@fused/unified-app";
 import { services } from "@fused/operations";
 
-export const fusedConfig = {
-  "name": "customer-app",
-  "version": "1.0.0",
-  "bucket": "default",
-  "services": {
-    "crm": { "version": "2026-01-01", "operations": ["createCustomer"] }
-  }
-};
-
 export default buildUnifiedApp({
+  config: {
+    "name": "customer-app",
+    "version": "1.0.0",
+    "bucket": "default",
+    "services": {
+      "crm": { "version": "2026-01-01", "operations": ["createCustomer"] }
+    }
+  },
   input: z.object({ name: z.string() }),
   output: z.object({ customerId: z.string() }),
   fetch: { searchable: ["customerId"] },
@@ -68,7 +67,7 @@ export default buildUnifiedApp({
 });
 ```
 
-`fusedConfig` is a literal JSON object inside TypeScript. The CLI derives the
+`config` is a literal JSON object inside TypeScript. The CLI derives the
 Engine config from it, including the `apiVersion`, `kind`, and source bytes.
 You can edit and lint the `.tsx` file directly. Omit `language` and `generate`;
 Unified Apps always use TypeScript and do not generate an SDK package.

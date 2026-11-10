@@ -23,7 +23,8 @@ func TestPromptUnifiedAppConfigProducesEngineCompiledCart(t *testing.T) {
 		t.Fatal(err)
 	}
 	request := scaffoldRequest{name: "billing", version: "1.0.0", bucket: "main", services: []scaffoldService{{name: "crm", version: "v1"}}, operations: []scaffoldOperation{{service: "crm", operation: "createCustomer"}}, events: []scaffoldEvent{{service: "crm", event: "customer.created"}}, webhookAttachment: "billing-webhooks"}
-	source := "export default buildUnifiedApp({});"
+	implementation := "execute() { return {}; }"
+	source := "export default buildUnifiedApp({" + implementation + "});"
 	data, err := promptUnifiedAppSource(request, source)
 	if err != nil {
 		t.Fatal(err)
@@ -77,7 +78,7 @@ func TestPromptExecutionDraftSelectionsPinsEvents(t *testing.T) {
 	}
 }
 
-// TestDeployPromptExecutionSendsCartToEngine verifies plan compiles remotely and apply needs no CLI bundle attachment.
+// TestDeployPromptExecutionSendsCartToEngine verifies inline metadata compiles remotely without changing executable source.
 func TestDeployPromptExecutionSendsCartToEngine(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
@@ -90,7 +91,8 @@ func TestDeployPromptExecutionSendsCartToEngine(t *testing.T) {
 	defer server.Close()
 	client := api.NewClient(server.URL, "fsk_test")
 	request := scaffoldRequest{name: "billing", version: "1.0.0", bucket: "main", path: filepath.Join(".fused", "unified_app", "billing.tsx"), services: []scaffoldService{{name: "crm", version: "v1"}}, operations: []scaffoldOperation{{service: "crm", operation: "create"}}}
-	source := "export default buildUnifiedApp({});"
+	implementation := "execute() { return {}; }"
+	source := "export default buildUnifiedApp({" + implementation + "});"
 	plan := promptInitPlan{mode: unifiedInitModeUnified, primary: request, execution: &promptExecutionDraft{source: source}}
 	command := &cobra.Command{}
 	var output bytes.Buffer
@@ -108,7 +110,7 @@ func TestDeployPromptExecutionSendsCartToEngine(t *testing.T) {
 	}
 	sourcePath := filepath.Join(".fused", "unified_app", "billing.tsx")
 	parsed, err := configfile.ParseFile(sourcePath)
-	if err != nil || parsed.Kind != configfile.KindUnifiedApp || !strings.Contains(parsed.UnifiedApp.Source, source) {
+	if err != nil || parsed.Kind != configfile.KindUnifiedApp || !strings.Contains(parsed.UnifiedApp.Source, implementation) {
 		t.Fatalf("published config=%#v err=%v", parsed, err)
 	}
 	// Describe publishes no sibling YAML declaration for a source-owned app.
@@ -116,7 +118,7 @@ func TestDeployPromptExecutionSendsCartToEngine(t *testing.T) {
 		t.Fatalf("unexpected YAML declaration: %v", err)
 	}
 	// A successful describe keeps selections and execution in the same editable file.
-	if saved, err := os.ReadFile(sourcePath); err != nil || !strings.Contains(string(saved), "export const fusedConfig") || !strings.Contains(string(saved), source) {
+	if saved, err := os.ReadFile(sourcePath); err != nil || !strings.Contains(string(saved), "config: {") || strings.Contains(string(saved), "export const fusedConfig") || !strings.Contains(string(saved), implementation) {
 		t.Fatalf("saved source = %q, %v", saved, err)
 	}
 }

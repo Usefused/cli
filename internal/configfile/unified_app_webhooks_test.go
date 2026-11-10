@@ -8,8 +8,7 @@ import (
 
 // TestUnifiedAppWebhookConfigPreservesTriggerScope verifies CLI plan transport retains existing attachment and event fields.
 func TestUnifiedAppWebhookConfigPreservesTriggerScope(t *testing.T) {
-	const document = `export const fusedConfig = {"name":"issue-handler","version":"1.0.0","bucket":"default","webhook_attachment":"team-events","services":{"jira":{"version":"v1","operations":["getIssue"],"webhooks":["issue.created"]}}};
-export default buildUnifiedApp({});`
+	const document = `export default buildUnifiedApp({ config: {"name":"issue-handler","version":"1.0.0","bucket":"default","webhook_attachment":"team-events","services":{"jira":{"version":"v1","operations":["getIssue"],"webhooks":["issue.created"]}}} });`
 	parsed, err := ParseUnifiedAppSource([]byte(document), "issue-handler.ts")
 	// Native triggers use ordinary Unified App config validation, never a separate deployment kind.
 	if err != nil {
@@ -34,8 +33,7 @@ export default buildUnifiedApp({});`
 
 // TestUnifiedAppWebhookOnlyConfig admits a hosted event handler with no unnecessary provider operation grant.
 func TestUnifiedAppWebhookOnlyConfig(t *testing.T) {
-	const document = `export const fusedConfig = {"name":"issue-handler","version":"1.0.0","bucket":"default","webhook_attachment":"team-events","services":{"jira":{"version":"v1","webhooks":["issue.created"]}}};
-export default buildUnifiedApp({});`
+	const document = `export default buildUnifiedApp({ config: {"name":"issue-handler","version":"1.0.0","bucket":"default","webhook_attachment":"team-events","services":{"jira":{"version":"v1","webhooks":["issue.created"]}}} });`
 	parsed, err := ParseUnifiedAppSource([]byte(document), "issue-handler.ts")
 	// Event-only source still has a finite inbound capability and must survive local validation.
 	if err != nil || parsed.UnifiedApp == nil || len(parsed.UnifiedApp.Services["jira"].Operations) != 0 {

@@ -346,7 +346,7 @@ func Parse(data []byte, sourcePath string) (*ParsedConfig, error) {
 	}
 	// Unified App metadata must live beside its executable source in one TypeScript file.
 	if kind == KindUnifiedApp {
-		return nil, fmt.Errorf("Unified App YAML is no longer supported; move its metadata into exported fusedConfig in a .ts or .tsx file")
+		return nil, fmt.Errorf("Unified App YAML is no longer supported; move its metadata into buildUnifiedApp({ config: { ... } }) in a .ts or .tsx file")
 	}
 
 	hash := sha256.Sum256(data)

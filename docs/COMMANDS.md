@@ -313,7 +313,7 @@ sending them. SDK and MCP proposals can attach provider webhook events; direct
 REST apps have no event receiver.
 
 Unified App creation needs 1–16 explicit operations. `describe` saves
-one `.fused/unified_app/<app>.tsx` file with `fusedConfig` and executable code.
+one `.fused/unified_app/<app>.tsx` file with `buildUnifiedApp({ config: { … }, … })` and executable code.
 Edit that TypeScript file and deploy a new version to update it. `--update <app-name>` applies to
 existing SDK, MCP, and REST configs and publishes an immutable successor when
 the reviewed proposal changes it. Use `-f <path>` when a name is ambiguous.

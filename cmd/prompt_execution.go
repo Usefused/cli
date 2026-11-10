@@ -173,7 +173,7 @@ func deployPromptExecution(cmd *cobra.Command, client *api.Client, plan promptIn
 	return nil
 }
 
-// promptUnifiedAppSource places reviewed metadata beside executable code in one TypeScript file.
+// promptUnifiedAppSource places reviewed metadata inside the executable app definition.
 func promptUnifiedAppSource(request scaffoldRequest, body string) ([]byte, error) {
 	config := promptUnifiedAppConfig(request)
 	metadata, err := json.MarshalIndent(config, "", "  ")
@@ -181,7 +181,7 @@ func promptUnifiedAppSource(request scaffoldRequest, body string) ([]byte, error
 	if err != nil {
 		return nil, err
 	}
-	return []byte("export const fusedConfig = " + string(metadata) + ";\n\n" + body), nil
+	return configfile.EmbedUnifiedAppConfig([]byte(body), metadata)
 }
 
 // promptUnifiedAppConfig preserves reviewed event and operation scope for the source-owned cart.

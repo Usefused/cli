@@ -23,16 +23,15 @@ import * as z from "zod/mini";
 import { buildUnifiedApp } from "@fused/unified-app";
 import { fused } from "@fused/operations";
 
-export const fusedConfig = {
-  "name": "customer-app",
-  "version": "1.0.0",
-  "bucket": "default",
-  "services": {
-    "crm": { "version": "2026-01-01", "operations": ["createCustomer"] }
-  }
-};
-
 export default buildUnifiedApp({
+  config: {
+    "name": "customer-app",
+    "version": "1.0.0",
+    "bucket": "default",
+    "services": {
+      "crm": { "version": "2026-01-01", "operations": ["createCustomer"] }
+    }
+  },
   input: z.object({ name: z.string() }),
   output: z.object({ customerId: z.string() }),
   async execute({ input }) {
@@ -42,9 +41,9 @@ export default buildUnifiedApp({
 });
 ```
 
-`fusedConfig` must be a literal JSON object, which is valid TypeScript syntax. The CLI adds `apiVersion`, `kind`, and source bytes to the Engine plan. Select at least one exact operation or webhook event; operation `select_all` is invalid. The top-level bucket supplies default credentials; `services.<name>.bucket` overrides it for one service. Do not put provider secrets in source. Each source change needs a new immutable version.
+`config` must be a literal JSON object, which is valid TypeScript syntax. The CLI adds `apiVersion`, `kind`, and source bytes to the Engine plan. Select at least one exact operation or webhook event; operation `select_all` is invalid. `config.bucket` supplies default credentials; `services.<name>.bucket` overrides it for one service. Do not put provider secrets in source. Each source change needs a new immutable version.
 
-For provider events, add `webhook_attachment: <registration>` at the top level and `webhooks: [<exact-event-name>]` under each selected service. An event-only app can use `operations: []`. The hosted `execute({ input })` receives the normalized envelope `{body, headers, query, path:{urlSlug,eventName}}`; validate the selected `eventName` and payload before effects. Register ingress first when authoring config directly with `fused-cli webhook apply -f <webhook-config>`; the Unified App plan checks attachment coverage. The browser Unified App editor also lets you select events and name an existing registration.
+For provider events, set `config.webhook_attachment` to the registration name and `webhooks: [<exact-event-name>]` under each selected service. An event-only app can use `operations: []`. The hosted `execute({ input })` receives the normalized envelope `{body, headers, query, path:{urlSlug,eventName}}`; validate the selected `eventName` and payload before effects. Register ingress first when authoring config directly with `fused-cli webhook apply -f <webhook-config>`; the Unified App plan checks attachment coverage. The browser Unified App editor also lets you select events and name an existing registration.
 
 ```sh
 fused-cli app plan -f .fused/unified_app/customer-app.tsx --json
@@ -90,7 +89,7 @@ fused-cli app promote "Customer lookup" --version 1.0.0
 fused-cli app promote -f .fused/unified_app/customer-app.tsx --version 1.0.0
 ```
 
-An explicit app name takes precedence over config selection and needs no local file. Without a name, the CLI reads `name` from the selected `fusedConfig`. Config discovery must select exactly one Unified App; use `-f` to disambiguate. Always pass `--version`; the declared `version` does not select the traffic destination. Promotion leaves the TypeScript unchanged and does not rebuild the app.
+An explicit app name takes precedence over config selection and needs no local file. Without a name, the CLI reads `name` from the selected `config`. Config discovery must select exactly one Unified App; use `-f` to disambiguate. Always pass `--version`; the declared `version` does not select the traffic destination. Promotion leaves the TypeScript unchanged and does not rebuild the app.
 
 Only a retained, runnable version can receive traffic. Promotion requires `app.unified_app.read` and `app.unified_app.manage`. It switches new executions while preserving historical results. The stable REST family URL and token follow each traffic switch without client changes; exact Unified App version IDs are rejected as runtime URLs. Historical reads use that family URL and their original read handle. Rerun/replay require the source version to remain current; the hosted MCP family URL follows the active version, and previous-version MCP sessions must reconnect. If another deployment changes traffic concurrently, inspect the current destination before retrying; do not blindly repeat a failed mutation. Add `--json` for a receipt containing `name`, `version`, `app_family_id`, and `active_app_id`.
 

@@ -911,4 +911,4 @@ or `FUSED_EXECUTION_BUILD` variable is needed.
 Unified App describe currently requires 1 to 16 explicit operations and a
 creation goal. To change an existing Unified App, edit the TypeScript
 file and deploy a reviewed new version with `fused-cli app plan/apply`.
-Unified App metadata belongs in the exported TypeScript `fusedConfig` object.
+Unified App metadata belongs in the TypeScript `buildUnifiedApp({ config: { … }, … })` property.

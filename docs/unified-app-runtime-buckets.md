@@ -7,17 +7,16 @@ import * as z from "zod/mini";
 import { buildUnifiedApp } from "@fused/unified-app";
 import { services } from "@fused/operations";
 
-export const fusedConfig = {
-  "name": "customer-lookup",
-  "version": "1.1.0",
-  "bucket": "default",
-  "runtime_buckets": ["tenant-a", "tenant-b"],
-  "services": {
-    "crm": { "version": "2026-01-01", "operations": ["getCustomer"] }
-  }
-};
-
 export default buildUnifiedApp({
+  config: {
+    "name": "customer-lookup",
+    "version": "1.1.0",
+    "bucket": "default",
+    "runtime_buckets": ["tenant-a", "tenant-b"],
+    "services": {
+      "crm": { "version": "2026-01-01", "operations": ["getCustomer"] }
+    }
+  },
   input: z.object({ customerId: z.string() }),
   output: z.object({ customer: z.unknown() }),
   async execute({ input }) {

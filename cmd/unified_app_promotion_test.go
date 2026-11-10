@@ -14,7 +14,7 @@ import (
 
 // TestUnifiedPromoteCommand exercises the actual command's discovery, mutation and structured receipt.
 func TestUnifiedPromoteCommand(t *testing.T) {
-	document := "export const fusedConfig = {\"name\":\"Customer lookup\",\"version\":\"2.0.0\",\"bucket\":\"default\",\"services\":{\"crm\":{\"version\":\"v1\",\"operations\":[\"createCustomer\"]}}};\nexport default buildUnifiedApp({});\n"
+	document := "export default buildUnifiedApp({ config: {\"name\":\"Customer lookup\",\"version\":\"2.0.0\",\"bucket\":\"default\",\"services\":{\"crm\":{\"version\":\"v1\",\"operations\":[\"createCustomer\"]}}} });\n"
 	configPath := filepath.Join(t.TempDir(), "customer-app.tsx")
 	// The local config version may differ from the explicit rollback destination.
 	if err := os.WriteFile(configPath, []byte(document), 0o600); err != nil {

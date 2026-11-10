@@ -87,8 +87,8 @@ safety rules.
 ## Unified App configuration
 
 A Unified App is a distinct hosted resource authored in one TypeScript file.
-Export a literal JSON `fusedConfig` object for name, version, bucket, and exact
-service selections, alongside `buildUnifiedApp({ input, output, execute, fetch? })`.
+Set a literal JSON `config` property inside `buildUnifiedApp` for name, version, bucket, and exact
+service selections: `buildUnifiedApp({ config, input, output, execute, fetch? })`.
 Input and output use Zod. The CLI derives the Engine config from the file and sends its bytes to Fused, which
 compiles them during `app plan` and publishes the bundle during
 `app apply`. `language` and `generate` are unnecessary here.
@@ -103,7 +103,7 @@ fused-cli app apply -f .fused/unified_app/customer-app.tsx --json
 Fused returns the immutable App version ID and shows its family execution
 token once. A new source revision needs a new App version. Unified App YAML
 declarations are no longer accepted by the CLI; put their metadata in the
-TypeScript `fusedConfig` export. `select_all` is not valid for Unified Apps. See
+TypeScript `buildUnifiedApp({ config: { … } })` property. `select_all` is not valid for Unified Apps. See
 the [`buildUnifiedApp` guide](UNIFIED_APPS.md) for the function contract,
 or the [complete example](unified-apps/example.md) for authoring, apply, and API
 calls.
