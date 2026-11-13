@@ -280,7 +280,7 @@ func TestPromptMissingOperationsNeverMeansAll(t *testing.T) {
 
 // TestPromptClassifierFailureStopsProposal distinguishes no-match and provider failure without falling back to catalogue search.
 func TestPromptClassifierFailureStopsProposal(t *testing.T) {
-	for _, payload := range []string{`{"data":{"classifyPromptOperation":""}}`, `{"errors":[{"message":"Jev unavailable"}]}`} {
+	for _, payload := range []string{`{"data":{"classifyPromptOperation":""}}`, `{"errors":[{"message":"Operation discovery unavailable"}]}`} {
 		// Only the classifier bridge is available; any lexical fallback fails the test.
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path != "/engine/graphql" {
@@ -296,12 +296,12 @@ func TestPromptClassifierFailureStopsProposal(t *testing.T) {
 	}
 }
 
-// TestPromptDisclosesJevBeforeResolution makes data sharing visible before the first network request.
-func TestPromptDisclosesJevBeforeResolution(t *testing.T) {
+// TestPromptDisclosesRemoteProcessingBeforeResolution makes data sharing visible before the first network request.
+func TestPromptDisclosesRemoteProcessingBeforeResolution(t *testing.T) {
 	var output bytes.Buffer
 	// Observe the disclosure at request time rather than merely after the command finishes.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.Contains(output.String(), "Jev") || !strings.Contains(output.String(), "operation names") {
+		if !strings.Contains(output.String(), "AI providers through Fused") || !strings.Contains(output.String(), "operation names") {
 			t.Error("missing pre-request disclosure")
 		}
 		_, _ = w.Write([]byte(`{"data":{"parseSDKIntent":{"services":[]}}}`))

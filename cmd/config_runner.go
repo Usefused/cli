@@ -1051,7 +1051,7 @@ func sdkApplyGenerationStageStatus(resp *api.SDKConfigApplyResponse, generatesPa
 func applyPreparedMCP(client *api.Client, cfg *configfile.ParsedConfig, receipt planReceipt) error {
 	// Receipt-based apply must disclose remote processing even when planning happened in another invocation.
 	if cfg.MCP.FusedIntelligentClassifier {
-		fmt.Fprintln(os.Stderr, "Intelligent search uses Jev through Fused Registry. Search intent and authorized operation names and descriptions are sent to Jev. Fused manages the Jev API key; no additional key is required.")
+		fmt.Fprintln(os.Stderr, "Intelligent search sends search intent and authorized operation names and descriptions to AI providers through Fused. No additional API key is required.")
 	}
 	resp, err := client.ApplyMCPConfig(receipt.PlanID, receipt.SourceHash, receipt.NoToken)
 	if err != nil {

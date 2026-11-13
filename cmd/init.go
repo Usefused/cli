@@ -143,7 +143,7 @@ Non-interactive runs print readiness warnings without prompting or storing secre
 	command.Flags().StringVar(&opts.version, "version", defaultScaffoldVersion, "App version")
 	command.Flags().StringVar(&opts.language, "language", defaultScaffoldLanguage, "Generated SDK target language")
 	command.Flags().StringVar(&opts.bucket, "bucket", "", "Existing bucket to bind to this app")
-	command.Flags().BoolVar(&opts.fusedIntelligentClassifier, "fused-intelligent-classifier", false, "Enable MCP intelligent search using Jev via Fused Registry")
+	command.Flags().BoolVar(&opts.fusedIntelligentClassifier, "fused-intelligent-classifier", false, "Enable MCP intelligent search through Fused")
 	command.Flags().StringVar(&opts.description, "description", "", "Hosted MCP summary; combined Apps derive one from the name when omitted")
 	command.Flags().BoolVar(&opts.noApply, "no-apply", false, "Plan initialization without applying, generating, or downloading")
 	command.Flags().BoolVar(&opts.noToken, "no-token", false, "Apply without an auto-issued execution token; create one yourself later with 'app token generate'")

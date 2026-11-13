@@ -52,7 +52,7 @@ Use --update <app-name> or name an existing app in an update goal. Updates resol
 config (use -f to disambiguate), preserve its settings, and publish an immutable successor.
 Sequential runtime intent is authored as one Unified App execute function.
 
-Describe uses Jev through Fused Registry to select operations from search intent and operation names/descriptions.
+Describe uses intelligent operation discovery through Fused to select operations from search intent and operation names/descriptions.
 No additional API key is required. Describe resolves exact selections before showing its proposal.
 If a Unified App, SDK, or MCP goal asks to receive provider events, describe also creates or reuses
 a webhook registration and attaches it to the app. Direct REST apps cannot receive webhook events.
@@ -109,7 +109,7 @@ func buildPromptInitPlan(cmd *cobra.Command, client *api.Client, goal string, op
 	if cmd.Flags().Changed("update") && strings.TrimSpace(opts.update) == "" {
 		return promptInitPlan{}, errors.New("--update requires an existing app name")
 	}
-	fmt.Fprintln(cmd.ErrOrStderr(), "Describe operation selection uses Jev via Fused Registry. Search intent, operation names, and descriptions are sent to Jev. No extra API key is needed.")
+	fmt.Fprintln(cmd.ErrOrStderr(), "Describe sends search intent, operation names, and descriptions to AI providers through Fused for operation selection. No additional API key is required.")
 	fmt.Fprintln(cmd.ErrOrStderr(), "Intent parsing uses Registry's configured language model with your goal and, for updates, the app name, kind, and service names.")
 	target, err := promptExplicitUpdateTarget(opts)
 	// Explicit update targets must exist before intent parsing can interpret their service context.

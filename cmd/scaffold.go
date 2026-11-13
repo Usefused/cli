@@ -203,7 +203,7 @@ merge services into that file.`
 	}
 	// MCP descriptions are authored by the calling agent and become server identity metadata, not tool documentation.
 	if kind == configfile.KindMCP {
-		command.Flags().BoolVar(&opts.fusedIntelligentClassifier, "fused-intelligent-classifier", false, "Enable MCP intelligent search using Jev via Fused Registry")
+		command.Flags().BoolVar(&opts.fusedIntelligentClassifier, "fused-intelligent-classifier", false, "Enable MCP intelligent search through Fused")
 		command.Flags().StringVar(&opts.description, "description", "", "Human-readable summary naming selected services and capabilities")
 	}
 	addJSONOutputFlag(command)

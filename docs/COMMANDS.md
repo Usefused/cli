@@ -307,7 +307,7 @@ fused-cli describe --update billing-sdk 'Add Stripe invoice lookup'
 `describe` requires an interactive terminal. It resolves exact Registry
 services and operations, shows the proposal, and applies it only after
 confirmation; `--no-input` and CI cannot approve a model-derived scope.
-Operation selection uses Jev through Fused Registry, and goal parsing uses
+Operation selection uses the configured classifier through Fused Registry, and goal parsing uses
 Registry's configured language model. The CLI discloses those requests before
 sending them. SDK and MCP proposals can attach provider webhook events; direct
 REST apps have no event receiver.

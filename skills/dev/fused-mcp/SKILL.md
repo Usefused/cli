@@ -102,13 +102,13 @@ The shared SDK/MCP service structure preserves each independent selection.
 MCP creation may opt into `fused-intelligent-classifier: true`, or
 `fused-cli init --mcp --fused-intelligent-classifier`. Omission
 keeps local search. This is immutable version metadata: changing or removing it
-requires a successor version. Disclose that intelligent search uses Jev through
-Fused Registry and sends search intent plus authorized operation names and
-descriptions to Jev; Fused manages the Jev API key, so no additional user key is
-needed. Exact/section lookups and empty-query browsing stay local. Intelligent
+requires a successor version. Disclose that intelligent search sends search
+intent plus authorized operation names and descriptions to AI providers through
+Fused; no additional user API key is needed. Keep user-facing wording
+provider-neutral. Exact/section lookups and empty-query browsing stay local. Intelligent
 intent search returns one best operation or no match, supports up to 2048
 authorized operations and 4096 query bytes, and reports classifier outages
-explicitly without silently falling back to lexical ranking. Never put a Jev key
+explicitly without silently falling back to lexical ranking. Never put a classifier provider key
 in an MCP config or bucket.
 
 Treat a non-empty `search_docs` query as a concise capability intent, such as
