@@ -96,3 +96,14 @@ func TestApplyOneConfig_Webhook(t *testing.T) {
 		t.Fatalf("expected reconstructed registration URL, got:\n%s", out)
 	}
 }
+
+// TestWebhookRegistrationURL verifies the reserved default label maps to the
+// predictable /webhook/svc/{service} URL while other labels keep the token form.
+func TestWebhookRegistrationURL(t *testing.T) {
+	if got := webhookRegistrationURL("https://engine.example.com", defaultWebhookName, "github", "AbC123"); got != "https://engine.example.com/webhook/svc/github" {
+		t.Fatalf("default URL = %q", got)
+	}
+	if got := webhookRegistrationURL("https://engine.example.com", "team-x-webhooks", "github", "AbC123"); got != "https://engine.example.com/webhook/AbC123-github" {
+		t.Fatalf("token URL = %q", got)
+	}
+}

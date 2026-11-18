@@ -169,7 +169,7 @@ func TestActionFlagsStayOnConsumingSubcommand(t *testing.T) {
 		flag    string
 		present bool
 	}{
-		{secretCmd, "bucket", false}, {secretSetCmd, "bucket", true}, {secretListCmd, "bucket", false}, {secretDeleteCmd, "bucket", true},
+		{secretCmd, "bucket", false}, {secretListCmd, "bucket", false}, {secretDeleteCmd, "bucket", true},
 		{serviceCmd, "search", false}, {serviceWebhooksCmd, "search", false}, {serviceOperationsCmd, "search", true},
 		{workspaceServiceCmd, "force", false}, {workspaceServiceVersionCmd, "force", false},
 		{workspaceServiceDeleteCmd, "force", true}, {workspaceServiceVersionDeleteCmd, "force", true},
@@ -186,47 +186,6 @@ func assertCommandFlagPresence(t *testing.T, command *cobra.Command, flag string
 	// A mismatch identifies the exact command/flag pair instead of a compound assertion.
 	if found != present {
 		t.Fatalf("%s flag --%s presence=%v, want %v", command.CommandPath(), flag, found, present)
-	}
-}
-
-// TestSecretSetDefaultsToPromptsAndRequiresStdinWithoutInput verifies the
-// terminal default and the explicit automation-safe credential channel.
-func TestSecretSetDefaultsToPromptsAndRequiresStdinWithoutInput(t *testing.T) {
-	previousInteractive, previousStdin, previousNoInput := secretSetInteractive, secretSetValueStdin, NoInput
-	t.Cleanup(func() {
-		secretSetInteractive = previousInteractive
-		secretSetValueStdin = previousStdin
-		NoInput = previousNoInput
-	})
-	t.Setenv("CI", "")
-
-	secretSetInteractive, secretSetValueStdin = false, false
-	NoInput = false
-	// A normal terminal invocation defers value collection to the selected auth prompt.
-	if err := validateSecretSetArgs(secretSetCmd, []string{"github"}); err != nil {
-		t.Fatalf("default interactive validation: %v", err)
-	}
-	value, err := readSecretValue(secretSetCmd)
-	if err != nil || value != "" {
-		t.Fatalf("default prompt seed = %q, %v", value, err)
-	}
-	NoInput = true
-	// Disabling prompts without providing stdin must fail before any service lookup.
-	if err := validateSecretSetArgs(secretSetCmd, []string{"github"}); err == nil || !strings.Contains(err.Error(), "--value-stdin") {
-		t.Fatalf("expected missing non-interactive input error, got %v", err)
-	}
-	secretSetValueStdin = true
-	// Extra positional values remain forbidden so secrets cannot leak through argv.
-	if err := validateSecretSetArgs(secretSetCmd, []string{"github", "visible-secret"}); err == nil {
-		t.Fatal("secret values in argv must be rejected")
-	}
-	secretSetCmd.SetIn(strings.NewReader("sensitive-value\n"))
-	value, err = readSecretValue(secretSetCmd)
-	if err != nil {
-		t.Fatalf("read stdin credential: %v", err)
-	}
-	if value != "sensitive-value" {
-		t.Fatalf("credential = %q, want trimmed line ending", value)
 	}
 }
 

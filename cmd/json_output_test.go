@@ -36,7 +36,7 @@ func TestAgentReadCommandsExposeJSON(t *testing.T) {
 }
 
 func TestMutationCommandsDoNotInheritJSON(t *testing.T) {
-	for _, command := range []*cobra.Command{bucketCreateCmd, secretSetCmd, mcpApplyCmd, workspaceApplyCmd} {
+	for _, command := range []*cobra.Command{bucketCreateCmd, secretDeleteCmd, mcpApplyCmd, workspaceApplyCmd} {
 		if command.Flags().Lookup(jsonOutputFlag) != nil {
 			t.Errorf("%s unexpectedly exposes --json", command.CommandPath())
 		}

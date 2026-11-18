@@ -1163,6 +1163,9 @@ func appliedWebhookURL(baseURL string, w api.AppliedWebhookConfig) string {
 	return webhookRegistrationURL(baseURL, w.Label, w.ServiceKey, w.Slug)
 }
 
+// defaultWebhookName is the reserved label whose registration uses the predictable /webhook/svc/{service} route.
+const defaultWebhookName = "default"
+
 // webhookRegistrationURL reconstructs the full display URL from the opaque slug
 // and label. The reserved default label maps to the predictable
 // /webhook/svc/{service} URL; every other label keeps the opaque token form.

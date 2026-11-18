@@ -30,140 +30,21 @@ func TestConnectRejectsMalformedInputBeforeRequests(t *testing.T) {
 	}
 }
 
-// TestMultiFieldSecretResolversRejectMalformedAssignments verifies both
-// parser consumers preserve the actionable shared diagnostic.
-func TestMultiFieldSecretResolversRejectMalformedAssignments(t *testing.T) {
-	tests := []struct {
-		name    string
-		resolve func() error
-	}{
-		{name: "basic", resolve: func() error {
-			_, _, err := resolveBasicSecretInput(api.BasicPasswordMode("required"), "username=alice;password=")
-			return err
-		}},
-		{name: "mtls", resolve: func() error {
-			_, _, err := resolveMTLSSecretInput("cert=certificate;key")
-			return err
-		}},
-		{name: "oauth", resolve: func() error {
-			_, _, err := resolveOAuthApplicationSecretInput("client_id=id;client_secret")
-			return err
-		}},
-	}
-	// Both multi-field credential families must expose the same parser contract.
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			err := test.resolve()
-			// Each resolver must retain the parser's precise local failure instead of replacing it with missing-field text.
-			if err == nil || !strings.Contains(err.Error(), "invalid inline key=value input") {
-				t.Fatalf("expected shared inline validation error, got %v", err)
-			}
-		})
-	}
-}
-
-// TestResolveOAuthApplicationSecretInputRequiresClosedPair distinguishes app registration from token material.
-func TestResolveOAuthApplicationSecretInputRequiresClosedPair(t *testing.T) {
-	clientID, clientSecret, err := resolveOAuthApplicationSecretInput("client_id=app-id;client_secret=app-secret")
+// TestValidateOAuthApplicationSecretInputRequiresClosedPair distinguishes app registration from token material.
+func TestValidateOAuthApplicationSecretInputRequiresClosedPair(t *testing.T) {
+	clientID, clientSecret, err := validateOAuthApplicationSecretInput("app-id", "app-secret", 2)
 	if err != nil || clientID != "app-id" || clientSecret != "app-secret" {
 		t.Fatalf("OAuth application input = %q/%q, err=%v", clientID, clientSecret, err)
 	}
-	// Redirects are Engine-owned and extra fields must fail before service lookup or mutation.
-	_, _, err = resolveOAuthApplicationSecretInput("client_id=app-id;client_secret=app-secret;redirect_uri=https://attacker.example")
+	// Extra fields such as redirect_uri are Engine-owned and must fail locally.
+	_, _, err = validateOAuthApplicationSecretInput("app-id", "app-secret", 3)
 	if err == nil || !strings.Contains(err.Error(), "exactly") {
 		t.Fatalf("extra OAuth field error = %v", err)
 	}
-}
-
-// TestBasicEmptyPasswordModeRetainsDeliberateEmptyValue verifies strict inline
-// parsing does not erase the reviewed passwordless Basic-auth contract.
-func TestBasicEmptyPasswordModeRetainsDeliberateEmptyValue(t *testing.T) {
-	username, password, err := resolveBasicSecretInput(api.BasicPasswordMode("empty"), "username=alice;password=")
-	// The explicit empty field is valid only because the selected auth contract requires it.
-	if err != nil || username != "alice" || password != "" {
-		t.Fatalf("empty-password Basic input = %q/%q, err=%v", username, password, err)
-	}
-	_, _, err = resolveBasicSecretInput(api.BasicPasswordMode("required"), "username=alice;password=")
-	// Required-password Basic auth still rejects the same blank assignment locally.
-	if err == nil || !strings.Contains(err.Error(), "empty value") {
-		t.Fatalf("required-password blank error = %v", err)
-	}
-}
-
-func TestSelectSecretAuthByTypeRequiresNameForSameFamilySchemes(t *testing.T) {
-	previousType, previousName := secretSetType, secretSetAuthName
-	t.Cleanup(func() { secretSetType, secretSetAuthName = previousType, previousName })
-	secretSetType, secretSetAuthName = "oauth", ""
-	info := &api.ServiceInfo{AuthConfigs: []api.AuthConfig{
-		{Name: "adminOAuth", Type: "oauth2"},
-		{Name: "userOAuth", Type: "oauth2"},
-	}}
-
-	_, err := selectSecretAuthByType(info, "acme")
-	if err == nil || !strings.Contains(err.Error(), "--auth-name") || !strings.Contains(err.Error(), "adminOAuth, userOAuth") {
-		t.Fatalf("expected deterministic same-family ambiguity error, got %v", err)
-	}
-}
-
-func TestSelectSecretAuthByTypeUsesExactNameWithinFamily(t *testing.T) {
-	previousType, previousName := secretSetType, secretSetAuthName
-	t.Cleanup(func() { secretSetType, secretSetAuthName = previousType, previousName })
-	secretSetType, secretSetAuthName = "oauth", "userOAuth"
-	info := &api.ServiceInfo{AuthConfigs: []api.AuthConfig{
-		{Name: "adminOAuth", Type: "oauth2"},
-		{Name: "userOAuth", Type: "oauth2"},
-	}}
-
-	auth, err := selectSecretAuthByType(info, "acme")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if auth.Name != "userOAuth" {
-		t.Fatalf("selected auth = %#v, want userOAuth", auth)
-	}
-}
-
-// TestSelectSecretAuthPromptsByDefault verifies terminal use asks the operator
-// to review the supported method even when only one method is declared.
-func TestSelectSecretAuthPromptsByDefault(t *testing.T) {
-	previousInteractive, previousStdin, previousNoInput := secretSetInteractive, secretSetValueStdin, NoInput
-	previousType, previousSelect := secretSetType, selectSecretAuthInteractively
-	t.Cleanup(func() {
-		secretSetInteractive, secretSetValueStdin, NoInput = previousInteractive, previousStdin, previousNoInput
-		secretSetType, selectSecretAuthInteractively = previousType, previousSelect
-	})
-	t.Setenv("CI", "")
-	secretSetInteractive, secretSetValueStdin, NoInput = false, false, false
-	secretSetType = ""
-	prompted := false
-	// The fake proves selection reached the protected prompt rather than silently auto-selecting.
-	selectSecretAuthInteractively = func(info *api.ServiceInfo) (*api.AuthConfig, error) {
-		prompted = true
-		return &info.AuthConfigs[0], nil
-	}
-	info := &api.ServiceInfo{AuthConfigs: []api.AuthConfig{{Name: "gmailOAuth", Type: "oauth2"}}}
-	auth, err := selectSecretAuth(info, "gmail")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !prompted || auth.Name != "gmailOAuth" {
-		t.Fatalf("prompted=%t auth=%#v", prompted, auth)
-	}
-}
-
-func TestValidateSecretSetArgsRequiresTypeWithAuthName(t *testing.T) {
-	previousInteractive, previousStdin := secretSetInteractive, secretSetValueStdin
-	previousType, previousName := secretSetType, secretSetAuthName
-	t.Cleanup(func() {
-		secretSetInteractive, secretSetValueStdin = previousInteractive, previousStdin
-		secretSetType, secretSetAuthName = previousType, previousName
-	})
-	secretSetInteractive, secretSetValueStdin = false, true
-	secretSetType, secretSetAuthName = "", "userOAuth"
-
-	err := validateSecretSetArgs(secretSetCmd, []string{"acme"})
-	if err == nil || !strings.Contains(err.Error(), "--auth-name requires --type") {
-		t.Fatalf("expected auth-name/type validation error, got %v", err)
+	// Missing client_secret must fail before any service mutation.
+	_, _, err = validateOAuthApplicationSecretInput("app-id", "", 2)
+	if err == nil || !strings.Contains(err.Error(), "exactly") {
+		t.Fatalf("missing OAuth secret error = %v", err)
 	}
 }
 

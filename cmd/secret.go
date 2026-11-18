@@ -22,87 +22,9 @@ var secretCmd = &cobra.Command{
 	RunE:  requireSubcommand,
 }
 
-var secretSetInteractive bool
-var secretSetValueStdin bool
-var secretSetBucketID string
-var secretSetExpiresAt string
-var secretSetExportable bool
-var secretSetType string
-var secretSetAuthName string
-var secretSetWebhook inboundWebhookFlag
 var secretListBucketID string
 var secretRemoveBucketID string
 var secretListFlags listFlags
-
-// selectSecretAuthInteractively is replaceable in tests so secure method
-// selection can be verified without attaching a real terminal.
-var selectSecretAuthInteractively = promptSecretAuthSelect
-
-// validateSecretSetArgs preserves secure terminal prompting by default while
-// requiring explicit stdin input whenever prompting has been disabled.
-func validateSecretSetArgs(cmd *cobra.Command, args []string) error {
-	// Positional validation runs first so credential values can never be accepted in argv.
-	if err := cobra.ExactArgs(1)(cmd, args); err != nil {
-		return err
-	}
-	// The two explicit input modes are mutually exclusive even though terminal
-	// prompting no longer needs a flag.
-	if secretSetInteractive && secretSetValueStdin {
-		return fmt.Errorf("choose only one credential input: --interactive or --value-stdin")
-	}
-	// An explicit interaction request must fail rather than silently consuming stdin in automation.
-	if secretSetInteractive {
-		if err := requireInteractive("omit --interactive and use --value-stdin, or unset --no-input/CI"); err != nil {
-			return err
-		}
-	}
-	// Non-interactive execution needs the dedicated secret-safe stdin channel.
-	if !secretSetValueStdin && nonInteractive() {
-		return errors.New("credential input is required in non-interactive mode; use --value-stdin")
-	}
-	// Exact provider scheme selection cannot be interpreted without its public auth family.
-	if strings.TrimSpace(secretSetAuthName) != "" && strings.TrimSpace(secretSetType) == "" {
-		return fmt.Errorf("--auth-name requires --type")
-	}
-	return nil
-}
-
-var secretSetCmd = &cobra.Command{
-	Use:   "set <service-slug>",
-	Short: "Set credentials for a service",
-	Args:  validateSecretSetArgs,
-	RunE: WithTelemetry("cli.secret.set", func(cmd *cobra.Command, args []string) error {
-		value, err := readSecretValue(cmd)
-		if err != nil {
-			return err
-		}
-		// Store the credential first; the inbound webhook offer runs after a
-		// successful write so it can never roll back committed OAuth/OIDC state.
-		if err := runSecretSet(cmd, args[0], value); err != nil {
-			return err
-		}
-		return offerWebhookAfterSecretSet(cmd, args[0])
-	}),
-}
-
-// readSecretValue defers collection to the provider-aware secure prompts for
-// terminal use and otherwise reads the dedicated stdin channel exactly once.
-func readSecretValue(cmd *cobra.Command) (string, error) {
-	// Interactive collectors need an empty seed so they can request the fields
-	// appropriate to the selected authentication method.
-	if secretSetUsesInteractiveInput() {
-		return "", nil
-	}
-	// Secrets never belong in argv because shell history and process listings
-	// can retain them long after the command finishes.
-	return readSensitiveValue(cmd, "credential")
-}
-
-// secretSetUsesInteractiveInput makes prompting the normal terminal path while
-// allowing --value-stdin, --no-input, and CI to remain deterministic.
-func secretSetUsesInteractiveInput() bool {
-	return !secretSetValueStdin && !nonInteractive()
-}
 
 var secretListCmd = &cobra.Command{
 	Use:   "list",
@@ -124,171 +46,6 @@ var secretDeleteCmd = &cobra.Command{
 		recordAppliedChange(cmd.Context(), cmd.CommandPath(), "secret")
 		return nil
 	}),
-}
-
-// runSecretSet resolves the bucket and service before inspecting auth metadata
-// so secret keys are stored under the same provider-specific names the Engine
-// later uses for request-time credential resolution.
-func runSecretSet(cmd *cobra.Command, serviceSlug, value string) error {
-	requestedType := canonicalSecretTypeName(secretSetType)
-	// Local assignment validation must finish before any metadata request can carry ambiguous input.
-	if err := validateSecretInlineInput(requestedType, value); err != nil {
-		return err
-	}
-	client, err := getAPIClient()
-	if err != nil {
-		return err
-	}
-	expiresAt, err := parseSecretExpiresAt()
-	if err != nil {
-		return err
-	}
-	bucketID, err := resolveOptionalBucketID(secretSetBucketID)
-	if err != nil {
-		return err
-	}
-	info, err := client.GetServiceInfo(serviceSlug)
-	if err != nil {
-		return err
-	}
-	if info == nil || strings.TrimSpace(info.ID) == "" {
-		return fmt.Errorf("service %s not found", serviceSlug)
-	}
-	auth, err := selectSecretAuth(info, serviceSlug)
-	if err != nil {
-		return err
-	}
-	return setSecretForAuth(client, info.ID, bucketID, auth, value, expiresAt, serviceSlug, cmd.OutOrStdout(), credentialMutationOptions{
-		auditCtx: cmd.Context(), auditAction: cmd.CommandPath(), resourceKind: "secret", exportable: secretSetExportable,
-	})
-}
-
-// validateSecretInlineInput checks only explicit multi-field credential
-// grammars while preserving opaque token values for provider-aware handling.
-func validateSecretInlineInput(requestedType, value string) error {
-	// Empty or opaque single-value input needs no assignment parsing at this stage.
-	if value == "" || requestedType != "basic" && requestedType != "mtls" && requestedType != "oauth" && requestedType != "oidc" {
-		return nil
-	}
-	// Basic may intentionally author an empty password only when the later reviewed auth contract requires it.
-	if requestedType == "basic" {
-		_, err := parseInlineKeyValuePairsAllowingEmpty(value, "password")
-		return err
-	}
-	// Paired families require valid assignments before remote metadata lookup.
-	_, err := parseInlineKeyValuePairs(value)
-	return err
-}
-
-// parseSecretExpiresAt validates expiry locally so malformed timestamps do not
-// reach the API and create ambiguous secret lifecycle state.
-func parseSecretExpiresAt() (*time.Time, error) {
-	if secretSetExpiresAt == "" {
-		return nil, nil
-	}
-	parsed, err := time.Parse(time.RFC3339, secretSetExpiresAt)
-	if err != nil {
-		return nil, fmt.Errorf("invalid --expires-at %q, expected RFC3339 (e.g. 2026-12-31T23:59:59Z): %w", secretSetExpiresAt, err)
-	}
-	return &parsed, nil
-}
-
-// selectSecretAuth keeps manual secret setup tied to the service's declared
-// auth scheme; bucket secrets must use those names for runtime lookup to work.
-func selectSecretAuth(info *api.ServiceInfo, serviceSlug string) (*api.AuthConfig, error) {
-	if len(info.AuthConfigs) == 0 {
-		return nil, fmt.Errorf("service %s does not declare any authentication methods in its OpenAPI spec", serviceSlug)
-	}
-	if secretSetType != "" {
-		return selectSecretAuthByType(info, serviceSlug)
-	}
-	// Non-interactive stdin may safely auto-select a sole method, but ambiguous
-	// services still require an exact public family from the caller.
-	if !secretSetUsesInteractiveInput() {
-		// A sole declared method is deterministic and needs no synthetic choice.
-		if len(info.AuthConfigs) == 1 {
-			return &info.AuthConfigs[0], nil
-		}
-		var validTypes []string
-		for _, a := range info.AuthConfigs {
-			validTypes = append(validTypes, a.Name)
-		}
-		return nil, fmt.Errorf("service %s has multiple authentication methods; specify --type. Valid methods are: %s. Run 'fused-cli service %s show' for details", serviceSlug, strings.Join(validTypes, ", "), serviceSlug)
-	}
-	// Prompting remains gated at the point of use in case this function is called outside Cobra validation.
-	if err := requireInteractive("pass --type and provide the credential value explicitly"); err != nil {
-		return nil, err
-	}
-	return selectSecretAuthInteractively(info)
-}
-
-// selectSecretAuthByType uses --type for the public auth family and
-// --auth-name for the exact provider scheme. Keeping those identities
-// separate prevents two same-family schemes from silently sharing secrets.
-func selectSecretAuthByType(info *api.ServiceInfo, serviceSlug string) (*api.AuthConfig, error) {
-	requested := canonicalSecretTypeName(secretSetType)
-	matches := make([]*api.AuthConfig, 0, len(info.AuthConfigs))
-	for i := range info.AuthConfigs {
-		auth := &info.AuthConfigs[i]
-		if canonicalSecretAuthType(auth) == requested {
-			matches = append(matches, auth)
-		}
-	}
-	if len(matches) == 0 {
-		return nil, unsupportedSecretAuthError(info, serviceSlug)
-	}
-	name := strings.TrimSpace(secretSetAuthName)
-	if name != "" {
-		for _, auth := range matches {
-			if auth.Name == name {
-				return auth, nil
-			}
-		}
-		return nil, fmt.Errorf("service %s does not declare auth_name %q for auth type %q; matching names are: %s", serviceSlug, name, requested, strings.Join(secretAuthNames(matches), ", "))
-	}
-	if len(matches) == 1 {
-		return matches[0], nil
-	}
-	return nil, fmt.Errorf("service %s declares multiple %s authentication schemes; pass --auth-name with one of: %s", serviceSlug, requested, strings.Join(secretAuthNames(matches), ", "))
-}
-
-func unsupportedSecretAuthError(info *api.ServiceInfo, serviceSlug string) error {
-	valid := make([]string, 0, len(info.AuthConfigs))
-	for i := range info.AuthConfigs {
-		valid = append(valid, canonicalSecretAuthType(&info.AuthConfigs[i])+":"+info.AuthConfigs[i].Name)
-	}
-	return fmt.Errorf("service %s does not support authentication type %q; valid type:name pairs are: %s", serviceSlug, secretSetType, strings.Join(valid, ", "))
-}
-
-func secretAuthNames(auths []*api.AuthConfig) []string {
-	names := make([]string, 0, len(auths))
-	for _, auth := range auths {
-		names = append(names, auth.Name)
-	}
-	return names
-}
-
-// promptSecretAuthSelect shows scheme names next to labels because those names
-// become the bucket secret keys the Engine reads during execution.
-func promptSecretAuthSelect(info *api.ServiceInfo) (*api.AuthConfig, error) {
-	options := make([]huh.Option[int], len(info.AuthConfigs))
-	for i, auth := range info.AuthConfigs {
-		title := fmt.Sprintf("%s (Key: %s)", auth.Name, auth.Name)
-		if auth.Type == "http" {
-			title = fmt.Sprintf("HTTP %s (%s)", auth.Scheme, auth.Name)
-		}
-		options[i] = huh.NewOption(title, i)
-	}
-	var selected int
-	err := huh.NewSelect[int]().
-		Title("Which authentication method would you like to configure?").
-		Options(options...).
-		Value(&selected).
-		Run()
-	if err != nil {
-		return nil, err
-	}
-	return &info.AuthConfigs[selected], nil
 }
 
 type secretCredentialInput struct {
@@ -337,13 +94,13 @@ func resolveSecretCredentialInput(auth *api.AuthConfig, value string) (secretCre
 	// Family dispatch prevents OAuth application pairs from entering the opaque token path.
 	switch canonicalSecretAuthType(auth) {
 	case "basic":
-		username, password, err := resolveBasicSecretInput(auth.BasicPasswordMode, value)
+		username, password, err := resolveBasicSecretInput(auth.BasicPasswordMode)
 		return secretCredentialInput{username: username, password: password}, err
 	case "mtls":
-		cert, key, err := resolveMTLSSecretInput(value)
+		cert, key, err := resolveMTLSSecretInput()
 		return secretCredentialInput{cert: cert, key: key}, err
 	case "oauth", "oidc":
-		clientID, clientSecret, err := resolveOAuthApplicationSecretInput(value)
+		clientID, clientSecret, err := resolveOAuthApplicationSecretInput()
 		return secretCredentialInput{clientID: clientID, clientSecret: clientSecret}, err
 	default:
 		token, err := resolveTokenSecretInput(auth, value)
@@ -403,17 +160,9 @@ func printSecretSetResult(out io.Writer, auth *api.AuthConfig, serviceDisplay st
 	fmt.Fprintf(out, "Secret set successfully for %s.\n", serviceDisplay)
 }
 
-// resolveOAuthApplicationSecretInput collects the two application-registration values as one mutation.
-func resolveOAuthApplicationSecretInput(value string) (string, string, error) {
-	// Structured non-interactive input shares the assignment parser used by Basic and mTLS.
-	if value != "" {
-		pairs, err := parseInlineKeyValuePairs(value)
-		if err != nil {
-			return "", "", err
-		}
-		return validateOAuthApplicationSecretInput(pairs["client_id"], pairs["client_secret"], len(pairs))
-	}
-	if err := requireInteractive("provide client_id and client_secret using the command's value input"); err != nil {
+// resolveOAuthApplicationSecretInput prompts for the two application-registration values as one atomic mutation.
+func resolveOAuthApplicationSecretInput() (string, string, error) {
+	if err := requireInteractive("pass \"client_id=..., client_secret=...\" with --no-input"); err != nil {
 		return "", "", err
 	}
 	var clientID, clientSecret string
@@ -431,36 +180,21 @@ func resolveOAuthApplicationSecretInput(value string) (string, string, error) {
 func validateOAuthApplicationSecretInput(clientID, clientSecret string, fieldCount int) (string, string, error) {
 	// Redirects and token fields are Engine-managed or user-grant material and cannot enter this family.
 	if fieldCount != 2 || strings.TrimSpace(clientID) == "" || strings.TrimSpace(clientSecret) == "" {
-		return "", "", errors.New("OAuth/OIDC application credentials require exactly 'client_id=...;client_secret=...'")
+		return "", "", errors.New("OAuth/OIDC application credentials require exactly client_id and client_secret")
 	}
 	return clientID, clientSecret, nil
 }
 
-// resolveBasicSecretInput collects and validates Basic-auth credential fields.
-func resolveBasicSecretInput(mode api.BasicPasswordMode, value string) (string, string, error) {
-	// Explicit Basic credentials must satisfy the shared assignment grammar before field validation.
-	if value != "" {
-		var pairs map[string]string
-		var err error
-		// The reviewed empty-password mode is the sole exception to global blank-value rejection.
-		if mode == api.BasicPasswordMode("empty") {
-			pairs, err = parseInlineKeyValuePairsAllowingEmpty(value, "password")
-		} else {
-			pairs, err = parseInlineKeyValuePairs(value)
-		}
-		// Parser failures are already actionable and must not be replaced by a generic missing-field error.
-		if err != nil {
-			return "", "", err
-		}
-		return validateBasicSecretInput(mode, pairs["username"], pairs["password"])
-	}
-	if err := requireInteractive("provide Basic authentication material using the command's value input"); err != nil {
+// resolveBasicSecretInput prompts for and validates Basic-auth credential fields.
+func resolveBasicSecretInput(mode api.BasicPasswordMode) (string, string, error) {
+	if err := requireInteractive("pass \"username=..., password=...\" with --no-input"); err != nil {
 		return "", "", err
 	}
 	var username, password string
 	if err := huh.NewInput().Title("Username:").Value(&username).Run(); err != nil {
 		return "", "", err
 	}
+	// Skip the password prompt when the provider scheme explicitly prohibits passwords.
 	if basicPasswordRequired(mode) || mode == api.BasicPasswordMode("optional") {
 		if err := huh.NewInput().Title("Password (optional when supported):").EchoMode(huh.EchoModePassword).Value(&password).Run(); err != nil {
 			return "", "", err
@@ -469,12 +203,13 @@ func resolveBasicSecretInput(mode api.BasicPasswordMode, value string) (string, 
 	return validateBasicSecretInput(mode, username, password)
 }
 
+// validateBasicSecretInput enforces the scheme's username and password policy before storage.
 func validateBasicSecretInput(mode api.BasicPasswordMode, username, password string) (string, string, error) {
 	if strings.TrimSpace(username) == "" {
 		return "", "", errors.New("basic auth requires a username")
 	}
 	if basicPasswordRequired(mode) && password == "" {
-		return "", "", errors.New("basic auth requires a password; provide format 'username=...;password=...' or use interactive mode (-i)")
+		return "", "", errors.New("basic auth requires a password")
 	}
 	if mode == api.BasicPasswordMode("empty") && password != "" {
 		return "", "", errors.New("this Basic authentication scheme requires an empty password")
@@ -486,36 +221,22 @@ func basicPasswordRequired(mode api.BasicPasswordMode) bool {
 	return mode == "" || mode == api.BasicPasswordMode("required")
 }
 
-// resolveMTLSSecretInput collects and validates both halves of an mTLS credential.
-func resolveMTLSSecretInput(value string) (string, string, error) {
+// resolveMTLSSecretInput prompts for and validates both halves of an mTLS credential.
+func resolveMTLSSecretInput() (string, string, error) {
 	var cert, key string
-
-	if value != "" {
-		pairs, err := parseInlineKeyValuePairs(value)
-		// Invalid inline mTLS assignments must fail before required-field validation obscures the cause.
-		if err != nil {
-			return "", "", err
-		}
-		cert, key = pairs["cert"], pairs["key"]
-		if cert == "" || key == "" {
-			return "", "", fmt.Errorf("mTLS auth requires both cert and key. Provide format 'cert=...;key=...' or use interactive mode (-i)")
-		}
-	} else {
-		if err := requireInteractive("provide the certificate and private key using the command's value input"); err != nil {
-			return "", "", err
-		}
-		err := huh.NewText().Title("Client certificate PEM:").Value(&cert).Run()
-		if err != nil {
-			return "", "", err
-		}
-		// Private keys must not be echoed even though certificates are safe to
-		// review in the multiline editor.
-		err = huh.NewInput().Title("Client private key PEM:").EchoMode(huh.EchoModePassword).Value(&key).Run()
-		if err != nil {
-			return "", "", err
-		}
+	if err := requireInteractive("pass \"cert=..., key=...\" with --no-input"); err != nil {
+		return "", "", err
 	}
-
+	err := huh.NewText().Title("Client certificate PEM:").Value(&cert).Run()
+	if err != nil {
+		return "", "", err
+	}
+	// Private keys must not be echoed even though certificates are safe to
+	// review in the multiline editor.
+	err = huh.NewInput().Title("Client private key PEM:").EchoMode(huh.EchoModePassword).Value(&key).Run()
+	if err != nil {
+		return "", "", err
+	}
 	if err := validateMTLSSecretPair(cert, key); err != nil {
 		return "", "", err
 	}
@@ -697,15 +418,6 @@ func init() {
 	RootCmd.AddCommand(secretCmd)
 	secretCmd.AddCommand(secretListCmd, secretDeleteCmd)
 	addJSONOutputFlag(secretListCmd)
-
-	secretSetCmd.Flags().StringVar(&secretSetBucketID, "bucket", "", "Bucket name or UUID; omit to use the default bucket")
-	secretSetCmd.Flags().BoolVar(&secretSetExportable, "exportable", false, "Allow callers with credentials.reveal to retrieve this API key")
-	secretSetCmd.Flags().StringVar(&secretSetExpiresAt, "expires-at", "", "RFC3339 expiry timestamp; omit for no expiry")
-	secretSetCmd.Flags().StringVar(&secretSetType, "type", "", "Authentication family, such as bearer, api_key, oauth, or mtls")
-	secretSetCmd.Flags().StringVar(&secretSetAuthName, "auth-name", "", "Exact provider auth scheme name; required when --type matches multiple schemes")
-	secretSetCmd.Flags().BoolVarP(&secretSetInteractive, "interactive", "i", false, "Explicitly require authentication prompts (the terminal default)")
-	secretSetCmd.Flags().BoolVar(&secretSetValueStdin, "value-stdin", false, "Read the credential value from stdin")
-	secretSetWebhook.addFlag(secretSetCmd)
 	addListFlags(secretListCmd, &secretListFlags)
 	secretDeleteCmd.Flags().StringVar(&secretRemoveBucketID, "bucket", "", "Bucket name or UUID; omit to use the default bucket")
 }
