@@ -59,14 +59,14 @@ func TestPlanOneConfig_Webhook(t *testing.T) {
 }
 
 // TestApplyOneConfig_Webhook exercises the kind: webhook branch added to
-// applyOneConfig -- it must hit /webhook-config/apply and print each
-// registration's reconstructed URL, mirroring workspace apply's webhook
-// printout but sourced from kind: webhook's own response shape.
+// applyOneConfig -- it must hit /webhook-config/apply and prefer Engine's
+// returned public callback_url while falling back to local URL reconstruction
+// when an older server omits callback_url.
 func TestApplyOneConfig_Webhook(t *testing.T) {
 	var gotPath string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
-		_, _ = w.Write([]byte(`{"status":"applied","plan_id":"plan-1","config_key":"webhook:team-x","name":"team-x","registrations":[{"service":"github","slug":"slugaaaaaaaaaaaaaaaaa"}]}`))
+		_, _ = w.Write([]byte(`{"status":"applied","plan_id":"plan-1","config_key":"webhook:team-x","name":"team-x","registrations":[{"service":"github","slug":"slugaaaaaaaaaaaaaaaaa"},{"service":"stripe","slug":"slugbbbbbbbbbbbbbbbbb","callback_url":"https://eng.usefused.com/webhook/slugbbbbbbbbbbbbbbbbb"}]}`))
 	}))
 	defer server.Close()
 
@@ -93,7 +93,11 @@ func TestApplyOneConfig_Webhook(t *testing.T) {
 		t.Fatalf("expected success line naming the artifact, got:\n%s", out)
 	}
 	if !strings.Contains(out, `service "github" -> `+server.URL+"/webhook/slugaaaaaaaaaaaaaaaaa-github") {
-		t.Fatalf("expected reconstructed registration URL, got:\n%s", out)
+		t.Fatalf("expected fallback reconstructed registration URL, got:\n%s", out)
+	}
+	// Engine's configured public callback URL must take precedence over the CLI's local connection URL.
+	if !strings.Contains(out, `service "stripe" -> https://eng.usefused.com/webhook/slugbbbbbbbbbbbbbbbbb`) {
+		t.Fatalf("expected server-returned public callback_url, got:\n%s", out)
 	}
 }
 

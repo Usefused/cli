@@ -1097,16 +1097,26 @@ type InjectionConfig struct {
 
 // ListWorkspaceServices assembles a complete snapshot through Engine's bounded, authorized page resolver.
 func (c *Client) ListWorkspaceServices(names ...string) ([]WorkspaceService, error) {
-	return c.workspaceServicePages(names, "")
+	return c.workspaceServicePages(names, "", false)
+}
+
+// ListWebhookWorkspaceServices lists only authorized workspace services whose active contract declares webhook events.
+func (c *Client) ListWebhookWorkspaceServices(names ...string) ([]WorkspaceService, error) {
+	return c.workspaceServicePages(names, "", true)
 }
 
 // SearchWorkspaceServices uses the same authorized free-text matching as the workspace UI.
 func (c *Client) SearchWorkspaceServices(q string) ([]WorkspaceService, error) {
-	return c.workspaceServicePages(nil, strings.TrimSpace(q))
+	return c.workspaceServicePages(nil, strings.TrimSpace(q), false)
+}
+
+// SearchWebhookWorkspaceServices searches only authorized workspace services that declare webhook events.
+func (c *Client) SearchWebhookWorkspaceServices(q string) ([]WorkspaceService, error) {
+	return c.workspaceServicePages(nil, strings.TrimSpace(q), true)
 }
 
 // workspaceServicePages shares bounded pagination while preserving exact-reference listing for config workflows.
-func (c *Client) workspaceServicePages(names []string, search string) ([]WorkspaceService, error) {
+func (c *Client) workspaceServicePages(names []string, search string, hasWebhooks bool) ([]WorkspaceService, error) {
 	const pageSize = 100
 	query := `
   query WorkspaceServices($names: [String], $limit: Int, $offset: Int) {
@@ -1120,15 +1130,24 @@ func (c *Client) workspaceServicePages(names []string, search string) ([]Workspa
    }
   }
  `
-	// Only search callers require the new argument; ordinary listing remains compatible with older Engines.
+	// Only search callers require the q argument; ordinary listing remains compatible with older Engines.
 	if search != "" {
 		query = strings.Replace(query, "$names: [String],", "$q: String, $names: [String],", 1)
 		query = strings.Replace(query, "workspaceServicePage(names:", "workspaceServicePage(q: $q, names:", 1)
+	}
+	// Only webhook-filtered callers pass has_webhooks so non-webhook commands stay compatible with older Engines.
+	if hasWebhooks {
+		query = strings.Replace(query, "$limit: Int,", "$hasWebhooks: Boolean, $limit: Int,", 1)
+		query = strings.Replace(query, "limit: $limit,", "has_webhooks: $hasWebhooks, limit: $limit,", 1)
 	}
 	variables := map[string]any{"names": names, "limit": pageSize}
 	// Exact-reference queries never acquire fuzzy semantics through an implicit fallback.
 	if search != "" {
 		variables["q"] = search
+	}
+	// Delegate webhook availability filtering to Engine's SQL query rather than filtering client-side.
+	if hasWebhooks {
+		variables["hasWebhooks"] = true
 	}
 	services := make([]WorkspaceService, 0)
 	seen := make(map[string]bool)
@@ -2299,8 +2318,9 @@ type WebhookConfigApplyResponse struct {
 }
 
 type WebhookConfigRegistration struct {
-	Service string `json:"service"`
-	Slug    string `json:"slug"`
+	Service     string `json:"service"`
+	Slug        string `json:"slug"`
+	CallbackURL string `json:"callback_url,omitempty"`
 }
 
 // ApplySDKConfig may return a plaintext execution token only when Engine first

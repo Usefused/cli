@@ -1082,15 +1082,15 @@ func applyPreparedWebhook(client *api.Client, cfg *configfile.ParsedConfig, rece
 	return nil
 }
 
-// printAppliedWebhookRegistrations mirrors printAppliedWebhooks' URL
-// reconstruction, but reads from kind: webhook's own apply response
-// (WebhookConfigRegistration) instead of workspace apply's
-// AppliedWebhookConfig -- the two shapes both carry service+slug, but come
-// from different endpoints and will keep diverging (this one has no per-call
-// Label since the whole webhook configuration is one label -- resp.Name).
+// printAppliedWebhookRegistrations prints each reconciled webhook's authoritative public URL from Engine when returned, falling back to baseURL reconstruction for older Engines.
 func printAppliedWebhookRegistrations(baseURL, label string, registrations []api.WebhookConfigRegistration) {
 	for _, reg := range registrations {
-		fmt.Printf("  webhook %q service %q -> %s\n", label, reg.Service, webhookRegistrationURL(baseURL, label, reg.Service, reg.Slug))
+		destination := reg.CallbackURL
+		// Older Engines or deployments without a configured public URL omit callback_url and fall back to CLI baseURL reconstruction.
+		if destination == "" {
+			destination = webhookRegistrationURL(baseURL, label, reg.Service, reg.Slug)
+		}
+		fmt.Printf("  webhook %q service %q -> %s\n", label, reg.Service, destination)
 	}
 }
 

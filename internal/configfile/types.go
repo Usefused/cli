@@ -174,9 +174,10 @@ type ConnectMaterial struct {
 // unique per (service) across every kind: webhook config in the account.
 // A second config cannot silently claim a registration another config owns.
 type WebhookConfig struct {
-	BaseConfig `yaml:",inline"`
-	Name       string                    `yaml:"name" json:"name"`
-	Services   map[string]WebhookService `yaml:"services" json:"services"`
+	BaseConfig      `yaml:",inline"`
+	Name            string                    `yaml:"name" json:"name"`
+	CallbackBaseURL string                    `yaml:"callback_base_url,omitempty" json:"callback_base_url,omitempty"`
+	Services        map[string]WebhookService `yaml:"services" json:"services"`
 }
 
 // WebhookService is one service's registration within a kind:
