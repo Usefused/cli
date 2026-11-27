@@ -23,11 +23,18 @@ import (
 	"github.com/google/uuid"
 )
 
+// RegistryTargetHeader selects an explicit Registry target ('local' or 'cloud') on Hybrid Engines.
+const RegistryTargetHeader = "X-Fused-Registry-Target"
+
+// RegistrySourceHeader reports which Registry ('local' or 'cloud') fulfilled an Engine proxy call.
+const RegistrySourceHeader = "X-Fused-Registry-Source"
+
 type Client struct {
-	BaseURL      string
-	APIKey       string
-	HTTP         *http.Client
-	showProgress bool
+	BaseURL        string
+	APIKey         string
+	RegistryTarget string
+	HTTP           *http.Client
+	showProgress   bool
 }
 
 const DefaultTimeout = time.Minute
@@ -109,6 +116,10 @@ func mergeRequestContext(requestCtx, executionCtx context.Context) (context.Cont
 func (c *Client) doRequest(req *http.Request) (*http.Response, error) {
 	var resp *http.Response
 	var err error
+	// Attach explicit Registry routing intent when the CLI command opted into --cloud or replayed a receipt target.
+	if target := strings.TrimSpace(c.RegistryTarget); target != "" && req.Header.Get(RegistryTargetHeader) == "" {
+		req.Header.Set(RegistryTargetHeader, target)
+	}
 
 	action := func() {
 		resp, err = c.HTTP.Do(req)
@@ -2672,6 +2683,7 @@ type SpecImportPlanResponse struct {
 	Diff                     SpecImportDiff         `json:"diff"`
 	Usage                    *SpecImportUsage       `json:"usage,omitempty"`
 	Diagnostics              []SpecImportDiagnostic `json:"diagnostics,omitempty"`
+	RegistrySource           string                 `json:"-"`
 }
 
 type SpecImportApplyRequest struct {
@@ -2766,6 +2778,7 @@ func (c *Client) PlanSpecImport(req SpecImportPlanRequest) (*SpecImportPlanRespo
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return nil, err
 	}
+	out.RegistrySource = strings.ToLower(strings.TrimSpace(resp.Header.Get(RegistrySourceHeader)))
 	return &out, nil
 }
 

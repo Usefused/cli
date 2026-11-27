@@ -79,6 +79,7 @@ type DiscoveryStartRequest struct {
 	Name             string                `json:"name"`
 	Slug             string                `json:"slug"`
 	Version          string                `json:"version,omitempty"`
+	IsPublic         *bool                 `json:"is_public,omitempty"`
 	SourceURL        string                `json:"source_url"`
 	SourceMode       string                `json:"source_mode"`
 	RequestedWorkers int                   `json:"requested_workers,omitempty"`

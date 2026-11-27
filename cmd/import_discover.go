@@ -39,6 +39,7 @@ var (
 	importDiscoverReceiptOut       string
 	importDiscoverNoBrowser        bool
 	importDiscoverJSON             bool
+	importDiscoverCloud            bool
 	importDiscoverTimeout          time.Duration
 )
 
@@ -71,7 +72,7 @@ the plan; run "fused-cli import apply" after review.`,
 			selectAll: importDiscoverAll, acceptedProposals: importDiscoverAcceptProposal,
 			rejectEnrichment: importDiscoverRejectEnrichment, overlayPath: importDiscoverOverlay,
 			receiptOut: importDiscoverReceiptOut, noBrowser: importDiscoverNoBrowser,
-			jsonOut: importDiscoverJSON,
+			jsonOut: importDiscoverJSON, cloud: importDiscoverCloud,
 			timeout: importDiscoverTimeout,
 		})
 	}),
@@ -96,6 +97,7 @@ type importDiscoveryOptions struct {
 	receiptOut        string
 	noBrowser         bool
 	jsonOut           bool
+	cloud             bool
 	timeout           time.Duration
 }
 
@@ -131,6 +133,7 @@ func init() {
 	importDiscoverCmd.Flags().StringVar(&importDiscoverReceiptOut, "receipt-out", "", "Write the resulting import-plan receipt to a specific path")
 	importDiscoverCmd.Flags().BoolVar(&importDiscoverNoBrowser, "no-browser", false, "Print the browser review URL instead of opening it")
 	importDiscoverCmd.Flags().BoolVar(&importDiscoverJSON, "json", false, "Print the final plan-ready snapshot as JSON")
+	importDiscoverCmd.Flags().BoolVar(&importDiscoverCloud, "cloud", false, "Publish publicly to Fused Cloud Registry instead of the Enterprise Local Registry")
 	importDiscoverCmd.Flags().DurationVar(&importDiscoverTimeout, "timeout", 20*time.Minute, "Maximum discovery session duration")
 }
 
@@ -142,6 +145,10 @@ func runImportDiscovery(cmd *cobra.Command, options importDiscoveryOptions) erro
 	client, err := getAPIClientWithTimeout(options.timeout)
 	if err != nil {
 		return err
+	}
+	// Route every discovery request to Fused Cloud Registry when --cloud is explicitly requested.
+	if options.cloud {
+		client.RegistryTarget = "cloud"
 	}
 	ctx, cancel := context.WithTimeout(cmd.Context(), options.timeout)
 	defer cancel()
@@ -293,12 +300,18 @@ func recordDiscoveryTelemetry(ctx context.Context, options importDiscoveryOption
 
 // discoveryStartRequest maps CLI flags to the single shared Registry start shape.
 func discoveryStartRequest(options importDiscoveryOptions) cliapi.DiscoveryStartRequest {
-	return cliapi.DiscoveryStartRequest{
+	req := cliapi.DiscoveryStartRequest{
 		Name: strings.TrimSpace(options.name), Slug: strings.TrimSpace(options.slug),
 		Version: strings.TrimSpace(options.version), SourceURL: strings.TrimSpace(options.sourceURL),
 		SourceMode: strings.ToLower(strings.TrimSpace(options.sourceMode)), RequestedWorkers: options.requestedWorkers,
 		Crawl: cliapi.DiscoveryCrawlRequest{MaxPages: options.maxPages, MaxDepth: options.maxDepth},
 	}
+	// Cloud Registry imports from Hybrid Engines require explicit public visibility.
+	if options.cloud {
+		publicTrue := true
+		req.IsPublic = &publicTrue
+	}
+	return req
 }
 
 // discoverySelectionMode classifies only user intent and never includes operation coordinates.
@@ -959,6 +972,10 @@ func (runner *discoverySessionRunner) finish(snapshot *cliapi.DiscoverySnapshot)
 		Slug:       strings.TrimSpace(runner.options.slug), PlanID: payload.Plan.PlanID,
 		ReviewHash: payload.Plan.ReviewHash, EngineURL: canonicalEngineURLOrRaw(runner.client.BaseURL),
 		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+	// Persist the Cloud Registry target so subsequent `import apply` replays the exact destination.
+	if runner.options.cloud {
+		receipt.RegistryTarget = "cloud"
 	}
 	// Discovery receipts retain the policy explicitly returned with their import plan.
 	if payload.ImportPlan != nil && payload.ImportPlan.RepairMode != "" {

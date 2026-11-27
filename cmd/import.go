@@ -26,6 +26,7 @@ var (
 	importPlanDestinationVersion string
 	importPlanTarget             string
 	importPlanPublic             bool
+	importPlanCloud              bool
 	importPlanCategory           string
 	importPlanOverlay            string
 	importPlanReceiptOut         string
@@ -64,6 +65,7 @@ file that Registry will validate and canonicalize with the source.`,
 			destinationVersion: importPlanDestinationVersion,
 			target:             importPlanTarget,
 			isPublic:           isPublic,
+			cloud:              importPlanCloud,
 			category:           importPlanCategory,
 			overlay:            importPlanOverlay,
 			receiptOut:         importPlanReceiptOut,
@@ -78,6 +80,8 @@ var (
 	importApplyPlanID      string
 	importApplyReviewHash  string
 	importApplyReceiptPath string
+	importApplyCloud       bool
+	importStatusCloud      bool
 )
 
 var importApplyCmd = &cobra.Command{
@@ -94,6 +98,7 @@ Import plan/apply requests allow 20 minutes unless --timeout is explicitly set.`
 			planID:      importApplyPlanID,
 			reviewHash:  importApplyReviewHash,
 			receiptPath: importApplyReceiptPath,
+			cloud:       importApplyCloud,
 		})
 	}),
 }
@@ -105,7 +110,7 @@ var importStatusCmd = &cobra.Command{
 apply timeout or lost response; status never retries the import mutation.`,
 	Args: cobra.ExactArgs(1),
 	RunE: WithTelemetry("cli.import.status", func(cmd *cobra.Command, args []string) error {
-		return runImportStatus(cmd, args[0])
+		return runImportStatusWithOptions(cmd, args[0], importStatusCloud)
 	}),
 }
 
@@ -122,6 +127,7 @@ func init() {
 	importPlanCmd.Flags().StringVar(&importPlanDestinationVersion, "destination-version", "", "Existing provider version to augment (requires --target webhooks)")
 	importPlanCmd.Flags().StringVar(&importPlanTarget, "target", "endpoints", "Contract content to import: all, endpoints, or webhooks")
 	importPlanCmd.Flags().BoolVar(&importPlanPublic, "public", false, "Registry visibility: a new service defaults private; its first version is available when the service is public. For a new version of an existing service, defaults public unless --public=false. Re-importing an existing version preserves its visibility.")
+	importPlanCmd.Flags().BoolVar(&importPlanCloud, "cloud", false, "Publish publicly to Fused Cloud Registry instead of the Enterprise Local Registry")
 	importPlanCmd.Flags().StringVar(&importPlanCategory, "category", "", "Category for a new service")
 	importPlanCmd.Flags().StringVar(&importPlanOverlay, "overlay", "", "Local overlay file applied by the Registry during planning")
 	importPlanCmd.Flags().StringVar(&importPlanReceiptOut, "receipt-out", "", "Write the plan receipt to a specific path")
@@ -134,8 +140,10 @@ func init() {
 	importApplyCmd.Flags().StringVar(&importApplyPlanID, "plan-id", "", "Apply a specific remote plan ID (requires --review-hash)")
 	importApplyCmd.Flags().StringVar(&importApplyReviewHash, "review-hash", "", "Combined review hash to pair with --plan-id")
 	importApplyCmd.Flags().StringVar(&importApplyReceiptPath, "receipt", "", "Read a specific plan or discovery receipt (default: most recent local receipt)")
+	importApplyCmd.Flags().BoolVar(&importApplyCloud, "cloud", false, "Target Fused Cloud Registry when applying with --plan-id without a local receipt")
 	addJSONOutputFlag(importApplyCmd)
 
 	importCmd.AddCommand(importStatusCmd)
+	importStatusCmd.Flags().BoolVar(&importStatusCloud, "cloud", false, "Read operation status from Fused Cloud Registry")
 	addJSONOutputFlag(importStatusCmd)
 }

@@ -39,6 +39,7 @@ type importSpecPlanOptions struct {
 	// isPublic is nil when --public was not passed at all, distinct from an
 	// explicit --public=false -- see import.go's flag registration.
 	isPublic   *bool
+	cloud      bool
 	category   string
 	overlay    string
 	receiptOut string
@@ -51,6 +52,7 @@ type importSpecApplyOptions struct {
 	planID      string
 	reviewHash  string
 	receiptPath string
+	cloud       bool
 }
 
 // importApplyOutcomeUnknownError distinguishes a lost response from a proven
@@ -108,6 +110,7 @@ func safeImportOperationID(value string) string {
 // and review_hash to send without re-planning.
 type importPlanReceipt struct {
 	RepairMode       string `json:"repair_mode"`
+	RegistryTarget   string `json:"registry_target,omitempty"`
 	Slug             string `json:"slug,omitempty"`
 	PlanID           string `json:"plan_id"`
 	ReviewHash       string `json:"review_hash"`
@@ -137,6 +140,8 @@ func runImportPlan(cmd *cobra.Command, specArg string, opts importSpecPlanOption
 	if err != nil {
 		return err
 	}
+	// Route planning to Fused Cloud Registry when --cloud was explicitly passed.
+	client.RegistryTarget = selectImportRegistryTarget(opts.cloud, "")
 	resp, err := client.PlanSpecImport(req)
 	if err != nil {
 		var strictError *api.SpecImportStrictError
@@ -155,7 +160,10 @@ func runImportPlan(cmd *cobra.Command, specArg string, opts importSpecPlanOption
 	)
 
 	// A durable receipt must contain the same reviewed response that the user sees.
-	if err := persistImportPlanReceipt(newImportPlanReceipt(resp), opts); err != nil {
+	receipt := newImportPlanReceipt(resp)
+	// Record explicit --cloud target or server-acknowledged Registry provenance for subsequent apply/status calls.
+	receipt.RegistryTarget = selectImportRegistryTarget(opts.cloud, resp.RegistrySource)
+	if err := persistImportPlanReceipt(receipt, opts); err != nil {
 		return err
 	}
 	// Structured mode returns the complete bounded Registry response for automation.
@@ -248,6 +256,10 @@ func buildSpecImportRequest(specArg string, opts importSpecPlanOptions) (api.Spe
 	if err != nil {
 		return req, err
 	}
+	// Enforce public visibility locally whenever --cloud targets Fused Cloud Registry.
+	if err := applyCloudImportVisibility(&req, opts); err != nil {
+		return req, err
+	}
 	// Omission preserves automatic safe repairs; typos must never silently enable them.
 	if req.RepairMode == "" {
 		req.RepairMode = "safe"
@@ -267,6 +279,37 @@ func buildSpecImportRequest(specArg string, opts importSpecPlanOptions) (api.Spe
 	}
 	req.OverlayContent = overlayContent
 	return populateSpecImportSource(req, specArg, opts.url)
+}
+
+// applyCloudImportVisibility enforces public visibility when publishing to Fused Cloud Registry via --cloud.
+func applyCloudImportVisibility(req *api.SpecImportPlanRequest, opts importSpecPlanOptions) error {
+	// Skip Cloud visibility rules when targeting the default Registry.
+	if !opts.cloud {
+		return nil
+	}
+	// Explicit private visibility conflicts with publishing to Fused Cloud Registry.
+	if opts.isPublic != nil && !*opts.isPublic {
+		return errors.New("--cloud requires public visibility; omit --public=false or omit --cloud to keep internal specifications in your Local Registry")
+	}
+	// Default unspecified visibility to public when --cloud is explicitly requested.
+	if req.IsPublic == nil {
+		publicTrue := true
+		req.IsPublic = &publicTrue
+	}
+	return nil
+}
+
+// selectImportRegistryTarget resolves the explicit or acknowledged Registry target for plan/apply headers and receipts.
+func selectImportRegistryTarget(cloud bool, sourceOrReceiptTarget string) string {
+	// An explicit --cloud flag always selects Fused Cloud Registry.
+	if cloud {
+		return "cloud"
+	}
+	// Preserve canonical 'local' or 'cloud' provenance recorded by Engine or a prior receipt.
+	if sourceOrReceiptTarget == "local" || sourceOrReceiptTarget == "cloud" {
+		return sourceOrReceiptTarget
+	}
+	return ""
 }
 
 // validateSpecImportIdentity keeps destination scope and canonical local
@@ -546,6 +589,8 @@ func runImportApply(cmd *cobra.Command, opts importSpecApplyOptions) error {
 	if err := validateReceiptEngineURL(receipt.EngineURL, client.BaseURL); err != nil {
 		return fmt.Errorf("import receipt target invalid: %w", err)
 	}
+	// Replay the Registry target recorded at plan time (or --cloud when applying by raw --plan-id).
+	client.RegistryTarget = selectImportRegistryTarget(opts.cloud, receipt.RegistryTarget)
 	resp, err := client.ApplySpecImport(receipt.PlanID, receipt.ReviewHash)
 	if err != nil {
 		var unknown *api.SpecImportApplyOutcomeUnknownError
@@ -600,6 +645,11 @@ func newImportApplyOutcomeUnknownError(cmd *cobra.Command, cause error, timeout 
 // runImportStatus reads one durable operation and renders either stable JSON
 // or a compact human recovery summary.
 func runImportStatus(cmd *cobra.Command, operationID string) error {
+	return runImportStatusWithOptions(cmd, operationID, false)
+}
+
+// runImportStatusWithOptions reads one durable operation, honoring --cloud or a matching local receipt target.
+func runImportStatusWithOptions(cmd *cobra.Command, operationID string, cloud bool) error {
 	canonicalOperationID := strings.TrimSpace(operationID)
 	parsedOperationID, err := uuid.Parse(canonicalOperationID)
 	// Local UUID validation keeps invalid path text away from the HTTP client.
@@ -612,6 +662,8 @@ func runImportStatus(cmd *cobra.Command, operationID string) error {
 	if err != nil {
 		return err
 	}
+	// Route status checks to Fused Cloud Registry when --cloud is passed or the active receipt matches this operation.
+	client.RegistryTarget = resolveStatusRegistryTarget(canonicalOperationID, cloud)
 	status, err := client.GetSpecImportStatus(canonicalOperationID)
 	// Shared API errors preserve stable recovery fields for automation.
 	if err != nil {
@@ -623,6 +675,20 @@ func runImportStatus(cmd *cobra.Command, operationID string) error {
 	}
 	printImportStatus(cmd.OutOrStdout(), status)
 	return nil
+}
+
+// resolveStatusRegistryTarget determines which Registry owns an operation status lookup.
+func resolveStatusRegistryTarget(canonicalOperationID string, cloud bool) string {
+	// An explicit --cloud flag overrides local receipt state.
+	if cloud {
+		return "cloud"
+	}
+	receipt, err := readImportPlanReceiptFile(defaultImportReceiptPath)
+	// Ignore missing or unrelated receipts so arbitrary operation IDs use the default Registry.
+	if err != nil || receipt.PlanID != canonicalOperationID {
+		return ""
+	}
+	return selectImportRegistryTarget(false, receipt.RegistryTarget)
 }
 
 // printImportStatus renders the compact human recovery view separately from
